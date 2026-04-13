@@ -1,0 +1,14 @@
+#!/bin/sh
+# Pre-push hook: scan for secrets before pushing to a public repo.
+# Install: make hooks
+set -e
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-push: gitleaks not installed — skipping secret scan"
+  echo "  install: go install github.com/zricethezav/gitleaks/v8@v8.21.2"
+  exit 0
+fi
+
+echo "pre-push: scanning for secrets with gitleaks..."
+gitleaks detect --source . --no-banner
+echo "pre-push: clean ✓"

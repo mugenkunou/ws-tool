@@ -4,19 +4,6 @@
 
 `ws` is a workspace management CLI for Linux. It manages your dotfiles, scans for sync hygiene violations, records terminal sessions, herds your Git repos, and makes sure you can restore a fresh machine from a single synced folder.
 
-```text
-ws scan
-Summary
-──────────────────────────────────────────────────────
-Workspace    ~/Workspace              1,842 files · 4.3 GB
-Ignore       0 critical · 1 warning   bloat/depth/project-meta
-Secret       0 critical · 0 warning   0 files matched
-Dotfiles     0 critical · 0 warning   5 registered
-Log          recording active         312 MB / 500 MB cap
-Trash        ok                       setup complete
-──────────────────────────────────────────────────────
-```
-
 ---
 
 ## The Problem
@@ -39,8 +26,9 @@ Your digital life is scattered:
 | **Dotfiles** | Configs scattered across `~/`, `/etc/`, `~/.config/` | `ws dotfile add ~/.bashrc` — moves the original into workspace, symlinks back |
 | **Sync hygiene** | 200 MB log dumps and `node_modules/` bloating your cloud | `ws ignore scan` finds bloat; `ws ignore fix` quarantines it |
 | **Secrets** | Accidentally syncing `password=hunter2` to the cloud | `ws secret scan` catches it; `ws secret fix` lets you exclude or allowlist |
+| **Git credentials** | Managing HTTPS tokens across multiple git hosts | `ws git-credential-helper setup` configures git to use `pass` as credential helper |
 | **Terminal sessions** | "What was that command I ran last Tuesday?" | `ws log start` records everything via PTY. Search it later with `ws log search` |
-| **Git repos** | 6 repos, 3 need push, 1 is on a detached HEAD | `ws repo scan` shows fleet status; `ws repo pull` / `ws repo push` in one shot |
+| **Git repos** | 6 repos, 3 need push, 1 is on a detached HEAD | `ws repo scan` shows fleet status; `ws repo sync` pulls/pushes per state in one shot |
 | **Scratch dirs** | Debug sessions and investigations scattered across `/tmp` | `ws scratch new` — named directory in `~/Scratch`, opens in VS Code instantly |
 | **Machine restore** | New laptop, two days of setup | `ws restore` — guided wizard, working machine in minutes |
 | **Soft delete** | `rm -rf` regrets | `ws trash setup` configures your shell, VS Code, and file explorer to soft-delete |
@@ -52,12 +40,14 @@ Your digital life is scattered:
 ### Install
 
 ```bash
-# From source (requires Go ≥ 1.23)
+# One-liner (requires Go ≥ 1.23)
+go install github.com/mugenkunou/ws-tool@latest
+sudo mv "$(go env GOPATH)/bin/ws-tool" /usr/local/bin/ws
+
+# Or from source
 git clone https://github.com/mugenkunou/ws-tool.git
 cd ws-tool
 make build
-
-# Copy the binary anywhere in your PATH
 sudo cp ws /usr/local/bin/
 ```
 
@@ -79,18 +69,6 @@ ws dotfile add ~/.bashrc
 
 Your `.bashrc` now lives in the workspace (synced). The system path is a symlink pointing back. Edit either one — they're the same file.
 
-### Scan for Problems
-
-```bash
-ws scan
-```
-
-One command. Checks everything: bloated files, secrets, broken dotfile symlinks, sync hygiene, trash setup. Fix them interactively:
-
-```bash
-ws fix
-```
-
 ---
 
 ## Commands at a Glance
@@ -101,25 +79,16 @@ ws fix
 | Command | What it does |
 | --- | --- |
 | `ws init` | Scaffold a workspace (creates `ws/`, `.megaignore`, configures trash) |
-| `ws restore` | Guided full-machine restore wizard — init → trash → dotfiles → scan → fix |
+| `ws reset` | Reverse `ws init` — undo all provisions and remove `ws/` |
+| `ws restore` | Guided full-machine restore wizard (requires initialized workspace) |
 | `ws trash setup` | Configure soft-delete for shell `rm`, VS Code, and file explorer |
-| `ws trash status` | Check if soft-delete is active on this machine |
+| `ws trash disable` | Remove soft-delete integrations |
+| `ws trash status` | Check integration status and trash size |
 
 </details>
 
 <details>
-<summary><strong>🔍 Scan & Fix</strong></summary>
-
-| Command | What it does |
-| --- | --- |
-| `ws scan` | Aggregate health check across all subsystems |
-| `ws fix` | Walk through all violations interactively |
-| `ws search <query>` | Grep the entire workspace — text, filenames, logs |
-
-</details>
-
-<details>
-<summary><strong>🔗 Dotfiles</strong></summary>
+<summary><strong> Dotfiles</strong></summary>
 
 | Command | What it does |
 | --- | --- |
@@ -128,7 +97,9 @@ ws fix
 | `ws dotfile ls` | List all managed dotfiles |
 | `ws dotfile scan` | Verify all symlinks are intact |
 | `ws dotfile fix` | Recreate broken/missing symlinks (the restore command) |
+| `ws dotfile reset` | Reset dotfile subsystem provisions |
 | `ws dotfile git connect` | Optional: configure Git backup for dotfile versioning |
+| `ws dotfile git disconnect` | Remove dotfile Git remote/config from ws |
 | `ws dotfile git status` | Show dotfile Git backup health |
 
 </details>
@@ -141,11 +112,10 @@ ws fix
 | `ws log start` | Start a PTY-recorded session (● ws:log prompt indicator) |
 | `ws log stop` | End the current recording |
 | `ws log ls` | List all sessions with size, duration, command count |
-| `ws log show <tag>` | View a session — merged, commands-only, or output-only |
 | `ws log search <query>` | Search across all recorded sessions |
 | `ws log scan` | Log subsystem health (storage, cap pressure) |
 | `ws log prune` | Delete old sessions |
-| `ws log setup-terminal` | Auto-record in every new terminal tab |
+| `ws log rm <tag>` | Delete one recorded session by tag |
 
 </details>
 
@@ -155,12 +125,11 @@ ws fix
 | Command | What it does |
 | --- | --- |
 | `ws repo ls` | Discover Git repos under workspace |
-| `ws repo scan` | Fleet status: dirty, ahead/behind, detached |
+| `ws repo scan` | Fleet status with fetch-first: dirty, ahead/behind, detached |
 | `ws repo fetch` | `git fetch --all --prune` across the fleet |
 | `ws repo pull` | Interactive fleet pull (ff-only or rebase) |
-| `ws repo push` | Interactive fleet push |
+| `ws repo sync` | Interactive fleet sync (pull/push per repo state) |
 | `ws repo run -- <cmd>` | Run any command in each repo root |
-| `ws repo fix` | Reconcile repo state from current workspace |
 
 </details>
 
@@ -186,6 +155,13 @@ ws fix
 | --- | --- |
 | `ws secret scan` | Find exposed secrets (`password=`, `API_KEY=`, private keys) |
 | `ws secret fix` | View context, exclude file, or allowlist false positives |
+| `ws secret setup` | Setup/check Unix Password Store (`pass`) prerequisites |
+| `ws git-credential-helper setup` | Connect credential helper and create missing pass entries |
+| `ws git-credential-helper status` | Check credential helper config and pass entry coverage |
+| `ws git-credential-helper disconnect` | Remove ws credential helper from git config |
+| `ws git-credential-helper get` | Look up credentials from pass (git plumbing — called by git) |
+| `ws git-credential-helper store` | No-op (git plumbing — pass is managed separately) |
+| `ws git-credential-helper erase` | No-op (git plumbing — pass is managed separately) |
 
 </details>
 
@@ -196,8 +172,13 @@ ws fix
 | --- | --- |
 | `ws scratch new [name]` | Create a named scratch directory, open in VS Code |
 | `ws scratch ls` | List scratch directories with age, size, items |
+| `ws scratch tag [name]` | Add tags to a scratch directory |
+| `ws scratch search [query]` | Search scratch directories by tag/name/content |
 | `ws scratch prune` | Remove old scratch directories |
-| `ws context init <task>` | Create a `.ws-context/` sidecar for agent-assisted dev |
+| `ws scratch rm <name>` | Delete a scratch directory by name |
+| `ws context create <task>` | Create a `.ws-context/` sidecar for agent-assisted dev |
+| `ws context list [--update|--find]` | List tracked contexts from `ws/contexts.json`; refresh by scanning workspace when requested |
+| `ws context rm` | Remove context sidecars (single or all with `--all`) |
 
 </details>
 
@@ -207,11 +188,11 @@ ws fix
 | Command | What it does |
 | --- | --- |
 | `ws version` | Binary version, schema versions, platform info |
-| `ws config view` | Dump the fully resolved config (shows source of each value) |
-| `ws config defaults` | Print the built-in default config as valid JSON |
+| `ws config` | Configuration commands (`view`, `defaults`) |
 | `ws completions <shell>` | Generate shell completions (bash/zsh/fish) |
+| `ws completions install/uninstall` | Install or remove completions in shell rc/config files |
 | `ws tui` | Full-screen interactive dashboard |
-| `ws notify start/stop/status` | Background notification daemon for real-time alerts |
+| `ws notify start/stop/status/test` | Background notification daemon and test alert |
 
 </details>
 
@@ -271,10 +252,39 @@ ws ignore generate --merge  # keep your custom rules, add missing template rules
 | **Offload, don't reimplement** | `ln`, `grep`, `find`, `diff`, `script(1)`, `git` — `ws` orchestrates battle-tested tools |
 | **Read/write separation** | Read commands are non-interactive and pipe-safe. Write commands are always interactive with `--dry-run`. |
 | **`--json` everywhere** | Every command supports `--json` for scripting. Stable schema envelope with version. |
+| **Colored & accessible** | ANSI colors + Unicode icons for scannable output. `--no-color` and `NO_COLOR` env for accessibility. |
 | **Soft-delete first** | `rm` is the delete primitive. `ws trash setup` makes it route to Trash. |
 | **Workspace-sourced metadata** | Config and manifest live inside the workspace. Sync the folder, get the tool state too. |
 
 Full philosophy: [PHILOSOPHY.md](PHILOSOPHY.md) — a nine-factor methodology for workspace management, inspired by the Twelve-Factor App.
+
+### Read/Write Separation
+
+This is a core design constraint, not a nice-to-have. Every command is classified as **RO** (read-only) or **RW** (read-write):
+
+- **RO commands** (`ls`, `show`, `check`, `status`, `version`, `config view`, subsystem `scan`) are non-interactive and pipe-safe. They never prompt for input and produce deterministic output to stdout.
+- **RW commands** (`init`, `restore`, `dotfile add/rm/fix`, `ignore fix/generate`, `secret fix/setup`, `git-credential-helper setup/disconnect`, `repo pull/push/run`, `log start/stop/prune`, `scratch new/prune/rm`, `trash enable/disable`, `notify start/stop`, `context init/reset`, `completions install/uninstall`) use **per-action confirmation** (`git add -p` style). Each discrete mutation gets its own `y/n/a/q` prompt — never a single gate before N operations.
+
+Prompt vocabulary for RW commands:
+
+| Key | Effect |
+| --- | --- |
+| `y` (default, Enter) | Execute this action |
+| `n` | Skip this action, continue to next |
+| `a` | Accept all remaining actions |
+| `q` | Quit, skip all remaining actions |
+
+Flags that interact with this:
+
+| Flag | Effect |
+| --- | --- |
+| `--dry-run` | Print the plan without executing any action. |
+| `--quiet` | Auto-accept all actions (for scripted use). |
+| `--json` | Auto-accept all actions (JSON mode is non-interactive). |
+
+There is **no `--force` flag**. The only way to bypass prompts is `--quiet` or `--json`.
+
+**For contributors:** When adding a new command, classify it as RO or RW. RW commands must use the **Action Plan pattern** (`cmd/plan.go`): build a `Plan` of `Action`s, call `RunPlan()`, use `planResult.ExitCode()`. See [spec.md](spec.md) § Read/Write Separation and [dev.md](dev.md) § Adding new commands for the full contract.
 
 ---
 
@@ -294,7 +304,7 @@ Scripts can branch on these without parsing output:
 ## Global Flags
 
 ```text
---workspace, -w   Path to workspace root     (default: ~/Workspace)
+--workspace, -w   Path to workspace root     (default: $WS_WORKSPACE or ~/Workspace)
 --config, -c      Path to config file        (default: <workspace>/ws/config.json)
 --quiet, -q       Errors only
 --verbose         Show internal decisions
@@ -302,6 +312,13 @@ Scripts can branch on these without parsing output:
 --dry-run         Preview actions, no changes
 --no-color        Disable colors and Unicode (also: NO_COLOR env var)
 ```
+
+### Environment Variables
+
+| Variable | Description |
+| --- | --- |
+| `WS_WORKSPACE` | Override the default workspace path (`~/Workspace`). The `--workspace` flag takes precedence. |
+| `NO_COLOR` | Disable colors and Unicode icons (see [no-color.org](https://no-color.org)). |
 
 ---
 
@@ -338,13 +355,19 @@ The whole point. You lost your laptop (or got a new one). Here's the play:
 
 1. **Install MEGA** → sign in → sync `~/Workspace`
 2. **Install `ws`** → copy the binary to `/usr/local/bin/`
-3. **Run the wizard:**
+3. **Initialize** (if not already synced):
+
+```bash
+ws init
+```
+
+4. **Run the wizard:**
 
 ```bash
 ws restore
 ```
 
-It walks you through: workspace init → trash setup → dotfile symlinks → scan → fix. Your SSH keys, bash config, Kubernetes context, VS Code settings — all back where they belong.
+It walks you through: trash setup → dotfile symlinks → scan → fix. Your SSH keys, bash config, Kubernetes context, VS Code settings — all back where they belong.
 
 ---
 
@@ -353,10 +376,17 @@ It walks you through: workspace init → trash setup → dotfile symlinks → sc
 ```bash
 git clone https://github.com/mugenkunou/ws-tool.git
 cd ws-tool
-go build -o ws .
+make build
 ```
 
 Requires Go ≥ 1.23. That's it. No `npm install`. No virtualenv. No cmake. One command.
+
+If your environment restricts executable temp dirs, use repo-local temp/cache dirs:
+
+```bash
+mkdir -p tmp .gocache
+TMPDIR=$PWD/tmp GOCACHE=$PWD/.gocache make build
+```
 
 ---
 

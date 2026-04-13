@@ -19,6 +19,7 @@ Inspired by the [Twelve-Factor App](https://12factor.net) methodology.
 | VII | [🧹 Sync Scripts, Quarantine State](#-vii-sync-scripts-quarantine-state) | Scripts are synced. Log dumps are not. |
 | VIII | [📏 Sync With Intent](#-viii-sync-with-intent) | Some files don't deserve sync. |
 | IX | [🗑️ Always Soft Delete](#️-ix-always-soft-delete) | Delete means recoverable move to Trash. |
+| X | [🎯 Per-Action Consent](#-x-per-action-consent) | Confirm each mutation, not the batch. |
 
 ---
 
@@ -169,11 +170,11 @@ The investigation model pairs these: a synced directory for the script and a scr
 ```text
 # Quick start — creates a scratch directory for the investigation
 ws scratch new proxy-timeout
-# ✔ Created   ~/Scratch/2026-03-proxy-timeout/
-# ✔ Opening   VS Code → ~/Scratch/2026-03-proxy-timeout/
+# ✔ Created   ~/Scratch/proxy-timeout.2026-03/
+# ✔ Opening   VS Code → ~/Scratch/proxy-timeout.2026-03/
 #
 # When you find scripts/notes worth keeping:
-#   cp ~/Scratch/2026-03-proxy-timeout/debug.sh ~/Workspace/Experiments/
+#   cp ~/Scratch/proxy-timeout.2026-03/debug.sh ~/Workspace/Experiments/
 
 ┌────────────────────────────────────┐
 │          THE SPLIT                 │
@@ -292,3 +293,31 @@ Operational stance:
 - Permanent deletion is an explicit, deliberate act.
 - Routine cleanup is always recoverable.
 - If a tool has both delete and trash modes, trash is the default.
+
+---
+
+## 🎯 X. Per-Action Consent
+
+*Confirm each mutation, not the batch.*
+
+A single "Proceed? Y/n" gate before N operations is a rubber-stamp. The user sees a summary, hits Enter out of habit, and regrets it when one of the N items was wrong. The `ws` CLI adopts the `git add -p` model: every discrete mutation gets its own prompt.
+
+The pattern is **Plan → Present → Confirm-Each → Execute**:
+
+1. The command builds a **Plan** — an ordered list of **Actions**, each with an ID, a human-readable description, and an execute closure.
+2. In interactive mode, each action is presented individually with `y/n/a/q`:
+   - `y` (default, Enter) — execute this action
+   - `n` — skip this action, continue to next
+   - `a` — accept all remaining without further prompts
+   - `q` — quit, skip everything remaining
+3. In `--dry-run` mode, the plan is printed without execution.
+4. In `--quiet` or `--json` mode, all actions are auto-accepted (non-interactive).
+
+Why per-action, not per-batch:
+
+- **Precision.** `ws repo pull` across 12 repos — you can skip the one with uncommitted changes.
+- **Auditability.** Each action's outcome (executed, skipped, failed) is tracked in `PlanResult` and available in JSON output.
+- **Partial success.** If action 3 of 5 fails, actions 1–2 are already done and actions 4–5 still get offered. No all-or-nothing rollback needed.
+- **Muscle memory.** The `y/n/a/q` vocabulary is identical to `git add -p`, reducing cognitive load.
+
+Granularity rule: **one Action per independently meaningful mutation**. For `ws init`, that's one action per file created. For `ws repo pull`, one per repository. For `ws log prune`, one per session removed. The test is: "would a user ever want to say yes to this but no to the next?" If so, they're separate actions.

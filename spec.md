@@ -27,6 +27,138 @@ The spec is organized in five parts:
 
 ---
 
+### Read/Write Separation (Detailed)
+
+Every command in `ws` is classified as **read-only (RO)** or **read-write (RW)**. This classification drives interactivity, piping, and safety behavior.
+
+#### RO Commands (non-interactive, pipe-safe)
+
+RO commands never modify the workspace, config, manifest, or system state. They:
+- Produce deterministic output to stdout.
+- Never prompt for user input.
+- Work correctly when piped (`ws repo ls | wc -l`, `ws ignore scan --json | jq`).
+- Support `--json` for machine-readable output.
+
+| Command | Notes |
+|---|---|
+| `ws version` | |
+| `ws config view`, `ws config --defaults`, `ws config dump` | |
+| `ws ignore scan`, `ws ignore check`, `ws ignore ls`, `ws ignore tree` | |
+| `ws secret scan` | |
+| `ws git-credential-helper get`, `ws git-credential-helper store`, `ws git-credential-helper erase` | Git plumbing — called by git, not for direct use (no workspace required) |
+| `ws git-credential-helper status` | Check credential helper config and pass entry coverage |
+| `ws dotfile ls`, `ws dotfile scan` | |
+| `ws dotfile git status` | |
+| `ws repo ls`, `ws repo scan`, `ws repo fetch` | |
+| `ws log ls` | |
+| `ws scratch ls` | |
+| `ws scratch search` | Search scratch directories by tag/name/content |
+| `ws trash status` | |
+| `ws notify status`, `ws notify test` | |
+| `ws tui` | Interactive TUI (reads input but doesn't modify data) |
+| `ws completions` | |
+
+#### RW Commands (interactive, confirm-before-write)
+
+RW commands modify state. They:
+- **Build a `Plan` of discrete `Action`s** before executing anything.
+- **Prompt per-action** with `y/n/a/q` keys (like `git add -p`): `y` = yes (default/Enter), `n` = skip this action, `a` = accept all remaining, `q` = quit (skip all remaining).
+- Support `--dry-run` to preview the full plan without writing.
+- Auto-accept all actions when `--quiet` or `--json` is set (non-interactive modes).
+- Treat EOF on stdin as "yes" (accept), so piped/test usage works seamlessly.
+- There is **no `--force` flag** — the only way to bypass prompts is `--quiet`.
+- Multi-action commands (e.g., `ws repo pull` across N repos) present **one prompt per action**, not a single gate.
+
+| Command | Actions |
+|---|---|
+| `ws init` | Per-file: config.json, manifest.json, .megaignore, ws/ dir |
+| `ws reset` | Per-subsystem: dotfiles, context, trash, ws/ dir removal |
+| `ws restore` | Per-step: trash-enable, dotfile-fix, ignore-generate |
+| `ws dotfile add` | Single action per file |
+| `ws dotfile rm` | Single action per file |
+| `ws dotfile reset` | Single action wrapping subsystem reset |
+| `ws dotfile fix` | Per-violation actions |
+| `ws dotfile git enable` | 2 actions: update-config, create-git-dir |
+| `ws dotfile git disconnect` | Single action |
+| `ws ignore fix` | Per-violation actions |
+| `ws ignore generate` | Per-step: generate/merge, optional scan |
+| `ws ignore edit` | Opens editor (inherently interactive) |
+| `ws secret fix` | Per-violation actions |
+| `ws repo pull` | Per-repo actions |
+| `ws repo sync` | Per-repo actions |
+| `ws repo run` | Per-repo actions |
+| `ws log start` | Single action |
+| `ws log stop` | Single action |
+| `ws log prune` | Per-session actions |
+| `ws log rm` | Single action |
+| `ws scratch new` | Single action |
+| `ws scratch prune` | Per-directory actions |
+| `ws scratch rm` | Single action |
+| `ws scratch tag` | Per-tag actions (interactive or auto) |
+| `ws trash enable` | 2 actions: setup, record-provisions |
+| `ws trash disable` | Single action wrapping subsystem reset |
+| `ws notify start` | Single action |
+| `ws notify stop` | Single action |
+| `ws notify daemon` | Long-running: inotify + periodic scan loop (used by systemd ExecStart) |
+| `ws context create` | Single action |
+| `ws context rm` | Single action (or batch with `--all`) |
+| `ws git-credential-helper setup` | Per-action: set git config, create missing pass entries |
+| `ws git-credential-helper disconnect` | Per-action: unset credential.helper from git config |
+| `ws completions install` | Single action |
+| `ws completions uninstall` | Single action |
+
+#### Implementation Contract
+
+When adding a new command to `ws`:
+
+1. **Classify it as RO or RW.** If it writes to disk, config, manifest, or system state → RW.
+2. **RO commands** receive `(args, globals, stdout, stderr)` — no stdin.
+3. **RW commands** receive `(args, globals, stdin, stdout, stderr)` — stdin is threaded from the entry point.
+4. **RW commands must use the Action Plan pattern (`cmd/plan.go`):**
+   - Build a `Plan` containing one or more `Action`s (each with an ID, Description, and Execute closure).
+   - Call `RunPlan(plan, stdin, stdout, globals)` to execute.
+   - `RunPlan` handles dry-run display, per-action `y/n/a/q` prompts, quiet/json auto-accept, and error reporting.
+   - Multi-mutation commands **must** create one `Action` per discrete mutation (e.g., one per repo, one per file, one per session) — never gate multiple mutations behind a single confirm.
+5. **RW commands must support `--dry-run`** to preview the plan without writing. Set `globals.dryRun = true` and `RunPlan` handles the rest.
+6. **After `RunPlan`**, use `planResult.WasExecuted(id)`, `planResult.ExitCode()`, `planResult.HasFailures()`, etc. to drive post-execution output and return codes.
+7. **JSON output**: include `planResult.Actions` in the JSON envelope alongside command-specific data for programmatic consumers.
+8. **Tests** pass `strings.NewReader("y\n")` as stdin to auto-accept the first action prompt. `promptChoice` returns the default key ("y") on EOF, so all actions are accepted in test contexts.
+
+##### Action Plan Pattern — Quick Reference
+
+```go
+plan := Plan{Command: "mycommand"}
+plan.Actions = append(plan.Actions, Action{
+    ID:          "do-something",
+    Description: "Create the thing",
+    Execute: func() error {
+        return doSomething()
+    },
+})
+planResult := RunPlan(plan, stdin, stdout, globals)
+
+if globals.json {
+    return writeJSON(stdout, stderr, "mycommand", map[string]any{
+        "result":  res,
+        "actions": planResult.Actions,
+    })
+}
+return planResult.ExitCode()
+```
+
+Prompt vocabulary (interactive mode):
+- `y` (default, Enter) — execute this action
+- `n` — skip this action, continue to next
+- `a` — accept all remaining actions without prompting
+- `q` — quit, skip all remaining actions
+
+Exit codes from `planResult.ExitCode()`:
+- `0` — all succeeded or all skipped by user choice
+- `1` — all failed or infrastructure error
+- `3` — partial success (some executed, some failed)
+
+---
+
 ## Config Files: `config.json` and `manifest.json`
 
 Located inside the workspace:
@@ -59,11 +191,12 @@ Located inside the workspace:
   "scratch": {
     "root_dir": "~/Scratch",
     "editor_cmd": "code",
-    "name_prefix": "auto",
+    "name_suffix": "auto",
     "prune_after_days": 90
   },
   "trash": {
     "root_dir": "~/.Trash",
+    "warn_size_mb": 1024,
     "setup": {
       "prompt_on_init": true,
       "shell_rm": true,
@@ -77,7 +210,7 @@ Located inside the workspace:
   },
   "search": {
     "default_context": 2,
-    "max_results": 200
+    "max_results": 0
   },
   "dotfile": {
     "git": {
@@ -87,14 +220,19 @@ Located inside the workspace:
       "pass_entry": "",
       "branch": "main",
       "auto_commit": true,
-      "auto_push": false
+      "auto_push": true
     }
   },
   "repo": {
     "roots": ["."],
-    "exclude_dirs": ["ws/ws-log", "node_modules", ".venv"],
+    "exclude_dirs": ["ws", "node_modules", ".venv"],
     "max_parallel": 8,
     "reconcile_on_read": true
+  },
+  "notify": {
+    "enabled": true,
+    "poll_interval_min": 10,
+    "events": ["dotfile", "secret", "bloat", "storage"]
   }
 }
 ```
@@ -172,8 +310,11 @@ Directory layout:
 └── ws/
   ├── config.json         # user-managed configuration
   ├── manifest.json       # ws-managed durable metadata (dotfiles, allowlists)
+  ├── provisions.json     # ws-managed provisioning ledger (external side-effects)
   ├── megaignore.state    # ws-managed canonical ignore state
   ├── repo.state          # ws-managed repo cache/index (workspace-only repos)
+  ├── health.json         # ws-managed daemon scan results (runtime-only, excluded from sync)
+  ├── notify.state        # ws-managed daemon lifecycle + dedup state
   ├── dotfiles-git/       # ws-managed local git repo for optional dotfile backup
   ├── ws-log-index.md     # ws-managed log index/summary
   ├── dotfiles/            # ws-managed originals captured by ws dotfile add
@@ -191,10 +332,13 @@ Ownership and edit policy:
 
 - `config.json`: edit by hand (or override via flags/env).
 - `manifest.json`: do not hand-edit; managed by `ws dotfile *`, `ws secret fix`, and `ws repo` reconciliation.
+- `provisions.json`: do not hand-edit; managed by all RW commands that create external side-effects. Read by `ws reset` to reverse provisions.
 - `repo.state`: generated/updated by `ws repo` commands. Safe to delete (recreated by reconcile scan).
 - `dotfiles-git/`: generated/managed by `ws dotfile git` when optional git backup is enabled. Not user-controlled.
 - `dotfiles/`: managed by `ws dotfile add|rm`. Files here are the synced originals — system paths are symlinks pointing back. Safe to edit the contents (they *are* your dotfiles), but don't move or rename files manually; use `ws dotfile rm` instead.
 - `megaignore.state`: generated/updated by `ws ignore` commands (canonical parsed/normalized ignore state).
+- `health.json`: generated/updated by `ws notify daemon` after each scan. Runtime-only state — excluded from MEGA sync. Consumed by `ws tui` and `ws notify status`.
+- `notify.state`: generated/updated by `ws notify start|stop|daemon`. Tracks daemon lifecycle, last-scan time, and known violations for notification deduplication.
 - `ws-log-index.md`: generated/updated by `ws log` commands.
 - `ws-log/`: created/rotated/pruned by `ws log start|ls|prune`.
 
@@ -219,7 +363,7 @@ The config file path resolves first (flag → env → `<workspace>/ws/config.jso
 
 ## Violation Types, Groups, and Remediation
 
-`ws` classifies findings into groups. Each group is owned by a specific subsystem that detects and fixes it. `ws scan` and `ws fix` are pure aggregators — they call the subsystem commands and present a unified view.
+`ws` classifies findings into groups. Each group is owned by a specific subsystem that detects and fixes it.
 
 | Violation type | Group | Output subtype (`TYPE` column) | Primary detector | Fix command |
 | --- | --- | --- | --- | --- |
@@ -229,12 +373,87 @@ The config file path resolves first (flag → env → `<workspace>/ws/config.jso
 | Secret pattern match | Secret | `secret` | `ws secret scan` | `ws secret fix` → view context / add `.megaignore` / allowlist |
 | Broken dotfile symlink (`BROKEN`) | Dotfile | `BROKEN` | `ws dotfile scan` | `ws dotfile fix` |
 | Overwritten dotfile symlink (`OVERWRITTEN`) | Dotfile | `OVERWRITTEN` | `ws dotfile scan` | `ws dotfile fix` |
+| Trash size exceeds threshold | Trash | `trash-size` | `ws trash status` | `ws trash enable` → re-enable integrations |
 
 ---
 
 ## Technical Design Decisions
 
 Implementation choices and rationale behind key subsystems. These designs are interface-agnostic — they apply regardless of whether `ws` is invoked via CLI, daemon, TUI, or API.
+
+### Batch Resilience: No Single Failure Breaks the Chain
+
+One bad file must never kill an entire operation.
+
+A workspace contains thousands of files across dozens of projects. At any moment some of those files will be broken symlinks, vanished directories, permission-denied paths, partially written blobs, or race-condition ghosts that exist in a directory listing but are gone by the time you stat them. This is normal. The tool must absorb it.
+
+**Hard rule:** When `ws` runs a batch operation — scanning, fixing, restoring, pruning, or any command that iterates over multiple items — a failure on any single item must **never** abort the entire operation. The operation continues, collects partial results, and reports what it could not process.
+
+Policy:
+
+- **Scan walks** (`ws ignore scan`, `ws secret scan`, `ws dotfile scan`) skip unreadable entries (broken symlinks, missing directories, permission errors) and continue. Results from healthy files are still returned.
+- **Batch mutations** (`ws restore`, `ws prune`) process every item they can and report per-item failures at the end.
+- **Exit codes** reflect the worst outcome across all items, not the first failure. Exit 0 = clean. Exit 2 = violations found. Exit 1 = infrastructure error (workspace not initialized, config unreadable). A skipped broken symlink is not exit 1.
+
+Implementation rules:
+
+- `filepath.WalkDir` callbacks return `nil` on entry errors, not the error itself.
+- `d.Info()` and `os.Open()` errors inside walk callbacks are skipped, not propagated.
+- Command orchestrators collect errors from subsystems into a warnings slice instead of returning early.
+- Warnings are surfaced in the output (both text and JSON modes) so the user knows what was skipped.
+
+The user sees everything that worked plus a clear list of what didn't. They never see a panic or a truncated output because one file in a 10,000-file tree was momentarily unreadable.
+
+### Output Styling: Colors, Icons, and Formatting
+
+`ws` uses ANSI colors and Unicode icons to make CLI output scannable at a glance. All styling is implemented in `internal/style/` — a zero-dependency package using raw ANSI escape sequences (no third-party color libraries). Every rendering function accepts a `noColor bool` parameter for testability and graceful degradation.
+
+**Color palette (semantic roles):**
+
+| Role | ANSI Code | Usage |
+| --- | --- | --- |
+| Success | Green (32) | OK states, completed actions, clean results |
+| Error | Red (31) | Critical issues, failures, broken state |
+| Warning | Yellow (33) | Warnings, attention needed, non-critical |
+| Info | Cyan (36) | Paths, values, highlighted data |
+| Muted | Dim (2) | Secondary info, metadata, hints |
+| Accent | Blue (34) | Headers, command names, emphasis |
+| Bold | Bold (1) | Section titles, key labels |
+| Critical | Bold+Red (1;31) | CRITICAL severity badge |
+
+**Icon vocabulary:**
+
+| Icon | Plain fallback | Semantic meaning |
+| --- | --- | --- |
+| `✔` | `[ok]` | Success / completed |
+| `✖` | `[err]` | Error / failure |
+| `▲` | `[warn]` | Warning / attention |
+| `●` | `(*)` | Active / recording |
+| `→` | `->` | Direction / mapping |
+| `ℹ` | `[i]` | Informational |
+| `🔒` | `[lock]` | Secret / security |
+| `⎇` | `[git]` | Git repository |
+
+**Status badges:** Words like `OK`, `CRITICAL`, `WARNING`, `SYNCED`, `IGNORED`, `DIRTY`, `CLEAN` are rendered as colored badges — uppercase text painted in the severity's color. This makes scan output visually parseable without reading every word.
+
+**Structural elements:**
+
+- **Headers:** Bold title + dimmed divider line (`────────`). Used by `ws tui`, `ws restore`.
+- **Key-value rows:** Bold left-aligned label (18-char column) + value. Used by `ws version`, `ws trash status`.
+- **Result lines:** Icon + message (`✔ Workspace is clean.`, `▲ Violations found: 3`). Used by every command's success/failure path.
+- **Severity counters:** `0 critical · 2 warning` with conditional coloring — zero counts are dimmed, non-zero counts use severity color.
+
+**Color suppression:**
+
+Color is automatically disabled when any of these conditions is true:
+
+1. `--no-color` flag is passed.
+2. `NO_COLOR` environment variable is set (per [no-color.org](https://no-color.org) convention).
+3. `TERM=dumb` is set.
+
+When color is disabled, Unicode icons fall back to ASCII text equivalents (`✔` → `[ok]`, `→` → `->`), and all ANSI escape codes are stripped. JSON output (`--json`) bypasses the style system entirely — it is always uncolored structured data.
+
+**Design rationale:** Colored output reduces cognitive load for repeated operations like `ws repo scan` where the user needs to spot problems in a list. The icon + badge system creates a visual language: green check = safe, red cross = broken, yellow triangle = needs attention. The `internal/style/` package centralizes all visual decisions so adding a new command means calling `style.ResultSuccess()` instead of hand-crafting `fmt.Fprintf` with embedded escape codes.
 
 ### Session Recording: PTY Mode (Default)
 
@@ -287,7 +506,7 @@ Rules:
 
 3. `trash.root_dir` (default `~/.Trash`) is a setup target for these integrations.
 
-4. `ws scan` and `ws trash status` warn when soft-delete setup is missing on the current machine.
+4. `ws trash status` warns when soft-delete setup is missing on the current machine.
 
 Rationale: keep the binary simple and Linux-native while still enforcing safe deletion posture across everyday tools.
 
@@ -297,7 +516,7 @@ Rationale: keep the binary simple and Linux-native while still enforcing safe de
 
 - Default is off (`dotfile.git.enabled=false`) so existing workflows are unchanged.
 - When enabled, successful dotfile write operations (`ws dotfile add`, `ws dotfile rm`, `ws dotfile fix`) stage + commit dotfile and registry changes.
-- Auto-push is opt-in and defaults to off (`dotfile.git.auto_push=false`).
+- Auto-push defaults to on (`dotfile.git.auto_push=true`).
 - When auto-push is enabled, network reachability is the only gate for remote sync: if online, push now; if offline, keep commits locally and retry on the next dotfile Git operation.
 
 Local repository model:
@@ -379,7 +598,19 @@ The built-in template defines two safe harbors:
 #   Result: EXCLUDED ✔
 ```
 
-**Interaction with violation scanning:** `ws ignore scan` still reports bloat violations for oversized files inside safe harbors — the file syncs, but the user should be aware of the size cost. `ws ignore check` shows the safe harbor override in its output so the user knows *why* a `*.tar.gz` file is syncing.
+**Interaction with violation scanning:** `ws ignore scan` detects violations inside safe harbors but **downgrades their severity to INFO**. These items don't count as actionable violations: they don't trigger exit code 2, they don't appear in `ws ignore fix`, and they render in muted/dim styling. By default, safe harbor items are collapsed to a single summary line:
+
+```text
+Violations (3)
+  CRITICAL  bloat          Experiments/dataset.bin  (420.0 MB exceeds critical threshold 10.0 MB)
+  WARNING   depth          Projects/vendor/deep/pkg  (depth 14 exceeds max 6)
+  WARNING   project-meta   Projects/app/node_modules  (Node project build artifact directory should be excluded)
+
+Safe harbors (47 items, 2.3 GB)
+  Use --expand-harbors to see details.
+```
+
+Pass `--expand-harbors` to list each safe harbor item individually. `ws ignore check` shows the safe harbor override in its output so the user knows *why* a `*.tar.gz` file is syncing (with a `[safe harbor]` annotation).
 
 **Adding new safe harbors:** Users can add more safe harbor directories by appending `+:DirName` / `+g:DirName/**` in the safe harbors section of `.megaignore`. The `ws ignore edit` post-save validation warns if include rules appear before exclude rules (order-dependent correctness).
 
@@ -424,13 +655,21 @@ The static `.megaignore` template covers universally-safe exclusions — compile
 
 The command is optimized for capture speed (Philosophy Factor II): type a name, get a directory, land in VS Code. The user manually promotes valuable scripts and notes to the synced `<workspace>` when they're worth keeping — `ws` doesn't try to be smart about what deserves sync.
 
-**Ghost suggestions:** While the user types a name for the new scratch directory, `ws` displays dimmed inline ghost text showing the closest existing directory name (fuzzy-matched, sorted by recency). This is context, not completion — it helps the user avoid collisions and pick a distinctive name. Tab accepts the ghost into the input buffer; any other key continues normal typing. Matching strips date prefixes so `proxy-timeout` matches `2026-03-proxy-timeout`.
+**Ghost suggestions:** When `ws scratch new` or `ws scratch rm` is invoked without a name argument on a TTY, a live ghost panel renders below the prompt line and updates on every keystroke. The panel lists existing directories filtered by the current input (date suffixes stripped for matching), capped at 5 rows with an overflow count. For `new`, the panel is display-only — Tab does nothing, because you are picking a name *distinct from* the ones shown. For `rm`, Tab completes the input to the first matched entry. Calling with a name argument (`ws scratch new proxy-debug`) bypasses the prompt entirely. On non-TTY (pipe, `--json`, test), falls back to a plain line read with no panel.
 
-**Name resolution:** When `scratch.name_prefix` is `"auto"` (default), the final directory name is prefixed with `YYYY-MM-` (e.g. `2026-04-proxy-auth-header`). If the exact name already exists, `-2`, `-3` etc. are appended. Empty input generates `YYYY-MM-scratch-<short-hash>`.
+**Name resolution:** When `scratch.name_suffix` is `"auto"` (default), the final directory name is suffixed with `.YYYY-MM` (e.g. `proxy-auth-header.2026-04`). If the exact name already exists, `-2`, `-3` etc. are appended. Empty input generates `scratch-<short-hash>.YYYY-MM`.
 
 **Editor launch:** After `mkdir -p`, `ws` runs the configured `scratch.editor_cmd` (default `code`) to open the new directory. If the command is not found, `ws` prints the path, skips the open, and exits 0 with a warning. Pass `--no-open` to skip the editor launch.
 
-`ws scratch` is not part of `ws scan` / `ws fix` aggregation. It is a standalone utility.
+**Scratch metadata:** Each scratch directory gets a `.ws-meta.json` file seeded on creation (with `created` timestamp and empty `tags` array). Tags are added later via `ws scratch tag`, which presents a multi-value ghost input showing popular tags from the workspace tag collection (`<workspace>/ws/tags.json`). Enter commits a tag and loops; empty Enter finishes. Tab completes to the first matching suggestion. New tags are automatically added to the workspace collection for future suggestions.
+
+**Auto-tagging:** `ws scratch tag --auto` scans files in the scratch directory and proposes tags based on heuristics: file extensions (`.sh` → `bash`, `.py` → `python`), known file names (`Dockerfile` → `docker`, `Makefile` → `make`), shebangs, and content patterns (`kubectl` → `k8s`, `systemctl` → `systemd`, `cgroup` → `cgroups`). Each suggestion is presented as an action in the standard plan/confirm flow.
+
+**Scratch search:** `ws scratch search <query>` finds scratch directories matching by tag (score 3), directory name (score 2), or file content (score 1). Multi-token queries use AND logic. Without arguments, enters interactive ghost mode showing all scratch dirs with tags, filterable as you type. Supports `--json` and `--max`.
+
+`ws scratch ls` shows tags inline when present: `my-debug.2026-04  age=2d  size=1.2M  items=7  [k8s, pid-limit]`.
+
+`ws scratch` is a standalone utility.
 
 ### Repository Fleet Operations (Workspace-Only, Stateful with Reconciliation)
 
@@ -446,17 +685,17 @@ Every repo command that reads state performs a reconcile phase first whenever po
 
 This makes state helpful for speed and UX while keeping commands grounded in current on-disk reality.
 
-Read commands (`ws repo ls`, `ws repo scan`) are non-interactive and pipe-safe. Write commands (`ws repo fix`, `ws repo pull`, `ws repo push`, `ws repo run`) are interactive by default and support `--dry-run`.
+Read commands (`ws repo ls`, `ws repo scan`) are non-interactive and pipe-safe. Write commands (`ws repo pull`, `ws repo sync`, `ws repo run`) are interactive by default and support `--dry-run`.
 
 ### Context Sidecar: Local Git Exclusion
 
-`ws context init` creates a `.ws-context/` directory alongside the project it supports. This directory holds task-scoped agent context (design notes, constraints, resources) that should stay close to the code but never be pushed to a remote.
+`ws context create` creates a `.ws-context/` directory alongside the project it supports. This directory holds task-scoped agent context (design notes, constraints, resources) that should stay close to the code but never be pushed to a remote.
 
 Git exclusion uses `.git/info/exclude` — a per-clone ignore file that is never committed, never pushed, and leaves zero trace in the repository. This is preferred over `.gitignore` (which would be committed and expose `ws` conventions to collaborators) and over `.git/config` sparse rules (which serve a different purpose).
 
 The dot prefix (`.ws-context/`) makes the directory hidden on Linux. Inside `<workspace>`, hidden files are already excluded from MEGA sync by the `-:.*` rule in `.megaignore`, so no additional MEGA configuration is needed. For repos outside `<workspace>` (e.g. `~/Repositories/`), MEGA is not involved at all.
 
-Idempotency: `ws context init` can be run multiple times safely. The directory is created only if absent. The `.git/info/exclude` entry is appended only if not already present. If the project is not a git repo, the exclude step is silently skipped — but a later invocation after `git init` will retroactively add the exclude rule.
+Idempotency: `ws context create` can be run multiple times safely. The directory is created only if absent. The `.git/info/exclude` entry is appended only if not already present. If the project is not a git repo, the exclude step is silently skipped — but a later invocation after `git init` will retroactively add the exclude rule.
 
 ---
 
@@ -509,7 +748,7 @@ Not required for any core functionality. `ws` detects availability and unlocks a
 | `mega-exclude` | mega-cmd | Query MEGA's exclusion engine directly for a path. More accurate than local rule parsing for edge cases in MEGA's matching semantics. |
 | `dconf` | dconf-cli | Read/write GNOME Terminal and Tilix profiles (both use `dconf`, not config files). Required only for these two terminal emulators. Kitty, Alacritty, and Konsole use file-based configs and don't need this. |
 | `pass` | pass | Optional credential source for dotfile Git backup. `ws` reads credentials from password-store entries at runtime instead of config. |
-| `jq` | jq | Not called by `ws`. Recommended for processing `--json` output in user scripts. Referenced in documentation examples (`ws scan --json \| jq '.data.violations[]'`). |
+| `jq` | jq | Not called by `ws`. Recommended for processing `--json` output in user scripts. Referenced in documentation examples (`ws ignore scan --json \| jq '.data.violations[]'`). |
 
 ### Delegation Map
 
@@ -524,22 +763,19 @@ Summary of what `ws` builds natively vs what it offloads, and why.
 | Output formatting | **Native** | All commands | Tables, progress lines, ANSI colors, Unicode/ASCII toggle. |
 | Exit code logic | **Native** | All commands | Structured exit codes (0/1/2/3) depend on command-specific analysis. |
 | Symlink creation & verification | **Offload** → `ln`, `readlink` | `ws dotfile add`, `ws dotfile scan`, `ws dotfile fix` | Handles edge cases: existing targets, dangling links, relative vs absolute, permissions. |
-| File operations | **Offload** → `cp -a`, `mv`, `rm -rf` | `ws dotfile add`, `ws dotfile rm`, `ws dotfile fix`, `ws fix` | Cross-device moves, permission preservation, recursive operations. Soft-delete behavior depends on machine-level setup around `rm`. |
-| File tree scanning | **Offload** → `find` | `ws scan`, `ws search`, `ws ignore scan`, `ws scratch ls` | Depth limiting, size filtering, type filtering, name patterns. |
-| Text search | **Offload** → `grep -rn` | `ws search`, `ws log search` | Regex, context lines, binary detection, line numbers. |
+| File operations | **Offload** → `cp -a`, `mv`, `rm -rf` | `ws dotfile add`, `ws dotfile rm`, `ws dotfile fix` | Cross-device moves, permission preservation, recursive operations. Soft-delete behavior depends on machine-level setup around `rm`. |
+| File tree scanning | **Offload** → `find` | `ws ignore scan`, `ws scratch ls` | Depth limiting, size filtering, type filtering, name patterns. |
 | Repo discovery + reconcile | **Offload** → `find`, `git rev-parse` | `ws repo ls`, `ws repo scan`, `ws repo *` | Reconciles cached repo state with live workspace before command execution. |
-| Git fleet operations | **Offload** → `git` | `ws repo fetch`, `ws repo pull`, `ws repo push`, `ws repo run` | Git owns per-repo state in `.git/`; `ws` coordinates fan-out execution and aggregate reporting. |
+| Git fleet operations | **Offload** → `git` | `ws repo fetch`, `ws repo pull`, `ws repo sync`, `ws repo run` | Git owns per-repo state in `.git/`; `ws` coordinates fan-out execution and aggregate reporting. |
 | Dotfile Git versioning | **Offload** → `git` | `ws dotfile git *`, `ws dotfile add`, `ws dotfile rm`, `ws dotfile fix` (when enabled) | Optional commit/push of dotfile registry and content for private backup history. Private-repo enforcement: `ws` verifies remote visibility via provider API on connect and before every push — public repos are rejected (hard constraint, not configurable). Credentials resolve in Obsidian-style order: git helper → `pass` → prompt. |
 | Secret scanning | **Offload** → `grep -rn -E` | `ws secret scan` | `ws` provides patterns, `grep` does the scanning. |
 | File comparison | **Offload** → `diff -u` | `ws dotfile add` (conflict), `ws dotfile fix` | Unified diff for conflict resolution. Battle-tested format. |
 | File identity | **Offload** → `sha256sum` | `ws dotfile scan`, `ws dotfile add` | Fast content comparison without reading files into memory. |
-| Binary/text detection | **Offload** → `file --mime-type` | `ws scan`, `ws ignore scan` | MIME-based detection beats extension-based guessing. |
+| Binary/text detection | **Offload** → `file --mime-type` | `ws ignore scan` | MIME-based detection beats extension-based guessing. |
 | Session recording (PTY default) | **Offload** → `script` | `ws log start` | Full PTY capture of stdin/stdout by default. Requires `script` from util-linux. |
-| Paginated display | **Offload** → `less -R` | `ws log show --merged` | Standard Unix paging when stdout is a TTY. |
+| Paginated display | **Offload** → `less -R` | `ws log ls` | Standard Unix paging when stdout is a TTY. |
 | Editor integration | **Offload** → `$EDITOR` / `$VISUAL` / `vi` | `ws ignore edit` | Standard editor resolution chain. |
-| Terminal config (GNOME/Tilix) | **Offload** → `dconf` | `ws log setup-terminal` | Binary database has no file-based alternative. |
-| Terminal config (file-based) | **Native** (string append/edit) | `ws log setup-terminal` | Plain text configs — trivial string operations. |
-| Directory size calculation | **Offload** → `du -sh` | `ws scan`, `ws log scan`, `ws scratch ls` | Faster than manual accumulation, handles filesystem edge cases. |
+| Directory size calculation | **Offload** → `du -sh` | `ws scratch ls` | Faster than manual accumulation, handles filesystem edge cases. |
 | MEGA sync verification | **Offload** → `mega-ls` (optional) | `ws ignore check` | Ground-truth check that local rule parsing can't guarantee. |
 
 ### Build Dependencies
@@ -660,9 +896,12 @@ ws config view                       Dump resolved config from memory
 ws config defaults                   Print default config as a valid ws/config.json file
 
 ws init                              Scaffold a directory as a ws-compatible workspace
+ws reset                             Reverse ws init — undo all provisions, remove ws/
 ws restore                           Guided full-machine restore wizard
 
 ws completions <shell>               Generate shell completions (bash/zsh/fish)
+ws completions install               Install shell completions into shell rc/config
+ws completions uninstall             Remove installed shell completions from shell rc/config
 
 ws tui                               Interactive TUI dashboard
 
@@ -670,41 +909,38 @@ ws notify start                      Start the notification daemon
 ws notify stop                       Stop the notification daemon
 ws notify status                     Check daemon status
 ws notify test                       Send a test notification
+ws notify daemon                     Run daemon in foreground (used by systemd ExecStart)
 
 ws trash setup                       Configure soft-delete integrations (rm, VS Code, file explorer)
-ws trash status                      Check soft-delete setup status on this machine
-
-ws scan                              Aggregate scan across all subsystems (read-only)
-ws fix                               Aggregate fix across all subsystems (interactive)
-
-ws search <query>                    Search workspace (text + filenames)
+ws trash disable                     Remove soft-delete integrations
+ws trash status                      Check integration status and trash size
 
 ws repo ls                           Discover git repos under workspace
-ws repo fix                          Reconcile repo state from current workspace
 ws repo scan                         Reconciled fleet status (branch, ahead/behind, dirty, stash)
 ws repo fetch                        Fetch remotes across repos
 ws repo pull                         Interactive fleet pull
-ws repo push                         Interactive fleet push
+ws repo sync                         Interactive fleet sync (pull/push per state)
 ws repo run -- <cmd>                 Run command in each selected repo
 
-ws context init <task>               Create a task-scoped context sidecar in the current repo/directory
+ws context create <task>             Create a task-scoped context sidecar in the current repo/directory
+ws context list                      List tracked context sidecars
+ws context rm                        Remove a context sidecar (or all with --all)
 
 ws dotfile add <system-path>          Capture a system file into ws/dotfiles/ + symlink back
 ws dotfile rm <path>                 Restore file to system path, unregister
 ws dotfile ls                        Show all registered dotfiles
 ws dotfile scan                      Verify all dotfile symlinks (read-only)
 ws dotfile fix                       Reconcile/enforce all dotfile symlinks from registry
+ws dotfile reset                     Reset dotfile subsystem provisions
 ws dotfile git connect               Configure optional git versioning remote for dotfiles
+ws dotfile git disconnect            Disconnect optional dotfile git remote/config
 ws dotfile git status                Show dotfile git backup status
 
 ws log start                         Start a recorded session (PTY mode by default)
 ws log stop                          Stop the current recording session
 ws log ls                            List recorded sessions (tag, duration, size)
-ws log show <tag>                    Show merged, commands-only, or output-only
-ws log search <query>                Search across all sessions
-ws log scan                          Show log subsystem health (active session, storage, cap)
 ws log prune                         Prune old sessions
-ws log setup-terminal                Auto-start ws log in new terminal tabs
+ws log rm <tag>                      Remove one recorded session by tag
 
 ws ignore check <path>               Test if a path would be synced
 ws ignore ls                         List all excluded files (flat, pipe-safe)
@@ -716,10 +952,21 @@ ws ignore generate                   Generate or merge .megaignore from built-in
 
 ws secret scan                       Scan workspace for exposed secrets
 ws secret fix                        Resolve secret violations interactively
+ws secret setup                      Setup/check Unix Password Store (pass)
+
+ws git-credential-helper setup       Connect credential helper and create missing pass entries
+ws git-credential-helper status      Check credential helper config and pass entry coverage
+ws git-credential-helper disconnect  Remove ws credential helper from git config
+ws git-credential-helper get         Look up credentials from pass (git plumbing — called by git)
+ws git-credential-helper store       No-op (git plumbing — pass is managed separately)
+ws git-credential-helper erase       No-op (git plumbing — pass is managed separately)
 
 ws scratch new [name]                Create a named scratch directory, open in editor
 ws scratch ls                        List scratch directories with age, size, items
+ws scratch tag [name]                Add tags to a scratch directory
+ws scratch search [query]            Search scratch directories by tag, name, or content
 ws scratch prune                     Remove old scratch directories
+ws scratch rm [name]                 Delete a scratch directory by name
 ```
 
 ---
@@ -783,7 +1030,7 @@ ws version --short
 
 Scaffold a directory as a `ws`-compatible workspace. Creates the `ws/` metadata directory and populates it with default `config.json`, empty `manifest.json`, and a `.megaignore` file at the workspace root. Interactively guides the user through initial configuration.
 
-`ws init` is primarily a scaffolding command — it does not scan, fix, or apply dotfile symlinks. It creates workspace metadata (`ws/`, `.megaignore`) and optionally performs machine-level trash setup when enabled. After initialization, it points the user to `ws scan` and `ws fix` for workspace hygiene.
+`ws init` is primarily a scaffolding command — it does not apply dotfile symlinks. It creates workspace metadata (`ws/`, `.megaignore`) and optionally performs machine-level trash setup when enabled. After initialization, it points the user to subsystem-specific scan and fix commands for workspace hygiene.
 
 **Init guard:** Every other `ws` command checks for the presence of `<workspace>/ws/config.json` before running. If the file does not exist, the command prints an error and exits:
 
@@ -855,11 +1102,8 @@ Files created:
   .megaignore           Edit rules:  ws ignore edit
 
 Next steps:
-  ws scan                Check workspace for violations
-  ws fix                 Fix violations interactively
   ws trash status        Verify soft-delete setup on this machine
   ws dotfile add <path>  Capture dotfiles into workspace management
-  ws log setup-terminal  Auto-record terminal sessions
   ws completions bash    Generate shell completions
 ```
 
@@ -901,8 +1145,6 @@ Detected 5 registered dotfiles in manifest.json.
 Next steps:
   ws trash status        Verify soft-delete setup on this machine
   ws dotfile fix         Apply registered dotfile symlinks to this machine
-  ws scan                Check workspace for violations
-  ws fix                 Fix violations interactively
 ```
 
 **Output — already initialized (no changes needed):**
@@ -913,8 +1155,6 @@ ws init
 Workspace ~/Workspace is already initialized. Nothing to do.
 
   ws trash status  Verify soft-delete setup on this machine
-  ws scan    Check workspace for violations
-  ws fix     Fix violations interactively
 ```
 
 **Output — .megaignore conflict (exists but differs from template):**
@@ -970,6 +1210,73 @@ No changes made.
 }
 ```
 
+### `ws reset`
+
+Reverse `ws init` — undo all external side-effects recorded in the provisioning ledger and remove the `ws/` directory. This is the nuclear teardown command: it removes symlinks, deletes provisioned files, strips config lines from shell rc files, and cleans up `.git/info/exclude` entries.
+
+**Prerequisite:** The `ws/` directory must exist. If not, `ws reset` exits with an error.
+
+**Provisioning ledger:** Every RW command that creates or modifies files outside `<workspace>/ws/` records an entry in `<workspace>/ws/provisions.json`. `ws reset` reads this ledger and undoes entries in reverse chronological order (LIFO).
+
+```text
+ws reset [flags]
+
+--dry-run   Preview what would be undone without applying
+```
+
+**Provision entry types:**
+
+| Type | Undo action |
+| --- | --- |
+| `file` | Delete the file |
+| `dir` | Delete the directory (recursively) |
+| `symlink` | Remove the symlink (does not delete the target) |
+| `config_line` | Remove the exact line from the config file |
+| `git_exclude` | Remove the line from `.git/info/exclude` |
+
+**Safety:**
+- Symlinks that have been overwritten by a real file are skipped (not deleted).
+- Missing files/dirs are silently skipped.
+- Each undo operation is idempotent.
+- `--dry-run` previews all actions without writing.
+
+**Output:**
+
+```text
+ws reset
+══════════════════════════════════════════════════════
+ WORKSPACE reset
+══════════════════════════════════════════════════════
+
+Provisions to undo: 5
+
+  symlink    ~/.bashrc                  (remove symlink)
+  symlink    ~/.ssh                     (remove symlink)
+  config_line ~/.bashrc                 (remove line from .bashrc)
+  config_line ~/.zshrc                  (remove line from .zshrc)
+  file       ~/.local/bin/ws-trash-rm   (delete file)
+
+This will also delete:
+  ~/Workspace/ws/
+
+reset workspace at ~/Workspace? [Y/n]: ↵
+
+  ✔ ~/.local/bin/ws-trash-rm  (deleted)
+  ✔ ~/.zshrc                  (line removed)
+  ✔ ~/.bashrc                 (line removed)
+  ✔ ~/.ssh                    (symlink removed)
+  ✔ ~/.bashrc                 (symlink removed)
+
+  ✔ ~/Workspace/ws/           (deleted)
+
+──────────────────────────────────────────────────────
+✔ Workspace reset.
+```
+
+**Contributor contract:** Every RW command that writes outside `<workspace>/ws/` must call `provision.Record()` after success. Commands that reverse their own work (e.g. `ws dotfile rm`) must call `provision.Remove()` to keep the ledger accurate.
+
+---
+
 ### `ws trash`
 
 Configure and validate machine-level soft-delete behavior.
@@ -984,6 +1291,7 @@ ws trash setup [flags]
 --no-file-explorer   Skip file explorer delete configuration
 --dry-run            Preview actions only
 
+ws trash disable
 ws trash status
 ```
 
@@ -1017,168 +1325,43 @@ WARNING  file-explorer  not configured
 Run `ws trash setup` to configure soft-delete behavior.
 ```
 
----
-
-### `ws scan`
-
-Aggregate, read-only health check. Calls each subsystem's scan command and presents a unified view. `ws scan` does not define its own violation types — it collects and displays what the subsystems report.
-
-Subsystems aggregated:
-
-- `ws ignore scan` — bloat, depth, and project-meta violations
-- `ws secret scan` — exposed secrets
-- `ws dotfile scan` — broken or overwritten dotfile symlinks
-- `ws log scan` — recording state, storage, cap pressure
-- `ws trash status` — machine-local soft-delete setup status
-
-Output is always shown in 2 sections: (1) Summary and (2) Violations. Safe to run any time.
+**Output — status (configured, under threshold):**
 
 ```text
-ws scan [flags]
+ws trash status
+
+Trash root: ~/.Trash
+
+  OK  shell-rm
+  OK  vscode-delete
+  OK  file-explorer
+
+  Files            42
+  Size             128 MB
+  Threshold        1024 MB
 ```
 
-No subsystem-specific flags. Threshold configuration lives in `config.json` (under `ignore.*` and `secret.*`).
-
-**Output (default — includes all violations):**
+**Output — status (configured, over threshold, exit 2):**
 
 ```text
-ws scan
-Summary
-──────────────────────────────────────────────────────
-Workspace    ~/Workspace              1,842 files · 4.3 GB
-Scratch      ~/Scratch                1.2 GB used
-Config       ~/Workspace/ws/config.json                           config_schema = 1
-Manifest     ~/Workspace/ws/manifest.json                         manifest_schema = 1
-Scanned      2026-03-29 09:14:22      profile: all
+ws trash status
 
-Ignore       2 critical · 3 warning   bloat/depth/project-meta
-Secret       1 critical · 1 warning   2 files matched
-Dotfiles     1 critical · 1 warning   5 registered
-Log          recording active          312 MB / 500 MB cap
-Trash        warning                   setup incomplete on this machine
-──────────────────────────────────────────────────────
+Trash root: ~/.Trash
 
-Violations
-──────────────────────────────────────────────────────
-[Ignore]
-CRITICAL  bloat           114 MB   artifacts/datasets/node-metrics-2026.csv
-CRITICAL  bloat            48 MB   experiments/proxy-debug/tcpdump-output.pcap
-WARNING   bloat            22 MB   artifacts/presentations/quarterly-review.pptx
-WARNING   depth             8 lvl  experiments/k8s/cluster/namespaces/logs/app/debug.txt
-WARNING   project-meta     24 KB   experiments/projects/java-demo/bin/  (marker: *.java)
-WARNING   project-meta      4 KB   experiments/blog/.bundle/                    (marker: Gemfile)
+  OK  shell-rm
+  OK  vscode-delete
+  OK  file-explorer
 
-[Secret]
-CRITICAL  secret     2.4 KB  configs/myapp/app.properties (line 14: password=)
-WARNING   secret     1.1 KB  experiments/debug-auth.sh   (line 3: API_KEY=)
+  Files            3,291
+  Size             2048 MB
+  Threshold        1024 MB
 
-[Dotfiles]
-CRITICAL  BROKEN      ~/.config/Code/User/settings.json  →  ws/dotfiles/vscode-settings.json   [target missing]
-WARNING   OVERWRITTEN /etc/docker/daemon.json                                                  [real file, not a symlink]
-
-[Trash]
-WARNING   machine-setup  shell-rm integration not configured
-WARNING   machine-setup  vscode-delete integration not configured
-WARNING   machine-setup  file-explorer integration not configured
-──────────────────────────────────────────────────────
-
-Run `ws fix` to resolve all interactively.
-Run `ws ignore fix` / `ws secret fix` / `ws dotfile fix` for targeted repair.
-Run `ws trash setup` to configure soft-delete behavior on this machine.
-Run `ws scan --json` for machine-readable output.
+▲ Trash size exceeds threshold (2048 MB > 1024 MB)
 ```
 
-**Output — clean workspace:**
-
-```text
-ws scan
-Summary
-──────────────────────────────────────────────────────
-Workspace    ~/Workspace              1,842 files · 4.3 GB
-Scratch      ~/Scratch                480 MB used
-Config       ~/Workspace/ws/config.json                           config_schema = 1
-Manifest     ~/Workspace/ws/manifest.json                         manifest_schema = 1
-Scanned      2026-03-29 09:14:22      profile: all
-
-Ignore       0 critical · 0 warning   no bloat/depth/project-meta
-Secret       0 critical · 0 warning   0 files matched
-Dotfiles     0 critical · 0 warning   5 registered
-Log          recording inactive        120 MB / 500 MB cap
-Trash        ok                         setup complete
-──────────────────────────────────────────────────────
-
-Violations
-──────────────────────────────────────────────────────
-none
-──────────────────────────────────────────────────────
-```
+The threshold is configurable via `trash.warn_size_mb` in `config.json` (default: `1024` = 1 GB).
 
 ---
-
-### `ws fix`
-
-Aggregate fix command. Runs each subsystem's fix in sequence: `ws ignore fix` → `ws secret fix` → `ws dotfile fix`. Interactive — walks through violations one by one. Each subsystem is self-contained; `ws fix` simply orchestrates the sequence.
-
-```text
-ws fix [flags]
-
---dry-run       Preview actions without applying
-```
-
-No `--scope` flag. Use the subsystem fix commands directly for targeted repair (`ws ignore fix`, `ws secret fix`, `ws dotfile fix`).
-
-**Output:**
-
-```text
-ws fix
-══════════════════════════════════════════════════════
- WORKSPACE FIX
-══════════════════════════════════════════════════════
-
-── [Ignore] (4 found) ─────────────────────────────
-
-CRITICAL  bloat  114 MB  artifacts/datasets/node-metrics-2026.csv
-Action? [m]ove to scratch  [i]gnore this file  [a]dd to .megaignore  [s]kip : m
-
-✔ Moved   → ~/Scratch/node-metrics-2026.csv
-
-CRITICAL  bloat   48 MB  experiments/proxy-debug/tcpdump-output.pcap
-Action? [m]ove to scratch  [i]gnore this file  [a]dd to .megaignore  [s]kip : a
-
-✔ Added rule to .megaignore: -g:*.pcap
-
-WARNING   depth    8 lvl  experiments/k8s/cluster/namespaces/logs/app/debug.txt
-Action? [i]gnore this path  [a]dd to .megaignore  [s]kip : s
-
-WARNING   project-meta  24 KB  experiments/projects/java-demo/bin/  (marker: *.java)
-Action? [a]dd to .megaignore  [d]elete  [s]kip : d
-
-✔ Deleted  experiments/projects/java-demo/bin/ (24 KB freed)
-
-── [Secret] (2 found) ─────────────────────────────
-
-CRITICAL  2.4 KB  configs/myapp/app.properties (line 14: password=)
-Action? [v]iew context  [a]dd to .megaignore  [l]allowlist  [s]kip : s
-
-WARNING   1.1 KB  experiments/debug-auth.sh (line 3: API_KEY=)
-Action? [v]iew context  [a]dd to .megaignore  [l]allowlist  [s]kip : l
-
-✔ Added to secret allowlist in manifest.json
-
-── [Dotfiles] (2 found) ────────────────────────────
-
-CRITICAL  BROKEN  ~/.config/Code/User/settings.json  →  ws/dotfiles/vscode-settings.json  [target missing]
-Action? [r]ecreate  [u]nregister  [s]kip : s
-
-WARNING   OVERWRITTEN  /etc/docker/daemon.json  [real file, not a symlink]
-Action? [w] Keep workspace  [s] Keep system file  [k] Skip : w
-
-✔ Workspace copy updated
-✔ System path re-linked → ~/Workspace/ws/dotfiles/daemon.json
-
-══════════════════════════════════════════════════════
-Fixed: 5   Skipped: 3
-```
 
 ---
 
@@ -1238,6 +1421,11 @@ The dotfile registry lives at `<workspace>/ws/manifest.json` (`dotfiles` array).
 Optional: `ws dotfile` can use a Git repository for versioned backups of dotfiles and registry changes. This is disabled by default.
 
 The local Git directory for dotfile backup is managed by `ws` under `<workspace>/ws/` and is not user-controlled.
+
+Additional subcommands implemented by the CLI:
+
+- `ws dotfile reset` — reset dotfile subsystem provisions.
+- `ws dotfile git disconnect` — disconnect dotfile Git remote/config.
 
 #### `ws dotfile add`
 
@@ -1487,7 +1675,7 @@ ws dotfile git connect [flags]
 --username    Remote auth username (required)
 --pass-entry  Optional pass entry path override (default: auto-derived)
 --branch      Branch for push/status (default: main)
---auto-push   Enable push after each successful auto-commit (default: disabled)
+--auto-push   Enable push after each successful auto-commit (default: enabled)
 --dry-run     Preview without writing config
 ```
 
@@ -1521,7 +1709,7 @@ Detected ws-managed local git repository:
 
 ✔ Dotfile git remote configured
   auto_commit: enabled
-  auto_push:   disabled
+  auto_push:   enabled
 
 Saved to ws/config.json under dotfile.git.
 ```
@@ -1598,7 +1786,7 @@ Remote URL:     https://git.example.com/user/dotfiles-private.git
 Username:       user
 Branch:         main
 Auto-commit:    enabled
-Auto-push:      disabled
+Auto-push:      enabled
 
 Working tree:   clean
 Ahead/behind:   ↑2 ↓0
@@ -1647,7 +1835,13 @@ Apply? [Y/n]: ↵
 
 Create and manage throwaway working directories outside the workspace for debug sessions, investigations, and ad-hoc tasks. Scratch directories live under `scratch.root_dir` (default `~/Scratch`) — never inside `<workspace>`, never synced. See **Technical Design Decisions → Scratch Directory Management** for the design rationale.
 
-`ws scratch` is not part of `ws scan` / `ws fix` aggregation. It is a standalone utility.
+`ws scratch` is a standalone utility.
+
+Additional subcommands implemented by the CLI:
+
+- `ws scratch rm [name]` — delete one scratch directory by name. Shows ghost panel if name is omitted.
+- `ws scratch tag [name]` — add tags to a scratch directory. Multi-tag ghost input with workspace tag suggestions.
+- `ws scratch search [query]` — search scratch directories by tag/name/content. Interactive ghost mode if no query.
 
 ```text
 ws scratch [subcommand]
@@ -1655,14 +1849,14 @@ ws scratch [subcommand]
 
 #### `ws scratch new`
 
-Create a named scratch directory and open it in the configured editor. Interactive — prompts for a name with ghost suggestions showing existing directories for context.
+Create a named scratch directory and open it in the configured editor. When invoked without a name argument, shows an interactive ghost panel listing existing directories for context.
 
 ```text
 ws scratch new [name] [flags]
 
 --no-open         Create the directory but don't launch the editor
 --editor <cmd>    Override scratch.editor_cmd for this invocation
---no-prefix       Skip the date prefix even if name_prefix is "auto"
+--no-date         Skip the date suffix even if name_suffix is "auto"
 --dry-run         Show what would be created, don't do it
 ```
 
@@ -1670,35 +1864,47 @@ ws scratch new [name] [flags]
 
 ```text
 ws scratch new
-Scratch name: proxy█
-             ░proxy-timeout░                      ← ghost (existing dir, dimmed)
+Name: █
+  ▒CA-remove-CPU-limits.2026-04▒
+  ▒CA-registry-migration.2026-04▒
+  ▒ca-llm-pending▒
+  ▒G9-reboot.2026-04▒
+  ▒whitelist-conflict.2026-04▒
 
-Scratch name: proxy-auth-header
+Name: CA-█
+  ▒CA-remove-CPU-limits.2026-04▒
+  ▒CA-registry-migration.2026-04▒
 
-✔ Created   ~/Scratch/2026-04-proxy-auth-header/
-✔ Opening   VS Code → ~/Scratch/2026-04-proxy-auth-header/
+Name: CA-debug█
+  ▒CA-remove-CPU-limits.2026-04▒
+  ▒CA-registry-migration.2026-04▒
+
+✔ Created   ~/Scratch/CA-debug.2026-04/
+✔ Opening   VS Code → ~/Scratch/CA-debug.2026-04/
 ```
 
-The ghost suggestion is the closest existing directory name under `scratch.root_dir`, fuzzy-matched against the current input (date prefixes stripped for matching). Ghost text is cosmetic — pressing Enter always uses what the user typed. Tab accepts the ghost into the input buffer. If there's no match, no ghost is shown.
+The ghost panel is display-only for `new` — Tab does not complete (you are picking a name distinct from those listed). Matching strips date suffixes: typing `CA` matches `CA-remove-CPU-limits.2026-04`. Bottom-of-terminal: `ws` reserves panel space before entering raw mode (emits blank lines to scroll the terminal up if needed), so the panel always fits regardless of cursor position.
 
 **Output (inline name — skip prompt):**
 
 ```text
 ws scratch new proxy-auth-header
 
-✔ Created   ~/Scratch/2026-04-proxy-auth-header/
-✔ Opening   VS Code → ~/Scratch/2026-04-proxy-auth-header/
+✔ Created   ~/Scratch/proxy-auth-header.2026-04/
+✔ Opening   VS Code → ~/Scratch/proxy-auth-header.2026-04/
 ```
 
 **Edge cases:**
 
 | Situation | Behavior |
 | --- | --- |
-| Name already exists (exact match with date prefix) | Appends `-2`, `-3`, etc. Prints a notice. |
-| Empty input (user hits Enter with no name) | Generates `YYYY-MM-scratch-<short-hash>` and proceeds. |
+| Name already exists (exact match with date suffix) | Appends `-2`, `-3`, etc. Prints a notice. |
+| Empty input (user hits Enter with no name) | Generates `scratch-<short-hash>.YYYY-MM` and proceeds. |
 | `scratch.root_dir` doesn't exist | Creates it automatically (`mkdir -p`). |
 | `editor_cmd` not found | Prints path, skips open, exits 0 with warning. |
 | `--no-open` flag | Creates dir, prints path, exits. Good for scripting. |
+| Non-TTY stdin (pipe, `--json`, test) | Ghost panel skipped; reads name from stdin line. |
+| Ctrl+C during prompt | Exits cleanly (code 130), no directory created. |
 
 #### `ws scratch ls`
 
@@ -1717,12 +1923,43 @@ ws scratch ls [flags]
 ws scratch ls
 
 NAME                              AGE     SIZE    ITEMS
-2026-04-proxy-auth-header         2h      —       0 files
-2026-03-proxy-timeout             8d      312 MB  14 files
-2026-03-dns-resolution            12d     48 MB   6 files
-2026-02-gpu-driver-debug          34d     1.2 GB  23 files
+proxy-auth-header.2026-04         2h      —       0 files
+proxy-timeout.2026-03             8d      312 MB  14 files
+dns-resolution.2026-03            12d     48 MB   6 files
+gpu-driver-debug.2026-02          34d     1.2 GB  23 files
                                           ──────
                                  4 dirs   1.5 GB
+```
+
+#### `ws scratch rm`
+
+Delete a scratch directory by name. When no name is given, shows a live ghost panel with Tab completion (Tab fills the first match; Enter confirms).
+
+```text
+ws scratch rm [name] [flags]
+
+--dry-run         Preview without deleting
+```
+
+**Output (interactive — no name argument):**
+
+```text
+ws scratch rm
+Delete: █
+  ░CA-remove-CPU-limits.2026-04░
+  ░CA-registry-migration.2026-04░
+  ░ca-llm-pending░
+  ░G9-reboot.2026-04░
+  ░whitelist-conflict.2026-04░
+
+Delete: CA-█     ← Tab → completes to first match
+  ░CA-remove-CPU-limits.2026-04░
+  ░CA-registry-migration.2026-04░
+
+Delete: CA-remove-CPU-limits.2026-04█
+
+Delete scratch "CA-remove-CPU-limits.2026-04"? [Y/n/a/q]
+✔ Deleted  ~/Scratch/CA-remove-CPU-limits.2026-04/
 ```
 
 #### `ws scratch prune`
@@ -1744,13 +1981,87 @@ ws scratch prune [flags]
 ws scratch prune --older-than 90d
 
 Will remove:
-  2026-01-cert-rotation          94d   180 MB   8 files
+  cert-rotation.2026-01          94d   180 MB   8 files
 
 Confirm? [y/N]: y
 ✔ Removed 180 MB from ~/Scratch/
 ```
 
 Deletion goes through `rm` (soft-delete if `ws trash setup` was run — Philosophy Factor IX).
+
+#### `ws scratch tag`
+
+Add tags to a scratch directory. When no name is given, shows a ghost panel to pick a scratch dir (Tab-completable). Then enters a multi-tag ghost input: type a tag, Enter commits it and loops, empty Enter finishes. Ghost panel suggests popular tags from `<workspace>/ws/tags.json`, filtered as you type. New tags are automatically added to the workspace tag collection.
+
+```text
+ws scratch tag [name] [flags]
+
+--auto            Suggest tags from file/content heuristics (plan/confirm per tag)
+```
+
+**Output (interactive):**
+
+```text
+ws scratch tag
+Scratch: pid-limit█     ← Tab completes
+Tag: [k8s] █
+  ░cgroups░
+  ░docker░
+  ░networking░
+  ░systemd░
+
+Tag: [k8s] cgroups█
+
+Tag: [k8s, cgroups] █   ← empty Enter finishes
+
+Tagged pid-limit-debug.2026-04: [k8s, cgroups]
+```
+
+**Output (auto-tag):**
+
+```text
+ws scratch tag pid-limit-debug --auto
+
+Add tag "bash" to pid-limit-debug.2026-04? [y/n/a/q] y
+Add tag "k8s" to pid-limit-debug.2026-04? [y/n/a/q] y
+Add tag "cgroups" to pid-limit-debug.2026-04? [y/n/a/q] y
+
+Tagged pid-limit-debug.2026-04: [bash, k8s, cgroups]
+```
+
+Auto-tag heuristics:
+- File extensions: `.sh` → `bash`, `.py` → `python`, `.go` → `go`, `.tf` → `terraform`
+- Named files: `Dockerfile` → `docker`, `Makefile` → `make`
+- Shebangs: `#!/bin/bash` → `bash`, `#!/usr/bin/env python` → `python`
+- Content patterns: `kubectl` → `k8s`, `systemctl` → `systemd`, `cgroup` → `cgroups`, `docker` → `docker`, `iptables` → `networking`
+
+#### `ws scratch search`
+
+Search scratch directories by tag, name, or file content. Multi-token queries use AND logic. Results ranked: tag match (3) > name match (2) > content match (1). Without arguments, enters interactive ghost mode showing all scratch dirs with tags, filterable as you type.
+
+```text
+ws scratch search [query] [flags]
+
+--max <n>         Limit results (0=unlimited)
+--json            Machine-readable output
+```
+
+**Output (CLI):**
+
+```text
+ws scratch search "k8s pid"
+
+pid-limit-debug.2026-04            match=tag     [k8s, pid-limit, cgroups]
+```
+
+**Output (interactive — no query):**
+
+```text
+ws scratch search
+Search: k8s█
+  ░pid-limit-debug.2026-04 [k8s, pid-limit, cgroups]░
+  ░ca-registry.2026-04 [k8s, docker]░
+```
 
 ---
 
@@ -1759,6 +2070,10 @@ Deletion goes through `rm` (soft-delete if `ws trash setup` was run — Philosop
 Solves: P5
 
 A session recorder. Uses PTY recording by default via `script(1)`, capturing both stdin and stdout. Recording sessions show a `● ws:log` prompt indicator. Logs are stored in `<workspace>/ws/ws-log`.
+
+Additional subcommand implemented by the CLI:
+
+- `ws log rm <tag>` — remove one recorded session by tag.
 
 See **Technical Design Decisions → Session Recording: PTY Mode (Default)** for architecture and trade-offs.
 
@@ -1802,14 +2117,14 @@ Tag [2026-03-29-1422]: ↵
   Stdout:   ~/Workspace/ws/ws-log/2026-03-29-1422/stdout.log (19 KB)
 ```
 
-**Output — quiet start (for setup-terminal):**
+**Output — quiet start:**
 
 ```text
 ws log start --quiet-start
 ● ws:log user@laptop ~/Workspace $
 ```
 
-No banner, no prompts. The `● ws:log` prefix is the only visual change. Ideal for auto-started sessions via `ws log setup-terminal`.
+No banner, no prompts. The `● ws:log` prefix is the only visual change.
 
 **Output on exit:**
 
@@ -1854,130 +2169,6 @@ ws log stop
 No active recording session.
 ```
 
-#### `ws log setup-terminal`
-
-Configure your default Linux terminal emulator to automatically run `ws log start --quiet-start` when opening a new tab or window. Detects the current terminal from `$TERM`, `$TERM_PROGRAM`, or by inspecting running processes, and writes the appropriate config.
-
-Auto-started sessions use PTY mode (the default). Every new tab shows the `● ws:log` prompt indicator and captures stdin/stdout.
-
-Supported terminals: GNOME Terminal, Kitty, Alacritty, Tilix, Konsole, xterm.
-
-```text
-ws log setup-terminal [flags]
-
---terminal   Force a specific terminal (gnome-terminal|kitty|alacritty|tilix|konsole)
---undo       Remove the auto-start configuration
---dry-run    Show what would be changed without writing anything
-```
-
-**Output -- auto-detect:**
-
-```text
-ws log setup-terminal
-
-Detected terminal: GNOME Terminal (via $TERM_PROGRAM)
-Will modify:       dconf /org/gnome/terminal/legacy/profiles  (profile default-command)
-
-New tab command:   ws log start --quiet-start
-
-Apply? [Y/n]: 
-
-Backed up:  ~/.config/gnome-terminal/ -> ~/Workspace/configs/gnome-terminal.bak
-Applied:    new tab default-command = ws log start --quiet-start
-
-New tabs will now auto-start a recording session.
-Run `ws log setup-terminal --undo` to revert.
-```
-
-**Output -- dry-run:**
-
-```text
-ws log setup-terminal --dry-run
-
-Detected: kitty
-Would append to ~/.config/kitty/kitty.conf:
-  shell_integration  enabled
-  startup_command    ws log start --quiet-start
-
-No changes made.
-```
-
-**Output -- undo:**
-
-```text
-ws log setup-terminal --undo
-
-Detected: GNOME Terminal
-Restored: ~/.config/gnome-terminal/ from ~/Workspace/configs/gnome-terminal.bak
-New tabs will no longer auto-start recording.
-```
-
-#### `ws log search`
-
-Search across all session logs by command text. Searches the stdin log (commands only) for speed. Shown with surrounding context from stdout if available.
-
-```text
-ws log search <query> [flags]
-
---tag    Filter to a specific session tag
---since  Only search sessions from this date onward (YYYY-MM-DD)
-```
-
-**Output:**
-
-```text
-ws log search "rsync"
-
-prod-migration   2026-03-29  14:22
-  cmd 47:  rsync -avz --delete --exclude='.git' ~/Workspace/ remote:/backup/
-
-ssl-debug-march  2026-02-18  09:11
-  cmd 12:  rsync -n ~/scratch/ server:/tmp/
-
-2 sessions  |  2 matches
-```
-
-#### `ws log show`
-
-Display a session interactively. By default merges stdin and stdout chronologically, interleaving commands with their output. Use flags to view each stream separately.
-
-```text
-ws log show <tag> [flags]
-
---commands-only   Show stdin only (what you typed, with timestamps) (default)
---output-only     Show stdout only (what the terminal returned)
---merged          Interleave stdin and stdout by timestamp and gives paginated display
---since           Start from a specific timestamp within the session
-```
-
-**Default (merged) output:**
-
-```text
-ws log show prod-migration
-
-[14:22:01] > cd ~/Workspace
-[14:22:08] > ls -la configs/
-[14:22:08]   total 48
-[14:22:08]   drwxr-xr-x  bashrc daemon.json ssh/ kubeconfig
-[14:22:45] > rsync -avz --delete --exclude='.git' ~/Workspace/ remote:/backup/
-[14:22:46]   sending incremental file list
-[14:22:46]   configs/bashrc
-[14:31:02] > mega-sync
-[14:31:10] > exit
-```
-
-**With --commands-only:**
-
-```text
-ws log show prod-migration --commands-only
-
-[14:22:01]  cd ~/Workspace
-[14:22:08]  ls -la configs/
-[14:22:45]  rsync -avz --delete --exclude='.git' ~/Workspace/ remote:/backup/
-[14:31:02]  mega-sync
-[14:31:10]  exit
-```
-
 #### `ws log ls`
 
 List all recorded sessions with storage summary. Shows each session's tag, command count, duration, and size. Storage totals are shown at the bottom.
@@ -2012,32 +2203,6 @@ Synced index: ~/Workspace/ws/ws-log-index.md  (12 KB)
 ```
 
 The `●` marker indicates the currently active session.
-
-#### `ws log scan`
-
-Show log subsystem health: active recording, storage usage, and cap pressure. Use `ws log ls` for per-session listing.
-
-```text
-ws log scan
-```
-
-**Output:**
-
-```text
-ws log scan
-Summary
-──────────────────────────────────────────────────────
-Sessions      48                        oldest: 2026-01-04
-Storage       312 MB / 500 MB cap       62% used
-Recording     2026-03-29-1422           47 cmds · 9m
-Synced index  ~/Workspace/ws/ws-log-index.md  (12 KB)
-──────────────────────────────────────────────────────
-
-Violations
-──────────────────────────────────────────────────────
-none
-──────────────────────────────────────────────────────
-```
 
 #### `ws log prune`
 
@@ -2132,34 +2297,9 @@ Reconcile behavior (default for stateful repo commands):
 - mark missing repos as stale instead of failing the whole command
 - append newly discovered repos to state when they are in scope
 
-Stateful commands: `ws repo scan`, `ws repo fetch`, `ws repo pull`, `ws repo push`, `ws repo run`.
+Stateful commands: `ws repo scan`, `ws repo fetch`, `ws repo pull`, `ws repo sync`, `ws repo run`.
 These commands always attempt reconcile-first behavior unless explicitly disabled by config.
 If state is missing or unreadable, commands fall back to live discovery for the current scope.
-
-#### `ws repo fix`
-
-Force a reconcile pass without running a fleet operation.
-
-```text
-ws repo fix [flags]
-
---write-state   Persist reconciled result (default: true)
-```
-
-**Output:**
-
-```text
-ws repo fix
-
-Scanned: 3 repos
-State:   2 tracked entries
-
-✔ Added      experiments/blog
-✔ Updated    notes/second-brain  (path normalized)
-⚠ Stale      data/old-repo        (not found)
-
-Reconciled: 2 changed, 1 stale
-```
 
 #### `ws repo ls`
 
@@ -2187,10 +2327,12 @@ data/bruno                         branch=master    dirty=no   ahead=0 behind=1
 
 Fleet status view for discovered repos.
 
-Before calculating status, `ws` reconciles repo state from the current directory scope whenever possible.
+Before calculating status, `ws` fetches each repo (`git fetch --all --prune`) to ensure ahead/behind counts are current, then reconciles repo state from the current directory scope whenever possible. Use `--no-fetch` to skip the fetch phase for offline or faster scans. Fetch failures for individual repos are reported as warnings, not errors.
 
 ```text
 ws repo scan [flags]
+
+--no-fetch   Skip the automatic fetch before scanning (default: fetch enabled)
 ```
 
 **Output:**
@@ -2269,31 +2411,54 @@ Apply `git pull --ff-only` to 1 repo? [Y/n]: ↵
 Updated: 1   Skipped: 0   Failed: 0
 ```
 
-#### `ws repo push`
+#### `ws repo sync`
 
-Interactive fleet push for repos with outgoing commits.
+Interactive fleet sync. Inspects each repo's state and proposes the minimal action to bring it in sync with its upstream. One action per repo.
 
-Reconcile runs first to avoid acting on stale paths.
+Reconcile runs first to avoid acting on stale paths. Fetches all repos before scanning to ensure accurate ahead/behind counts.
+
+Per-repo state → action mapping:
+
+| State | Action | Git operations |
+| --- | --- | --- |
+| Behind only | Pull (ff-only) | `git pull --ff-only` |
+| Ahead only | Push | `git push` |
+| Diverged | Pull + push | `git pull --no-rebase` (or `--rebase` with flag) → `git push` |
+| Dirty + needs pull | Stash, pull, unstash | `git stash push` → pull → `git stash pop` |
+| Up to date | *(skipped)* | — |
+| Detached HEAD | *(skipped with warning)* | — |
+| No upstream | *(skipped with warning)* | — |
+
+Sync never commits. It only syncs already-committed work with the remote.
+
+If merge/rebase conflicts occur, the operation is aborted cleanly (`git merge --abort` / `git rebase --abort`) and the repo is reported as failed. The repo is never left in a mid-merge/mid-rebase state.
+
+If `git stash pop` encounters conflicts after a successful pull, the stash is preserved on the stack and a warning is emitted.
 
 ```text
-ws repo push [flags]
+ws repo sync [flags]
 
---dry-run    preview planned pushes
+--rebase     use rebase for diverged repos (default: merge)
+--dry-run    preview planned sync actions
 ```
 
 **Output:**
 
 ```text
-ws repo push
+ws repo sync
 
-Ahead repos:
-  notes/second-brain (main, ahead 2)
+  Pull       data/bruno                  (1 behind, ff)                [y/n/a/q] y
+  ✔ Pulled (fast-forward)
 
-Push 1 repo now? [Y/n]: ↵
+  Push       notes/second-brain          (2 ahead)                     [y/n/a/q] y
+  ✔ Pushed
 
-[1/1] notes/second-brain   ✔ pushed origin/main
+  Pull+Push  experiments/blog            (1 ahead, 2 behind, merge)   [y/n/a/q] y
+  ✔ Merged + pushed
 
-Pushed: 1   Skipped: 0   Failed: 0
+  ▲ Skipped: tmp-branch (detached HEAD)
+
+  3 synced · 1 skipped
 ```
 
 #### `ws repo run`
@@ -2325,13 +2490,30 @@ Run now? [Y/n]: ↵
 Succeeded: 3   Failed: 0
 ```
 
+**Output:**
+
+```text
+ws repo run -- git gc --auto
+
+Command: git gc --auto
+Targets: 3 repos
+
+Run now? [Y/n]: ↵
+
+[1/3] experiments/blog      ✔ exit 0
+[2/3] notes/second-brain   ✔ exit 0
+[3/3] data/bruno           ✔ exit 0
+
+Succeeded: 3   Failed: 0
+```
+
 ---
 
 ### `ws context`
 
 Create task-scoped context directories alongside a project. Designed for agent-assisted development: drop design notes, constraints, and resources next to the code so AI agents discover them naturally without path redirection.
 
-The context sidecar lives at `.ws-context/` in the project root. Each task or feature gets its own subdirectory inside it. The parent `.ws-context/` is excluded from git via `.git/info/exclude` (local-only, never committed, zero trace in the repo). If the project is not a git repository, the exclude step is silently skipped; if the project becomes a git repo later, the next `ws context init` retroactively adds the exclude rule.
+The context sidecar lives at `.ws-context/` in the project root. Each task or feature gets its own subdirectory inside it. The parent `.ws-context/` is excluded from git via `.git/info/exclude` (local-only, never committed, zero trace in the repo). If the project is not a git repository, the exclude step is silently skipped; if the project becomes a git repo later, the next `ws context create` retroactively adds the exclude rule.
 
 See **Technical Design Decisions → Context Sidecar: Local Git Exclusion** for rationale.
 
@@ -2339,12 +2521,12 @@ See **Technical Design Decisions → Context Sidecar: Local Git Exclusion** for 
 ws context [subcommand]
 ```
 
-#### `ws context init`
+#### `ws context create`
 
 Create a new task context directory under `.ws-context/`. The task name is required and becomes the subdirectory name.
 
 ```text
-ws context init <task> [flags]
+ws context create <task> [flags]
 
 --path       Project root to create context in (default: current directory)
 --dry-run    Preview actions without applying
@@ -2363,7 +2545,7 @@ Step 3 uses `git rev-parse --show-toplevel` to locate the repo root and its `.gi
 **Output — first task in a git repo:**
 
 ```text
-ws context init auth-redesign
+ws context create auth-redesign
 ──────────────────────────────────────────────────────
 Project: ~/Repositories/my-service
 Task:    auth-redesign
@@ -2380,7 +2562,7 @@ Apply? [Y/n]: ↵
 **Output — second task (exclude already present):**
 
 ```text
-ws context init rate-limiter
+ws context create rate-limiter
 ──────────────────────────────────────────────────────
 Project: ~/Repositories/my-service
 Task:    rate-limiter
@@ -2396,7 +2578,7 @@ Apply? [Y/n]: ↵
 **Output — task directory already exists:**
 
 ```text
-ws context init auth-redesign
+ws context create auth-redesign
 
 .ws-context/auth-redesign/ already exists. Nothing to create.
 ✔ .git/info/exclude already has .ws-context/ — skipped
@@ -2405,7 +2587,7 @@ ws context init auth-redesign
 When the task directory already exists but the project was not previously a git repo and now is, the exclude step runs:
 
 ```text
-ws context init auth-redesign
+ws context create auth-redesign
 
 .ws-context/auth-redesign/ already exists. Nothing to create.
 ✔ Updated  .git/info/exclude
@@ -2414,7 +2596,7 @@ ws context init auth-redesign
 **Output — not a git repo:**
 
 ```text
-ws context init dns-investigation
+ws context create dns-investigation
 ──────────────────────────────────────────────────────
 Project: ~/Workspace/Experiments/dns-debug
 Task:    dns-investigation
@@ -2430,7 +2612,7 @@ Apply? [Y/n]: ↵
 **Output — dry-run:**
 
 ```text
-ws context init auth-redesign --dry-run
+ws context create auth-redesign --dry-run
 
 Would create:
   ~/Repositories/my-service/.ws-context/auth-redesign/
@@ -2446,7 +2628,7 @@ No changes made.
 {
   "ws_version": "0.1.0",
   "schema": 1,
-  "command": "context.init",
+  "command": "context.create",
   "data": {
     "project": "~/Repositories/my-service",
     "task": "auth-redesign",
@@ -2471,6 +2653,18 @@ my-service/
 ├── src/
 ├── go.mod
 └── README.md
+```
+
+#### `ws context rm`
+
+Remove context sidecars. Use `--all` to remove all tracked context sidecars and reset context subsystem state.
+
+```text
+ws context rm [<task>] [flags]
+
+--all        Remove all contexts
+--path       Project root (default: current directory)
+--dry-run    Preview actions without applying
 ```
 
 ---
@@ -2652,13 +2846,16 @@ artifacts/datasets/
 
 Scan the workspace and report all sync-hygiene violations: oversized files (bloat), excessive directory depth, and project-meta artifacts (build outputs detected via project-marker heuristics). This is the single place where file size thresholds, depth limits, and project-type artifact detection are checked.
 
+Violations inside safe harbor directories are automatically downgraded to INFO severity. They don't count toward the violation total, don't trigger exit code 2, and are collapsed to a single summary line by default. Pass `--expand-harbors` to list each safe harbor item individually.
+
 ```text
 ws ignore scan [flags]
 
---warn-size     File size threshold for warnings   (default: 1MB)
---crit-size     File size threshold for critical   (default: 10MB)
---depth         Max directory depth before warning (default: 6)
---no-meta       Skip project-meta artifact detection
+--warn-size        File size threshold for warnings   (default: 1MB)
+--crit-size        File size threshold for critical   (default: 10MB)
+--depth            Max directory depth before warning (default: 6)
+--no-meta          Skip project-meta artifact detection
+--expand-harbors   Show safe harbor items individually instead of collapsed summary
 ```
 
 **Output:**
@@ -2674,7 +2871,7 @@ Project-meta   0 critical · 2 warning   build output dirs
 Scanned        2026-03-29 09:14:22     profile: ignore
 ──────────────────────────────────────────────────────
 
-Violations
+Violations (6)
 ──────────────────────────────────────────────────────
 CRITICAL  bloat           114 MB   artifacts/datasets/node-metrics-2026.csv
 CRITICAL  bloat            48 MB   experiments/proxy-debug/tcpdump-output.pcap
@@ -2684,7 +2881,20 @@ WARNING   project-meta     24 KB   experiments/projects/java-demo/bin/  (marker:
 WARNING   project-meta      4 KB   experiments/blog/.bundle/                    (marker: Gemfile)
 ──────────────────────────────────────────────────────
 
+Safe harbors (47 items, 2.3 GB)
+  Use --expand-harbors to see details.
+
 Run `ws ignore fix` to resolve interactively.
+```
+
+**Output with `--expand-harbors`:**
+
+```text
+Safe harbors (47 items, 2.3 GB)
+  INFO      bloat           420 MB   ws/ws-log/session-2026-03/stdout.log
+  INFO      bloat           180 MB   Archive/vpn-client-v3.deb
+  INFO      depth            12 lvl  Archive/backups/2026/Q1/host/etc/nginx/conf.d/upstream.conf
+  ... (44 more)
 ```
 
 #### `ws ignore fix`
@@ -3048,7 +3258,26 @@ ws secret [subcommand]
 Read-only scan. Reports files containing secret patterns. Follows the same 2-section `Summary` + `Violations` structure as other scan commands. Secret violations show the file size (not the secret itself), the matched pattern, and the line number for context.
 
 ```text
-ws secret scan
+ws secret scan [--skip-dir <dir>] [--pass]
+```
+
+**Flags:**
+
+| Flag | Description |
+| --- | --- |
+| `--skip-dir <dir>` | Skip a directory from scanning. Repeatable. Additive with `secret.skip_dirs` in config. |
+| `--pass` | Audit pass store health |
+
+**Config — `secret.skip_dirs`:**
+
+Directories listed in `config.json` under `secret.skip_dirs` are skipped during secret scanning. Paths are relative to workspace root, forward-slash separated, prefix-matched. No globs.
+
+```json
+"secret": {
+  "enabled": true,
+  "pass_nudge": true,
+  "skip_dirs": ["vendor", "testdata", "fixtures/certs"]
+}
 ```
 
 **Output:**
@@ -3135,15 +3364,202 @@ Fixed: 2   Skipped: 0
 | `[v]iew context` | Show 5 lines around the match (grep -C 2). Redisplays the action menu after viewing. |
 | `[a]dd to .megaignore` | Append an exclude rule for this file. Prints a warning reminding the user to rotate the exposed credential. |
 | `[l]allowlist` | Mark this file+pattern as a known false positive. Stored in `manifest.json` under `secret.allowlist`. Future scans skip this match. |
+| `[d]ir-skip` | Skip the parent directory from future secret scans. Writes the directory to `config.json` under `secret.skip_dirs`. Remaining violations in the same directory are skipped in the current session. |
 | `[s]kip` | Do nothing — move to the next violation. |
 
 The allowlist is stored in `manifest.json` under `secret.allowlist` as `file:line` entries. See **Technical Design Decisions → Secret Allowlist: Line-Anchored Entries** for the anchoring and expiry design.
+
+#### `ws secret setup`
+
+Set up or validate Unix Password Store (`pass`) prerequisites used by secret workflows. For credential helper connection, use `ws git-credential-helper setup`.
+
+```text
+ws secret setup [--git-remote <url>]
+```
+
+---
+
+### `ws git-credential-helper`
+
+Git credential helper backed by Unix `pass`. Bridges the git credential protocol with the password store, eliminating the need for third-party helpers like `pass-git-helper` (Python, extra attack surface). Ships as part of the `ws` binary — zero additional dependencies.
+
+```text
+ws git-credential-helper <command>
+
+User commands:
+  setup        Connect credential helper and create missing pass entries
+  status       Show credential helper config, pass health, and remote coverage
+  disconnect   Remove ws credential helper from git config
+
+Git plumbing (called by git — not for direct use):
+  get          Look up credentials from pass
+  store        No-op (pass is managed separately)
+  erase        No-op (pass is managed separately)
+```
+
+The `get`, `store`, and `erase` operations do not require workspace initialization — git invokes them outside any workspace context. The `setup`, `status`, and `disconnect` commands accept global flags and benefit from workspace context for remote discovery. The legacy alias `ws credential` still works for backward compatibility with existing git configs.
+
+#### `ws git-credential-helper setup`
+
+Configure git to use `ws` as the credential helper and create missing pass entries for workspace git remotes. Uses the Action Plan pattern for per-action consent.
+
+```text
+ws git-credential-helper setup [--dry-run]
+```
+
+**Prerequisites:** `pass` must be installed and the pass store must be initialized (run `ws secret setup` first if needed).
+
+**Actions:**
+
+1. Set `credential.helper` in global git config to `!<ws-binary-path> git-credential-helper`
+2. Set `credential.useHttpPath = true` so git sends the full repo path
+3. Scan workspace repos for git remotes, check which `git/<host>` pass entries exist
+4. Offer to create missing entries via interactive `pass insert`
+
+**Output:**
+
+```text
+ws git-credential-helper setup
+  [1/2] Set credential.helper to '!/usr/local/bin/ws git-credential-helper'
+  Apply? [y/n/a/q] y
+  ✔ Set credential.helper
+  [2/2] Set credential.useHttpPath = true
+  Apply? [y/n/a/q] y
+  ✔ Set credential.useHttpPath
+
+  Workspace git remotes:
+    ✔ github.com → git/github.com (exists)
+    ✖ gitlab.work.com → git/gitlab.work.com (missing)
+
+  [1/1] Create pass entry git/gitlab.work.com
+  Apply? [y/n/a/q] y
+  Enter password for git/gitlab.work.com:
+  ✔ Created git/gitlab.work.com
+
+✔ git credential helper configured.
+
+  Convention: store git credentials under git/<host> in pass.
+  Entry format (standard pass):
+    <password or token>
+    username: your-username
+```
+
+#### `ws git-credential-helper status`
+
+Check credential helper configuration, pass store health, and workspace remote pass entry coverage.
+
+```text
+ws git-credential-helper status
+```
+
+**Output:**
+
+```text
+ws git-credential-helper status
+Git Credential Helper
+──────────────────────────────────────────────────────
+Status              connected
+credential.helper   !/usr/local/bin/ws git-credential-helper
+
+Pass Store
+──────────────────────────────────────────────────────
+  ✔  pass installed
+  ✔  gpg available
+  ✔  store initialized  (42 entries)
+
+Workspace Remotes
+──────────────────────────────────────────────────────
+  ✔  github.com → git/github.com (exists)
+  ✖  gitlab.work.com → git/gitlab.work.com (missing)
+
+▲ 1 remote(s) missing pass entries — run `ws git-credential-helper setup`
+```
+
+#### `ws git-credential-helper disconnect`
+
+Remove the ws credential helper from global git config.
+
+```text
+ws git-credential-helper disconnect [--dry-run]
+```
+
+**Output:**
+
+```text
+ws git-credential-helper disconnect
+  [1/2] Remove credential.helper from global git config
+  Apply? [y/n/a/q] y
+  ✔ Remove credential.helper
+  [2/2] Remove credential.useHttpPath from global git config
+  Apply? [y/n/a/q] y
+  ✔ Remove credential.useHttpPath
+
+✔ Git credential helper disconnected.
+```
+
+#### `ws git-credential-helper get`
+
+**Git plumbing — called by git, not for direct use.**
+
+Look up credentials from the pass store. Called by git when it needs authentication. Reads the git credential protocol on stdin (`protocol=`, `host=`, `path=`), looks up the corresponding pass entry, and returns credentials on stdout.
+
+```text
+ws git-credential-helper get
+```
+
+**Lookup convention:** Credentials are stored under `git/<host>` in the pass store. For per-repo tokens (when `credential.useHttpPath = true`), the path is appended: `git/<host>/<path>`.
+
+**Lookup order:**
+
+1. `git/<host>/<path>` — if path is provided (stripped of trailing `.git`)
+2. `git/<host>` — fallback to host-only entry
+3. No match — exit silently (git tries the next helper or prompts)
+
+**Pass entry format (standard pass convention):**
+
+```text
+<password or token>
+username: your-username
+url: https://example.com
+```
+
+Line 1 is the password. Lines 2+ are scanned for `username:`, `user:`, or `login:` (case-insensitive) to extract the username. Other metadata lines are ignored.
+
+**Example pass store layout:**
+
+```text
+~/.password-store/git/
+  github.com.gpg                         ← default token for github.com
+  github.com/
+    work-org/private-repo.gpg            ← specific token for this repo
+  gitlab.work.com.gpg                    ← gitlab token
+```
+
+#### `ws git-credential-helper store`
+
+**Git plumbing — called by git, not for direct use.**
+
+No-op. Git calls this after successful authentication. The pass store is managed separately via `pass insert`, `ws secret fix`, or `ws git-credential-helper setup`.
+
+#### `ws git-credential-helper erase`
+
+**Git plumbing — called by git, not for direct use.**
+
+No-op. Git calls this after failed authentication. Credential removal from the pass store is a manual operation.
+
+**Security posture:**
+
+- Read-only helper — never writes to the pass store during `get`
+- Secrets never appear in logs, even with `--verbose`
+- Silent failure on errors — lets git fall back to next helper or prompt
+- No credential caching — `gpg-agent` handles GPG passphrase caching
+- No stdin injection — mapping is convention-based (`git/<host>`), not configurable via git args
 
 ---
 
 ### `ws config`
 
-View the active configuration. `ws` reads user settings from `ws/config.json` and writes durable operational metadata to `ws/manifest.json` and `ws/repo.state`. These files are stored inside the workspace for portable restore. To change config values, edit `<workspace>/ws/config.json` directly (or use command flags/env overrides). `<workspace>`, `scratch.root_dir`, `repo.roots`, and `trash.root_dir` are user-provided; log data is always stored in `<workspace>/ws/ws-log`. The dotfile registry is managed through `ws dotfile add` and `ws dotfile rm`; optional dotfile git backup settings are managed via `ws dotfile git connect`; repo state is managed through `ws repo fix` and other `ws repo` commands.
+View the active configuration. `ws` reads user settings from `ws/config.json` and writes durable operational metadata to `ws/manifest.json` and `ws/repo.state`. These files are stored inside the workspace for portable restore. To change config values, edit `<workspace>/ws/config.json` directly (or use command flags/env overrides). `<workspace>`, `scratch.root_dir`, `repo.roots`, and `trash.root_dir` are user-provided; log data is always stored in `<workspace>/ws/ws-log`. The dotfile registry is managed through `ws dotfile add` and `ws dotfile rm`; optional dotfile git backup settings are managed via `ws dotfile git connect`; repo state is managed through `ws repo` commands.
 
 ```text
 ws config [subcommand]
@@ -3183,7 +3599,7 @@ ws config view
   "scratch": {
     "root_dir": { "value": "/home/user/Scratch", "source": "config.json" },
     "editor_cmd": { "value": "code", "source": "default" },
-    "name_prefix": { "value": "auto", "source": "default" },
+    "name_suffix": { "value": "auto", "source": "default" },
     "prune_after_days": { "value": 90, "source": "default" }
   },
   "trash": {
@@ -3198,7 +3614,7 @@ ws config view
   },
   "search": {
     "default_context": { "value": 2, "source": "default" },
-    "max_results": { "value": 200, "source": "default" }
+    "max_results": { "value": 0, "source": "default" }
   },
   "dotfile": {
     "git": {
@@ -3209,12 +3625,12 @@ ws config view
       "pass_entry": { "value": "", "source": "default" },
       "branch": { "value": "main", "source": "default" },
       "auto_commit": { "value": true, "source": "default" },
-      "auto_push": { "value": false, "source": "default" }
+      "auto_push": { "value": true, "source": "default" }
     }
   },
   "repo": {
     "roots": { "value": ["."], "source": "config.json" },
-    "exclude_dirs": { "value": ["ws/ws-log", "node_modules", ".venv"], "source": "config.json" },
+    "exclude_dirs": { "value": ["ws", "node_modules", ".venv"], "source": "config.json" },
     "max_parallel": { "value": 8, "source": "default" },
     "reconcile_on_read": { "value": true, "source": "default" },
     "state_path": { "value": "/home/user/Workspace/ws/repo.state", "source": "derived(<workspace>)" }
@@ -3270,7 +3686,7 @@ All paths are shown fully expanded (tildes resolved, relative paths resolved aga
     "scratch": {
       "root_dir": { "value": "/home/user/Scratch", "source": "config.json" },
       "editor_cmd": { "value": "code", "source": "default" },
-      "name_prefix": { "value": "auto", "source": "default" },
+      "name_suffix": { "value": "auto", "source": "default" },
       "prune_after_days": { "value": 90, "source": "default" }
     },
     "trash": {
@@ -3285,7 +3701,7 @@ All paths are shown fully expanded (tildes resolved, relative paths resolved aga
     },
     "search": {
       "default_context": { "value": 2, "source": "default" },
-      "max_results": { "value": 200, "source": "default" }
+      "max_results": { "value": 0, "source": "default" }
     },
     "dotfile": {
       "git": {
@@ -3296,12 +3712,12 @@ All paths are shown fully expanded (tildes resolved, relative paths resolved aga
         "pass_entry": { "value": "", "source": "default" },
         "branch": { "value": "main", "source": "default" },
         "auto_commit": { "value": true, "source": "default" },
-        "auto_push": { "value": false, "source": "default" }
+        "auto_push": { "value": true, "source": "default" }
       }
     },
     "repo": {
       "roots": { "value": ["."], "source": "config.json" },
-      "exclude_dirs": { "value": ["ws/ws-log", "node_modules", ".venv"], "source": "config.json" },
+      "exclude_dirs": { "value": ["ws", "node_modules", ".venv"], "source": "config.json" },
       "max_parallel": { "value": 8, "source": "default" },
       "reconcile_on_read": { "value": true, "source": "default" },
       "state_path": { "value": "/home/user/Workspace/ws/repo.state", "source": "derived(<workspace>)" }
@@ -3342,11 +3758,12 @@ ws config defaults
   "scratch": {
     "root_dir": "~/Scratch",
     "editor_cmd": "code",
-    "name_prefix": "auto",
+    "name_suffix": "auto",
     "prune_after_days": 90
   },
   "trash": {
     "root_dir": "~/.Trash",
+    "warn_size_mb": 1024,
     "setup": {
       "prompt_on_init": true,
       "shell_rm": true,
@@ -3375,7 +3792,7 @@ ws config defaults
   },
   "repo": {
     "roots": ["."],
-    "exclude_dirs": ["ws/ws-log", "node_modules", ".venv"],
+    "exclude_dirs": ["ws", "node_modules", ".venv"],
     "max_parallel": 8,
     "reconcile_on_read": true
   }
@@ -3396,13 +3813,25 @@ The `dotfiles` registry is omitted — dotfiles are managed in `manifest.json` v
 
 Guided full-machine restore wizard. Chains the post-sync setup steps into a single interactive flow. Designed for the day you lose everything: sync the workspace to a fresh machine, run `ws restore`, walk through the prompts, and the machine is configured.
 
+**Prerequisite:** The workspace must already be initialized (`ws/config.json` must exist). `ws restore` is for synced workspaces on new machines — not for first-time setup. If the workspace is not initialized, `ws restore` exits with an error and directs the user to run `ws init` first.
+
 ```text
 ws restore [flags]
 
 --dry-run   Preview all actions without applying
 ```
 
-**Output:**
+**Output — workspace not initialized:**
+
+```text
+ws restore
+✖ Workspace is not initialized: ~/Workspace/ws/config.json
+
+  ws restore only works on an already-initialized workspace.
+  Run 'ws init' first to set up the workspace, then run 'ws restore'.
+```
+
+**Output — workspace initialized (normal flow):**
 
 ```text
 ws restore
@@ -3410,22 +3839,15 @@ ws restore
  WORKSPACE RESTORE
 ══════════════════════════════════════════════════════
 
-This wizard will set up your machine from the synced workspace.
-Steps: init → trash setup → dotfile fix → ignore generate → scan → fix
+Steps: trash setup → dotfile fix → ignore generate → scan → fix
 
-── [1/6] Init ─────────────────────────────────────
-
-✔ ws/config.json       already exists — skipped
-✔ ws/manifest.json     already exists — skipped (5 dotfiles registered)
-✔ .megaignore           already exists — skipped (22 rules)
-
-── [2/6] Trash setup ─────────────────────────────
+── [1/5] Trash setup ─────────────────────────────
 
 ✔ shell-rm integration configured
 ✔ vscode-delete integration configured
 ✔ file-explorer integration configured
 
-── [3/6] Dotfiles ─────────────────────────────────
+── [2/5] Dotfiles ─────────────────────────────────
 
 ws dotfile fix — Dotfile Reconciliation
 Registry: manifest.json  (5 dotfiles)
@@ -3446,18 +3868,18 @@ Apply? [Y/n]: ↵
 
 Created: 5   Skipped: 0   Failed: 0
 
-── [4/6] Ignore rules ─────────────────────────────
+── [3/5] Ignore rules ─────────────────────────────
 
 ✔ .megaignore is up to date (22 rules, matches template)
 
-── [5/6] Scan ─────────────────────────────────────
+── [4/5] Scan ─────────────────────────────────────
 
 Ignore       0 critical · 0 warning   no bloat/depth/project-meta
 Secret       0 critical · 0 warning   0 files matched
 Dotfiles     0 critical · 0 warning   5 registered
 Log          recording inactive        0 MB / 500 MB cap
 
-── [6/6] Fix ──────────────────────────────────────
+── [5/5] Fix ──────────────────────────────────────
 
 No violations found. Nothing to fix.
 
@@ -3466,14 +3888,11 @@ No violations found. Nothing to fix.
 ══════════════════════════════════════════════════════
 
 Your machine is configured. Suggested next steps:
-  ws log setup-terminal  Auto-record terminal sessions
   ws completions bash    Generate shell completions
   ws tui                 Open the workspace dashboard
 ```
 
 Each step is self-contained. If a step fails, the wizard reports the failure and continues to the next step. The user can re-run `ws restore` safely — every sub-step is idempotent.
-
-If no `ws/config.json` exists (workspace never initialized), `ws restore` falls back to `ws init` and runs the full init flow first.
 
 ---
 
@@ -3532,10 +3951,12 @@ See **Beyond CLI → Notification Daemon Design** for implementation details.
 
 ### `ws completions`
 
-Generate shell completion scripts for bash, zsh, or fish. Outputs the completion script to stdout so the user can redirect it to the appropriate location for their shell.
+Generate shell completion scripts for bash, zsh, or fish. Also supports install/uninstall helpers that manage shell rc/config files directly.
 
 ```text
 ws completions <shell>
+ws completions install [--shell <bash|zsh|fish>] [--dry-run]
+ws completions uninstall [--shell <bash|zsh|fish>] [--dry-run]
 
 Supported shells: bash, zsh, fish
 ```
@@ -3584,7 +4005,7 @@ ws completions fish
 #   ws completions fish > ~/.config/fish/completions/ws.fish
 ```
 
-The completion script covers all commands, subcommands, flags, and flag values (e.g. `--terminal gnome-terminal|kitty|alacritty|tilix|konsole` for `ws log setup-terminal`). It is regenerated from the command tree at build time — no manual maintenance.
+The completion script covers all commands, subcommands, flags, and flag values. It is regenerated from the command tree at build time — no manual maintenance.
 
 ---
 
