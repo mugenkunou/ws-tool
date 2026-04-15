@@ -1,3 +1,5 @@
+//go:build linux
+
 package notify
 
 import (
@@ -18,14 +20,6 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/secret"
 	"github.com/mugenkunou/ws-tool/internal/trash"
 )
-
-// DaemonOptions holds the parameters for the daemon event loop.
-type DaemonOptions struct {
-	WorkspacePath string
-	ConfigPath    string
-	ManifestPath  string
-	Cfg           config.Config
-}
 
 // RunDaemon runs the daemon event loop. It watches for filesystem changes
 // via inotify and runs periodic scans. It blocks until SIGTERM or SIGINT
