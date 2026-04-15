@@ -96,11 +96,12 @@ func runSecretScan(args []string, globals globalFlags, workspacePath, configPath
 	}
 	skipDirs := mergeSkipDirs(cfg.Secret.SkipDirs, skipDirFlags)
 
-	engine, err := ignore.LoadEngine(filepath.Join(workspacePath, ".megaignore"))
+	userRules, err := ignore.LoadUserRules(ignore.UserRulesPath(workspacePath))
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
+	engine := ignore.BuildEngine(userRules)
 
 	m, err := manifest.Load(manifestPath)
 	if err != nil {
@@ -271,11 +272,13 @@ func runSecretFix(args []string, globals globalFlags, workspacePath, configPath,
 	}
 	skipDirs := mergeSkipDirs(cfg.Secret.SkipDirs, skipDirFlags)
 
-	engine, err := ignore.LoadEngine(filepath.Join(workspacePath, ".megaignore"))
+	userRulesPath := ignore.UserRulesPath(workspacePath)
+	userRules, err := ignore.LoadUserRules(userRulesPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
+	engine := ignore.BuildEngine(userRules)
 
 	m, err := manifest.Load(manifestPath)
 	if err != nil {
@@ -343,6 +346,7 @@ func runSecretFixBatch(violations []secret.Violation, mode string, workspacePath
 		return 1
 	}
 
+	userRulesPath := ignore.UserRulesPath(workspacePath)
 	plan := Plan{Command: "secret.fix"}
 	excludeSeen := make(map[string]bool) // dedup file-level excludes
 
@@ -366,10 +370,17 @@ func runSecretFixBatch(violations []secret.Violation, mode string, workspacePath
 			excludeSeen[v.Path] = true
 			plan.Actions = append(plan.Actions, Action{
 				ID:          "exclude-" + v.Path,
-				Description: fmt.Sprintf("Add -:%s to .megaignore", v.Path),
+				Description: fmt.Sprintf("Add exclude rule for %s", v.Path),
 				Execute: func() error {
-					_, err := ignore.AddRules(megaignorePath, []string{"-:" + v.Path})
-					return err
+					_, err := ignore.AddUserExclude(userRulesPath, v.Path, "secret: excluded by ws secret fix")
+					if err != nil {
+						return err
+					}
+					ur, err := ignore.LoadUserRules(userRulesPath)
+					if err != nil {
+						return err
+					}
+					return ignore.WriteMegaignore(megaignorePath, ur)
 				},
 			})
 		case "pass":
@@ -407,6 +418,7 @@ func runSecretFixBatch(violations []secret.Violation, mode string, workspacePath
 func runSecretFixInteractive(violations []secret.Violation, workspacePath, configPath, manifestPath, megaignorePath string, passHealth secret.PassHealth, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	out := textOut(globals, stdout)
 	nc := globals.noColor
+	userRulesPath := ignore.UserRulesPath(workspacePath)
 
 	var result secret.FixResult
 	result.Mode = "interactive"
@@ -494,16 +506,24 @@ func runSecretFixInteractive(violations []secret.Violation, workspacePath, confi
 				}
 
 			case "a":
-				_, err := ignore.AddRules(megaignorePath, []string{"-:" + v.Path})
+				ok, err := ignore.AddUserExclude(userRulesPath, v.Path, "secret: excluded by ws secret fix")
 				if err != nil {
 					fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
 					result.Skipped++
-				} else {
+				} else if ok {
+					// Regenerate .megaignore.
+					ur, loadErr := ignore.LoadUserRules(userRulesPath)
+					if loadErr == nil {
+						_ = ignore.WriteMegaignore(megaignorePath, ur)
+					}
 					excludedFiles[v.Path] = true
-					fmt.Fprintf(out, "  %s Added -:%s to .megaignore\n", style.IconCheck(nc), v.Path)
+					fmt.Fprintf(out, "  %s Added exclude rule for %s\n", style.IconCheck(nc), v.Path)
 					fmt.Fprintf(out, "  %s Rotate any real credentials in this file\n", style.IconWarning(nc))
 					result.Excluded++
 					result.Added = append(result.Added, "exclude:"+v.Path)
+				} else {
+					fmt.Fprintf(out, "  %s Rule already exists for %s\n", style.Mutedf(nc, ""), v.Path)
+					result.Skipped++
 				}
 
 			case "l":

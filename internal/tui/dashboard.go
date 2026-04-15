@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"path/filepath"
 	"time"
 
 	"github.com/mugenkunou/ws-tool/internal/config"
@@ -67,7 +66,8 @@ func LoadDashboard(workspacePath, configPath, manifestPath string, cfg config.Co
 	}
 
 	// Ignore scan
-	engine, _ := ignore.LoadEngine(filepath.Join(workspacePath, ".megaignore"))
+	userRules, _ := ignore.LoadUserRules(ignore.UserRulesPath(workspacePath))
+	engine := ignore.BuildEngine(userRules)
 	ignoreViolations, _ := ignore.Scan(ignore.ScanOptions{
 		WorkspacePath: workspacePath,
 		WarnSizeMB:    cfg.Ignore.WarnSizeMB,

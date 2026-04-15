@@ -149,7 +149,7 @@ func TestSecretScanDetectsNewPatterns(t *testing.T) {
 		{"client_secret", "client_secret=cs_live_abcdefg\n"},
 		{"connection_string", "connection_string=Server=mydb;Password=s3cret\n"},
 		{"github_token_prefix", "GITHUB_TOKEN=ghp_ABCDEFdummy\n"},
-		{"aws_key_prefix", "some config AKIA1234567890ABCDEF in this line\n"},
+		{"aws_key_prefix", "some config AKIA1234567890ABCDEF in this line\n"}, //gitleaks:allow
 		{"slack_token", "SLACK=xoxb-1234567890-abcdef\n"},
 		{"openai_key", "key is sk-ABCDEF0123456789WXYZ\n"},
 	}

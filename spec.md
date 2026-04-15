@@ -186,7 +186,9 @@ Located inside the workspace:
     "template": "builtin"
   },
   "secret": {
-    "enabled": true
+    "enabled": true,
+    "pass_nudge": true,
+    "skip_dirs": []
   },
   "scratch": {
     "root_dir": "~/Scratch",
@@ -3589,7 +3591,9 @@ ws config view
     "template": { "value": "builtin", "source": "default" }
   },
   "secret": {
-    "enabled": { "value": true, "source": "default" }
+    "enabled": { "value": true, "source": "default" },
+    "pass_nudge": { "value": true, "source": "default" },
+    "skip_dirs": { "value": [], "source": "default" }
   },
   "log": {
     "state_dir": { "value": "/home/user/Workspace/ws/ws-log", "source": "derived(<workspace>)" },
@@ -3604,6 +3608,7 @@ ws config view
   },
   "trash": {
     "root_dir": { "value": "/home/user/.Trash", "source": "default" },
+    "warn_size_mb": { "value": 1024, "source": "default" },
     "setup": {
       "prompt_on_init": { "value": true, "source": "default" },
       "shell_rm": { "value": true, "source": "default" },
@@ -3634,6 +3639,11 @@ ws config view
     "max_parallel": { "value": 8, "source": "default" },
     "reconcile_on_read": { "value": true, "source": "default" },
     "state_path": { "value": "/home/user/Workspace/ws/repo.state", "source": "derived(<workspace>)" }
+  },
+  "notify": {
+    "enabled": { "value": true, "source": "default" },
+    "poll_interval_min": { "value": 10, "source": "default" },
+    "events": { "value": ["dotfile", "secret", "bloat", "storage"], "source": "default" }
   },
   "manifest": {
     "path": "~/Workspace/ws/manifest.json",
@@ -3676,7 +3686,9 @@ All paths are shown fully expanded (tildes resolved, relative paths resolved aga
       "template": { "value": "builtin", "source": "default" }
     },
     "secret": {
-      "enabled": { "value": true, "source": "default" }
+      "enabled": { "value": true, "source": "default" },
+      "pass_nudge": { "value": true, "source": "default" },
+      "skip_dirs": { "value": [], "source": "default" }
     },
     "log": {
       "state_dir": { "value": "/home/user/Workspace/ws/ws-log", "source": "derived(<workspace>)" },
@@ -3691,6 +3703,7 @@ All paths are shown fully expanded (tildes resolved, relative paths resolved aga
     },
     "trash": {
       "root_dir": { "value": "/home/user/.Trash", "source": "default" },
+      "warn_size_mb": { "value": 1024, "source": "default" },
       "setup": {
         "prompt_on_init": { "value": true, "source": "default" },
         "shell_rm": { "value": true, "source": "default" },
@@ -3721,6 +3734,11 @@ All paths are shown fully expanded (tildes resolved, relative paths resolved aga
       "max_parallel": { "value": 8, "source": "default" },
       "reconcile_on_read": { "value": true, "source": "default" },
       "state_path": { "value": "/home/user/Workspace/ws/repo.state", "source": "derived(<workspace>)" }
+    },
+    "notify": {
+      "enabled": { "value": true, "source": "default" },
+      "poll_interval_min": { "value": 10, "source": "default" },
+      "events": { "value": ["dotfile", "secret", "bloat", "storage"], "source": "default" }
     },
     "manifest": {
       "path": "~/Workspace/ws/manifest.json",
@@ -3753,7 +3771,9 @@ ws config defaults
     "template": "builtin"
   },
   "secret": {
-    "enabled": true
+    "enabled": true,
+    "pass_nudge": true,
+    "skip_dirs": []
   },
   "scratch": {
     "root_dir": "~/Scratch",
@@ -3777,7 +3797,7 @@ ws config defaults
   },
   "search": {
     "default_context": 2,
-    "max_results": 200
+    "max_results": 0
   },
   "dotfile": {
     "git": {
@@ -3787,8 +3807,13 @@ ws config defaults
       "pass_entry": "",
       "branch": "main",
       "auto_commit": true,
-      "auto_push": false
+      "auto_push": true
     }
+  },
+  "notify": {
+    "enabled": true,
+    "poll_interval_min": 10,
+    "events": ["dotfile", "secret", "bloat", "storage"]
   },
   "repo": {
     "roots": ["."],

@@ -6,13 +6,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
 
-var ignoreHelp = cmdHelp{Usage: "ws ignore <scan|check|fix|ls|tree|edit|generate>"}
+var ignoreHelp = cmdHelp{Usage: "ws ignore <scan|fix|edit|ls>"}
 
 func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	if hasHelpArg(args) {
@@ -31,11 +32,14 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 		return 1
 	}
 
-	engine, err := ignore.LoadEngine(filepath.Join(workspacePath, ".megaignore"))
+	// Load layered ignore rules: built-in defaults + user overrides.
+	userRulesPath := ignore.UserRulesPath(workspacePath)
+	userRules, err := ignore.LoadUserRules(userRulesPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
+	engine := ignore.BuildEngine(userRules)
 
 	if len(args) == 0 {
 		return printUsageError(stderr, ignoreHelp)
@@ -48,12 +52,8 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 	switch sub {
 	case "ls":
 		return runIgnoreList(engine, workspacePath, subArgs, globals, stdout, stderr)
-	case "tree":
-		return runIgnoreTree(engine, workspacePath, subArgs, globals, stdout, stderr)
 	case "edit":
-		return runIgnoreEdit(megaignorePath, subArgs, globals, stdin, stdout, stderr)
-	case "generate":
-		return runIgnoreGenerate(megaignorePath, workspacePath, subArgs, globals, stdin, stdout, stderr)
+		return runIgnoreEdit(userRulesPath, megaignorePath, userRules, subArgs, globals, stdin, stdout, stderr)
 	case "scan":
 		fs := flag.NewFlagSet("ignore-scan", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -128,54 +128,7 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 			fmt.Fprintln(textOut(globals, stdout), style.ResultSuccess(globals.noColor, "No ignore violations to fix."))
 			return 0
 		}
-		return runIgnoreFixInteractive(actionable, megaignorePath, workspacePath, cfg, globals, stdin, stdout, stderr)
-	case "check":
-		fs := flag.NewFlagSet("ignore-check", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if len(fs.Args()) != 1 {
-			fmt.Fprintln(stderr, "usage: ws ignore check <path>")
-			return 1
-		}
-		absPath := fs.Args()[0]
-		if !filepath.IsAbs(absPath) {
-			absPath = filepath.Join(workspacePath, absPath)
-		}
-		st, err := os.Stat(absPath)
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		res, rel, err := ignore.Check(engine, workspacePath, absPath, st.IsDir())
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-
-		data := map[string]any{"path": rel, "included": res.Included, "rule": res.Rule, "safe_harbor": res.SafeHarbor}
-		if globals.json {
-			return writeJSON(stdout, stderr, "ignore.check", data)
-		} else {
-			out := textOut(globals, stdout)
-			nc := globals.noColor
-			state := style.Badge("synced", nc)
-			if !res.Included {
-				state = style.Badge("ignored", nc)
-			}
-			harbor := ""
-			if res.SafeHarbor {
-				harbor = " " + style.Mutedf(nc, "[safe harbor]")
-			}
-			fmt.Fprintf(out, "%s (%s) %s %s%s\n", style.Infof(nc, "%s", rel), state, style.Mutedf(nc, "via"), style.Mutedf(nc, "%s", res.Rule), harbor)
-		}
-		if !res.Included {
-			return 2
-		}
-		return 0
+		return runIgnoreFixInteractive(actionable, userRulesPath, megaignorePath, workspacePath, cfg, globals, stdin, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown ignore subcommand: %s\n", sub)
 		return 1
@@ -184,13 +137,15 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 
 // runIgnoreFixInteractive walks through violations one by one, prompting
 // the user for an action on each. Actions vary by violation type.
-func runIgnoreFixInteractive(violations []ignore.Violation, megaignorePath, workspacePath string, cfg config.Config, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+// Rules are added to ws/ignore.json and .megaignore is regenerated.
+func runIgnoreFixInteractive(violations []ignore.Violation, userRulesPath, megaignorePath, workspacePath string, cfg config.Config, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	out := textOut(globals, stdout)
 	nc := globals.noColor
 
 	style.Header(out, style.IconWrench(nc)+" Ignore Fix "+fmt.Sprintf("(%d found)", len(violations)), nc)
 
-	var added, deleted, moved, skipped int
+	var added, deleted, moved, harbored, skipped int
+	needsRegen := false
 
 	scratchRoot, _ := config.ResolvePath(workspacePath, cfg.Scratch.RootDir)
 
@@ -211,30 +166,66 @@ func runIgnoreFixInteractive(violations []ignore.Violation, megaignorePath, work
 			style.Infof(nc, "%s", v.Path))
 
 		if globals.dryRun {
-			fmt.Fprintf(out, "  %s would add rule: -p:%s\n", style.Mutedf(nc, "[dry-run]"), v.Path)
+			fmt.Fprintf(out, "  %s would add exclude rule: %s\n", style.Mutedf(nc, "[dry-run]"), v.Path)
 			added++
 			continue
+		}
+
+		// Derive the parent directory for the safe harbor option.
+		harborDir := filepath.Dir(v.Path)
+		if harborDir == "." {
+			harborDir = ""
 		}
 
 		var choice string
 		switch v.Type {
 		case "bloat":
-			choice = promptChoice(stdin, stdout, globals,
-				"  Action?", "[a]dd to .megaignore  [m]ove to scratch  [d]elete  [s]kip  [q]uit", "amdsq", "s")
+			if harborDir != "" {
+				choice = promptChoice(stdin, stdout, globals,
+					"  Action?", "[a]dd exclude rule  [h]arbor "+harborDir+"/  [m]ove to scratch  [d]elete  [s]kip  [q]uit", "ahmdsq", "s")
+			} else {
+				choice = promptChoice(stdin, stdout, globals,
+					"  Action?", "[a]dd exclude rule  [m]ove to scratch  [d]elete  [s]kip  [q]uit", "amdsq", "s")
+			}
 		default:
-			choice = promptChoice(stdin, stdout, globals,
-				"  Action?", "[a]dd to .megaignore  [d]elete  [s]kip  [q]uit", "adsq", "s")
+			if harborDir != "" {
+				choice = promptChoice(stdin, stdout, globals,
+					"  Action?", "[a]dd exclude rule  [h]arbor "+harborDir+"/  [d]elete  [s]kip  [q]uit", "ahdsq", "s")
+			} else {
+				choice = promptChoice(stdin, stdout, globals,
+					"  Action?", "[a]dd exclude rule  [d]elete  [s]kip  [q]uit", "adsq", "s")
+			}
 		}
 
 		switch choice {
 		case "a":
-			rule := "-p:" + v.Path
-			_, err := ignore.AddRules(megaignorePath, []string{rule})
+			ok, err := ignore.AddUserExclude(userRulesPath, v.Path, "")
 			if err != nil {
 				fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
-			} else {
-				fmt.Fprintf(out, "  %s Added rule: %s\n", style.IconCheck(nc), style.Mutedf(nc, "%s", rule))
+			} else if ok {
+				fmt.Fprintf(out, "  %s Added exclude: %s %s ws/ignore.json\n", style.IconCheck(nc), style.Infof(nc, "%s", v.Path), style.IconArrow(nc))
 				added++
+				needsRegen = true
+			} else {
+				fmt.Fprintf(out, "  %s Rule already exists\n", style.Mutedf(nc, ""))
+				skipped++
+			}
+		case "h":
+			if harborDir == "" {
+				skipped++
+				continue
+			}
+			harborPattern := harborDir + "/**"
+			ok, err := ignore.AddUserSafeHarbor(userRulesPath, harborPattern, "")
+			if err != nil {
+				fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
+			} else if ok {
+				fmt.Fprintf(out, "  %s Added safe harbor: %s %s ws/ignore.json\n", style.IconCheck(nc), style.Infof(nc, "%s", harborPattern), style.IconArrow(nc))
+				harbored++
+				needsRegen = true
+			} else {
+				fmt.Fprintf(out, "  %s Harbor already exists\n", style.Mutedf(nc, ""))
+				skipped++
 			}
 		case "m":
 			if scratchRoot == "" {
@@ -275,13 +266,34 @@ func runIgnoreFixInteractive(violations []ignore.Violation, megaignorePath, work
 	}
 
 done:
+	// Regenerate .megaignore if any rules were added to ws/ignore.json.
+	if needsRegen {
+		userRules, err := ignore.LoadUserRules(userRulesPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "warning: could not reload user rules: %s\n", err)
+		} else {
+			if err := ignore.WriteMegaignore(megaignorePath, userRules); err != nil {
+				fmt.Fprintf(stderr, "warning: could not regenerate .megaignore: %s\n", err)
+			} else {
+				stats := ignore.GetRuleStats(userRules)
+				fmt.Fprintf(out, "\n%s .megaignore regenerated (%d rules: %d default + %d user)\n",
+					style.IconCheck(nc), stats.Total, stats.DefaultExclude+stats.DefaultHarbors, stats.UserExclude+stats.UserHarbors)
+			}
+		}
+	}
+
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, style.Divider(nc))
-	fmt.Fprintf(out, "Added: %d   Moved: %d   Deleted: %d   Skipped: %d\n", added, moved, deleted, skipped)
+	parts := []string{fmt.Sprintf("Added: %d", added)}
+	if harbored > 0 {
+		parts = append(parts, fmt.Sprintf("Harbored: %d", harbored))
+	}
+	parts = append(parts, fmt.Sprintf("Moved: %d", moved), fmt.Sprintf("Deleted: %d", deleted), fmt.Sprintf("Skipped: %d", skipped))
+	fmt.Fprintln(out, strings.Join(parts, "   "))
 
 	if globals.json {
 		return writeJSON(stdout, stderr, "ignore.fix", map[string]any{
-			"added": added, "moved": moved, "deleted": deleted, "skipped": skipped,
+			"added": added, "harbored": harbored, "moved": moved, "deleted": deleted, "skipped": skipped,
 		})
 	}
 	return 0

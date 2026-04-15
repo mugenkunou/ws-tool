@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 
 	"github.com/mugenkunou/ws-tool/internal/config"
+	"github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/manifest"
-	"github.com/mugenkunou/ws-tool/internal/megaignore"
 )
 
 type InitOptions struct {
@@ -82,9 +82,19 @@ func Init(opts InitOptions) (InitResult, error) {
 		return result, err
 	}
 
+	userRulesPath := ignore.UserRulesPath(opts.WorkspacePath)
+	if err := writeIfMissing(userRulesPath, func() error {
+		return ignore.SaveUserRules(userRulesPath, ignore.DefaultUserRules())
+	}, &result); err != nil {
+		return result, err
+	}
+
 	if err := writeIfMissing(megaignorePath, func() error {
-		content := megaignore.EnsureFinalSentinel(megaignore.Template)
-		return os.WriteFile(megaignorePath, []byte(content), 0o644)
+		userRules, err := ignore.LoadUserRules(userRulesPath)
+		if err != nil {
+			userRules = ignore.DefaultUserRules()
+		}
+		return ignore.WriteMegaignore(megaignorePath, userRules)
 	}, &result); err != nil {
 		return result, err
 	}

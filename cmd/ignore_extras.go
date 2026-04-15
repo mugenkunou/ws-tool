@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
 	"io"
@@ -12,15 +11,19 @@ import (
 	"strings"
 
 	"github.com/mugenkunou/ws-tool/internal/ignore"
-	"github.com/mugenkunou/ws-tool/internal/megaignore"
-	"github.com/mugenkunou/ws-tool/internal/provision"
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
 
+// runIgnoreList handles:
+//   - ws ignore ls              → flat list of all excluded files
+//   - ws ignore ls --tree       → hierarchical tree view with sync status
+//   - ws ignore ls <path>       → single-path status check (replaces old "check")
 func runIgnoreList(engine *ignore.Engine, workspacePath string, args []string, globals globalFlags, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ignore-ls", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	registerGlobalFlags(fs, &globals)
+	treeMode := fs.Bool("tree", false, "show hierarchical tree view")
+	depth := fs.Int("depth", 1, "max depth (with --tree)")
 	pathFilter := fs.String("path", "", "restrict to subpath")
 	ruleFilter := fs.String("rule", "", "show only entries matching rule")
 	if err := fs.Parse(args); err != nil {
@@ -28,6 +31,16 @@ func runIgnoreList(engine *ignore.Engine, workspacePath string, args []string, g
 		return 1
 	}
 
+	// Positional argument: single-path check mode.
+	if len(fs.Args()) > 0 {
+		return runIgnoreCheckPath(engine, workspacePath, fs.Args()[0], globals, stdout, stderr)
+	}
+
+	if *treeMode {
+		return runIgnoreTreeView(engine, workspacePath, *pathFilter, *depth, globals, stdout, stderr)
+	}
+
+	// Default: flat list of excluded files.
 	type row struct {
 		Path string `json:"path"`
 		Rule string `json:"rule"`
@@ -92,25 +105,62 @@ func runIgnoreList(engine *ignore.Engine, workspacePath string, args []string, g
 	return 0
 }
 
-func runIgnoreTree(engine *ignore.Engine, workspacePath string, args []string, globals globalFlags, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("ignore-tree", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	registerGlobalFlags(fs, &globals)
-	pathFilter := fs.String("path", "", "start from subpath")
-	depth := fs.Int("depth", 1, "max depth")
-	if err := fs.Parse(args); err != nil {
+// runIgnoreCheckPath checks a single path's sync status (replaces old "ws ignore check").
+func runIgnoreCheckPath(engine *ignore.Engine, workspacePath, target string, globals globalFlags, stdout, stderr io.Writer) int {
+	absPath := target
+	if !filepath.IsAbs(absPath) {
+		absPath = filepath.Join(workspacePath, absPath)
+	}
+	st, err := os.Stat(absPath)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	res, rel, err := ignore.Check(engine, workspacePath, absPath, st.IsDir())
+	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
 
+	data := map[string]any{"path": rel, "included": res.Included, "rule": res.Rule, "safe_harbor": res.SafeHarbor}
+	if globals.json {
+		return writeJSON(stdout, stderr, "ignore.ls", data)
+	}
+
+	out := textOut(globals, stdout)
+	nc := globals.noColor
+	state := style.Badge("synced", nc)
+	if !res.Included {
+		state = style.Badge("ignored", nc)
+	}
+	harbor := ""
+	if res.SafeHarbor {
+		harbor = " " + style.Mutedf(nc, "[safe harbor]")
+	}
+	fmt.Fprintf(out, "%s  %s  %s %s%s\n",
+		state,
+		style.Infof(nc, "%s", rel),
+		style.Mutedf(nc, "Rule:"),
+		style.Mutedf(nc, "%s", res.Rule),
+		harbor)
+
+	if !res.Included {
+		return 2
+	}
+	return 0
+}
+
+// runIgnoreTreeView shows the workspace tree annotated with sync status.
+func runIgnoreTreeView(engine *ignore.Engine, workspacePath, pathFilter string, maxDepth int, globals globalFlags, stdout, stderr io.Writer) int {
 	start := workspacePath
-	if strings.TrimSpace(*pathFilter) != "" {
-		start = filepath.Join(workspacePath, strings.TrimSpace(*pathFilter))
+	if strings.TrimSpace(pathFilter) != "" {
+		start = filepath.Join(workspacePath, strings.TrimSpace(pathFilter))
 	}
 	if _, err := os.Stat(start); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
+
 	type node struct {
 		Path   string `json:"path"`
 		Status string `json:"status"`
@@ -132,7 +182,7 @@ func runIgnoreTree(engine *ignore.Engine, workspacePath string, args []string, g
 			rel = ""
 		}
 		currentDepth := strings.Count(filepath.ToSlash(strings.TrimPrefix(path, start)), "/")
-		if currentDepth > *depth {
+		if currentDepth > maxDepth {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
@@ -149,7 +199,7 @@ func runIgnoreTree(engine *ignore.Engine, workspacePath string, args []string, g
 	})
 
 	if globals.json {
-		return writeJSON(stdout, stderr, "ignore.tree", rows)
+		return writeJSON(stdout, stderr, "ignore.ls", rows)
 	}
 	out := textOut(globals, stdout)
 	if len(rows) == 0 {
@@ -165,9 +215,9 @@ func runIgnoreTree(engine *ignore.Engine, workspacePath string, args []string, g
 		if displayPath == "" {
 			displayPath = "."
 		}
-		depth := 0
+		d := 0
 		if displayPath != "." {
-			depth = strings.Count(displayPath, "/") + 1
+			d = strings.Count(displayPath, "/") + 1
 		}
 		prefix := ""
 		if i > 0 {
@@ -175,7 +225,7 @@ func runIgnoreTree(engine *ignore.Engine, workspacePath string, args []string, g
 			if i == len(rows)-1 {
 				branch = style.TreeCorner
 			}
-			prefix = style.TreePrefix(strings.Repeat(style.TreePipe, maxInt(0, depth-1))+branch, nc)
+			prefix = style.TreePrefix(strings.Repeat(style.TreePipe, maxInt(0, d-1))+branch, nc)
 		}
 		statusBadge := style.Badge(n.Status, nc)
 		pathStr := style.Infof(nc, "%s", displayPath)
@@ -187,7 +237,9 @@ func runIgnoreTree(engine *ignore.Engine, workspacePath string, args []string, g
 	return 0
 }
 
-func runIgnoreEdit(megaignorePath string, args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+// runIgnoreEdit opens ws/ignore.json in $EDITOR, validates on save,
+// and regenerates .megaignore.
+func runIgnoreEdit(userRulesPath, megaignorePath string, currentRules ignore.UserRules, args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ignore-edit", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	registerGlobalFlags(fs, &globals)
@@ -196,6 +248,15 @@ func runIgnoreEdit(megaignorePath string, args []string, globals globalFlags, st
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
+
+	// Ensure ws/ignore.json exists so the editor has something to open.
+	if _, err := os.Stat(userRulesPath); os.IsNotExist(err) {
+		if err := ignore.SaveUserRules(userRulesPath, currentRules); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+	}
+
 	cmdName := strings.TrimSpace(*editor)
 	if cmdName == "" {
 		cmdName = strings.TrimSpace(os.Getenv("EDITOR"))
@@ -206,7 +267,7 @@ func runIgnoreEdit(megaignorePath string, args []string, globals globalFlags, st
 	if cmdName == "" {
 		cmdName = "vi"
 	}
-	cmd := exec.Command(cmdName, megaignorePath)
+	cmd := exec.Command(cmdName, userRulesPath)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -214,141 +275,33 @@ func runIgnoreEdit(megaignorePath string, args []string, globals globalFlags, st
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	if globals.json {
-		return writeJSON(stdout, stderr, "ignore.edit", map[string]any{"path": megaignorePath, "editor": cmdName})
-	}
-	fmt.Fprintln(textOut(globals, stdout), style.ResultSuccess(globals.noColor, "Edited %s", style.Infof(globals.noColor, "%s", megaignorePath)))
-	return 0
-}
 
-func runIgnoreGenerate(megaignorePath string, workspacePath string, args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("ignore-generate", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	merge := fs.Bool("merge", false, "merge with existing rules")
-	scan := fs.Bool("scan", false, "append generated suggestions from workspace")
-	dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
-	registerGlobalFlags(fs, &globals)
-	if err := fs.Parse(args); err != nil {
+	// Validate and regenerate .megaignore after edit.
+	updatedRules, err := ignore.LoadUserRules(userRulesPath)
+	if err != nil {
+		fmt.Fprintln(stderr, "validation error: "+err.Error())
+		return 1
+	}
+
+	if err := ignore.WriteMegaignore(megaignorePath, updatedRules); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
 
-	template := megaignore.EnsureFinalSentinel(megaignore.Template)
-	rules := extractRules(template)
-	added := []string{}
-	action := "created"
-
-	if *dryRun {
-		globals.dryRun = true
-	}
-
-	plan := Plan{Command: "ignore.generate"}
-
-	if *merge {
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "ignore-merge",
-			Description: fmt.Sprintf("Merge rules into %s", megaignorePath),
-			Execute: func() error {
-				a, err := ignore.AddRules(megaignorePath, rules)
-				if err != nil {
-					return err
-				}
-				added = a
-				action = "merged"
-				return nil
-			},
-		})
-	} else {
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "ignore-generate",
-			Description: fmt.Sprintf("Generate %s", megaignorePath),
-			Execute: func() error {
-				if err := os.WriteFile(megaignorePath, []byte(template), 0o644); err != nil {
-					return err
-				}
-				action = "generated"
-				_ = provision.Record(provision.LedgerPath(workspacePath), provision.Entry{
-					Type:    provision.TypeFile,
-					Path:    megaignorePath,
-					Command: "ignore generate",
-				})
-				return nil
-			},
-		})
-	}
-
-	if *scan {
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "ignore-scan",
-			Description: "Scan workspace for binary suggestions",
-			Execute: func() error {
-				suggestions := detectBinarySuggestions(workspacePath)
-				if len(suggestions) > 0 {
-					a, err := ignore.AddRules(megaignorePath, suggestions)
-					if err != nil {
-						return err
-					}
-					added = append(added, a...)
-				}
-				return nil
-			},
-		})
-	}
-
-	planResult := RunPlan(plan, stdin, stdout, globals)
+	nc := globals.noColor
+	stats := ignore.GetRuleStats(updatedRules)
 
 	if globals.json {
-		return writeJSONDryRun(stdout, stderr, "ignore.generate", globals.dryRun, map[string]any{
-			"action":      action,
-			"path":        megaignorePath,
-			"added_rules": added,
-			"actions":     planResult.Actions,
+		return writeJSON(stdout, stderr, "ignore.edit", map[string]any{
+			"path":   userRulesPath,
+			"editor": cmdName,
+			"stats":  stats,
 		})
 	}
 	out := textOut(globals, stdout)
-	nc := globals.noColor
-	if planResult.ExecutedCount() > 0 {
-		fmt.Fprintf(out, "%s %s\n", style.Successf(nc, "%s", strings.Title(action)), style.Infof(nc, "%s", megaignorePath))
-		if len(added) > 0 {
-			fmt.Fprintf(out, "%s\n", style.Mutedf(nc, "Rules added: %d", len(added)))
-		}
-	}
-	return planResult.ExitCode()
-}
-
-func extractRules(content string) []string {
-	out := make([]string, 0)
-	s := bufio.NewScanner(strings.NewReader(content))
-	for s.Scan() {
-		line := strings.TrimSpace(s.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		out = append(out, line)
-	}
-	return out
-}
-
-func detectBinarySuggestions(workspacePath string) []string {
-	seen := map[string]struct{}{}
-	out := make([]string, 0)
-	_ = filepath.WalkDir(workspacePath, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		ext := strings.ToLower(filepath.Ext(path))
-		switch ext {
-		case ".pcap", ".bin":
-			r := "-g:*" + ext
-			if _, ok := seen[r]; !ok {
-				seen[r] = struct{}{}
-				out = append(out, r)
-			}
-		}
-		return nil
-	})
-	sort.Strings(out)
-	return out
+	fmt.Fprintf(out, "%s .megaignore regenerated (%d rules: %d default + %d user)\n",
+		style.IconCheck(nc), stats.Total, stats.DefaultExclude+stats.DefaultHarbors, stats.UserExclude+stats.UserHarbors)
+	return 0
 }
 
 func maxInt(a, b int) int {

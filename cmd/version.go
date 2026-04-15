@@ -9,8 +9,8 @@ import (
 	"runtime"
 
 	"github.com/mugenkunou/ws-tool/internal/config"
+	"github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/manifest"
-	"github.com/mugenkunou/ws-tool/internal/megaignore"
 	"github.com/mugenkunou/ws-tool/internal/provision"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
@@ -198,8 +198,12 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			ID:          "create-megaignore",
 			Description: "Create .megaignore",
 			Execute: func() error {
-				content := megaignore.EnsureFinalSentinel(megaignore.Template)
-				return os.WriteFile(megaignorePath, []byte(content), 0o644)
+				userRulesPath := ignore.UserRulesPath(resolvedWorkspace)
+				userRules, loadErr := ignore.LoadUserRules(userRulesPath)
+				if loadErr != nil {
+					userRules = ignore.DefaultUserRules()
+				}
+				return ignore.WriteMegaignore(megaignorePath, userRules)
 			},
 		})
 	}

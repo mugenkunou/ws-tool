@@ -9,7 +9,7 @@ import (
 
 	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/dotfile"
-	"github.com/mugenkunou/ws-tool/internal/megaignore"
+	"github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/provision"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/trash"
@@ -162,8 +162,12 @@ func runRestore(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		Description: "[3/3] Ignore rules",
 		Execute: func() error {
 			if _, err := os.Stat(ignorePath); err != nil {
-				content := megaignore.EnsureFinalSentinel(megaignore.Template)
-				if err := os.WriteFile(ignorePath, []byte(content), 0o644); err != nil {
+				userRulesPath := ignore.UserRulesPath(resolvedWorkspace)
+				userRules, loadErr := ignore.LoadUserRules(userRulesPath)
+				if loadErr != nil {
+					userRules = ignore.DefaultUserRules()
+				}
+				if err := ignore.WriteMegaignore(ignorePath, userRules); err != nil {
 					return err
 				}
 				_ = provision.Record(provision.LedgerPath(resolvedWorkspace), provision.Entry{

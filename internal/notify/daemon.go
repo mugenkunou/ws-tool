@@ -163,8 +163,12 @@ func performScan(workspacePath, configPath, manifestPath string, cfg config.Conf
 	var violations []HealthViolation
 
 	// ignore scan
-	engine, err := ignore.LoadEngine(filepath.Join(workspacePath, ".megaignore"))
-	if err == nil {
+	userRules, err := ignore.LoadUserRules(ignore.UserRulesPath(workspacePath))
+	if err != nil {
+		userRules = ignore.DefaultUserRules()
+	}
+	engine := ignore.BuildEngine(userRules)
+	{
 		ignoreViolations, err := ignore.Scan(ignore.ScanOptions{
 			WorkspacePath: workspacePath,
 			WarnSizeMB:    cfg.Ignore.WarnSizeMB,
@@ -199,13 +203,9 @@ func performScan(workspacePath, configPath, manifestPath string, cfg config.Conf
 			for _, a := range m.Secret.Allowlist {
 				allow[a] = struct{}{}
 			}
-			var secretEngine *ignore.Engine
-			if engine != nil {
-				secretEngine = engine
-			}
 			secretViolations, err := secret.Scan(secret.ScanOptions{
 				WorkspacePath: workspacePath,
-				Engine:        secretEngine,
+				Engine:        engine,
 				Allowlist:     allow,
 			})
 			if err == nil {

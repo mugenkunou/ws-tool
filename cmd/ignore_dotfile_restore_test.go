@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,16 +16,6 @@ func TestIgnoreExtraCommands(t *testing.T) {
 		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
 	}
 
-	if err := os.WriteFile(filepath.Join(workspace, "trace.bin"), []byte{1, 2, 3}, 0o644); err != nil {
-		t.Fatalf("write file failed: %v", err)
-	}
-
-	out.Reset()
-	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "ignore", "generate", "--merge", "--scan"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
-		t.Fatalf("ignore generate failed: code=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
-	}
-
 	out.Reset()
 	errOut.Reset()
 	if code := Execute([]string{"--workspace", workspace, "ignore", "ls"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
@@ -35,8 +24,8 @@ func TestIgnoreExtraCommands(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "ignore", "tree", "--depth", "1"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
-		t.Fatalf("ignore tree failed: code=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
+	if code := Execute([]string{"--workspace", workspace, "ignore", "ls", "--tree", "--depth", "1"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("ignore ls --tree failed: code=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
 	if !strings.Contains(out.String(), "├──") && !strings.Contains(out.String(), "└──") {
 		t.Fatalf("expected tree-like formatting, got: %s", out.String())
