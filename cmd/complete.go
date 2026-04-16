@@ -66,7 +66,7 @@ var completers = map[string]completer{
 	"notify":      {subcommands: []string{"start", "stop", "status", "test", "daemon"}},
 	"repo":        {subcommands: []string{"ls", "scan", "fetch", "fix", "pull", "sync", "run"}},
 	"scratch":     {subcommands: []string{"new", "ls", "tag", "search", "prune", "rm"}, resolve: completeScratch},
-	"secret":      {subcommands: []string{"scan", "fix", "setup"}, resolve: completeSecret},
+	"secret":      {subcommands: []string{"scan", "fix", "setup", "status", "git"}, resolve: completeSecret},
 	"search":      {resolve: completeSearch},
 	"trash":       {subcommands: []string{"enable", "disable", "scan", "fix", "reset", "status"}},
 }
@@ -201,7 +201,7 @@ func completeDotfile(sub string, args []string, toComplete string, ctx completio
 	case "git":
 		// Sub-subcommands.
 		if len(args) == 0 {
-			return filterPrefix([]string{"enable", "disconnect", "status"}, toComplete), compDirectiveNoFileComp
+			return filterPrefix([]string{"remote", "push", "log", "status", "setup", "disconnect"}, toComplete), compDirectiveNoFileComp
 		}
 		return nil, compDirectiveNoFileComp
 	default:
@@ -247,7 +247,15 @@ func completeScratch(sub string, args []string, toComplete string, ctx completio
 }
 
 func completeSecret(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
-	return nil, compDirectiveNoFileComp
+	switch sub {
+	case "git":
+		if len(args) == 0 {
+			return filterPrefix([]string{"push", "log", "remote", "status"}, toComplete), compDirectiveNoFileComp
+		}
+		return nil, compDirectiveNoFileComp
+	default:
+		return nil, compDirectiveNoFileComp
+	}
 }
 
 func completeSearch(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
@@ -328,14 +336,30 @@ func commandFlags(command string, rest []string) []string {
 			// rest[0] is "git", check for sub-sub in rest[1:]
 			if len(rest) > 1 {
 				switch rest[1] {
-				case "enable", "connect":
-					return []string{"--remote-url", "--username", "--pass-entry", "--branch", "--auto-push", dryRun}
+				case "remote":
+					return []string{"--pass-entry", dryRun}
+				case "init", "setup", "disconnect":
+					return []string{dryRun}
+				case "log":
+					return []string{"-n"}
+				case "sync":
+					return []string{"-m"}
 				}
 			}
 		}
 	case "secret":
 		if sub == "fix" {
 			return []string{"--mode"}
+		}
+		if sub == "git" {
+			if len(rest) > 1 {
+				switch rest[1] {
+				case "remote":
+					return []string{dryRun}
+				case "log":
+					return []string{"-n"}
+				}
+			}
 		}
 	case "git-credential-helper":
 		if sub == "setup" || sub == "disconnect" {

@@ -44,10 +44,14 @@ func RunDaemon(opts DaemonOptions) error {
 	}
 	defer syscall.Close(ifd)
 
-	// Watch dotfiles directory.
+	// Watch dotfiles directory — track the watch descriptor for routing.
 	dotfilesDir := filepath.Join(ws, "ws", "dotfiles")
+	var dotfileWD int = -1
 	if info, err := os.Stat(dotfilesDir); err == nil && info.IsDir() {
-		_, _ = inotifyAddWatch(ifd, dotfilesDir)
+		wd, wdErr := inotifyAddWatch(ifd, dotfilesDir)
+		if wdErr == nil {
+			dotfileWD = wd
+		}
 	}
 
 	// Watch MEGA sync state directory if it exists.
@@ -62,8 +66,8 @@ func RunDaemon(opts DaemonOptions) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
-	// inotify event channel — reads events in a goroutine.
-	inotifyCh := make(chan struct{}, 1)
+	// inotify event channel — reads events with watch descriptors in a goroutine.
+	inotifyCh := make(chan inotifyEvent, 1)
 	go readInotifyEvents(ifd, inotifyCh)
 
 	// Interval from config.
@@ -74,20 +78,32 @@ func RunDaemon(opts DaemonOptions) error {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	// Push interval for periodic auto-push of dotfiles and pass store.
+	pushInterval := time.Duration(opts.Cfg.Notify.PushIntervalMin) * time.Minute
+	if pushInterval < time.Minute {
+		pushInterval = 5 * time.Minute
+	}
+	pushTicker := time.NewTicker(pushInterval)
+	defer pushTicker.Stop()
+
 	// Run initial scan immediately.
 	runDaemonScan(opts, "startup")
 
-	// Debounce timer for inotify events.
+	// Debounce timer for health scan (all inotify events).
 	var debounce *time.Timer
 	debounceCh := make(chan struct{})
+
+	// Separate debounce for dotfile git auto-sync (3s — editors do atomic saves).
+	var dotfileDebounce *time.Timer
+	dotfileSyncCh := make(chan struct{})
 
 	for {
 		select {
 		case <-sigCh:
 			return nil
 
-		case <-inotifyCh:
-			// Coalesce rapid inotify events with a 500ms debounce.
+		case evt := <-inotifyCh:
+			// Coalesce rapid inotify events with a 500ms debounce for health scan.
 			if debounce != nil {
 				debounce.Stop()
 			}
@@ -98,6 +114,22 @@ func RunDaemon(opts DaemonOptions) error {
 				}
 			})
 
+			// If this is a dotfile change, also trigger git auto-sync (longer debounce).
+			if dotfileWD >= 0 && evt.wd == dotfileWD && opts.Cfg.Dotfile.Git.Enabled && opts.Cfg.Dotfile.Git.AutoCommit {
+				if dotfileDebounce != nil {
+					dotfileDebounce.Stop()
+				}
+				dotfileDebounce = time.AfterFunc(3*time.Second, func() {
+					select {
+					case dotfileSyncCh <- struct{}{}:
+					default:
+					}
+				})
+			}
+
+		case <-dotfileSyncCh:
+			runDotfileGitSync(opts)
+
 		case <-debounceCh:
 			runDaemonScan(opts, "inotify")
 			// Reset periodic timer after inotify-triggered scan.
@@ -105,6 +137,9 @@ func RunDaemon(opts DaemonOptions) error {
 
 		case <-ticker.C:
 			runDaemonScan(opts, "periodic")
+
+		case <-pushTicker.C:
+			runPeriodicPush(opts)
 		}
 	}
 }
@@ -341,7 +376,69 @@ func megaSyncStateDir() string {
 	return filepath.Join(home, ".local", "share", "data", "Mega Limited", "MEGAsync")
 }
 
+// runDotfileGitSync performs a dotfile git auto-commit/push triggered by
+// filesystem changes detected via inotify. Errors are non-fatal.
+func runDotfileGitSync(opts DaemonOptions) {
+	ws := opts.WorkspacePath
+	cfg := opts.Cfg
+
+	repoPath := filepath.Join(ws, "ws", "dotfiles")
+	result := dotfile.GitSync(dotfile.GitSyncOptions{
+		WorkspacePath: ws,
+		RepoPath:      repoPath,
+		RemoteURL:     cfg.Dotfile.Git.RemoteURL,
+		Branch:        cfg.Dotfile.Git.Branch,
+		AutoCommit:    cfg.Dotfile.Git.AutoCommit,
+		AutoPush:      cfg.Dotfile.Git.AutoPush,
+		CommitMessage: "auto: dotfile changed",
+	})
+	// Log errors to stderr for systemd journal visibility.
+	if result.Error != "" {
+		fmt.Fprintf(os.Stderr, "dotfile git sync: %s\n", result.Error)
+	}
+}
+
+// runPeriodicPush pushes dotfiles and pass store git repos on a timer.
+// This catches any commits that weren't pushed at commit time (e.g. network
+// was down, or auto-commit happened but auto-push was temporarily off).
+// Errors are non-fatal and logged for journal visibility.
+func runPeriodicPush(opts DaemonOptions) {
+	cfg := opts.Cfg
+	ws := opts.WorkspacePath
+
+	// Push dotfile git if enabled, has remote, and auto-push is on.
+	if cfg.Dotfile.Git.Enabled && cfg.Dotfile.Git.AutoPush {
+		repoPath := filepath.Join(ws, "ws", "dotfiles")
+		if dotfile.GitHasRemote(repoPath) {
+			branch := cfg.Dotfile.Git.Branch
+			if branch == "" {
+				branch = "main"
+			}
+			if err := dotfile.GitPush(repoPath, branch); err != nil {
+				fmt.Fprintf(os.Stderr, "periodic dotfile push: %v\n", err)
+			}
+		}
+	}
+
+	// Push pass store git if it has a remote.
+	passHealth := secret.CheckPass()
+	if passHealth.GitBacked {
+		remote := secret.GitRemoteURL()
+		if remote != "" {
+			if err := secret.GitPush(); err != nil {
+				fmt.Fprintf(os.Stderr, "periodic pass push: %v\n", err)
+			}
+		}
+	}
+}
+
 // ── inotify helpers (Linux-native, zero dependencies) ──
+
+// inotifyEvent carries the watch descriptor so the daemon can route
+// events to the correct handler (dotfile git sync vs full health scan).
+type inotifyEvent struct {
+	wd int
+}
 
 func inotifyInit() (int, error) {
 	fd, err := syscall.InotifyInit1(syscall.IN_NONBLOCK | syscall.IN_CLOEXEC)
@@ -366,7 +463,7 @@ func inotifyAddWatch(fd int, path string) (int, error) {
 	return int(wd), nil
 }
 
-func readInotifyEvents(fd int, ch chan<- struct{}) {
+func readInotifyEvents(fd int, ch chan<- inotifyEvent) {
 	buf := make([]byte, 4096)
 	for {
 		n, err := syscall.Read(fd, buf)
@@ -380,9 +477,18 @@ func readInotifyEvents(fd int, ch chan<- struct{}) {
 			return
 		}
 		if n > 0 {
-			select {
-			case ch <- struct{}{}:
-			default:
+			// Parse inotify events to extract watch descriptors.
+			offset := 0
+			for offset < n {
+				if offset+syscall.SizeofInotifyEvent > n {
+					break
+				}
+				raw := (*syscall.InotifyEvent)(unsafe.Pointer(&buf[offset]))
+				select {
+				case ch <- inotifyEvent{wd: int(raw.Wd)}:
+				default:
+				}
+				offset += syscall.SizeofInotifyEvent + int(raw.Len)
 			}
 		}
 	}

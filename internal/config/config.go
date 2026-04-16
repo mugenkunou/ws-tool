@@ -92,6 +92,7 @@ type Log struct {
 type Notify struct {
 	Enabled         bool     `json:"enabled"`
 	PollIntervalMin int      `json:"poll_interval_min"`
+	PushIntervalMin int      `json:"push_interval_min"`
 	Events          []string `json:"events"`
 }
 
@@ -143,6 +144,7 @@ func Default() Config {
 		Notify: Notify{
 			Enabled:         true,
 			PollIntervalMin: 10,
+			PushIntervalMin: 5,
 			Events:          []string{"dotfile", "secret", "bloat", "storage"},
 		},
 	}

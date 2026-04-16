@@ -232,7 +232,7 @@ func TestCompleteDotfileGitSubSub(t *testing.T) {
 	if dir != compDirectiveNoFileComp {
 		t.Fatalf("expected NoFileComp, got %d", dir)
 	}
-	if !contains(comps, "enable") || !contains(comps, "status") {
+	if !contains(comps, "setup") || !contains(comps, "status") {
 		t.Fatalf("expected git sub-subcommands, got %v", comps)
 	}
 }

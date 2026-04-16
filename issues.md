@@ -1,3 +1,4 @@
 - ws capture/dump to capture work related forum posts, comments, or other snippets in any form. web extension like obsidian clipper, but captures images as well?
 - keyboard shortcuts can be synced to dotfile as well. maybe in a generic way.
 - condense knowledge from valuable issue debugging. eg. default pod pid limit; getting values from cgroups; and changing it;
+- ws repo should warn if any git repos doesn't have basic details configured like user.name or user.email

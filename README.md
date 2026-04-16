@@ -98,9 +98,12 @@ Your `.bashrc` now lives in the workspace (synced). The system path is a symlink
 | `ws dotfile scan` | Verify all symlinks are intact |
 | `ws dotfile fix` | Recreate broken/missing symlinks (the restore command) |
 | `ws dotfile reset` | Reset dotfile subsystem provisions |
-| `ws dotfile git connect` | Optional: configure Git backup for dotfile versioning |
-| `ws dotfile git disconnect` | Remove dotfile Git remote/config from ws |
+| `ws dotfile git remote <url>` | Set/show git remote URL |
+| `ws dotfile git push` | Commit pending changes + push to remote |
+| `ws dotfile git log` | Show dotfile commit history |
 | `ws dotfile git status` | Show dotfile Git backup health |
+| `ws dotfile git setup` | Guided walk-through (init → remote → auto-push) |
+| `ws dotfile git disconnect` | Remove dotfile Git remote/config from ws |
 
 </details>
 
@@ -156,6 +159,11 @@ Your `.bashrc` now lives in the workspace (synced). The system path is a symlink
 | `ws secret scan` | Find exposed secrets (`password=`, `API_KEY=`, private keys) |
 | `ws secret fix` | View context, exclude file, or allowlist false positives |
 | `ws secret setup` | Setup/check Unix Password Store (`pass`) prerequisites |
+| `ws secret status` | Show pass health, git state, and actionable warnings |
+| `ws secret git push` | Push pass store commits to remote |
+| `ws secret git log` | Show pass store commit history |
+| `ws secret git remote` | Show pass store git remote URL |
+| `ws secret git status` | Show pass store git status summary |
 | `ws git-credential-helper setup` | Connect credential helper and create missing pass entries |
 | `ws git-credential-helper status` | Check credential helper config and pass entry coverage |
 | `ws git-credential-helper disconnect` | Remove ws credential helper from git config |

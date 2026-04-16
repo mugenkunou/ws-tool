@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -24,11 +25,13 @@ func (s *stringSliceFlag) Set(v string) error {
 }
 
 var secretHelp = cmdHelp{
-	Usage: "ws secret <scan|fix|setup>",
+	Usage: "ws secret <scan|fix|setup|status|git>",
 	Subcommands: []string{
 		"  scan     Scan for secrets + pass health status (--pass to audit pass store)",
 		"  fix      Interactively resolve secret violations",
 		"  setup    Set up Unix Password Store (pass)",
+		"  status   Show pass store and credential helper health",
+		"  git      Pass git operations (push, log, remote, status)",
 		"",
 		"  For credential helper commands: ws git-credential-helper",
 	},
@@ -69,6 +72,10 @@ func runSecret(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 		return runSecretFix(subArgs, globals, workspacePath, configPath, manifestPath, stdin, stdout, stderr)
 	case "setup":
 		return runSecretSetup(subArgs, globals, stdin, stdout, stderr)
+	case "status":
+		return runSecretStatus(subArgs, globals, stdout, stderr)
+	case "git":
+		return runSecretGit(subArgs, globals, stdin, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown secret subcommand: %s\n", sub)
 		return 1
@@ -234,6 +241,96 @@ func printPassHealth(w io.Writer, h secret.PassHealth, nc bool) {
 			fmt.Fprintf(w, "  %s  git-remote %s\n", style.IconWarning(nc), style.Mutedf(nc, "(local only, no remote)"))
 		}
 	}
+}
+
+// ── ws secret status (RO) ──
+
+func runSecretStatus(args []string, globals globalFlags, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("secret-status", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+
+	nc := globals.noColor
+	health := secret.CheckPass()
+
+	// Git details.
+	remoteURL := ""
+	if health.GitBacked && health.GitRemote {
+		remoteURL = secret.GitRemoteURL()
+	}
+
+	// Credential helper check.
+	credHelperConfigured := false
+	credHelperValue := ""
+	if out, err := gitConfigValue("credential.helper"); err == nil && strings.TrimSpace(out) != "" {
+		credHelperValue = strings.TrimSpace(out)
+		credHelperConfigured = strings.Contains(credHelperValue, "ws") || strings.Contains(credHelperValue, "git-credential-helper")
+	}
+
+	result := map[string]any{
+		"gpg_available":    health.GPGAvailable,
+		"pass_installed":   health.Installed,
+		"initialized":      health.Initialized,
+		"store_path":       health.StorePath,
+		"entry_count":      health.EntryCount,
+		"git_backed":       health.GitBacked,
+		"git_remote":       health.GitRemote,
+		"remote_url":       remoteURL,
+		"cred_helper":      credHelperConfigured,
+		"cred_helper_value": credHelperValue,
+	}
+	if globals.json {
+		return writeJSON(stdout, stderr, "secret.status", result)
+	}
+
+	out := textOut(globals, stdout)
+	printPassHealth(out, health, nc)
+	fmt.Fprintln(out)
+
+	if health.GitBacked {
+		if health.GitRemote {
+			style.KV(out, "Remote", style.Infof(nc, "%s", remoteURL), nc)
+		}
+	}
+
+	if credHelperConfigured {
+		fmt.Fprintf(out, "  %s  credential helper configured\n", style.IconCheck(nc))
+	} else {
+		fmt.Fprintf(out, "  %s  credential helper %s\n", style.IconCross(nc), style.Mutedf(nc, "(not configured)"))
+		fmt.Fprintln(out, style.Mutedf(nc, "  Run: ws git-credential-helper setup"))
+	}
+
+	// Actionable warnings.
+	if !health.Installed {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, style.Mutedf(nc, "  Install pass: sudo apt install pass"))
+	} else if !health.Initialized {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, style.Mutedf(nc, "  Run: ws secret setup"))
+	} else if !health.GitBacked {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, style.Mutedf(nc, "  Enable git: ws secret setup"))
+	} else if !health.GitRemote {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, style.ResultWarning(nc, "No git remote. Secrets only exist on this machine."))
+		fmt.Fprintln(out, style.Mutedf(nc, "  Add one with: ws secret git remote <url>"))
+	}
+
+	return 0
+}
+
+// gitConfigValue reads a git config value.
+func gitConfigValue(key string) (string, error) {
+	cmd := exec.Command("git", "config", "--global", key)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // ── ws secret fix (RW) ──
@@ -704,8 +801,16 @@ func runSecretSetup(args []string, globals globalFlags, stdin io.Reader, stdout,
 		})
 	}
 
-	if *gitRemote != "" {
-		capturedRemote := *gitRemote
+	remoteURL := *gitRemote
+	if remoteURL == "" && !health.GitRemote {
+		// Interactive prompt for remote when not provided via flag.
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, style.Mutedf(nc, "  A private git remote provides off-machine backup for your secrets."))
+		fmt.Fprintln(out, style.Mutedf(nc, "  Create a PRIVATE repo first, then paste the URL below."))
+		remoteURL = promptLine(stdin, stdout, globals, "  Remote URL (blank to skip)", "")
+	}
+	if remoteURL != "" {
+		capturedRemote := remoteURL
 		plan.Actions = append(plan.Actions, Action{
 			ID:          "pass-git-remote",
 			Description: fmt.Sprintf("Add git remote: %s", capturedRemote),
@@ -745,12 +850,165 @@ func runSecretSetup(args []string, globals globalFlags, stdin io.Reader, stdout,
 	// Show final status.
 	if !planResult.HasFailures() {
 		fmt.Fprintln(out)
-		printPassHealth(out, secret.CheckPass(), nc)
+		finalHealth := secret.CheckPass()
+		printPassHealth(out, finalHealth, nc)
 		fmt.Fprintln(out)
+		if finalHealth.GitBacked && !finalHealth.GitRemote {
+			fmt.Fprintln(out, style.ResultWarning(nc, "No git remote. Secrets only exist on this machine."))
+			fmt.Fprintln(out, style.Mutedf(nc, "  To add one later: ws secret setup --git-remote <url>"))
+			fmt.Fprintln(out, style.Mutedf(nc, "  Use a PRIVATE repo — never push pass to a public repo."))
+			fmt.Fprintln(out)
+		}
 		fmt.Fprintln(out, style.Mutedf(nc, "  To connect git credential helper: ws git-credential-helper setup"))
 	}
 
 	return planResult.ExitCode()
+}
+
+// ── ws secret git ──
+
+func runSecretGit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: ws secret git <push|log|remote|status>")
+		return 1
+	}
+
+	nc := globals.noColor
+	out := textOut(globals, stdout)
+
+	health := secret.CheckPass()
+
+	// Pre-check: pass must be installed, initialized, and git-backed.
+	if !health.Installed {
+		fmt.Fprintln(stderr, style.ResultError(nc, "pass not found. Install with: sudo apt install pass"))
+		return 1
+	}
+	if !health.Initialized {
+		fmt.Fprintln(stderr, style.ResultError(nc, "pass store not initialized. Run: ws secret setup"))
+		return 1
+	}
+	if !health.GitBacked {
+		fmt.Fprintln(stderr, style.ResultError(nc, "pass store has no git. Run: ws secret setup"))
+		return 1
+	}
+
+	switch args[0] {
+	case "push":
+		if !health.GitRemote {
+			fmt.Fprintln(stderr, style.ResultError(nc, "No remote configured. Run: ws secret git remote <url>"))
+			return 1
+		}
+		if err := secret.GitPush(); err != nil {
+			fmt.Fprintln(stderr, style.ResultError(nc, "push failed: %s", err))
+			return 1
+		}
+		fmt.Fprintln(out, style.ResultSuccess(nc, "Pushed to %s", secret.GitRemoteURL()))
+		return 0
+
+	case "log":
+		fs := flag.NewFlagSet("secret-git-log", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		count := fs.Int("n", 20, "number of commits to show")
+		registerGlobalFlags(fs, &globals)
+		if err := fs.Parse(args[1:]); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+
+		logOut, err := secret.GitLog(*count)
+		if err != nil {
+			fmt.Fprintln(stderr, style.ResultError(nc, "git log: %s", err))
+			return 1
+		}
+		if globals.json {
+			return writeJSON(stdout, stderr, "secret.git.log", map[string]any{
+				"log": logOut,
+			})
+		}
+		if logOut == "" {
+			fmt.Fprintln(out, style.Mutedf(nc, "No commits yet."))
+		} else {
+			fmt.Fprintln(out, logOut)
+		}
+		return 0
+
+	case "remote":
+		fs := flag.NewFlagSet("secret-git-remote", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
+		registerGlobalFlags(fs, &globals)
+		if err := fs.Parse(args[1:]); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		if *dryRun {
+			globals.dryRun = true
+		}
+		if len(fs.Args()) != 1 {
+			fmt.Fprintln(stderr, "usage: ws secret git remote <url>")
+			return 1
+		}
+		remoteURL := strings.TrimSpace(fs.Args()[0])
+
+		if health.GitRemote {
+			// Update existing remote.
+			fmt.Fprintln(out, style.Mutedf(nc, "Updating existing remote to %s", remoteURL))
+		}
+
+		plan := Plan{Command: "secret.git.remote"}
+		plan.Actions = append(plan.Actions, Action{
+			ID:          "add-remote",
+			Description: fmt.Sprintf("Set pass git remote to %s", remoteURL),
+			Execute: func() error {
+				return secret.AddGitRemote(remoteURL)
+			},
+		})
+		planResult := RunPlan(plan, stdin, stdout, globals)
+		if globals.json {
+			return writeJSONDryRun(stdout, stderr, "secret.git.remote", globals.dryRun, map[string]any{
+				"remote_url": remoteURL,
+				"actions":    planResult.Actions,
+			})
+		}
+		if planResult.WasExecuted("add-remote") {
+			fmt.Fprintln(out, style.ResultSuccess(nc, "Remote set to %s", remoteURL))
+		}
+		return planResult.ExitCode()
+
+	case "status":
+		remoteURL := secret.GitRemoteURL()
+		result := map[string]any{
+			"git_backed":  health.GitBacked,
+			"git_remote":  health.GitRemote,
+			"remote_url":  remoteURL,
+			"store_path":  health.StorePath,
+			"entry_count": health.EntryCount,
+		}
+		if globals.json {
+			return writeJSON(stdout, stderr, "secret.git.status", result)
+		}
+		style.KV(out, "Store", health.StorePath, nc)
+		style.KV(out, "Git", style.Badge("enabled", nc), nc)
+		if health.GitRemote {
+			style.KV(out, "Remote", style.Infof(nc, "%s", remoteURL), nc)
+		} else {
+			style.KV(out, "Remote", style.ResultWarning(nc, "none"), nc)
+		}
+		style.KV(out, "Entries", fmt.Sprintf("%d", health.EntryCount), nc)
+
+		if !health.GitRemote {
+			fmt.Fprintln(out)
+			fmt.Fprintln(out, style.ResultWarning(nc, "No git remote. Secrets only exist on this machine."))
+			fmt.Fprintln(out, style.Mutedf(nc, "  Add one with: ws secret git remote <url>"))
+			fmt.Fprintln(out, style.Mutedf(nc, "  Use a PRIVATE repo — never push pass to a public repo."))
+		}
+		return 0
+
+	default:
+		fmt.Fprintf(stderr, "unknown secret git subcommand: %s\n", args[0])
+		fmt.Fprintln(stderr, "usage: ws secret git <push|log|remote|status>")
+		return 1
+	}
 }
 
 // ── Helpers (secret) ──

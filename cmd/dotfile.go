@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -257,7 +256,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		return planResult.ExitCode()
 	case "git":
 		if len(subArgs) == 0 {
-			fmt.Fprintln(stderr, "usage: ws dotfile git <enable|disconnect|status>")
+			fmt.Fprintln(stderr, "usage: ws dotfile git <remote|push|log|status|setup|disconnect>")
 			return 1
 		}
 		cfg, err := config.Load(configPath)
@@ -265,37 +264,39 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
+		repoPath := filepath.Join(workspacePath, "ws", "dotfiles")
+
 		switch subArgs[0] {
-		case "enable", "connect":
-			fs := flag.NewFlagSet("dotfile-git-enable", flag.ContinueOnError)
+		case "remote":
+			fs := flag.NewFlagSet("dotfile-git-remote", flag.ContinueOnError)
 			fs.SetOutput(io.Discard)
-			remoteURL := fs.String("remote-url", "", "remote repository URL")
-			username := fs.String("username", "", "auth username")
-			passEntry := fs.String("pass-entry", "", "optional pass entry")
-			branch := fs.String("branch", "main", "git branch")
-			autoPush := fs.Bool("auto-push", false, "enable auto-push")
+			passEntry := fs.String("pass-entry", "", "optional pass entry for auth")
 			dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 			registerGlobalFlags(fs, &globals)
 			if err := fs.Parse(subArgs[1:]); err != nil {
 				fmt.Fprintln(stderr, err.Error())
 				return 1
 			}
-			if strings.TrimSpace(*remoteURL) == "" || strings.TrimSpace(*username) == "" {
-				fmt.Fprintln(stderr, "--remote-url and --username are required")
-				return 1
-			}
 			if *dryRun {
 				globals.dryRun = true
 			}
+			if len(fs.Args()) != 1 {
+				fmt.Fprintln(stderr, "usage: ws dotfile git remote <url>")
+				return 1
+			}
+			remoteURL := strings.TrimSpace(fs.Args()[0])
 
-			localRepoPath := filepath.Join(workspacePath, "ws", "dotfiles-git")
+			if !dotfile.GitIsInitialized(repoPath) {
+				fmt.Fprintln(stderr, style.ResultError(globals.noColor, "Git not initialized. Run: ws dotfile git setup"))
+				return 1
+			}
 
-			// Enforce private remote — hard constraint, no override.
+			// Enforce private remote — hard constraint.
 			out := textOut(globals, stdout)
 			nc := globals.noColor
 			fmt.Fprintln(out, style.Mutedf(nc, "Checking repository visibility…"))
-			token := resolveGitToken(strings.TrimSpace(*remoteURL), strings.TrimSpace(*passEntry))
-			vis := repo.CheckRepoVisibility(strings.TrimSpace(*remoteURL), token)
+			token := resolveGitToken(remoteURL, *passEntry)
+			vis := repo.CheckRepoVisibility(remoteURL, token)
 			if vis.Checked && !vis.Private {
 				fmt.Fprintln(stderr, style.ResultError(nc, "%s", repo.ErrPublicRepository))
 				fmt.Fprintln(stderr, style.Mutedf(nc, "Make the repository private, then retry."))
@@ -308,61 +309,339 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 				fmt.Fprintln(out, style.ResultWarning(nc, "visibility check failed: %s", vis.Error))
 			}
 
-			plan := Plan{Command: "dotfile.git.enable"}
+			plan := Plan{Command: "dotfile.git.remote"}
 			plan.Actions = append(plan.Actions, Action{
-				ID:          "update-config",
-				Description: fmt.Sprintf("Enable dotfile git to %s", strings.TrimSpace(*remoteURL)),
+				ID:          "add-remote",
+				Description: fmt.Sprintf("Set remote origin to %s", remoteURL),
 				Execute: func() error {
-					cfg.Dotfile.Git.Enabled = true
-					cfg.Dotfile.Git.RemoteURL = strings.TrimSpace(*remoteURL)
-					cfg.Dotfile.Git.AuthUsername = strings.TrimSpace(*username)
-					cfg.Dotfile.Git.PassEntry = strings.TrimSpace(*passEntry)
-					cfg.Dotfile.Git.Branch = strings.TrimSpace(*branch)
-					if cfg.Dotfile.Git.Branch == "" {
-						cfg.Dotfile.Git.Branch = "main"
+					if err := dotfile.GitAddRemote(repoPath, remoteURL); err != nil {
+						return err
 					}
-					cfg.Dotfile.Git.AutoPush = *autoPush
-					cfg.Dotfile.Git.AutoCommit = true
+					cfg.Dotfile.Git.RemoteURL = remoteURL
+					if *passEntry != "" {
+						cfg.Dotfile.Git.PassEntry = *passEntry
+					}
 					return config.Save(configPath, cfg)
 				},
 			})
-			plan.Actions = append(plan.Actions, Action{
-				ID:          "create-git-dir",
-				Description: fmt.Sprintf("Create %s", localRepoPath),
-				Execute: func() error {
-					if err := os.MkdirAll(localRepoPath, 0o755); err != nil {
-						return err
-					}
-					_ = provision.Record(provision.LedgerPath(workspacePath), provision.Entry{
-						Type:    provision.TypeDir,
-						Path:    localRepoPath,
-						Command: "dotfile git enable",
-					})
-					return nil
-				},
+			planResult := RunPlan(plan, stdin, stdout, globals)
+			if globals.json {
+				return writeJSONDryRun(stdout, stderr, "dotfile.git.remote", globals.dryRun, map[string]any{
+					"remote_url": remoteURL,
+					"actions":    planResult.Actions,
+				})
+			}
+			if planResult.WasExecuted("add-remote") {
+				fmt.Fprintln(out, style.ResultSuccess(nc, "Remote set to %s", remoteURL))
+			}
+			return planResult.ExitCode()
+
+		case "push":
+			fs := flag.NewFlagSet("dotfile-git-push", flag.ContinueOnError)
+			fs.SetOutput(io.Discard)
+			message := fs.String("m", "", "commit message (default: auto)")
+			passEntry := fs.String("pass-entry", "", "optional pass entry for auth")
+			registerGlobalFlags(fs, &globals)
+			if err := fs.Parse(subArgs[1:]); err != nil {
+				fmt.Fprintln(stderr, err.Error())
+				return 1
+			}
+			_ = passEntry // reserved for future credential resolution before push
+
+			if !dotfile.GitIsInitialized(repoPath) {
+				fmt.Fprintln(stderr, style.ResultError(globals.noColor, "Git not initialized. Run: ws dotfile git setup"))
+				return 1
+			}
+			if !dotfile.GitHasRemote(repoPath) {
+				fmt.Fprintln(stderr, style.ResultError(globals.noColor, "No remote configured. Run: ws dotfile git remote <url>"))
+				return 1
+			}
+
+			out := textOut(globals, stdout)
+			nc := globals.noColor
+
+			// Smart push: commit any pending changes first.
+			commitMsg := *message
+			if commitMsg == "" {
+				commitMsg = "manual push"
+			}
+			result := dotfile.GitSync(dotfile.GitSyncOptions{
+				WorkspacePath: workspacePath,
+				RepoPath:      repoPath,
+				RemoteURL:     cfg.Dotfile.Git.RemoteURL,
+				Branch:        cfg.Dotfile.Git.Branch,
+				AutoCommit:    true,
+				AutoPush:      false, // we handle push with visibility check below
+				CommitMessage: commitMsg,
 			})
+			if result.Error != "" {
+				fmt.Fprintln(stderr, style.ResultError(nc, "commit: %s", result.Error))
+				return 1
+			}
+			if result.Committed {
+				fmt.Fprintln(out, style.ResultSuccess(nc, "Committed."))
+			}
+
+			// Pre-push private repo check.
+			remoteURL := dotfile.GitRemoteURL(repoPath)
+			token := resolveGitToken(remoteURL, cfg.Dotfile.Git.PassEntry)
+			vis := repo.CheckRepoVisibility(remoteURL, token)
+			if vis.Checked && !vis.Private {
+				fmt.Fprintln(stderr, style.ResultError(nc, "%s", repo.ErrPublicRepository))
+				return 1
+			}
+
+			branch := cfg.Dotfile.Git.Branch
+			if err := dotfile.GitPush(repoPath, branch); err != nil {
+				fmt.Fprintln(stderr, style.ResultError(nc, "push failed: %s", err))
+				return 1
+			}
+			fmt.Fprintln(out, style.ResultSuccess(nc, "Pushed to %s", remoteURL))
+			return 0
+
+		case "log":
+			fs := flag.NewFlagSet("dotfile-git-log", flag.ContinueOnError)
+			fs.SetOutput(io.Discard)
+			count := fs.Int("n", 20, "number of commits to show")
+			registerGlobalFlags(fs, &globals)
+			if err := fs.Parse(subArgs[1:]); err != nil {
+				fmt.Fprintln(stderr, err.Error())
+				return 1
+			}
+
+			if !dotfile.GitIsInitialized(repoPath) {
+				fmt.Fprintln(stderr, style.ResultError(globals.noColor, "Git not initialized. Run: ws dotfile git setup"))
+				return 1
+			}
+
+			logOut, err := dotfile.GitLog(repoPath, *count)
+			if err != nil {
+				fmt.Fprintln(stderr, style.ResultError(globals.noColor, "git log: %s", err))
+				return 1
+			}
+			if globals.json {
+				return writeJSON(stdout, stderr, "dotfile.git.log", map[string]any{
+					"log": strings.TrimSpace(logOut),
+				})
+			}
+			out := textOut(globals, stdout)
+			logStr := strings.TrimSpace(logOut)
+			if logStr == "" {
+				fmt.Fprintln(out, style.Mutedf(globals.noColor, "No commits yet."))
+			} else {
+				fmt.Fprintln(out, logStr)
+			}
+			return 0
+
+		case "status":
+			fs := flag.NewFlagSet("dotfile-git-status", flag.ContinueOnError)
+			fs.SetOutput(io.Discard)
+			registerGlobalFlags(fs, &globals)
+			if err := fs.Parse(subArgs[1:]); err != nil {
+				fmt.Fprintln(stderr, err.Error())
+				return 1
+			}
+			out := textOut(globals, stdout)
+			nc := globals.noColor
+
+			gitInited := dotfile.GitIsInitialized(repoPath)
+			hasRemote := false
+			remoteURL := ""
+			branch := ""
+			lastCommit := ""
+			dirty := ""
+			var ahead, behind int
+
+			if gitInited {
+				hasRemote = dotfile.GitHasRemote(repoPath)
+				remoteURL = dotfile.GitRemoteURL(repoPath)
+				branch = dotfile.GitBranch(repoPath)
+				lastCommit, _ = dotfile.GitLastCommit(repoPath)
+				lastCommit = strings.TrimSpace(lastCommit)
+				porcelain, _ := dotfile.GitStatus(repoPath)
+				if strings.TrimSpace(porcelain) != "" {
+					dirty = "dirty"
+				} else {
+					dirty = "clean"
+				}
+				if hasRemote {
+					ahead, behind = dotfile.GitAheadBehind(repoPath, branch)
+				}
+			}
+
+			result := map[string]any{
+				"git_initialized": gitInited,
+				"git_remote":      hasRemote,
+				"remote_url":      remoteURL,
+				"branch":          branch,
+				"auto_commit":     cfg.Dotfile.Git.AutoCommit,
+				"auto_push":       cfg.Dotfile.Git.AutoPush,
+				"working_tree":    dirty,
+				"last_commit":     lastCommit,
+				"ahead":           ahead,
+				"behind":          behind,
+				"repo_path":       repoPath,
+			}
+			if globals.json {
+				return writeJSON(stdout, stderr, "dotfile.git.status", result)
+			}
+
+			if !gitInited {
+				fmt.Fprintln(out, style.ResultInfo(nc, "Git not initialized."))
+				fmt.Fprintln(out, style.Mutedf(nc, "  Run: ws dotfile git setup"))
+				return 0
+			}
+
+			style.KV(out, "Git", style.Badge("initialized", nc), nc)
+			style.KV(out, "Repo", repoPath, nc)
+			style.KV(out, "Branch", branch, nc)
+			if hasRemote {
+				style.KV(out, "Remote", style.Infof(nc, "%s", remoteURL), nc)
+				style.KV(out, "Ahead/behind", fmt.Sprintf("↑%d ↓%d", ahead, behind), nc)
+			} else {
+				style.KV(out, "Remote", style.ResultWarning(nc, "none"), nc)
+			}
+			style.KV(out, "Working tree", dirty, nc)
+			style.KV(out, "Auto-commit", fmt.Sprintf("%t", cfg.Dotfile.Git.AutoCommit), nc)
+			style.KV(out, "Auto-push", fmt.Sprintf("%t", cfg.Dotfile.Git.AutoPush), nc)
+			if lastCommit != "" {
+				style.KV(out, "Last commit", lastCommit, nc)
+			}
+
+			if !hasRemote {
+				fmt.Fprintln(out)
+				fmt.Fprintln(out, style.ResultWarning(nc, "No git remote. Dotfiles only exist on this machine."))
+				fmt.Fprintln(out, style.Mutedf(nc, "  Add one with: ws dotfile git remote <url>"))
+				fmt.Fprintln(out, style.Mutedf(nc, "  Use a PRIVATE repo — never push dotfiles to a public repo."))
+			}
+			return 0
+
+		case "setup":
+			fs := flag.NewFlagSet("dotfile-git-setup", flag.ContinueOnError)
+			fs.SetOutput(io.Discard)
+			dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
+			registerGlobalFlags(fs, &globals)
+			if err := fs.Parse(subArgs[1:]); err != nil {
+				fmt.Fprintln(stderr, err.Error())
+				return 1
+			}
+			if *dryRun {
+				globals.dryRun = true
+			}
+
+			out := textOut(globals, stdout)
+			nc := globals.noColor
+
+			plan := Plan{Command: "dotfile.git.setup"}
+
+			// Step 1: git init if needed.
+			gitInited := dotfile.GitIsInitialized(repoPath)
+			branch := cfg.Dotfile.Git.Branch
+			if branch == "" {
+				branch = "main"
+			}
+
+			if !gitInited {
+				plan.Actions = append(plan.Actions, Action{
+					ID:          "git-init",
+					Description: fmt.Sprintf("Initialize git in %s (branch: %s)", repoPath, branch),
+					Execute: func() error {
+						if err := dotfile.EnsureGitRepo(repoPath, "", branch); err != nil {
+							return err
+						}
+						cfg.Dotfile.Git.Enabled = true
+						cfg.Dotfile.Git.AutoCommit = true
+						if cfg.Dotfile.Git.Branch == "" {
+							cfg.Dotfile.Git.Branch = branch
+						}
+						return config.Save(configPath, cfg)
+					},
+				})
+			}
+
+			// Step 2: remote if not configured.
+			hasRemote := gitInited && dotfile.GitHasRemote(repoPath)
+			var remoteURL string
+			if !hasRemote {
+				fmt.Fprintln(out)
+				fmt.Fprintln(out, style.Mutedf(nc, "  A private git remote provides off-machine backup for your dotfiles."))
+				fmt.Fprintln(out, style.Mutedf(nc, "  Create a PRIVATE repo first, then paste the URL below."))
+				remoteURL = promptLine(stdin, stdout, globals, "  Remote URL (blank to skip)", "")
+
+				if remoteURL != "" {
+					// Enforce private remote.
+					fmt.Fprintln(out, style.Mutedf(nc, "Checking repository visibility…"))
+					token := resolveGitToken(remoteURL, cfg.Dotfile.Git.PassEntry)
+					vis := repo.CheckRepoVisibility(remoteURL, token)
+					if vis.Checked && !vis.Private {
+						fmt.Fprintln(stderr, style.ResultError(nc, "%s", repo.ErrPublicRepository))
+						fmt.Fprintln(stderr, style.Mutedf(nc, "Make the repository private, then retry."))
+						return 1
+					}
+					if vis.Warning != "" {
+						fmt.Fprintln(out, style.ResultWarning(nc, "%s", vis.Warning))
+					}
+					if vis.Error != "" && !vis.Checked {
+						fmt.Fprintln(out, style.ResultWarning(nc, "visibility check failed: %s", vis.Error))
+					}
+
+					capturedURL := remoteURL
+					plan.Actions = append(plan.Actions, Action{
+						ID:          "add-remote",
+						Description: fmt.Sprintf("Set remote origin to %s", capturedURL),
+						Execute: func() error {
+							if err := dotfile.GitAddRemote(repoPath, capturedURL); err != nil {
+								return err
+							}
+							cfg.Dotfile.Git.RemoteURL = capturedURL
+							return config.Save(configPath, cfg)
+						},
+					})
+				}
+			}
+
+			// Step 3: enable auto-push if remote is being set and not already enabled.
+			if (hasRemote || remoteURL != "") && !cfg.Dotfile.Git.AutoPush {
+				plan.Actions = append(plan.Actions, Action{
+					ID:          "enable-auto-push",
+					Description: "Enable auto-push on dotfile changes",
+					Execute: func() error {
+						cfg.Dotfile.Git.AutoPush = true
+						return config.Save(configPath, cfg)
+					},
+				})
+			}
+
+			if len(plan.Actions) == 0 {
+				fmt.Fprintln(out, style.ResultSuccess(nc, "Dotfile git already set up."))
+				fmt.Fprintln(out)
+				style.KV(out, "Repo", repoPath, nc)
+				style.KV(out, "Remote", style.Infof(nc, "%s", dotfile.GitRemoteURL(repoPath)), nc)
+				style.KV(out, "Branch", dotfile.GitBranch(repoPath), nc)
+				return 0
+			}
 
 			planResult := RunPlan(plan, stdin, stdout, globals)
 
 			if globals.json {
-				return writeJSONDryRun(stdout, stderr, "dotfile.git.enable", globals.dryRun, map[string]any{
-					"enabled":        true,
-					"remote_url":     strings.TrimSpace(*remoteURL),
-					"branch":         strings.TrimSpace(*branch),
-					"auto_push":      *autoPush,
-					"local_repo_dir": localRepoPath,
-					"actions":        planResult.Actions,
+				return writeJSONDryRun(stdout, stderr, "dotfile.git.setup", globals.dryRun, map[string]any{
+					"actions": planResult.Actions,
 				})
 			}
-			if globals.dryRun {
-				fmt.Fprintln(out, style.ResultInfo(nc, "Would enable dotfile git remote."))
-			} else if planResult.ExecutedCount() > 0 {
-				fmt.Fprintln(out, style.ResultSuccess(nc, "Dotfile git remote enabled."))
+
+			if !planResult.HasFailures() {
+				fmt.Fprintln(out)
+				finalHasRemote := dotfile.GitHasRemote(repoPath)
+				if !finalHasRemote {
+					fmt.Fprintln(out, style.ResultWarning(nc, "No git remote. Dotfiles only exist on this machine."))
+					fmt.Fprintln(out, style.Mutedf(nc, "  To add one later: ws dotfile git remote <url>"))
+					fmt.Fprintln(out, style.Mutedf(nc, "  Use a PRIVATE repo — never push dotfiles to a public repo."))
+				} else {
+					fmt.Fprintln(out, style.ResultSuccess(nc, "Dotfile git setup complete."))
+				}
 			}
-			style.KV(out, "Remote URL", style.Infof(nc, "%s", strings.TrimSpace(*remoteURL)), nc)
-			style.KV(out, "Branch", strings.TrimSpace(*branch), nc)
-			style.KV(out, "Auto-push", fmt.Sprintf("%t", *autoPush), nc)
 			return planResult.ExitCode()
+
 		case "disconnect":
 			fs := flag.NewFlagSet("dotfile-git-disconnect", flag.ContinueOnError)
 			fs.SetOutput(io.Discard)
@@ -372,90 +651,50 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 				fmt.Fprintln(stderr, err.Error())
 				return 1
 			}
+			if *dryRun {
+				globals.dryRun = true
+			}
 
 			if !cfg.Dotfile.Git.Enabled {
 				fmt.Fprintln(stderr, "dotfile git versioning is not enabled")
 				return 1
 			}
-			if *dryRun {
-				globals.dryRun = true
-			}
-
-			localRepoPath := filepath.Join(workspacePath, "ws", "dotfiles-git")
 
 			plan := Plan{Command: "dotfile.git.disconnect"}
 			plan.Actions = append(plan.Actions, Action{
 				ID:          "disconnect-git",
-				Description: "Disconnect dotfile git remote",
+				Description: "Disable dotfile git versioning",
 				Execute: func() error {
 					cfg.Dotfile.Git.Enabled = false
 					cfg.Dotfile.Git.AutoPush = false
 					cfg.Dotfile.Git.AutoCommit = false
-					if err := config.Save(configPath, cfg); err != nil {
-						return err
-					}
-					_ = provision.Remove(provision.LedgerPath(workspacePath), provision.TypeDir, localRepoPath)
-					return nil
+					return config.Save(configPath, cfg)
 				},
 			})
 
 			planResult := RunPlan(plan, stdin, stdout, globals)
-
 			if globals.json {
 				return writeJSONDryRun(stdout, stderr, "dotfile.git.disconnect", globals.dryRun, map[string]any{
-					"disabled":       true,
-					"remote_url":     cfg.Dotfile.Git.RemoteURL,
-					"local_repo_dir": localRepoPath,
-					"actions":        planResult.Actions,
+					"actions": planResult.Actions,
 				})
 			}
 			out := textOut(globals, stdout)
 			nc := globals.noColor
-			if globals.dryRun {
-				fmt.Fprintln(out, style.ResultInfo(nc, "Would disconnect dotfile git remote."))
-			} else if planResult.ExecutedCount() > 0 {
-				fmt.Fprintln(out, style.ResultSuccess(nc, "Dotfile git remote disconnected."))
+			if planResult.WasExecuted("disconnect-git") {
+				fmt.Fprintln(out, style.ResultSuccess(nc, "Dotfile git versioning disabled."))
+				fmt.Fprintln(out, style.Mutedf(nc, "  .git directory preserved in %s", repoPath))
+				fmt.Fprintln(out, style.Mutedf(nc, "  Re-enable with: ws dotfile git setup"))
 			}
-			style.KV(out, "Remote URL", style.Infof(nc, "%s", cfg.Dotfile.Git.RemoteURL), nc)
-			style.KV(out, "Local repo", localRepoPath, nc)
 			return planResult.ExitCode()
-		case "status":
-			fs := flag.NewFlagSet("dotfile-git-status", flag.ContinueOnError)
-			fs.SetOutput(io.Discard)
-			registerGlobalFlags(fs, &globals)
-			if err := fs.Parse(subArgs[1:]); err != nil {
-				fmt.Fprintln(stderr, err.Error())
-				return 1
-			}
-			localRepoPath := filepath.Join(workspacePath, "ws", "dotfiles-git")
-			_, statErr := os.Stat(localRepoPath)
-			result := map[string]any{
-				"enabled":           cfg.Dotfile.Git.Enabled,
-				"remote_url":        cfg.Dotfile.Git.RemoteURL,
-				"username":          cfg.Dotfile.Git.AuthUsername,
-				"branch":            cfg.Dotfile.Git.Branch,
-				"auto_commit":       cfg.Dotfile.Git.AutoCommit,
-				"auto_push":         cfg.Dotfile.Git.AutoPush,
-				"local_repo_dir":    localRepoPath,
-				"local_repo_exists": statErr == nil,
-			}
-			if globals.json {
-				return writeJSON(stdout, stderr, "dotfile.git.status", result)
-			}
-			out := textOut(globals, stdout)
-			nc := globals.noColor
-			stateStr := style.Badge("disabled", nc)
-			if cfg.Dotfile.Git.Enabled {
-				stateStr = style.Badge("enabled", nc)
-			}
-			style.KV(out, "Git versioning", stateStr, nc)
-			style.KV(out, "Local repo", localRepoPath, nc)
-			style.KV(out, "Remote URL", style.Infof(nc, "%s", cfg.Dotfile.Git.RemoteURL), nc)
-			style.KV(out, "Branch", cfg.Dotfile.Git.Branch, nc)
-			style.KV(out, "Auto-push", fmt.Sprintf("%t", cfg.Dotfile.Git.AutoPush), nc)
-			return 0
+
+		// Keep old names as aliases for backward compatibility.
+		case "enable", "connect":
+			fmt.Fprintln(stderr, style.ResultWarning(globals.noColor, "Use 'ws dotfile git setup' instead."))
+			return 1
+
 		default:
 			fmt.Fprintf(stderr, "unknown dotfile git subcommand: %s\n", subArgs[0])
+			fmt.Fprintln(stderr, "usage: ws dotfile git <remote|push|log|status|setup|disconnect>")
 			return 1
 		}
 	default:
@@ -503,7 +742,7 @@ func dotfileGitAutoSync(workspacePath, configPath, commitMessage string, globals
 	if err != nil || !cfg.Dotfile.Git.Enabled {
 		return
 	}
-	repoPath := filepath.Join(workspacePath, "ws", "dotfiles-git")
+	repoPath := filepath.Join(workspacePath, "ws", "dotfiles")
 	result := dotfile.GitSync(dotfile.GitSyncOptions{
 		WorkspacePath: workspacePath,
 		RepoPath:      repoPath,

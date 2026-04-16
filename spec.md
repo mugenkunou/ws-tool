@@ -45,6 +45,8 @@ RO commands never modify the workspace, config, manifest, or system state. They:
 | `ws config view`, `ws config --defaults`, `ws config dump` | |
 | `ws ignore scan`, `ws ignore check`, `ws ignore ls`, `ws ignore tree` | |
 | `ws secret scan` | |
+| `ws secret status` | |
+| `ws secret git status`, `ws secret git log`, `ws secret git remote` | |
 | `ws git-credential-helper get`, `ws git-credential-helper store`, `ws git-credential-helper erase` | Git plumbing — called by git, not for direct use (no workspace required) |
 | `ws git-credential-helper status` | Check credential helper config and pass entry coverage |
 | `ws dotfile ls`, `ws dotfile scan` | |
@@ -78,8 +80,10 @@ RW commands modify state. They:
 | `ws dotfile rm` | Single action per file |
 | `ws dotfile reset` | Single action wrapping subsystem reset |
 | `ws dotfile fix` | Per-violation actions |
-| `ws dotfile git enable` | 2 actions: update-config, create-git-dir |
+| `ws dotfile git setup` | Guided walk-through: init → remote → auto-push |
+| `ws dotfile git push` | Commit pending + push to remote |
 | `ws dotfile git disconnect` | Single action |
+| `ws secret git push` | Push pass store to remote |
 | `ws ignore fix` | Per-violation actions |
 | `ws ignore generate` | Per-step: generate/merge, optional scan |
 | `ws ignore edit` | Opens editor (inherently interactive) |
@@ -234,6 +238,7 @@ Located inside the workspace:
   "notify": {
     "enabled": true,
     "poll_interval_min": 10,
+    "push_interval_min": 5,
     "events": ["dotfile", "secret", "bloat", "storage"]
   }
 }
@@ -317,9 +322,8 @@ Directory layout:
   ├── repo.state          # ws-managed repo cache/index (workspace-only repos)
   ├── health.json         # ws-managed daemon scan results (runtime-only, excluded from sync)
   ├── notify.state        # ws-managed daemon lifecycle + dedup state
-  ├── dotfiles-git/       # ws-managed local git repo for optional dotfile backup
   ├── ws-log-index.md     # ws-managed log index/summary
-  ├── dotfiles/            # ws-managed originals captured by ws dotfile add
+  ├── dotfiles/            # ws-managed originals captured by ws dotfile add (also git repo when git versioning enabled)
   │   ├── bashrc
   │   ├── ssh/
   │   ├── kubeconfig
@@ -336,8 +340,7 @@ Ownership and edit policy:
 - `manifest.json`: do not hand-edit; managed by `ws dotfile *`, `ws secret fix`, and `ws repo` reconciliation.
 - `provisions.json`: do not hand-edit; managed by all RW commands that create external side-effects. Read by `ws reset` to reverse provisions.
 - `repo.state`: generated/updated by `ws repo` commands. Safe to delete (recreated by reconcile scan).
-- `dotfiles-git/`: generated/managed by `ws dotfile git` when optional git backup is enabled. Not user-controlled.
-- `dotfiles/`: managed by `ws dotfile add|rm`. Files here are the synced originals — system paths are symlinks pointing back. Safe to edit the contents (they *are* your dotfiles), but don't move or rename files manually; use `ws dotfile rm` instead.
+- `dotfiles/`: managed by `ws dotfile add|rm`. When git versioning is enabled via `ws dotfile git setup`, this directory also serves as the git repo. Files here are the synced originals — system paths are symlinks pointing back. Safe to edit the contents (they *are* your dotfiles), but don't move or rename files manually; use `ws dotfile rm` instead.
 - `megaignore.state`: generated/updated by `ws ignore` commands (canonical parsed/normalized ignore state).
 - `health.json`: generated/updated by `ws notify daemon` after each scan. Runtime-only state — excluded from MEGA sync. Consumed by `ws tui` and `ws notify status`.
 - `notify.state`: generated/updated by `ws notify start|stop|daemon`. Tracks daemon lifecycle, last-scan time, and known violations for notification deduplication.
@@ -934,9 +937,12 @@ ws dotfile ls                        Show all registered dotfiles
 ws dotfile scan                      Verify all dotfile symlinks (read-only)
 ws dotfile fix                       Reconcile/enforce all dotfile symlinks from registry
 ws dotfile reset                     Reset dotfile subsystem provisions
-ws dotfile git connect               Configure optional git versioning remote for dotfiles
-ws dotfile git disconnect            Disconnect optional dotfile git remote/config
+ws dotfile git remote <url>          Set/show git remote URL
+ws dotfile git push                  Commit pending changes + push to remote
+ws dotfile git log                   Show dotfile commit history
 ws dotfile git status                Show dotfile git backup status
+ws dotfile git setup                 Guided walk-through (init → remote → auto-push)
+ws dotfile git disconnect            Disconnect dotfile git remote/config
 
 ws log start                         Start a recorded session (PTY mode by default)
 ws log stop                          Stop the current recording session
@@ -955,6 +961,11 @@ ws ignore generate                   Generate or merge .megaignore from built-in
 ws secret scan                       Scan workspace for exposed secrets
 ws secret fix                        Resolve secret violations interactively
 ws secret setup                      Setup/check Unix Password Store (pass)
+ws secret status                     Show pass health, git state, and actionable warnings
+ws secret git push                   Push pass store commits to remote
+ws secret git log                    Show pass store commit history
+ws secret git remote                 Show pass store git remote URL
+ws secret git status                 Show pass store git status summary
 
 ws git-credential-helper setup       Connect credential helper and create missing pass entries
 ws git-credential-helper status      Check credential helper config and pass entry coverage
@@ -4176,9 +4187,12 @@ The daemon maintains `ws/notify.state` — a record of the last-notified violati
   "notify": {
     "enabled": true,
     "poll_interval_min": 10,
+    "push_interval_min": 5,
     "events": ["dotfile", "secret", "bloat", "storage"]
   }
 }
 ```
+
+- `push_interval_min`: How often the daemon pushes dotfile and pass store git repos to their remotes (default 5). Acts as a safety net for failed at-commit pushes.
 
 ---

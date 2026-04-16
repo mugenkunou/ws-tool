@@ -3,16 +3,17 @@ package dotfile
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
-// GitSyncOptions configures an auto-commit/push operation on the dotfiles-git repo.
+// GitSyncOptions configures an auto-commit/push operation on the dotfiles repo.
 type GitSyncOptions struct {
 	WorkspacePath string
-	RepoPath      string // absolute path to ws/dotfiles-git
+	RepoPath      string // absolute path to ws/dotfiles (the git repo itself)
 	RemoteURL     string
 	Branch        string
 	AutoCommit    bool
@@ -28,9 +29,9 @@ type GitSyncResult struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// GitSync performs auto-commit and optional auto-push on the dotfiles-git repo.
-// It copies the current dotfiles/ content into the git repo, commits changes,
-// and pushes if configured. Errors are non-fatal — the operation returns a result
+// GitSync performs auto-commit and optional auto-push on the dotfiles repo.
+// The git repo lives directly inside ws/dotfiles/ (like pass uses ~/.password-store/).
+// Errors are non-fatal — the operation returns a result
 // rather than failing the parent command.
 func GitSync(opts GitSyncOptions) GitSyncResult {
 	if !opts.AutoCommit {
@@ -38,21 +39,11 @@ func GitSync(opts GitSyncOptions) GitSyncResult {
 	}
 
 	// Ensure the repo is initialized.
-	if err := ensureGitRepo(opts.RepoPath, opts.RemoteURL, opts.Branch); err != nil {
+	if err := EnsureGitRepo(opts.RepoPath, opts.RemoteURL, opts.Branch); err != nil {
 		return GitSyncResult{Error: "git repo setup: " + err.Error()}
 	}
 
-	// Sync dotfiles/ content into the git repo working tree.
-	dotfilesDir := filepath.Join(opts.WorkspacePath, "ws", "dotfiles")
-	if _, err := os.Stat(dotfilesDir); err != nil {
-		return GitSyncResult{Error: "dotfiles dir not found"}
-	}
-	destDir := filepath.Join(opts.RepoPath, "dotfiles")
-	if err := syncDir(dotfilesDir, destDir); err != nil {
-		return GitSyncResult{Error: "sync dotfiles: " + err.Error()}
-	}
-
-	// Also copy manifest.json for portable restore.
+	// Copy manifest.json into ws/dotfiles/ for portable restore.
 	manifestSrc := filepath.Join(opts.WorkspacePath, "ws", "manifest.json")
 	manifestDest := filepath.Join(opts.RepoPath, "manifest.json")
 	if _, err := os.Stat(manifestSrc); err == nil {
@@ -95,8 +86,8 @@ func GitSync(opts GitSyncOptions) GitSyncResult {
 	return result
 }
 
-// ensureGitRepo initializes the git repo if needed, sets remote and branch.
-func ensureGitRepo(repoPath, remoteURL, branch string) error {
+// EnsureGitRepo initializes the git repo if needed, sets remote and branch.
+func EnsureGitRepo(repoPath, remoteURL, branch string) error {
 	if err := os.MkdirAll(repoPath, 0o755); err != nil {
 		return err
 	}
@@ -140,32 +131,6 @@ func ensureGitRepo(repoPath, remoteURL, branch string) error {
 	return nil
 }
 
-// syncDir copies all files from src to dest, creating dest if needed.
-// It uses a simple recursive copy: create dirs, copy files.
-func syncDir(src, dest string) error {
-	if err := os.MkdirAll(dest, 0o755); err != nil {
-		return err
-	}
-	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return nil // skip errors
-		}
-		rel, relErr := filepath.Rel(src, path)
-		if relErr != nil {
-			return nil
-		}
-		target := filepath.Join(dest, rel)
-		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return nil // skip unreadable files
-		}
-		return os.WriteFile(target, data, 0o644)
-	})
-}
-
 func runDotfileGit(repoPath string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", repoPath}, args...)...)
 	var stdout bytes.Buffer
@@ -180,4 +145,91 @@ func runDotfileGit(repoPath string, args ...string) (string, error) {
 		return "", errors.New(errText)
 	}
 	return stdout.String(), nil
+}
+
+// GitIsInitialized returns true if ws/dotfiles/ has a .git directory.
+func GitIsInitialized(repoPath string) bool {
+	info, err := os.Stat(filepath.Join(repoPath, ".git"))
+	return err == nil && info.IsDir()
+}
+
+// GitHasRemote returns true if the repo has a remote named "origin".
+func GitHasRemote(repoPath string) bool {
+	out, err := runDotfileGit(repoPath, "remote", "get-url", "origin")
+	return err == nil && strings.TrimSpace(out) != ""
+}
+
+// GitRemoteURL returns the origin remote URL, or empty string.
+func GitRemoteURL(repoPath string) string {
+	out, err := runDotfileGit(repoPath, "remote", "get-url", "origin")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
+// GitBranch returns the current branch name.
+func GitBranch(repoPath string) string {
+	out, err := runDotfileGit(repoPath, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
+// GitPush pushes the current branch to origin.
+func GitPush(repoPath, branch string) error {
+	if branch == "" {
+		branch = GitBranch(repoPath)
+	}
+	if branch == "" {
+		branch = "main"
+	}
+	_, err := runDotfileGit(repoPath, "push", "-u", "origin", branch)
+	return err
+}
+
+// GitLog returns the last N commit log entries as a string.
+func GitLog(repoPath string, count int) (string, error) {
+	countStr := fmt.Sprintf("-%d", count)
+	return runDotfileGit(repoPath, "log", countStr, "--oneline", "--no-decorate")
+}
+
+// GitStatus returns the porcelain status output.
+func GitStatus(repoPath string) (string, error) {
+	return runDotfileGit(repoPath, "status", "--porcelain")
+}
+
+// GitLastCommit returns the last commit's date and message.
+func GitLastCommit(repoPath string) (string, error) {
+	return runDotfileGit(repoPath, "log", "-1", "--format=%ci  %s")
+}
+
+// GitAheadBehind returns ahead/behind counts relative to origin/branch.
+func GitAheadBehind(repoPath, branch string) (ahead, behind int) {
+	if branch == "" {
+		branch = "main"
+	}
+	ref := "origin/" + branch
+	out, err := runDotfileGit(repoPath, "rev-list", "--left-right", "--count", "HEAD..."+ref)
+	if err != nil {
+		return 0, 0
+	}
+	parts := strings.Fields(strings.TrimSpace(out))
+	if len(parts) == 2 {
+		fmt.Sscanf(parts[0], "%d", &ahead)
+		fmt.Sscanf(parts[1], "%d", &behind)
+	}
+	return
+}
+
+// GitAddRemote adds or updates the origin remote.
+func GitAddRemote(repoPath, url string) error {
+	existing, _ := runDotfileGit(repoPath, "remote", "get-url", "origin")
+	if strings.TrimSpace(existing) != "" {
+		_, err := runDotfileGit(repoPath, "remote", "set-url", "origin", url)
+		return err
+	}
+	_, err := runDotfileGit(repoPath, "remote", "add", "origin", url)
+	return err
 }

@@ -38,7 +38,7 @@ func TestIgnoreExtraCommands(t *testing.T) {
 	}
 }
 
-func TestDotfileGitConnectAndStatus(t *testing.T) {
+func TestDotfileGitSetupAndStatus(t *testing.T) {
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
@@ -49,11 +49,11 @@ func TestDotfileGitConnectAndStatus(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "dotfile", "git", "enable", "--remote-url", "https://example.com/private.git", "--username", "user", "--branch", "main", "--auto-push"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
-		t.Fatalf("dotfile git enable failed: code=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
+	if code := Execute([]string{"--workspace", workspace, "dotfile", "git", "setup"}, strings.NewReader("\n"), &out, &errOut); code != 0 {
+		t.Fatalf("dotfile git setup failed: code=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
-	if !strings.Contains(out.String(), "enabled") {
-		t.Fatalf("unexpected connect output: %s", out.String())
+	if !strings.Contains(out.String(), "No git remote") {
+		t.Fatalf("unexpected setup output: %s", out.String())
 	}
 
 	out.Reset()
@@ -61,7 +61,7 @@ func TestDotfileGitConnectAndStatus(t *testing.T) {
 	if code := Execute([]string{"--workspace", workspace, "dotfile", "git", "status"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
 		t.Fatalf("dotfile git status failed: code=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
-	if !strings.Contains(out.String(), "Git versioning") {
+	if !strings.Contains(out.String(), "Git") {
 		t.Fatalf("unexpected status output: %s", out.String())
 	}
 }

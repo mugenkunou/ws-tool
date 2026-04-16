@@ -288,6 +288,40 @@ func AddGitRemote(url string) error {
 	return nil
 }
 
+// GitPush runs pass git push.
+func GitPush() error {
+	cmd := exec.Command("pass", "git", "push")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("pass git push failed: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// GitLog returns the last N commit log entries from the pass store.
+func GitLog(count int) (string, error) {
+	cmd := exec.Command("pass", "git", "log", fmt.Sprintf("-%d", count), "--oneline", "--no-decorate")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("pass git log failed: %s", strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// GitRemoteURL returns the origin remote URL of the pass store, or empty string.
+func GitRemoteURL() string {
+	h := CheckPass()
+	if !h.GitBacked {
+		return ""
+	}
+	cmd := exec.Command("git", "-C", h.StorePath, "remote", "get-url", "origin")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // InsertEntry stores a value in the pass store under the given entry name.
 // The value is piped via stdin to avoid command-line exposure.
 // Multi-line values (containing newlines) use pass insert -m; single-line
