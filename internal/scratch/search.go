@@ -11,10 +11,10 @@ import (
 
 // SearchResult represents a scratch directory that matched a search query.
 type SearchResult struct {
-	Entry    Entry  `json:"entry"`
-	Score    int    `json:"score"`
-	MatchOn  string `json:"match_on"` // "tag", "name", "content"
-	Snippet  string `json:"snippet,omitempty"`
+	Entry   Entry  `json:"entry"`
+	Score   int    `json:"score"`
+	MatchOn string `json:"match_on"` // "tag", "name", "content"
+	Snippet string `json:"snippet,omitempty"`
 }
 
 // SearchOptions controls scratch search behavior.

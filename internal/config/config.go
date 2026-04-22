@@ -23,6 +23,7 @@ type Config struct {
 	Dotfile      Dotfile `json:"dotfile"`
 	Repo         Repo    `json:"repo"`
 	Notify       Notify  `json:"notify"`
+	Capture      Capture `json:"capture"`
 }
 
 type Scratch struct {
@@ -96,6 +97,11 @@ type Notify struct {
 	Events          []string `json:"events"`
 }
 
+type Capture struct {
+	MaxAttachMB int               `json:"max_attach_mb"`
+	Locations   map[string]string `json:"locations,omitempty"`
+}
+
 func Default() Config {
 	return Config{
 		ConfigSchema: CurrentSchema,
@@ -146,6 +152,9 @@ func Default() Config {
 			PollIntervalMin: 10,
 			PushIntervalMin: 5,
 			Events:          []string{"dotfile", "secret", "bloat", "storage"},
+		},
+		Capture: Capture{
+			MaxAttachMB: 5,
 		},
 	}
 }

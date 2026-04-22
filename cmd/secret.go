@@ -39,12 +39,12 @@ var secretHelp = cmdHelp{
 
 // secretScanResult is the JSON envelope for ws secret scan.
 type secretScanResult struct {
-	Violations      []secret.Violation      `json:"violations"`
-	SkippedDirs     []string                `json:"skipped_dirs,omitempty"`
-	Pass            secret.PassHealth       `json:"pass"`
-	PassAudit       *secret.PassAuditResult `json:"pass_audit,omitempty"`
-	GitCredHelper   bool                    `json:"git_credential_helper"`
-	CredentialHelper string                 `json:"credential_helper_value,omitempty"`
+	Violations       []secret.Violation      `json:"violations"`
+	SkippedDirs      []string                `json:"skipped_dirs,omitempty"`
+	Pass             secret.PassHealth       `json:"pass"`
+	PassAudit        *secret.PassAuditResult `json:"pass_audit,omitempty"`
+	GitCredHelper    bool                    `json:"git_credential_helper"`
+	CredentialHelper string                  `json:"credential_helper_value,omitempty"`
 }
 
 func runSecret(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -272,15 +272,15 @@ func runSecretStatus(args []string, globals globalFlags, stdout, stderr io.Write
 	}
 
 	result := map[string]any{
-		"gpg_available":    health.GPGAvailable,
-		"pass_installed":   health.Installed,
-		"initialized":      health.Initialized,
-		"store_path":       health.StorePath,
-		"entry_count":      health.EntryCount,
-		"git_backed":       health.GitBacked,
-		"git_remote":       health.GitRemote,
-		"remote_url":       remoteURL,
-		"cred_helper":      credHelperConfigured,
+		"gpg_available":     health.GPGAvailable,
+		"pass_installed":    health.Installed,
+		"initialized":       health.Initialized,
+		"store_path":        health.StorePath,
+		"entry_count":       health.EntryCount,
+		"git_backed":        health.GitBacked,
+		"git_remote":        health.GitRemote,
+		"remote_url":        remoteURL,
+		"cred_helper":       credHelperConfigured,
 		"cred_helper_value": credHelperValue,
 	}
 	if globals.json {

@@ -23,6 +23,7 @@ const (
 // topLevelCommands is the authoritative list used by both __complete
 // and the generated shell scripts. Keep alphabetised.
 var topLevelCommands = []string{
+	"capture",
 	"completions",
 	"config",
 	"context",
@@ -56,30 +57,32 @@ type completer struct {
 
 // completers is the data-driven dispatch table for all commands.
 var completers = map[string]completer{
-	"completions": {subcommands: []string{"bash", "zsh", "fish", "install", "uninstall"}},
-	"config":      {subcommands: []string{"view", "defaults"}},
-	"context":     {subcommands: []string{"create", "list", "rm"}, resolve: completeContext},
-	"dotfile":     {subcommands: []string{"add", "rm", "ls", "scan", "fix", "reset", "git"}, resolve: completeDotfile},
+	"capture":               {subcommands: []string{"edit", "ls"}, resolve: completeCapture},
+	"completions":           {subcommands: []string{"bash", "zsh", "fish", "install", "uninstall"}},
+	"config":                {subcommands: []string{"view", "defaults"}},
+	"context":               {subcommands: []string{"create", "list", "rm"}, resolve: completeContext},
+	"dotfile":               {subcommands: []string{"add", "rm", "ls", "scan", "fix", "reset", "git"}, resolve: completeDotfile},
 	"git-credential-helper": {subcommands: []string{"setup", "status", "disconnect"}},
-	"ignore":      {subcommands: []string{"check", "scan", "fix", "ls", "tree", "edit", "generate"}, resolve: completeIgnore},
-	"log":         {subcommands: []string{"start", "stop", "ls", "show", "search", "scan", "prune", "rm"}, resolve: completeLog},
-	"notify":      {subcommands: []string{"start", "stop", "status", "test", "daemon"}},
-	"repo":        {subcommands: []string{"ls", "scan", "fetch", "fix", "pull", "sync", "run"}},
-	"scratch":     {subcommands: []string{"new", "open", "ls", "tag", "search", "prune", "rm"}, resolve: completeScratch},
-	"secret":      {subcommands: []string{"scan", "fix", "setup", "status", "git"}, resolve: completeSecret},
-	"search":      {resolve: completeSearch},
-	"trash":       {subcommands: []string{"enable", "disable", "scan", "fix", "reset", "status"}},
+	"ignore":                {subcommands: []string{"check", "scan", "fix", "ls", "tree", "edit", "generate"}, resolve: completeIgnore},
+	"log":                   {subcommands: []string{"start", "stop", "ls", "show", "search", "scan", "prune", "rm"}, resolve: completeLog},
+	"notify":                {subcommands: []string{"start", "stop", "status", "test", "daemon"}},
+	"repo":                  {subcommands: []string{"ls", "scan", "fetch", "fix", "pull", "sync", "run"}},
+	"scratch":               {subcommands: []string{"new", "open", "ls", "tag", "search", "prune", "rm"}, resolve: completeScratch},
+	"secret":                {subcommands: []string{"scan", "fix", "setup", "status", "git"}, resolve: completeSecret},
+	"search":                {resolve: completeSearch},
+	"trash":                 {subcommands: []string{"enable", "disable", "scan", "fix", "reset", "status"}},
 }
 
 // completionCtx holds best-effort workspace state loaded once per
 // __complete invocation. Fields may be zero-valued if loading fails.
 type completionCtx struct {
-	workspace  string
-	scratchDir string
-	logDir     string
-	dotfiles   []string // dotfile names from manifest
-	logTags    []string // session tag directory names
-	scratchIDs []string // scratch directory names
+	workspace        string
+	scratchDir       string
+	logDir           string
+	dotfiles         []string // dotfile names from manifest
+	logTags          []string // session tag directory names
+	scratchIDs       []string // scratch directory names
+	captureLocations []string // configured capture location names
 }
 
 // globalFlagCompletions is the static list offered when the current word
@@ -263,6 +266,23 @@ func completeSearch(sub string, args []string, toComplete string, ctx completion
 	return nil, compDirectiveNoFileComp
 }
 
+func completeCapture(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
+	switch sub {
+	case "edit":
+		// First positional is a file path — let the shell do native completion.
+		return nil, compDirectiveDefault
+	case "ls":
+		return nil, compDirectiveNoFileComp
+	default:
+		// Pin mode — complete location names for -l flag value position.
+		if len(args) > 0 && (args[len(args)-1] == "-l" || args[len(args)-1] == "--location") {
+			return filterPrefix(ctx.captureLocations, toComplete), compDirectiveNoFileComp
+		}
+		// Positional: file path argument.
+		return nil, compDirectiveDefault
+	}
+}
+
 func completeContext(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
 	switch sub {
 	case "create":
@@ -286,6 +306,8 @@ func commandFlags(command string, rest []string) []string {
 	dryRun := "--dry-run"
 
 	switch command {
+	case "capture":
+		return []string{"-l", "--location", "--dry-run"}
 	case "version":
 		return []string{"--short"}
 	case "search":
@@ -420,6 +442,9 @@ func loadCompletionCtx(globals globalFlags) completionCtx {
 		if dir, err := config.ResolvePath(resolved, cfg.Scratch.RootDir); err == nil {
 			ctx.scratchDir = dir
 		}
+		for name := range cfg.Capture.Locations {
+			ctx.captureLocations = append(ctx.captureLocations, name)
+		}
 	}
 	if ctx.scratchDir == "" {
 		if home, err := config.ExpandUserPath("~/Scratch"); err == nil {
@@ -497,7 +522,8 @@ func isStringFlag(flag string) bool {
 		"sort", "older-than", "name", "editor", "terminal",
 		"root-dir", "secret-mode", "mode",
 		"remote-url", "username", "pass-entry", "branch",
-		"shell", "depth", "rule":
+		"shell", "depth", "rule",
+		"location", "l":
 		return true
 	}
 	return false

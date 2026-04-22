@@ -19,9 +19,9 @@ type Engine struct {
 }
 
 type EvalResult struct {
-	Included    bool   `json:"included"`
-	Rule        string `json:"rule"`
-	SafeHarbor  bool   `json:"safe_harbor,omitempty"`
+	Included   bool   `json:"included"`
+	Rule       string `json:"rule"`
+	SafeHarbor bool   `json:"safe_harbor,omitempty"`
 }
 
 func LoadEngine(path string) (*Engine, error) {

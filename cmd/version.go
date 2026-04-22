@@ -141,8 +141,8 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		if globals.json {
 			return writeJSON(stdout, stderr, "init", map[string]any{
 				"already_initialized": true,
-				"workspace_path":     resolvedWorkspace,
-				"suggestion":         "ws reset && ws init",
+				"workspace_path":      resolvedWorkspace,
+				"suggestion":          "ws reset && ws init",
 			})
 		}
 		out := textOut(globals, stdout)

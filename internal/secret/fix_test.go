@@ -111,10 +111,10 @@ func TestPruneAllowlist(t *testing.T) {
 		{Path: "config.yml", Line: 5},
 	}
 	allowlist := []string{
-		"app.env:2",      // still valid
-		"config.yml:5",   // still valid
-		"old.txt:10",     // stale — file/line no longer matches
-		"deleted.env:1",  // stale
+		"app.env:2",     // still valid
+		"config.yml:5",  // still valid
+		"old.txt:10",    // stale — file/line no longer matches
+		"deleted.env:1", // stale
 	}
 
 	kept, pruned := PruneAllowlist(allowlist, violations)

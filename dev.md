@@ -290,6 +290,15 @@ Every command is either **read-only (RO)** or **read-write (RW)**. If it writes 
 - **RO commands** receive `(args, globals, stdout, stderr)` — no stdin, no prompts.
 - **RW commands** receive `(args, globals, stdin, stdout, stderr)` — stdin is threaded for interactive prompts.
 
+### RW exemptions
+
+Some RW commands are exempt from the Plan → Confirm → Execute pattern because their writes are non-destructive and time-sensitive. These commands append-only and never modify existing data:
+
+- `ws capture` — appends to `captures.md`. Confirmation would contradict the sub-5-second capture goal. `--dry-run` is still supported.
+- `ws log stop` — stops a recording session. No meaningful "undo" to confirm.
+
+New exemptions require strong justification in the spec. Default is always to use the Action Plan pattern.
+
 ### Action Plan pattern (required for all RW commands)
 
 All RW commands **must** use the Action Plan pattern defined in `cmd/plan.go`. Do not use `confirm()` for new commands.

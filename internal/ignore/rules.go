@@ -125,10 +125,10 @@ func AddUserSafeHarbor(path string, pattern, note string) (bool, error) {
 
 // BuildEngine creates an Engine from built-in defaults + user rules.
 // The generated rule set follows megaignore evaluation order:
-//   1. Built-in exclude rules (minus suppress_defaults)
-//   2. User exclude rules
-//   3. Built-in safe harbors (minus suppress_harbors)
-//   4. User safe harbors
+//  1. Built-in exclude rules (minus suppress_defaults)
+//  2. User exclude rules
+//  3. Built-in safe harbors (minus suppress_harbors)
+//  4. User safe harbors
 //
 // Last-match-wins semantics apply.
 func BuildEngine(userRules UserRules) *Engine {
@@ -289,13 +289,13 @@ func WriteMegaignore(megaignorePath string, userRules UserRules) error {
 
 // DefaultRuleStats returns counts of default and user rules for display.
 type RuleStats struct {
-	DefaultExclude   int
-	DefaultHarbors   int
-	UserExclude      int
-	UserHarbors      int
+	DefaultExclude     int
+	DefaultHarbors     int
+	UserExclude        int
+	UserHarbors        int
 	SuppressedDefaults int
 	SuppressedHarbors  int
-	Total            int
+	Total              int
 }
 
 func GetRuleStats(userRules UserRules) RuleStats {

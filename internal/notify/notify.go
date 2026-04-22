@@ -11,15 +11,15 @@ import (
 // State is the on-disk representation of ws/notify.state.
 // It tracks daemon lifecycle and deduplication of notifications.
 type State struct {
-	Active          bool             `json:"active"`
-	StartedAt       time.Time        `json:"started_at,omitempty"`
-	UpdatedAt       time.Time        `json:"updated_at"`
-	Mode            string           `json:"mode"`
-	PID             int              `json:"pid,omitempty"`
-	LastScan        time.Time        `json:"last_scan,omitempty"`
-	LastAlert       string           `json:"last_alert,omitempty"`
-	LastAlertTime   time.Time        `json:"last_alert_time,omitempty"`
-	KnownViolations []ViolationKey   `json:"known_violations,omitempty"`
+	Active          bool           `json:"active"`
+	StartedAt       time.Time      `json:"started_at,omitempty"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+	Mode            string         `json:"mode"`
+	PID             int            `json:"pid,omitempty"`
+	LastScan        time.Time      `json:"last_scan,omitempty"`
+	LastAlert       string         `json:"last_alert,omitempty"`
+	LastAlertTime   time.Time      `json:"last_alert_time,omitempty"`
+	KnownViolations []ViolationKey `json:"known_violations,omitempty"`
 }
 
 // ViolationKey uniquely identifies a violation for deduplication.

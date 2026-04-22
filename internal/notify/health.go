@@ -11,11 +11,11 @@ import (
 // Consumed by ws tui and shell prompt integrations for near-real-time
 // workspace health without running scans themselves.
 type HealthSummary struct {
-	Timestamp       time.Time          `json:"timestamp"`
-	Trigger         string             `json:"trigger"` // "periodic", "inotify", "mega-sync", "manual"
-	Summary         HealthSubsystems   `json:"summary"`
-	ViolationsCount int                `json:"violations_count"`
-	Violations      []HealthViolation  `json:"violations,omitempty"`
+	Timestamp       time.Time         `json:"timestamp"`
+	Trigger         string            `json:"trigger"` // "periodic", "inotify", "mega-sync", "manual"
+	Summary         HealthSubsystems  `json:"summary"`
+	ViolationsCount int               `json:"violations_count"`
+	Violations      []HealthViolation `json:"violations,omitempty"`
 }
 
 // HealthSubsystems mirrors the subsystem breakdown from ws scan.

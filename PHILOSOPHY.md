@@ -19,8 +19,7 @@ Inspired by the [Twelve-Factor App](https://12factor.net) methodology.
 | VII | [🧹 Sync Scripts, Quarantine State](#-vii-sync-scripts-quarantine-state) | Scripts are synced. Log dumps are not. |
 | VIII | [📏 Sync With Intent](#-viii-sync-with-intent) | Some files don't deserve sync. |
 | IX | [🗑️ Always Soft Delete](#️-ix-always-soft-delete) | Delete means recoverable move to Trash. |
-| X | [🎯 Per-Action Consent](#-x-per-action-consent) | Confirm each mutation, not the batch. |
-
+| X | [🎯 Per-Action Consent](#-x-per-action-consent) | Confirm each mutation, not the batch. || XI | [📌 Pin the Clipboard](#-xi-pin-the-clipboard) | The clipboard forgets. Your workspace shouldn't. |
 ---
 
 ## 🏠 I. Single Source of Truth
@@ -321,3 +320,26 @@ Why per-action, not per-batch:
 - **Muscle memory.** The `y/n/a/q` vocabulary is identical to `git add -p`, reducing cognitive load.
 
 Granularity rule: **one Action per independently meaningful mutation**. For `ws init`, that's one action per file created. For `ws repo pull`, one per repository. For `ws log prune`, one per session removed. The test is: "would a user ever want to say yes to this but no to the next?" If so, they're separate actions.
+
+---
+
+## 📌 XI. Pin the Clipboard
+
+*The clipboard forgets. Your workspace shouldn't.*
+
+Valuable information flows past you constantly: a Slack message with a deactivation procedure, a wiki page with an architecture diagram, a colleague's verbal tip about a config flag, an error message that took hours to reproduce. You recognize its value in the moment. Then you copy something else, and it's gone.
+
+The clipboard is a single-slot buffer. It is the universal choke point — every digital knowledge transfer passes through it. The problem isn't that you fail to *recognize* valuable information. The problem is that you fail to *persist* it before the next copy overwrites it.
+
+The capture model:
+
+- **The content already exists.** The clipboard has it. A URL points to it. A file contains it. The tool's job is to grab it from the source, not ask the user to retype it.
+- **One file is the knowledge inbox.** `ws/captures.md` — append-only, searchable, synced. Open it in any editor, Ctrl+F finds anything, `grep` finds anything.
+- **The capture gesture must be instantaneous.** A hotkey or a two-word command. If the user needs to leave their current context (switch windows, open a terminal, think about where to put it), the system has failed.
+- **Auto-extract what's in the content. Ask only for what's in the user's head.** The topic is prompted once — a short label for the section heading. Timestamps, source type, and window title are captured automatically. If the user skips the topic prompt, it's auto-derived from content. Even that's optional.
+- **Images are first-class content, not a problem to solve.** Screenshots, diagrams, UI walkthroughs — stored as images with markdown embeds. The rich clipboard (`text/html`) preserves inline images from web content. No OCR needed.
+- **Search finds text. Context finds images.** Text captures are greppable. Image captures are findable by topic, timestamp, window title, and surrounding text. Together they cover retrieval.
+
+This is not a note-taking app. It's a net for knowledge that would otherwise be lost to clipboard amnesia.
+
+⚠️ **Eyes open:** Capture is write-optimized. The file grows forever and is never automatically pruned. At ~5 captures/week, a 5-year career produces ~4000 lines — a small file. If the model breaks, it breaks at scale, and named locations absorb the overflow.

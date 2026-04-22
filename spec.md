@@ -55,6 +55,7 @@ RO commands never modify the workspace, config, manifest, or system state. They:
 | `ws log ls` | |
 | `ws scratch ls` | |
 | `ws scratch search` | Search scratch directories by tag/name/content |
+| `ws capture ls` | List configured capture locations |
 | `ws trash status` | |
 | `ws notify status`, `ws notify test` | |
 | `ws tui` | Interactive TUI (reads input but doesn't modify data) |
@@ -110,6 +111,8 @@ RW commands modify state. They:
 | `ws git-credential-helper disconnect` | Per-action: unset credential.helper from git config |
 | `ws completions install` | Single action |
 | `ws completions uninstall` | Single action |
+| `ws capture` | Single action (append to captures file, RW exemption: no plan/confirm — append-only, non-destructive) |
+| `ws capture edit` | Opens editor (inherently interactive) |
 
 #### Implementation Contract
 
@@ -240,6 +243,11 @@ Located inside the workspace:
     "poll_interval_min": 10,
     "push_interval_min": 5,
     "events": ["dotfile", "secret", "bloat", "storage"]
+  },
+  "capture": {
+    "max_attach_mb": 5,
+    "locations": {
+    }
   }
 }
 ```
@@ -323,6 +331,9 @@ Directory layout:
   ├── health.json         # ws-managed daemon scan results (runtime-only, excluded from sync)
   ├── notify.state        # ws-managed daemon lifecycle + dedup state
   ├── ws-log-index.md     # ws-managed log index/summary
+  ├── captures/            # ws-managed capture directory
+  │   ├── captures.md      # knowledge capture file (append-only)
+  │   └── assets/          # images, attachments saved by ws capture
   ├── dotfiles/            # ws-managed originals captured by ws dotfile add (also git repo when git versioning enabled)
   │   ├── bashrc
   │   ├── ssh/
@@ -346,6 +357,8 @@ Ownership and edit policy:
 - `notify.state`: generated/updated by `ws notify start|stop|daemon`. Tracks daemon lifecycle, last-scan time, and known violations for notification deduplication.
 - `ws-log-index.md`: generated/updated by `ws log` commands.
 - `ws-log/`: created/rotated/pruned by `ws log start|ls|prune`.
+- `captures/captures.md`: append-only knowledge capture file managed by `ws capture`. Safe to hand-edit (add entries, delete entries, reformat). The file is the user's knowledge base.
+- `captures/assets/`: images and attachments saved by `ws capture`. Referenced by relative markdown links from `captures/captures.md`. Safe to delete individual assets if the corresponding entry is removed.
 
 Design intent:
 
@@ -702,6 +715,98 @@ The dot prefix (`.ws-context/`) makes the directory hidden on Linux. Inside `<wo
 
 Idempotency: `ws context create` can be run multiple times safely. The directory is created only if absent. The `.git/info/exclude` entry is appended only if not already present. If the project is not a git repo, the exclude step is silently skipped — but a later invocation after `git init` will retroactively add the exclude rule.
 
+### Knowledge Capture: Clipboard-First, Append-Only
+
+`ws capture` is a frictionless knowledge capture tool. The problem it solves: valuable information flows past you constantly — Slack messages, wiki pages, terminal output, screenshots — and the clipboard is a single-slot buffer that forgets the moment you copy something else. `ws capture` pins clipboard content to a persistent, searchable markdown file before it's lost.
+
+**Core design principle:** The clipboard already has the content. The tool's job is to persist it, not to ask the user to retype it.
+
+**Capture file model:** One file — `<workspace>/ws/captures/captures.md`. Append-only. Every capture lands here as a markdown entry with a topic, timestamp, source type, and the content. The file is human-readable, editable, greppable, and renders in any markdown viewer. Images are embedded via standard markdown `![](path)` syntax. Assets (images, attachments) are stored in `<workspace>/ws/captures/assets/`.
+
+**Locations:** Additional capture destinations can be configured in `config.json` under `capture.locations`. Each location is a `name → directory path` mapping. The tool creates a `captures/` subdirectory within each location directory containing `captures.md` and `assets/`. The default location (`<workspace>/ws/`) is implicit and never appears in config.
+
+**Source detection:** `ws capture` has exactly two input sources — clipboard and stdin pipe. No file arguments, no URL fetching. The clipboard is the primary interface; stdin pipe is the secondary for programmatic use.
+
+| Invocation | Source | Behavior |
+|---|---|---|
+| `ws capture` | Clipboard | Reads richest clipboard format (`text/html` > `text/plain` > `image/png`) |
+| `ws capture work` | Clipboard | Same, but targets the `work` location |
+| `ws capture -a` | Clipboard | Amends (appends to) the last entry |
+| `cmd \| ws capture` | stdin pipe | Reads piped input, appends as text entry |
+| `ws capture -e` | — | Opens captures file in editor |
+| `ws capture ls` | — | Lists configured locations |
+
+**Rich clipboard handling:** When the user copies content from a browser, Slack desktop, Confluence, or any Electron app, the clipboard contains multiple formats simultaneously (`text/plain`, `text/html`, `image/png`). `ws capture` reads the richest format available:
+
+1. `text/html` — preferred. Contains `<img>` tags with URLs pointing to inline images. `ws` parses the HTML, downloads referenced images to `assets/`, converts HTML to markdown with local `![](path)` references. Links, formatting, and structure are preserved.
+2. `text/plain` — fallback. Raw text appended as-is.
+3. `image/png` — screenshot. Saved to `assets/`, embedded in entry.
+
+Clipboard access uses `xclip` (X11) or `wl-paste` (Wayland) — same class of dependency as `script(1)` for `ws log`. Detection: try `wl-paste` first, fall back to `xclip`. If neither is available, print actionable error.
+
+**Active window title:** On capture, `ws` reads the active window title via `xdotool getactivewindow getwindowname` (X11) or equivalent. This provides free metadata (`"#general - Slack"`, `"Architecture - Confluence - Firefox"`, `"user@host:~"`) without touching the content. Stored in the entry metadata line. Falls back gracefully if unavailable.
+
+**Topic:** The entry topic is the `## ` section heading. When the user runs `ws capture` interactively (TTY, not `--quiet`/`--json`), the tool prompts `Topic:` before pinning. The user types a short label — or presses Enter to auto-derive from content. For auto-derived: HTML uses extracted structure, text uses the first meaningful line, images use `[pinned image]`. The user can always edit the topic later — it's a text file.
+
+**Entry format:**
+
+```markdown
+## User-provided or auto-derived topic
+_2026-04-22 14:30 · clipboard-html_
+
+Content body — markdown, code blocks, embedded images.
+
+---
+```
+
+- `## Topic` — enables editor outline/TOC navigation. `grep "^## " ws/captures/captures.md` lists all entries.
+- `_timestamp · source-type_` — italic metadata line. Human-readable. Source types: `clipboard-html`, `clipboard-text`, `clipboard-image`, `stdin-pipe`.
+- Free-form body — markdown. No schema. No required fields.
+- `---` — horizontal rule separator between entries.
+
+**Location as positional argument:** The location is the first positional argument: `ws capture work`. Tab-completion suggests configured location names. If omitted, defaults to the default location. No `-l` flag, no location prompt — the positional arg or its absence is the entire UX.
+
+**Amend (`--amend` / `-a`):** Appends content to the most recent entry instead of creating a new one. No topic prompt — reuses the existing entry's topic. Typical workflow: copy webpage text → `ws capture` → take screenshot → `ws capture -a`. The screenshot lands in the same entry as the text. Works with clipboard (any format) and stdin pipe. Fails with a clear error if no existing entry is found in the captures file.
+
+**Edit (`--edit` / `-e`):** Opens the captures file in an editor. Editor resolution: `scratch.editor_cmd` → `$EDITOR` → `$VISUAL` → `vi`. Combines with positional location: `ws capture work -e` opens the work location's file.
+
+**RW exemption:** `ws capture` does not use the Plan → Confirm → Execute pattern. Rationale: an append to a personal knowledge file is non-destructive (append-only, no existing data modified), low-stakes (worst case: a bad entry, trivially deleted by opening the file), and time-sensitive (the knowledge is in short-term memory right now). Adding a confirmation prompt contradicts the subsystem's reason to exist. `--dry-run` is still supported — shows the entry that would be appended without writing. Precedent: `ws log stop` is also an exemption.
+
+**Concurrent captures:** Append uses advisory file locking (`flock`). Two rapid captures won't corrupt the file.
+
+**Captures file externally modified:** `ws` does not enforce format. If you hand-edit the file (add entries, delete entries, reformat), subsequent `ws capture` appends work fine. Malformed sections are skipped by `ws capture ls` with a warning in `--verbose` mode.
+
+**Dependencies:**
+
+| Tool | Package | Purpose | Required |
+|---|---|---|---|
+| `xclip` | xclip | Clipboard access (X11) | One of xclip or wl-paste |
+| `wl-paste` | wl-clipboard | Clipboard access (Wayland) | One of xclip or wl-paste |
+| `xdotool` | xdotool | Active window title (X11) | Optional (graceful fallback) |
+
+**Config:**
+
+```json
+{
+  "capture": {
+    "max_attach_mb": 5,
+    "locations": {
+      "personal": "~/Personal"
+    }
+  }
+}
+```
+
+- `capture.max_attach_mb` — maximum attachment size in MB. Files exceeding this are rejected with a message. Default: 5.
+- `capture.locations` — flat `name → directory path` map. Each location directory gets its own `captures/` subdirectory containing `captures.md` and `assets/`, created on first capture. Empty by default. The `default` name is reserved and cannot be overridden — it always means `<workspace>/ws/`.
+
+**Integration with existing `ws` systems:**
+
+- `ws tui` — "Recent Captures" panel showing last 5 entries.
+- `ws restore` — No action needed. `ws/captures/` is synced. Restore a machine → captures are already there.
+- `ws ignore` — `ws/captures/assets/` is inside the `ws/` safe harbor, so attachments sync regardless of extension rules.
+- `ws completions` — `ws capture <TAB>` completes to configured location names.
+
 ---
 
 ## Prerequisites & External Dependencies
@@ -742,6 +847,7 @@ Present on most Linux desktop installations. `ws` checks availability at the mom
 | `vi` / `vim` | vim-minimal | Fallback editor when `$EDITOR` and `$VISUAL` are unset. The tool resolution order is `$EDITOR` → `$VISUAL` → `vi`. |
 | `tput` | ncurses-bin | Terminal capability queries: column width (`tput cols`), color support (`tput colors`). `ws` falls back to 80 columns / no color if unavailable. |
 | `pgrep` | procps | Terminal emulator detection by inspecting the process tree when `$TERM_PROGRAM` is unset. `pgrep -a` identifies running terminal emulators. |
+| `xclip` or `wl-paste` | xclip / wl-clipboard | **Clipboard access for `ws capture`.** `xclip -selection clipboard -t TARGETS -o` queries available clipboard formats; `-t text/html` reads rich HTML with embedded image references. `wl-paste` is the Wayland equivalent. `ws` tries `wl-paste` first, falls back to `xclip`. Required only for `ws capture` — all other commands work without it. |
 
 ### Tier 3 — Optional (enhanced features)
 
@@ -754,6 +860,7 @@ Not required for any core functionality. `ws` detects availability and unlocks a
 | `dconf` | dconf-cli | Read/write GNOME Terminal and Tilix profiles (both use `dconf`, not config files). Required only for these two terminal emulators. Kitty, Alacritty, and Konsole use file-based configs and don't need this. |
 | `pass` | pass | Optional credential source for dotfile Git backup. `ws` reads credentials from password-store entries at runtime instead of config. |
 | `jq` | jq | Not called by `ws`. Recommended for processing `--json` output in user scripts. Referenced in documentation examples (`ws ignore scan --json \| jq '.data.violations[]'`). |
+| `xdotool` | xdotool | Active window title capture for `ws capture`. Provides free metadata (e.g., `"#general - Slack"`, `"Architecture - Confluence - Firefox"`) without touching content. Falls back gracefully — captures work without it, just without window title metadata. |
 
 ### Delegation Map
 
@@ -782,6 +889,9 @@ Summary of what `ws` builds natively vs what it offloads, and why.
 | Editor integration | **Offload** → `$EDITOR` / `$VISUAL` / `vi` | `ws ignore edit` | Standard editor resolution chain. |
 | Directory size calculation | **Offload** → `du -sh` | `ws scratch ls` | Faster than manual accumulation, handles filesystem edge cases. |
 | MEGA sync verification | **Offload** → `mega-ls` (optional) | `ws ignore check` | Ground-truth check that local rule parsing can't guarantee. |
+| Clipboard access | **Offload** → `xclip` / `wl-paste` | `ws capture` | Reads clipboard in multiple formats (text/html, text/plain, image/png). Rich HTML preserves links and inline images. |
+| Window title | **Offload** → `xdotool` (optional) | `ws capture` | Free metadata about where the content came from. Graceful fallback. |
+| HTML to Markdown | **Native** | `ws capture` | Converts clipboard `text/html` to markdown with local image references. Simple tag-based conversion — no full DOM parser needed. |
 
 ### Build Dependencies
 
@@ -981,6 +1091,10 @@ ws scratch tag [name]                Add tags to a scratch directory
 ws scratch search [query]            Search scratch directories by tag, name, or content
 ws scratch prune                     Remove old scratch directories
 ws scratch rm [name]                 Delete a scratch directory by name
+
+ws capture                           Pin clipboard content to captures file
+ws capture edit                      Open captures file in editor
+ws capture ls                        List configured capture locations
 ```
 
 ---
@@ -4092,6 +4206,177 @@ ws completions fish
 ```
 
 The completion script covers all commands, subcommands, flags, and flag values. It is regenerated from the command tree at build time — no manual maintenance.
+
+---
+
+### `ws capture`
+
+Pin clipboard content or piped input to a persistent knowledge capture file. Optimized for sub-5-second capture — the user should never leave their current context.
+
+```text
+ws capture [location] [flags]
+ws capture ls [flags]
+
+Flags:
+  -a, --amend              Append to the last entry instead of creating a new one
+  -e, --edit               Open captures file in editor
+  --dry-run                Show entry that would be appended without writing
+  --quiet                  No prompts, no interactive output
+  --json                   Machine-readable output
+  --no-color               Disable colors and Unicode
+```
+
+**Source detection:**
+
+| Invocation | Source | Behavior |
+|---|---|---|
+| `ws capture` | Clipboard | Reads richest clipboard format available |
+| `ws capture work` | Clipboard | Same, targets the `work` location |
+| `ws capture -a` | Clipboard | Amends last entry in default location |
+| `ws capture work -a` | Clipboard | Amends last entry in work location |
+| `cmd \| ws capture` | stdin pipe | Read stdin, append as text entry |
+| `cmd \| ws capture work` | stdin pipe | Read stdin, append to work location |
+
+**Clipboard format priority:** `text/html` > `text/plain` > `image/png`. Rich HTML is preferred because it preserves links, formatting, and inline images.
+
+**Interactive prompts (when stdin is TTY):**
+
+| Condition | Prompts shown |
+|---|---|
+| Normal capture | Topic only |
+| `--amend` | None |
+| `--quiet` or `--json` | None |
+| stdin is pipe | None |
+
+**Output:**
+
+```text
+ws capture
+
+✔ Pinned  (clipboard-html, 14 lines, 1 image)
+```
+
+```text
+ws capture
+
+✔ Pinned  (clipboard-text, 3 lines)
+```
+
+```text
+ws capture
+
+✔ Pinned  (clipboard-image, saved to assets/2026-04-22-1430-1.png)
+```
+
+```text
+echo "test" | ws capture
+
+✔ Pinned  (stdin-pipe, 1 line)
+```
+
+**Output — amend:**
+
+```text
+ws capture -a
+
+✔ Amended  (amend → captures.md)
+```
+
+**Output — with location:**
+
+```text
+ws capture work
+
+✔ Pinned  (clipboard-html, 14 lines, 1 image)
+```
+
+**Output — dry-run:**
+
+```text
+ws capture --dry-run
+
+--- DRY RUN ---
+Would append to: ~/Workspace/ws/captures/captures.md
+
+## ID card — deactivate if misplaced or lost
+_2026-04-22 14:30 · clipboard-html_
+
+Hi Vicknesh,
+Please ensure you inform us and deactivate your ID card...
+```
+
+**Output — JSON:**
+
+```json
+{
+  "ws_version": "0.1.0",
+  "schema": 1,
+  "command": "capture",
+  "data": {
+    "source": "clipboard-html",
+    "location": "default",
+    "file": "/home/user/Workspace/ws/captures/captures.md",
+    "topic": "ID card — deactivate if misplaced or lost",
+    "lines": 14,
+    "images": 1,
+    "window_title": "#general - Slack"
+  }
+}
+```
+
+**Exit codes:**
+
+| Code | Meaning |
+|---|---|
+| `0` | Entry appended successfully |
+| `1` | Error — clipboard empty, tool missing, write failed |
+
+---
+
+#### `ws capture ls`
+
+List all configured capture locations with their paths and existence status. Read-only, pipe-safe.
+
+```text
+ws capture ls [flags]
+
+Flags:
+  --json                   Machine-readable output
+  --no-color               Disable colors and Unicode
+```
+
+**Output:**
+
+```text
+ws capture ls
+
+  default     ~/Workspace/ws/captures/captures.md
+  personal    ~/Personal/captures/captures.md
+```
+
+**Output — single location (no custom locations configured):**
+
+```text
+ws capture ls
+
+  default     ~/Workspace/ws/captures/captures.md
+```
+
+**Output — JSON:**
+
+```json
+{
+  "ws_version": "0.1.0",
+  "schema": 1,
+  "command": "capture.ls",
+  "data": {
+    "locations": [
+      {"name": "default", "path": "/home/user/Workspace/ws/captures/captures.md", "exists": true},
+      {"name": "personal", "path": "/home/user/Personal/captures/captures.md", "exists": false}
+    ]
+  }
+}
+```
 
 ---
 

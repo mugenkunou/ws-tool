@@ -16,11 +16,11 @@ import (
 )
 
 type restoreResult struct {
-	WorkspacePath        string `json:"workspace_path"`
-	TrashConfigured      bool   `json:"trash_configured"`
-	DotfileFixed         int    `json:"dotfile_fixed"`
-	DotfileFailed        int    `json:"dotfile_failed"`
-	IgnoreGenerated      bool   `json:"ignore_generated"`
+	WorkspacePath   string `json:"workspace_path"`
+	TrashConfigured bool   `json:"trash_configured"`
+	DotfileFixed    int    `json:"dotfile_fixed"`
+	DotfileFailed   int    `json:"dotfile_failed"`
+	IgnoreGenerated bool   `json:"ignore_generated"`
 }
 
 var restoreHelp = cmdHelp{
@@ -180,8 +180,6 @@ func runRestore(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			return nil
 		},
 	})
-
-
 
 	planResult := RunPlan(plan, stdin, stdout, globals)
 

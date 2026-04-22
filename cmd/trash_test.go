@@ -43,4 +43,3 @@ func TestTrashStatusAndSetupFromCLI(t *testing.T) {
 		t.Fatalf("unexpected trash status output: %s", out.String())
 	}
 }
-

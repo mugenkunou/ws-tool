@@ -17,7 +17,7 @@ type ResetOptions struct {
 // ResetEntry describes the outcome of resetting a single trash provision.
 type ResetEntry struct {
 	Path    string `json:"path"`
-	Action  string `json:"action"`  // "removed", "would-remove", "skipped", "failed"
+	Action  string `json:"action"` // "removed", "would-remove", "skipped", "failed"
 	Message string `json:"message"`
 }
 

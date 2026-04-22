@@ -134,7 +134,7 @@ func (g *GhostMultiInput) redrawMulti(out *os.File, collected []string, buf []ru
 	prefix := g.Prompt + ": "
 	collectedStr := ""
 	if len(collected) > 0 {
-		collectedStr = g.dim("["+strings.Join(collected, ", ")+"] ")
+		collectedStr = g.dim("[" + strings.Join(collected, ", ") + "] ")
 	}
 	fmt.Fprint(out, prefix+collectedStr+string(buf))
 

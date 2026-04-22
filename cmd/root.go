@@ -92,6 +92,8 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runContext(commandArgs, globals, stdin, stdout, stderr)
 	case "trash":
 		return runTrash(commandArgs, globals, stdin, stdout, stderr)
+	case "capture":
+		return runCapture(commandArgs, globals, stdin, stdout, stderr)
 	case "credential", "git-credential-helper":
 		return runGitCredentialHelper(commandArgs, globals, stdin, stdout, stderr)
 	case "completions":
@@ -456,6 +458,7 @@ func printHelpStyled(stdout io.Writer, noColor bool) {
 		{"tui", "Interactive dashboard summary"},
 		{"log", "Session recording commands"},
 		{"scratch", "Scratch directory commands"},
+		{"capture", "Frictionless knowledge capture"},
 		{"completions", "Generate shell completions"},
 		{"ignore", "Ignore rule scan/check"},
 		{"secret", "Secret scanning and pass store management"},

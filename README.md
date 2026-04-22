@@ -32,6 +32,7 @@ Your digital life is scattered:
 | **Scratch dirs** | Debug sessions and investigations scattered across `/tmp` | `ws scratch new` — named directory in `~/Scratch`, opens in VS Code instantly |
 | **Machine restore** | New laptop, two days of setup | `ws restore` — guided wizard, working machine in minutes |
 | **Soft delete** | `rm -rf` regrets | `ws trash setup` configures your shell, VS Code, and file explorer to soft-delete |
+| **Knowledge capture** | Valuable info from Slack, wikis, emails lost in clipboard | `ws capture` — pins clipboard (text, HTML, images) to a searchable markdown file |
 
 ---
 
@@ -192,6 +193,19 @@ Your `.bashrc` now lives in the workspace (synced). The system path is a symlink
 </details>
 
 <details>
+<summary><strong>📌 Knowledge Capture</strong></summary>
+
+| Command | What it does |
+| --- | --- |
+| `ws capture` | Pin clipboard content (text, HTML with images, screenshots) to captures file |
+| `ws capture <url>` | Fetch web page content + images, append to captures file |
+| `ws capture <file>` | Capture a file (image: embed, text: inline) |
+| `ws capture edit` | Open captures file in your editor |
+| `ws capture ls` | List configured capture locations |
+
+</details>
+
+<details>
 <summary><strong>⚙️ Config & Meta</strong></summary>
 
 | Command | What it does |
@@ -265,7 +279,7 @@ ws ignore generate --merge  # keep your custom rules, add missing template rules
 | **Soft-delete first** | `rm` is the delete primitive. `ws trash setup` makes it route to Trash. |
 | **Workspace-sourced metadata** | Config and manifest live inside the workspace. Sync the folder, get the tool state too. |
 
-Full philosophy: [PHILOSOPHY.md](PHILOSOPHY.md) — a nine-factor methodology for workspace management, inspired by the Twelve-Factor App.
+Full philosophy: [PHILOSOPHY.md](PHILOSOPHY.md) — an eleven-factor methodology for workspace management, inspired by the Twelve-Factor App.
 
 ### Read/Write Separation
 
@@ -345,6 +359,9 @@ Scripts can branch on these without parsing output:
 │   │   ├── kubeconfig
 │   │   └── ...
 │   ├── dotfiles-git/            # optional git repo for dotfile backup
+│   ├── captures.md              # knowledge capture file (append-only)
+│   ├── captures/                # capture assets
+│   │   └── assets/              # images, attachments from ws capture
 │   ├── ws-log/                  # recorded terminal sessions
 │   │   └── <tag>/
 │   │       ├── stdin.log

@@ -220,7 +220,7 @@ func isPlaceholderMatch(match string) bool {
 // real secrets like "hunter2" or "s3cret!!".
 func isLowEntropy(value string) bool {
 	// Strip surrounding quotes for analysis.
-	cleaned := strings.Trim(value, `"'` + "`")
+	cleaned := strings.Trim(value, `"'`+"`")
 	if len(cleaned) < 8 {
 		return false // short values can be real passwords with low entropy
 	}

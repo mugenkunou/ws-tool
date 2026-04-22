@@ -19,7 +19,7 @@ type ResetOptions struct {
 // ResetEntry describes the outcome of resetting a single dotfile.
 type ResetEntry struct {
 	Record  manifest.DotfileRecord `json:"record"`
-	Action  string                 `json:"action"`  // "restored", "would-restore", "skipped", "failed"
+	Action  string                 `json:"action"` // "restored", "would-restore", "skipped", "failed"
 	Message string                 `json:"message"`
 }
 
