@@ -975,6 +975,7 @@ ws git-credential-helper store       No-op (git plumbing — pass is managed sep
 ws git-credential-helper erase       No-op (git plumbing — pass is managed separately)
 
 ws scratch new [name]                Create a named scratch directory, open in editor
+ws scratch open [name]               Open an existing scratch directory in editor
 ws scratch ls                        List scratch directories with age, size, items
 ws scratch tag [name]                Add tags to a scratch directory
 ws scratch search [query]            Search scratch directories by tag, name, or content
@@ -1853,6 +1854,7 @@ Create and manage throwaway working directories outside the workspace for debug 
 Additional subcommands implemented by the CLI:
 
 - `ws scratch rm [name]` — delete one scratch directory by name. Shows ghost panel if name is omitted.
+- `ws scratch open [name]` — open an existing scratch directory in the configured editor. Shows ghost panel with Tab completion if name is omitted.
 - `ws scratch tag [name]` — add tags to a scratch directory. Multi-tag ghost input with workspace tag suggestions.
 - `ws scratch search [query]` — search scratch directories by tag/name/content. Interactive ghost mode if no query.
 
@@ -1943,6 +1945,54 @@ gpu-driver-debug.2026-02          34d     1.2 GB  23 files
                                           ──────
                                  4 dirs   1.5 GB
 ```
+
+#### `ws scratch open`
+
+Open an existing scratch directory in the configured editor. When no name is given, shows a live ghost panel with Tab completion (Tab fills the first match; Enter confirms). Resolves names with substring matching (case-insensitive).
+
+```text
+ws scratch open [name] [flags]
+
+--editor <cmd>    Override scratch.editor_cmd for this invocation
+```
+
+**Output (interactive — no name argument):**
+
+```text
+ws scratch open
+Open: █
+  ░CA-remove-CPU-limits.2026-04░
+  ░CA-registry-migration.2026-04░
+  ░ca-llm-pending░
+  ░G9-reboot.2026-04░
+  ░whitelist-conflict.2026-04░
+
+Open: CA-█     ← Tab → completes to first match
+  ░CA-remove-CPU-limits.2026-04░
+  ░CA-registry-migration.2026-04░
+
+Open: CA-remove-CPU-limits.2026-04█
+
+✔ Opening   code → ~/Scratch/CA-remove-CPU-limits.2026-04/
+```
+
+**Output (inline name — skip prompt):**
+
+```text
+ws scratch open proxy-auth-header
+
+✔ Opening   code → ~/Scratch/proxy-auth-header.2026-04/
+```
+
+**Edge cases:**
+
+| Situation | Behavior |
+| --- | --- |
+| Name not found | Prints error, exits 1. |
+| `editor_cmd` not found | Prints path, skips open, exits 0 with warning. |
+| Non-TTY stdin (pipe, `--json`, test) | Ghost panel skipped; reads name from stdin line. |
+| `--json` | Emits `{"name": "...", "path": "..."}`, skips editor launch. |
+| Ctrl+C during prompt | Exits cleanly (code 130). |
 
 #### `ws scratch rm`
 

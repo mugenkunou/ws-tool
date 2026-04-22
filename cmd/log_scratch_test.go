@@ -128,3 +128,82 @@ func TestScratchDeleteAndAgeFormatting(t *testing.T) {
 		t.Fatalf("scratch rm failed: code=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
 }
+
+func TestScratchOpenJSON(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(t.TempDir(), "Workspace")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	// Create a scratch directory first.
+	out.Reset()
+	errOut.Reset()
+	if code := Execute([]string{"--workspace", workspace, "scratch", "new", "open-test", "--no-open"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("scratch new failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	// Open with --json to avoid launching an editor.
+	out.Reset()
+	errOut.Reset()
+	if code := Execute([]string{"--workspace", workspace, "--json", "scratch", "open", "open-test"}, strings.NewReader(""), &out, &errOut); code != 0 {
+		t.Fatalf("scratch open --json failed: code=%d stderr=%s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "open-test") {
+		t.Fatalf("expected open-test in json output, got: %s", out.String())
+	}
+}
+
+func TestScratchOpenNotFound(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(t.TempDir(), "Workspace")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	// Open a non-existent scratch dir.
+	out.Reset()
+	errOut.Reset()
+	if code := Execute([]string{"--workspace", workspace, "--json", "scratch", "open", "does-not-exist"}, strings.NewReader(""), &out, &errOut); code != 1 {
+		t.Fatalf("expected exit 1 for missing scratch, got code=%d", code)
+	}
+	if !strings.Contains(errOut.String(), "scratch entry not found") {
+		t.Fatalf("expected not-found error, got stderr=%s", errOut.String())
+	}
+}
+
+func TestScratchOpenSubstringMatch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(t.TempDir(), "Workspace")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := Execute([]string{"--workspace", workspace, "scratch", "new", "my-debug-session", "--no-open", "--no-date"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("scratch new failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	// Substring match should find "my-debug-session".
+	out.Reset()
+	errOut.Reset()
+	if code := Execute([]string{"--workspace", workspace, "--json", "scratch", "open", "debug"}, strings.NewReader(""), &out, &errOut); code != 0 {
+		t.Fatalf("scratch open substring failed: code=%d stderr=%s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "my-debug-session") {
+		t.Fatalf("expected my-debug-session in output, got: %s", out.String())
+	}
+}

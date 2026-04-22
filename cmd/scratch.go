@@ -18,9 +18,10 @@ import (
 )
 
 var scratchHelp = cmdHelp{
-	Usage: "ws scratch <new|ls|tag|search|prune|rm>",
+	Usage: "ws scratch <new|open|ls|tag|search|prune|rm>",
 	Subcommands: []string{
 		"  new [name]      Create a scratch directory",
+		"  open [name]     Open an existing scratch directory in editor",
 		"  ls              List scratch directories",
 		"  tag [name]      Add tags to a scratch directory",
 		"  search [query]  Search scratch directories by tag/name/content",
@@ -539,6 +540,83 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 				fmt.Fprintf(out, "  %s\n", style.Mutedf(nc, "%s", r.Snippet))
 			}
 		}
+		return 0
+
+	case "open":
+		fs := flag.NewFlagSet("scratch-open", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		editor := fs.String("editor", cfg.Scratch.EditorCmd, "editor command")
+		registerGlobalFlags(fs, &globals)
+		if err := fs.Parse(subArgs); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+
+		var openName string
+		if len(fs.Args()) > 0 {
+			openName = strings.Join(fs.Args(), " ")
+		} else {
+			// Interactive: live ghost panel with Tab completion.
+			entries, _ := scratch.List(scratch.ListOptions{RootDir: rootDir, SortBy: "age"})
+			names := make([]string, len(entries))
+			for i, e := range entries {
+				names[i] = e.Name
+			}
+			gi := &tui.GhostInput{
+				Prompt:      "Open",
+				Entries:     names,
+				TabComplete: true,
+				NoColor:     globals.noColor,
+			}
+			inputName, err := gi.Run(stdin, stdout)
+			if errors.Is(err, tui.ErrCancelled) {
+				return 130
+			}
+			if err != nil {
+				fmt.Fprintln(stderr, err.Error())
+				return 1
+			}
+			openName = strings.TrimSpace(inputName)
+			if openName == "" {
+				fmt.Fprintln(stderr, "no name given")
+				return 1
+			}
+		}
+
+		// Resolve matching entry.
+		entries, err := scratch.List(scratch.ListOptions{RootDir: rootDir, SortBy: "name"})
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		var matchPath, matchName string
+		for _, e := range entries {
+			if e.Name == openName || strings.Contains(strings.ToLower(e.Name), strings.ToLower(openName)) {
+				matchPath = e.Path
+				matchName = e.Name
+				break
+			}
+		}
+		if matchPath == "" {
+			fmt.Fprintf(stderr, "scratch entry not found: %s\n", openName)
+			return 1
+		}
+
+		if globals.json {
+			return writeJSON(stdout, stderr, "scratch.open", map[string]any{"name": matchName, "path": matchPath})
+		}
+
+		cmd := exec.Command(*editor, matchPath)
+		if err := cmd.Start(); err != nil {
+			out := textOut(globals, stdout)
+			nc := globals.noColor
+			fmt.Fprintln(out, style.ResultWarning(nc, "Editor launch skipped: %v", err))
+			fmt.Fprintln(out, matchPath)
+			return 0
+		}
+		out := textOut(globals, stdout)
+		nc := globals.noColor
+		fmt.Fprintf(out, "%s\n", style.ResultSuccess(nc, "Opening   %s → %s", *editor, matchPath))
 		return 0
 
 	default:

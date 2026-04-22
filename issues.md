@@ -2,3 +2,4 @@
 - keyboard shortcuts can be synced to dotfile as well. maybe in a generic way.
 - condense knowledge from valuable issue debugging. eg. default pod pid limit; getting values from cgroups; and changing it;
 - ws repo should warn if any git repos doesn't have basic details configured like user.name or user.email
+- ~~implement ws scratch open~~

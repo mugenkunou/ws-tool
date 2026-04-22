@@ -65,7 +65,7 @@ var completers = map[string]completer{
 	"log":         {subcommands: []string{"start", "stop", "ls", "show", "search", "scan", "prune", "rm"}, resolve: completeLog},
 	"notify":      {subcommands: []string{"start", "stop", "status", "test", "daemon"}},
 	"repo":        {subcommands: []string{"ls", "scan", "fetch", "fix", "pull", "sync", "run"}},
-	"scratch":     {subcommands: []string{"new", "ls", "tag", "search", "prune", "rm"}, resolve: completeScratch},
+	"scratch":     {subcommands: []string{"new", "open", "ls", "tag", "search", "prune", "rm"}, resolve: completeScratch},
 	"secret":      {subcommands: []string{"scan", "fix", "setup", "status", "git"}, resolve: completeSecret},
 	"search":      {resolve: completeSearch},
 	"trash":       {subcommands: []string{"enable", "disable", "scan", "fix", "reset", "status"}},
@@ -226,7 +226,7 @@ func completeLog(sub string, args []string, toComplete string, ctx completionCtx
 
 func completeScratch(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
 	switch sub {
-	case "rm", "tag":
+	case "rm", "tag", "open":
 		if len(args) == 0 {
 			return filterPrefix(ctx.scratchIDs, toComplete), compDirectiveNoFileComp
 		}
@@ -294,6 +294,8 @@ func commandFlags(command string, rest []string) []string {
 		switch sub {
 		case "new":
 			return []string{"--no-open", "--editor", "--no-date", "--dry-run"}
+		case "open":
+			return []string{"--editor"}
 		case "ls":
 			return []string{"--sort"}
 		case "prune":

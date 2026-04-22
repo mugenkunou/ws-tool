@@ -179,6 +179,7 @@ Your `.bashrc` now lives in the workspace (synced). The system path is a symlink
 | Command | What it does |
 | --- | --- |
 | `ws scratch new [name]` | Create a named scratch directory, open in VS Code |
+| `ws scratch open [name]` | Open an existing scratch directory in VS Code |
 | `ws scratch ls` | List scratch directories with age, size, items |
 | `ws scratch tag [name]` | Add tags to a scratch directory |
 | `ws scratch search [query]` | Search scratch directories by tag/name/content |
