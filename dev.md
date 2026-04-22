@@ -245,20 +245,86 @@ go build -ldflags "-s -w -X github.com/mugenkunou/ws-tool/cmd.appVersion=v0.2.0"
 
 `-s -w` strips debug symbols and DWARF tables — smaller binary, no local paths leaked.
 
-### Tagging a release
+### Tagging a release (step-by-step)
+
+#### 1. Make sure everything is clean and passing
 
 ```bash
-# 1. quality gate
-make release-check
+# check for uncommitted changes — everything must be committed first
+git status
 
-# 2. tag
-git tag -a v0.2.0 -m "v0.2.0"
-
-# 3. push (pre-push hook runs gitleaks automatically)
-git push origin main --follow-tags
+# run the full quality gate
+make fmt && make test && make build
 ```
 
-The tag push triggers `.github/workflows/release.yml`, which builds and publishes the release.
+If anything fails, fix it before proceeding. All code must be committed and pushed.
+
+#### 2. Pick the next version number
+
+Check the latest tag:
+
+```bash
+git tag --sort=-v:refname | head -3
+```
+
+Then pick the next version following [semver](https://semver.org/):
+
+- **Patch** (`v0.2.0` → `v0.2.1`) — bug fixes only, no new features.
+- **Minor** (`v0.2.0` → `v0.3.0`) — new features, backward-compatible.
+- **Major** (`v0.2.0` → `v1.0.0`) — breaking changes.
+
+To see what changed since the last tag:
+
+```bash
+git log v0.2.0..HEAD --oneline
+```
+
+#### 3. Run the pre-release check
+
+```bash
+make release-check
+```
+
+This runs gitleaks (secret scan) + `go vet` + race-condition tests — the full safety gate. Do not skip this.
+
+#### 4. Create the tag
+
+```bash
+git tag -a v0.3.0 -m "v0.3.0"
+```
+
+- `-a` creates an **annotated** tag (includes author, date, and message).
+- `-m` sets the tag message. Keep it matching the version.
+
+#### 5. Push the tag
+
+```bash
+git push origin master --follow-tags
+```
+
+`--follow-tags` pushes your commits **and** the annotated tag in one go. The pre-push hook will run gitleaks automatically before anything leaves your machine.
+
+#### 6. Verify
+
+Go to the GitHub repo → **Releases**. The CI workflow (`.github/workflows/release.yml`) will automatically:
+1. Run tests
+2. Cross-compile binaries (linux/darwin × amd64/arm64)
+3. Generate SHA-256 checksums
+4. Create a GitHub Release with all artifacts
+
+You can also verify locally:
+
+```bash
+git tag --sort=-v:refname | head -3
+```
+
+#### Quick copy-paste summary
+
+```bash
+make release-check
+git tag -a v0.3.0 -m "v0.3.0"
+git push origin master --follow-tags
+```
 
 ### CI
 
