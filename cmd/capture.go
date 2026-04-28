@@ -52,7 +52,11 @@ func runCapture(args []string, globals globalFlags, stdin io.Reader, stdout, std
 	}
 
 	// Parse flags — location is positional, extracted before flag parsing
-	locName, flagArgs := extractLocation(args, cfg)
+	locName, flagArgs, err := extractLocation(args, cfg)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
 
 	fs := flag.NewFlagSet("capture", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -105,21 +109,22 @@ func runCapture(args []string, globals globalFlags, stdin io.Reader, stdout, std
 
 // extractLocation separates a positional location name from the args list.
 // Returns the location name (empty string for default) and the remaining args.
-func extractLocation(args []string, cfg config.Config) (string, []string) {
+// Returns an error if the first positional argument is not a known location.
+func extractLocation(args []string, cfg config.Config) (string, []string, error) {
 	if len(args) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
 	first := args[0]
 	// If it starts with "-", it's a flag, not a location
 	if strings.HasPrefix(first, "-") {
-		return "", args
+		return "", args, nil
 	}
 	// Check if it matches a configured location name
 	if _, ok := cfg.Capture.Locations[first]; ok {
-		return first, args[1:]
+		return first, args[1:], nil
 	}
-	// Not a known location — leave args as-is (will be parsed as flags)
-	return "", args
+	// Unknown positional argument — reject it
+	return "", nil, fmt.Errorf("unknown capture location %q — use 'ws capture ls' to see configured locations", first)
 }
 
 func runCaptureEdit(capturesFile string, globals globalFlags, cfg config.Config, stdin io.Reader, stdout, stderr io.Writer) int {

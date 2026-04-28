@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -15,7 +16,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
 
-var dotfileHelp = cmdHelp{Usage: "ws dotfile <add|rm|ls|scan|fix|reset|git> [args]"}
+var dotfileHelp = cmdHelp{Usage: "ws dotfile <add|rm|ls|scan|fix|reset|migrate|git> [args]"}
 
 func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	if hasHelpArg(args) {
@@ -50,32 +51,90 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		}
 
 		targetPath := fs.Args()[0]
-		plan := Plan{Command: "dotfile.add"}
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "dotfile-add",
-			Description: fmt.Sprintf("Add dotfile %s", targetPath),
-			Execute: func() error {
-				result, err := dotfile.Add(dotfile.AddOptions{
-					WorkspacePath: workspacePath,
-					ManifestPath:  manifestPath,
-					SystemPath:    targetPath,
-					DryRun:        false,
-				})
-				if err != nil {
-					return err
+
+		// Resolve the path so we can stat it before passing to internal logic.
+		absTarget, err := config.ExpandUserPath(targetPath)
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+
+		out := textOut(globals, stdout)
+
+		info, statErr := os.Stat(absTarget)
+		if statErr != nil {
+			fmt.Fprintf(stderr, "path not found: %s\n", absTarget)
+			return 1
+		}
+
+		var filesToAdd []string // absolute paths of files to track
+
+		if info.IsDir() {
+			fmt.Fprintf(out, "Scanning %s ...\n", absTarget)
+			entries, expanded, expandErr := dotfile.ExpandDir(absTarget)
+			if expandErr != nil {
+				fmt.Fprintln(stderr, expandErr.Error())
+				return 1
+			}
+			if len(entries) == 0 {
+				fmt.Fprintln(out, "Directory is empty — nothing to add.")
+				return 0
+			}
+			selected := promptDirSelection(stdin, stdout, globals, entries, expanded, absTarget)
+			if len(selected) == 0 {
+				fmt.Fprintln(out, "Nothing selected.")
+				return 0
+			}
+			for _, e := range selected {
+				files, collectErr := dotfile.CollectFiles(e)
+				if collectErr != nil {
+					fmt.Fprintf(stderr, "error reading %s: %v\n", e.AbsPath, collectErr)
+					return 1
 				}
-				_ = provision.Record(provision.LedgerPath(workspacePath), provision.Entry{
-					Type:    provision.TypeSymlink,
-					Path:    result.Record.System,
-					Target:  dotfile.DotfilePath(result.Record.Name),
-					Command: "dotfile add",
-				})
-				return nil
-			},
-		})
+				filesToAdd = append(filesToAdd, files...)
+			}
+		} else {
+			filesToAdd = []string{absTarget}
+		}
+
+		// Warn about secret files and let user opt out.
+		filesToAdd = warnAndFilterSecrets(filesToAdd, stdin, stdout, globals)
+		if len(filesToAdd) == 0 {
+			fmt.Fprintln(out, "Nothing to add.")
+			return 0
+		}
+
+		// Build a plan: one action per file.
+		plan := Plan{Command: "dotfile.add"}
+		for _, f := range filesToAdd {
+			f := f
+			plan.Actions = append(plan.Actions, Action{
+				ID:          "dotfile-add-" + f,
+				Description: fmt.Sprintf("Add dotfile %s", f),
+				Execute: func() error {
+					result, addErr := dotfile.Add(dotfile.AddOptions{
+						WorkspacePath: workspacePath,
+						ManifestPath:  manifestPath,
+						SystemPath:    f,
+						DryRun:        false,
+					})
+					if addErr != nil {
+						return addErr
+					}
+					_ = provision.Record(provision.LedgerPath(workspacePath), provision.Entry{
+						Type:    provision.TypeSymlink,
+						Path:    result.Record.System,
+						Target:  dotfile.DotfilePath(result.Record.Name),
+						Command: "dotfile add",
+					})
+					return nil
+				},
+			})
+		}
 		planResult := RunPlan(plan, stdin, stdout, globals)
 		if planResult.ExecutedCount() > 0 && !planResult.HasFailures() {
-			dotfileGitAutoSync(workspacePath, configPath, "dotfile add: "+targetPath, globals, stdout)
+			label := targetPath
+			dotfileGitAutoSync(workspacePath, configPath, "dotfile add: "+label, globals, stdout)
 		}
 		if globals.json {
 			return writeJSONDryRun(stdout, stderr, "dotfile.add", globals.dryRun, map[string]any{
@@ -147,7 +206,11 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		}
 		out := textOut(globals, stdout)
 		for _, r := range records {
-			fmt.Fprintf(out, "%s %s %s\n", style.Infof(globals.noColor, "%s", r.System), style.IconArrow(globals.noColor), style.Mutedf(globals.noColor, "%s", r.Name))
+			sudoTag := ""
+			if r.Sudo {
+				sudoTag = "  " + style.Warningf(globals.noColor, "[sudo]")
+			}
+			fmt.Fprintf(out, "%s %s %s%s\n", style.Infof(globals.noColor, "%s", r.System), style.IconArrow(globals.noColor), style.Mutedf(globals.noColor, "%s", r.Name), sudoTag)
 		}
 		return 0
 	case "scan":
@@ -697,11 +760,290 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			fmt.Fprintln(stderr, "usage: ws dotfile git <remote|push|log|status|setup|disconnect>")
 			return 1
 		}
+	case "migrate":
+		fs := flag.NewFlagSet("dotfile-migrate", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		registerGlobalFlags(fs, &globals)
+		if err := fs.Parse(subArgs); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+
+		out := textOut(globals, stdout)
+		nc := globals.noColor
+
+		dirRecords, err := dotfile.FindDirEntries(workspacePath, manifestPath)
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		if len(dirRecords) == 0 {
+			fmt.Fprintln(out, style.ResultSuccess(nc, "No directory entries found — all dotfiles are already file-level."))
+			return 0
+		}
+
+		fmt.Fprintf(out, "Found %d directory entry(s) to migrate:\n\n", len(dirRecords))
+		exitCode := 0
+
+		for _, record := range dirRecords {
+			wsDir := filepath.Join(workspacePath, filepath.FromSlash(dotfile.DotfilePath(record.Name)))
+			fmt.Fprintf(out, "%s %s\n", style.Infof(nc, "%s", record.System), style.Mutedf(nc, "(→ %s)", record.Name))
+
+			entries, expanded, expandErr := dotfile.ExpandDir(wsDir)
+			if expandErr != nil {
+				fmt.Fprintf(stderr, "  error scanning %s: %v\n", wsDir, expandErr)
+				exitCode = 1
+				continue
+			}
+			if len(entries) == 0 {
+				fmt.Fprintln(out, style.Mutedf(nc, "  (empty — skipping)"))
+				continue
+			}
+
+			selected := promptDirSelection(stdin, stdout, globals, entries, expanded, wsDir)
+			if len(selected) == 0 {
+				fmt.Fprintln(out, style.Mutedf(nc, "  Nothing selected — skipping."))
+				continue
+			}
+
+			// Collect the paths the files will have AFTER Remove restores the directory.
+			type fileTask struct {
+				systemPath    string
+				workspacePath string // for display
+			}
+			var tasks []fileTask
+			for _, e := range selected {
+				var relPaths []string
+				if e.IsDir {
+					// Walk the workspace subdirectory to gather all file paths.
+					subFiles, collectErr := dotfile.CollectFiles(e)
+					if collectErr != nil {
+						fmt.Fprintf(stderr, "  error reading %s: %v\n", e.AbsPath, collectErr)
+						continue
+					}
+					for _, sf := range subFiles {
+						rel, _ := filepath.Rel(wsDir, sf)
+						relPaths = append(relPaths, rel)
+					}
+				} else {
+					rel, _ := filepath.Rel(wsDir, e.AbsPath)
+					relPaths = append(relPaths, rel)
+				}
+				for _, rel := range relPaths {
+					sysPath := filepath.Join(record.System, filepath.FromSlash(rel))
+					tasks = append(tasks, fileTask{systemPath: sysPath, workspacePath: e.Name})
+				}
+			}
+
+			if globals.dryRun {
+				fmt.Fprintln(out, style.Mutedf(nc, "  [dry-run] would migrate:"))
+				for _, task := range tasks {
+					fmt.Fprintf(out, "    %s %s %s\n", style.Mutedf(nc, "[dry-run]"), task.systemPath, style.IconArrow(nc))
+				}
+				continue
+			}
+
+			// Step 1: Remove the directory entry, restoring the real directory.
+			if _, removeErr := dotfile.Remove(dotfile.RemoveOptions{
+				WorkspacePath: workspacePath,
+				ManifestPath:  manifestPath,
+				SystemPath:    record.System,
+			}); removeErr != nil {
+				fmt.Fprintf(stderr, "  failed to remove directory entry %s: %v\n", record.System, removeErr)
+				exitCode = 1
+				continue
+			}
+
+			// Step 2: Warn about secrets in the files about to be added.
+			var sysPaths []string
+			for _, t := range tasks {
+				sysPaths = append(sysPaths, t.systemPath)
+			}
+			sysPaths = warnAndFilterSecrets(sysPaths, stdin, stdout, globals)
+
+			// Step 3: Add each selected file individually.
+			addedCount := 0
+			for _, sysPath := range sysPaths {
+				addResult, addErr := dotfile.Add(dotfile.AddOptions{
+					WorkspacePath: workspacePath,
+					ManifestPath:  manifestPath,
+					SystemPath:    sysPath,
+				})
+				if addErr != nil {
+					fmt.Fprintf(stderr, "  failed to add %s: %v\n", sysPath, addErr)
+					exitCode = 1
+					continue
+				}
+				_ = provision.Record(provision.LedgerPath(workspacePath), provision.Entry{
+					Type:    provision.TypeSymlink,
+					Path:    addResult.Record.System,
+					Target:  dotfile.DotfilePath(addResult.Record.Name),
+					Command: "dotfile migrate",
+				})
+				fmt.Fprintf(out, "  %s %s\n", style.IconCheck(nc), style.Mutedf(nc, "%s", sysPath))
+				addedCount++
+			}
+			fmt.Fprintf(out, "  Migrated %d file(s) from %s\n\n", addedCount, record.System)
+		}
+
+		if exitCode == 0 {
+			dotfileGitAutoSync(workspacePath, configPath, "dotfile migrate", globals, stdout)
+		}
+		return exitCode
+
 	default:
 		fmt.Fprintf(stderr, "unknown dotfile subcommand: %s\n", subcommand)
-		fmt.Fprintln(stderr, "usage: ws dotfile <add|rm|ls|scan|fix|reset|git>")
+		fmt.Fprintln(stderr, "usage: ws dotfile <add|rm|ls|scan|fix|reset|migrate|git>")
 		return 1
 	}
+}
+
+// promptDirSelection presents the expanded directory entries to the user and
+// returns the subset they choose to track. Defaults to all ClassConfig entries.
+//
+// In --json / --quiet mode the defaults are accepted automatically.
+func promptDirSelection(stdin io.Reader, stdout io.Writer, globals globalFlags, entries []dotfile.DirEntry, expanded bool, rootPath string) []dotfile.DirEntry {
+	out := textOut(globals, stdout)
+	nc := globals.noColor
+
+	totalFiles := 0
+	for _, e := range entries {
+		totalFiles += e.FileCount
+	}
+
+	if expanded {
+		fmt.Fprintf(out, "  %d file(s)\n\n", totalFiles)
+	} else {
+		fmt.Fprintf(out, "  %d file(s) total — showing top-level entries:\n\n", totalFiles)
+	}
+
+	// Print numbered list.
+	var defaultIdxs []int
+	for i, e := range entries {
+		num := i + 1
+		sizeStr := style.HumanBytes(e.Size)
+		classStr := ""
+		switch e.Class {
+		case dotfile.ClassSecret:
+			classStr = style.Warningf(nc, "⚠ secret")
+		case dotfile.ClassState:
+			classStr = style.Mutedf(nc, "likely state")
+		}
+
+		var countStr string
+		if e.IsDir {
+			countStr = fmt.Sprintf("  (%d files)", e.FileCount)
+		}
+
+		fmt.Fprintf(out, "  %2d  %-40s %8s  %s%s\n",
+			num,
+			e.Name,
+			sizeStr,
+			classStr,
+			countStr,
+		)
+
+		if e.Class == dotfile.ClassConfig {
+			defaultIdxs = append(defaultIdxs, num)
+		}
+	}
+
+	// Build default string.
+	var defaultParts []string
+	for _, idx := range defaultIdxs {
+		defaultParts = append(defaultParts, fmt.Sprintf("%d", idx))
+	}
+	defaultStr := strings.Join(defaultParts, ",")
+	if defaultStr == "" {
+		defaultStr = "none"
+	}
+
+	fmt.Fprintln(out)
+
+	// Auto-accept defaults in non-interactive modes.
+	if globals.json || globals.quiet {
+		var result []dotfile.DirEntry
+		for _, idx := range defaultIdxs {
+			result = append(result, entries[idx-1])
+		}
+		return result
+	}
+
+	fmt.Fprintf(out, "Select entries to track [%s] (or Enter for defaults, \"all\", \"none\"): ", style.Mutedf(nc, defaultStr))
+	line, err := readLine(stdin)
+	if err != nil || strings.TrimSpace(line) == "" {
+		var result []dotfile.DirEntry
+		for _, idx := range defaultIdxs {
+			result = append(result, entries[idx-1])
+		}
+		return result
+	}
+
+	line = strings.TrimSpace(line)
+	switch strings.ToLower(line) {
+	case "all":
+		return entries
+	case "none":
+		return nil
+	}
+
+	// Parse comma-separated numbers.
+	var result []dotfile.DirEntry
+	seen := make(map[int]bool)
+	for _, part := range strings.Split(line, ",") {
+		part = strings.TrimSpace(part)
+		n := 0
+		for _, c := range part {
+			if c >= '0' && c <= '9' {
+				n = n*10 + int(c-'0')
+			}
+		}
+		if n >= 1 && n <= len(entries) && !seen[n] {
+			seen[n] = true
+			result = append(result, entries[n-1])
+		}
+	}
+	return result
+}
+
+// warnAndFilterSecrets checks filesToAdd for likely secrets. If any are found
+// it prints a warning and asks once whether to track them anyway. If the user
+// declines, secrets are removed from the list and the rest are returned.
+func warnAndFilterSecrets(filesToAdd []string, stdin io.Reader, stdout io.Writer, globals globalFlags) []string {
+	var secretFiles []string
+	for _, f := range filesToAdd {
+		if dotfile.ClassifyFile(f) == dotfile.ClassSecret {
+			secretFiles = append(secretFiles, f)
+		}
+	}
+	if len(secretFiles) == 0 {
+		return filesToAdd
+	}
+
+	out := textOut(globals, stdout)
+	nc := globals.noColor
+
+	fmt.Fprintf(out, "\n%s %d file(s) look like secrets:\n", style.IconWarning(nc), len(secretFiles))
+	for _, f := range secretFiles {
+		fmt.Fprintf(out, "  %s\n", style.Mutedf(nc, "%s", f))
+	}
+
+	if confirm(stdin, stdout, globals, "Track anyway?") {
+		return filesToAdd
+	}
+
+	// Remove secrets.
+	secretSet := make(map[string]bool, len(secretFiles))
+	for _, f := range secretFiles {
+		secretSet[f] = true
+	}
+	var filtered []string
+	for _, f := range filesToAdd {
+		if !secretSet[f] {
+			filtered = append(filtered, f)
+		}
+	}
+	return filtered
 }
 
 func writeDotfileResult(globals globalFlags, command string, data any, stdout, stderr io.Writer) int {

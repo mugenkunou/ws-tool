@@ -117,7 +117,15 @@ _ws_completions() {
 
     return 0
 }
-complete -o default -F _ws_completions ws`
+complete -o default -F _ws_completions ws
+
+# wsopen — open a scratch directory in VS Code and cd to it.
+# Usage: wsopen [name]
+wsopen() {
+    local path
+    path=$(ws scratch open --print-path "$@") || return $?
+    cd "$path"
+}`
 }
 
 func zshCompletionScript() string {
@@ -162,7 +170,15 @@ _ws() {
     fi
 }
 
-compdef _ws ws`
+compdef _ws ws
+
+# wsopen — open a scratch directory in VS Code and cd to it.
+# Usage: wsopen [name]
+wsopen() {
+    local path
+    path=$(ws scratch open --print-path "$@") || return $?
+    cd "$path"
+}`
 }
 
 func fishCompletionScript() string {
@@ -194,7 +210,15 @@ function __ws_complete
     return 0
 end
 
-complete -c ws -f -a '(__ws_complete)'`
+complete -c ws -f -a '(__ws_complete)'
+
+# wsopen — open a scratch directory in VS Code and cd to it.
+# Usage: wsopen [name]
+function wsopen
+    set -l path (ws scratch open --print-path $argv)
+    or return $status
+    cd $path
+end`
 }
 
 // ── Install / Uninstall ────────────────────────────────────────────

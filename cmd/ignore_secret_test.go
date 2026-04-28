@@ -24,12 +24,11 @@ func TestIgnoreCheckAndSecretScan(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	// Use "ws ignore ls <path>" which replaces the old "ws ignore check" command.
-	if code := Execute([]string{"--workspace", workspace, "ignore", "ls", "secrets.txt"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
-		t.Fatalf("ignore ls <path> failed: code=%d stderr=%s", code, errOut.String())
+	if code := Execute([]string{"--workspace", workspace, "ignore", "check", "secrets.txt"}, strings.NewReader(""), &out, &errOut); code != 0 {
+		t.Fatalf("ignore check synced file failed: code=%d stderr=%s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), "SYNCED") {
-		t.Fatalf("unexpected ignore ls path output: %s", out.String())
+		t.Fatalf("unexpected ignore check output: %s", out.String())
 	}
 
 	out.Reset()

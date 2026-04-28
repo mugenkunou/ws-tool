@@ -8,10 +8,19 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/ignore"
 	wslog "github.com/mugenkunou/ws-tool/internal/log"
 	"github.com/mugenkunou/ws-tool/internal/manifest"
-	"github.com/mugenkunou/ws-tool/internal/notify"
 	"github.com/mugenkunou/ws-tool/internal/secret"
 	"github.com/mugenkunou/ws-tool/internal/trash"
 )
+
+// Violation is a single health violation entry surfaced in the TUI.
+type Violation struct {
+	Group    string
+	Type     string
+	Severity string
+	Path     string
+	Message  string
+	SizeMB   int
+}
 
 // DashboardData holds all data needed to render the TUI dashboard.
 type DashboardData struct {
@@ -30,7 +39,7 @@ type DashboardData struct {
 	DotfileIssues []dotfile.Issue
 
 	// Violations panel
-	Violations []notify.HealthViolation
+	Violations []Violation
 
 	// Log panel
 	Sessions  []wslog.Session
@@ -39,9 +48,6 @@ type DashboardData struct {
 
 	// Storage panel (placeholder counts)
 	TrashConfigured bool
-
-	// Notify daemon
-	NotifyActive bool
 }
 
 // LoadDashboard runs all subsystem scans and populates DashboardData.
@@ -81,7 +87,7 @@ func LoadDashboard(workspacePath, configPath, manifestPath string, cfg config.Co
 		} else {
 			d.IgnoreWarning++
 		}
-		d.Violations = append(d.Violations, notify.HealthViolation{
+		d.Violations = append(d.Violations, Violation{
 			Group:    v.Group,
 			Type:     v.Type,
 			Severity: v.Severity,
@@ -110,7 +116,7 @@ func LoadDashboard(workspacePath, configPath, manifestPath string, cfg config.Co
 				} else {
 					d.SecretWarning++
 				}
-				d.Violations = append(d.Violations, notify.HealthViolation{
+				d.Violations = append(d.Violations, Violation{
 					Group:    v.Group,
 					Type:     v.Type,
 					Severity: v.Severity,
@@ -138,54 +144,11 @@ func LoadDashboard(workspacePath, configPath, manifestPath string, cfg config.Co
 		d.TrashConfigured = ts.ShellRMConfigured
 	}
 
-	// Notify state
-	ns, _ := notify.Status(workspacePath)
-	d.NotifyActive = ns.Active
-
 	return d
 }
 
-// LoadDashboardFromHealth populates DashboardData from an existing health.json
-// for a fast-path render (no scans). Falls back to LoadDashboard if health.json
-// is missing.
+// LoadDashboardFromHealth is a compatibility alias for LoadDashboard.
+// Previously used a notify daemon health.json fast-path; now always runs live scans.
 func LoadDashboardFromHealth(workspacePath, configPath, manifestPath string, cfg config.Config) DashboardData {
-	h, err := notify.ReadHealth(workspacePath)
-	if err != nil || h.Timestamp.IsZero() {
-		return LoadDashboard(workspacePath, configPath, manifestPath, cfg)
-	}
-
-	d := DashboardData{
-		Workspace:       workspacePath,
-		LoadedAt:        h.Timestamp,
-		IgnoreCritical:  h.Summary.Ignore.Critical,
-		IgnoreWarning:   h.Summary.Ignore.Warning,
-		SecretCritical:  h.Summary.Secret.Critical,
-		SecretWarning:   h.Summary.Secret.Warning,
-		DotfileCritical: h.Summary.Dotfile.Critical,
-		DotfileWarning:  h.Summary.Dotfile.Warning,
-		Violations:      h.Violations,
-	}
-
-	// Still need live dotfile list and log sessions (not in health.json)
-	d.DotfileIssues, _ = dotfile.Scan(dotfile.ScanOptions{
-		WorkspacePath: workspacePath,
-		ManifestPath:  manifestPath,
-	})
-	sessions, _ := wslog.List(workspacePath)
-	d.Sessions = sessions
-	for _, s := range sessions {
-		if s.Active {
-			d.LogActive = true
-			d.ActiveTag = s.Tag
-			break
-		}
-	}
-
-	ts, _ := trash.GetStatus("")
-	d.TrashConfigured = ts.ShellRMConfigured
-
-	ns, _ := notify.Status(workspacePath)
-	d.NotifyActive = ns.Active
-
-	return d
+	return LoadDashboard(workspacePath, configPath, manifestPath, cfg)
 }

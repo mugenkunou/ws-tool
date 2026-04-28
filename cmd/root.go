@@ -78,8 +78,6 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runIgnore(commandArgs, globals, stdin, stdout, stderr)
 	case "secret":
 		return runSecret(commandArgs, globals, stdin, stdout, stderr)
-	case "notify":
-		return runNotify(commandArgs, globals, stdin, stdout, stderr)
 	case "tui":
 		return runTUI(commandArgs, globals, stdout, stderr)
 	case "log":
@@ -454,7 +452,6 @@ func printHelpStyled(stdout io.Writer, noColor bool) {
 		{"repo", "Repository fleet operations"},
 		{"context", "Task context sidecar management"},
 		{"trash", "Soft-delete setup and status"},
-		{"notify", "Notification daemon commands"},
 		{"tui", "Interactive dashboard summary"},
 		{"log", "Session recording commands"},
 		{"scratch", "Scratch directory commands"},

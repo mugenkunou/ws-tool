@@ -14,10 +14,8 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
 
-// runIgnoreList handles:
-//   - ws ignore ls              → flat list of all excluded files
-//   - ws ignore ls --tree       → hierarchical tree view with sync status
-//   - ws ignore ls <path>       → single-path status check (replaces old "check")
+// runIgnoreList handles ws ignore ls (flat list of excluded files).
+// Also supports positional path arg (legacy) and --tree flag for tree view.
 func runIgnoreList(engine *ignore.Engine, workspacePath string, args []string, globals globalFlags, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ignore-ls", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -105,11 +103,26 @@ func runIgnoreList(engine *ignore.Engine, workspacePath string, args []string, g
 	return 0
 }
 
-// runIgnoreCheckPath checks a single path's sync status (replaces old "ws ignore check").
+// runIgnoreCheckPath implements ws ignore check <path>.
+// It reports whether a path would be synced or ignored, with a reason line
+// and (for files) a file-size line.
 func runIgnoreCheckPath(engine *ignore.Engine, workspacePath, target string, globals globalFlags, stdout, stderr io.Writer) int {
 	absPath := target
 	if !filepath.IsAbs(absPath) {
-		absPath = filepath.Join(workspacePath, absPath)
+		// Resolve relative to cwd first (mirrors how a user types a path at their
+		// shell prompt), then fall back to workspace-relative for callers that
+		// supply workspace-anchored paths directly (e.g. tests, scripting).
+		cwd, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		cwdAbs := filepath.Join(cwd, absPath)
+		if _, statErr := os.Stat(cwdAbs); statErr == nil {
+			absPath = cwdAbs
+		} else {
+			absPath = filepath.Join(workspacePath, absPath)
+		}
 	}
 	st, err := os.Stat(absPath)
 	if err != nil {
@@ -122,27 +135,49 @@ func runIgnoreCheckPath(engine *ignore.Engine, workspacePath, target string, glo
 		return 1
 	}
 
-	data := map[string]any{"path": rel, "included": res.Included, "rule": res.Rule, "safe_harbor": res.SafeHarbor}
+	data := map[string]any{
+		"path":        rel,
+		"included":    res.Included,
+		"rule":        res.Rule,
+		"safe_harbor": res.SafeHarbor,
+	}
+	if !st.IsDir() {
+		data["size_bytes"] = st.Size()
+	}
 	if globals.json {
-		return writeJSON(stdout, stderr, "ignore.ls", data)
+		return writeJSON(stdout, stderr, "ignore.check", data)
 	}
 
 	out := textOut(globals, stdout)
 	nc := globals.noColor
-	state := style.Badge("synced", nc)
+
+	statusBadge := style.Badge("SYNCED", nc)
+	statusIcon := style.IconCheck(nc)
 	if !res.Included {
-		state = style.Badge("ignored", nc)
+		statusBadge = style.Badge("IGNORED", nc)
+		statusIcon = style.IconCross(nc)
 	}
-	harbor := ""
-	if res.SafeHarbor {
-		harbor = " " + style.Mutedf(nc, "[safe harbor]")
+	_ = statusBadge
+
+	fmt.Fprintf(out, "%s %s  %s\n", statusIcon, style.Badge(map[bool]string{true: "SYNCED", false: "IGNORED"}[res.Included], nc), style.Infof(nc, "%s", rel))
+
+	// Reason line
+	if res.Included {
+		if res.SafeHarbor {
+			fmt.Fprintf(out, "  Reason: safe harbor — %s overrides an exclude rule\n", style.Mutedf(nc, "%s", res.Rule))
+		} else if res.Rule == "<default>" {
+			fmt.Fprintf(out, "  Reason: no matching exclude rule\n")
+		} else {
+			fmt.Fprintf(out, "  Reason: included by rule %s\n", style.Mutedf(nc, "`%s`", res.Rule))
+		}
+	} else {
+		fmt.Fprintf(out, "  Reason: excluded by rule %s\n", style.Mutedf(nc, "`%s`", res.Rule))
 	}
-	fmt.Fprintf(out, "%s  %s  %s %s%s\n",
-		state,
-		style.Infof(nc, "%s", rel),
-		style.Mutedf(nc, "Rule:"),
-		style.Mutedf(nc, "%s", res.Rule),
-		harbor)
+
+	// File size line (files only)
+	if !st.IsDir() {
+		fmt.Fprintf(out, "  File size: %s\n", style.Mutedf(nc, "%s", style.HumanBytes(st.Size())))
+	}
 
 	if !res.Included {
 		return 2
@@ -150,7 +185,28 @@ func runIgnoreCheckPath(engine *ignore.Engine, workspacePath, target string, glo
 	return 0
 }
 
-// runIgnoreTreeView shows the workspace tree annotated with sync status.
+// treeEntry holds one entry in the ignore tree walk.
+type treeEntry struct {
+	rel              string // path relative to workspace
+	name             string // last path component
+	isDir            bool
+	status           string // "synced", "ignored", "partial"
+	sizeBytes        int64  // file size for regular files
+	rule             string // matched rule (or "<default>")
+	relDepth         int    // depth relative to start dir (0 = direct children)
+	excludedChildren int    // dirs: number of excluded immediate sub-trees
+}
+
+// runIgnoreTreeView implements ws ignore tree.
+//
+// Two-pass algorithm:
+//  1. Walk the full subtree, collecting every entry with its individual status.
+//  2. Propagate "partial" status upward: any directory with at least one
+//     excluded descendant (that isn't itself inside an excluded sub-tree) is
+//     marked ◐ partial.
+//
+// The tree is rendered up to maxDepth, with proper ├──/└── connectors, ✔/✗/◐
+// status icons, and a summary line.
 func runIgnoreTreeView(engine *ignore.Engine, workspacePath, pathFilter string, maxDepth int, globals globalFlags, stdout, stderr io.Writer) int {
 	start := workspacePath
 	if strings.TrimSpace(pathFilter) != "" {
@@ -161,80 +217,268 @@ func runIgnoreTreeView(engine *ignore.Engine, workspacePath, pathFilter string, 
 		return 1
 	}
 
-	type node struct {
-		Path   string `json:"path"`
-		Status string `json:"status"`
-		Rule   string `json:"rule"`
-		IsDir  bool   `json:"is_dir"`
+	startRel, _ := filepath.Rel(workspacePath, start)
+	startRel = filepath.ToSlash(startRel)
+	if startRel == "." {
+		startRel = ""
 	}
-	rows := make([]node, 0)
-	baseDepth := strings.Count(filepath.ToSlash(strings.TrimPrefix(start, workspacePath)), "/")
+
+	// ── Pass 1: collect all entries (no depth limit, don't skip excluded dirs) ──
+	entries := make([]treeEntry, 0, 256)
+	entryIdx := map[string]int{} // relPath → index in entries
+
 	_ = filepath.WalkDir(start, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
+		}
+		if path == start {
+			return nil // skip the root itself
 		}
 		rel, err := filepath.Rel(workspacePath, path)
 		if err != nil {
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
-		if rel == "." {
-			rel = ""
-		}
-		currentDepth := strings.Count(filepath.ToSlash(strings.TrimPrefix(path, start)), "/")
-		if currentDepth > maxDepth {
-			if d.IsDir() {
-				return filepath.SkipDir
+
+		var status, rule string
+		if engine != nil {
+			eval := engine.Evaluate(rel, d.IsDir())
+			if eval.Included {
+				status = "synced"
+			} else {
+				status = "ignored"
 			}
-			return nil
+			rule = eval.Rule
+		} else {
+			status = "synced"
+			rule = "<default>"
 		}
-		_ = baseDepth
-		res := engine.Evaluate(rel, d.IsDir())
-		status := "SYNCED"
-		if !res.Included {
-			status = "IGNORED"
+
+		size := int64(0)
+		if !d.IsDir() {
+			if info, infoErr := d.Info(); infoErr == nil && info != nil {
+				size = info.Size()
+			}
 		}
-		rows = append(rows, node{Path: rel, Status: status, Rule: res.Rule, IsDir: d.IsDir()})
+
+		// Depth relative to start.
+		var relD int
+		if startRel == "" {
+			relD = strings.Count(rel, "/")
+		} else {
+			inner := strings.TrimPrefix(rel, startRel+"/")
+			relD = strings.Count(inner, "/")
+		}
+
+		idx := len(entries)
+		entries = append(entries, treeEntry{
+			rel:       rel,
+			name:      filepath.Base(path),
+			isDir:     d.IsDir(),
+			status:    status,
+			sizeBytes: size,
+			rule:      rule,
+			relDepth:  relD,
+		})
+		entryIdx[rel] = idx
 		return nil
 	})
 
-	if globals.json {
-		return writeJSON(stdout, stderr, "ignore.ls", rows)
-	}
-	out := textOut(globals, stdout)
-	if len(rows) == 0 {
-		fmt.Fprintln(out, "(empty)")
-		return 0
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		return rows[i].Path < rows[j].Path
-	})
-	for i, n := range rows {
-		nc := globals.noColor
-		displayPath := n.Path
-		if displayPath == "" {
-			displayPath = "."
+	// ── Pass 2: propagate partial status upward ──
+	// Only propagate from entries that are excluded AND whose parent is NOT
+	// also excluded (to avoid double-counting nested exclusions).
+	for i := range entries {
+		e := &entries[i]
+		if e.status != "ignored" {
+			continue
 		}
-		d := 0
-		if displayPath != "." {
-			d = strings.Count(displayPath, "/") + 1
+		// Check if immediate parent is already excluded.
+		parentRel := filepath.ToSlash(filepath.Dir(e.rel))
+		if parentRel == "." {
+			parentRel = ""
 		}
-		prefix := ""
-		if i > 0 {
-			branch := style.TreeBranch
-			if i == len(rows)-1 {
-				branch = style.TreeCorner
+		if parentRel != startRel {
+			if pIdx, ok := entryIdx[parentRel]; ok && entries[pIdx].status == "ignored" {
+				continue // parent already excluded; skip to avoid double-count
 			}
-			prefix = style.TreePrefix(strings.Repeat(style.TreePipe, maxInt(0, d-1))+branch, nc)
 		}
-		statusBadge := style.Badge(n.Status, nc)
-		pathStr := style.Infof(nc, "%s", displayPath)
-		if n.IsDir {
-			pathStr = style.Boldf(nc, "%s", displayPath) + style.Mutedf(nc, "/")
+		// Walk up the ancestor chain, marking each as partial.
+		cur := parentRel
+		for {
+			if cur == startRel || cur == "." || cur == "" {
+				break
+			}
+			if aIdx, ok := entryIdx[cur]; ok {
+				if entries[aIdx].status == "synced" {
+					entries[aIdx].status = "partial"
+				}
+				entries[aIdx].excludedChildren++
+			}
+			next := filepath.ToSlash(filepath.Dir(cur))
+			if next == "." {
+				next = ""
+			}
+			if next == cur {
+				break
+			}
+			cur = next
 		}
-		fmt.Fprintf(out, "%s%s %s %s\n", prefix, statusBadge, pathStr, style.Mutedf(nc, "(%s)", n.Rule))
 	}
+
+	// ── JSON output ──
+	if globals.json {
+		type jsonEntry struct {
+			Path      string `json:"path"`
+			Status    string `json:"status"`
+			Rule      string `json:"rule"`
+			IsDir     bool   `json:"is_dir"`
+			SizeBytes int64  `json:"size_bytes,omitempty"`
+			Depth     int    `json:"depth"`
+		}
+		out := make([]jsonEntry, 0, len(entries))
+		for _, e := range entries {
+			if maxDepth >= 0 && e.relDepth > maxDepth {
+				continue
+			}
+			out = append(out, jsonEntry{
+				Path:      e.rel,
+				Status:    e.status,
+				Rule:      e.rule,
+				IsDir:     e.isDir,
+				SizeBytes: e.sizeBytes,
+				Depth:     e.relDepth,
+			})
+		}
+		return writeJSON(stdout, stderr, "ignore.tree", out)
+	}
+
+	// ── Build parent→children map for display ──
+	children := map[string][]int{} // parentRel → sorted child indices
+	for i, e := range entries {
+		parentRel := filepath.ToSlash(filepath.Dir(e.rel))
+		if parentRel == "." {
+			parentRel = ""
+		}
+		children[parentRel] = append(children[parentRel], i)
+	}
+	// Ensure consistent ordering within each parent group.
+	for k := range children {
+		sort.Slice(children[k], func(a, b int) bool {
+			return entries[children[k][a]].name < entries[children[k][b]].name
+		})
+	}
+
+	// ── Render ──
+	w := textOut(globals, stdout)
+	nc := globals.noColor
+
+	// Header: display the start path.
+	displayRoot := start
+	if home, err := os.UserHomeDir(); err == nil {
+		if rel, err := filepath.Rel(home, start); err == nil && !strings.HasPrefix(rel, "..") {
+			displayRoot = "~/" + filepath.ToSlash(rel)
+		}
+	}
+	fmt.Fprintf(w, "%s\n", style.Boldf(nc, "%s/", displayRoot))
+
+	var totalExcludedFiles int
+	var totalExcludedSize int64
+
+	var renderChildren func(parentRel, prefix string, depth int)
+	renderChildren = func(parentRel, prefix string, depth int) {
+		kids := children[parentRel]
+		for i, idx := range kids {
+			e := entries[idx]
+			isLast := i == len(kids)-1
+
+			connector := style.TreeBranch
+			childPrefix := prefix + style.TreePipe
+			if isLast {
+				connector = style.TreeCorner
+				childPrefix = prefix + style.TreeSpace
+			}
+
+			icon := treeStatusIcon(e.status, nc)
+			name := e.name
+			if e.isDir {
+				name += "/"
+			}
+
+			extra := ""
+			switch e.status {
+			case "ignored":
+				if !e.isDir {
+					totalExcludedFiles++
+					totalExcludedSize += e.sizeBytes
+					if e.rule != "" && e.rule != "<default>" {
+						extra = "  " + style.Mutedf(nc, "%s", e.rule)
+					}
+				} else {
+					// Excluded dir: count it as one unit (don't descend).
+					totalExcludedFiles++
+					if e.rule != "" && e.rule != "<default>" {
+						extra = "  " + style.Mutedf(nc, "%s", e.rule)
+					}
+				}
+			case "partial":
+				if e.excludedChildren > 0 {
+					extra = "  " + style.Mutedf(nc, "(%d excluded)", e.excludedChildren)
+				}
+			}
+
+			sizeStr := ""
+			if e.sizeBytes > 0 {
+				sizeStr = "  " + style.Mutedf(nc, "%s", style.HumanBytes(e.sizeBytes))
+			}
+
+			fmt.Fprintf(w, "%s%s %s%s%s\n",
+				style.TreePrefix(prefix+connector, nc),
+				icon,
+				style.Infof(nc, "%s", name),
+				sizeStr,
+				extra,
+			)
+
+			// Recurse into dirs that are within the depth limit and not fully excluded.
+			// depth is 0-based (0 = rendering direct children of start).
+			// At depth D we are already showing level D+1 entries.
+			// To honour -L N (show N levels), recurse only when D+1 < N.
+			// maxDepth == -1 means unlimited.
+			if e.isDir && (maxDepth < 0 || depth+1 < maxDepth) && e.status != "ignored" {
+				renderChildren(e.rel, childPrefix, depth+1)
+			}
+		}
+	}
+
+	renderChildren(startRel, "", 0)
+
+	// ── Summary ──
+	if totalExcludedFiles > 0 {
+		fmt.Fprintf(w, "\n%s excluded · %s not synced\n",
+			style.Mutedf(nc, "%d files", totalExcludedFiles),
+			style.Mutedf(nc, "%s", style.HumanBytes(totalExcludedSize)))
+	} else {
+		fmt.Fprintf(w, "\n%s\n", style.ResultSuccess(nc, "All files synced"))
+	}
+
 	return 0
+}
+
+// treeStatusIcon returns the ✔/✗/◐ icon for a tree entry status.
+func treeStatusIcon(status string, nc bool) string {
+	switch status {
+	case "synced":
+		return style.IconCheck(nc)
+	case "ignored":
+		return style.IconCross(nc)
+	case "partial":
+		if nc {
+			return "~"
+		}
+		return "◐"
+	default:
+		return "?"
+	}
 }
 
 // runIgnoreEdit opens ws/ignore.json in $EDITOR, validates on save,
@@ -302,11 +546,4 @@ func runIgnoreEdit(userRulesPath, megaignorePath string, currentRules ignore.Use
 	fmt.Fprintf(out, "%s .megaignore regenerated (%d rules: %d default + %d user)\n",
 		style.IconCheck(nc), stats.Total, stats.DefaultExclude+stats.DefaultHarbors, stats.UserExclude+stats.UserHarbors)
 	return 0
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

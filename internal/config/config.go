@@ -22,7 +22,6 @@ type Config struct {
 	Search       Search  `json:"search"`
 	Dotfile      Dotfile `json:"dotfile"`
 	Repo         Repo    `json:"repo"`
-	Notify       Notify  `json:"notify"`
 	Capture      Capture `json:"capture"`
 }
 
@@ -90,13 +89,6 @@ type Log struct {
 	CapMB int `json:"cap_mb"`
 }
 
-type Notify struct {
-	Enabled         bool     `json:"enabled"`
-	PollIntervalMin int      `json:"poll_interval_min"`
-	PushIntervalMin int      `json:"push_interval_min"`
-	Events          []string `json:"events"`
-}
-
 type Capture struct {
 	MaxAttachMB int               `json:"max_attach_mb"`
 	Locations   map[string]string `json:"locations,omitempty"`
@@ -146,12 +138,6 @@ func Default() Config {
 			ExcludeDirs:     []string{"ws", "node_modules", ".venv"},
 			MaxParallel:     8,
 			ReconcileOnRead: true,
-		},
-		Notify: Notify{
-			Enabled:         true,
-			PollIntervalMin: 10,
-			PushIntervalMin: 5,
-			Events:          []string{"dotfile", "secret", "bloat", "storage"},
 		},
 		Capture: Capture{
 			MaxAttachMB: 5,

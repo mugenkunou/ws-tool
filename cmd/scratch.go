@@ -546,10 +546,18 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fs := flag.NewFlagSet("scratch-open", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		editor := fs.String("editor", cfg.Scratch.EditorCmd, "editor command")
+		printPath := fs.Bool("print-path", false, "print resolved path to stdout (TUI goes to stderr); useful for shell cd wrappers")
 		registerGlobalFlags(fs, &globals)
 		if err := fs.Parse(subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
+		}
+
+		// When --print-path is set, direct TUI output to stderr so that
+		// only the resolved path reaches stdout (allows `cd $(ws scratch open --print-path)`).
+		tuiOut := stdout
+		if *printPath {
+			tuiOut = stderr
 		}
 
 		var openName string
@@ -568,7 +576,7 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 				TabComplete: true,
 				NoColor:     globals.noColor,
 			}
-			inputName, err := gi.Run(stdin, stdout)
+			inputName, err := gi.Run(stdin, tuiOut)
 			if errors.Is(err, tui.ErrCancelled) {
 				return 130
 			}
@@ -604,6 +612,21 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 
 		if globals.json {
 			return writeJSON(stdout, stderr, "scratch.open", map[string]any{"name": matchName, "path": matchPath})
+		}
+
+		if *printPath {
+			// Launch editor in the background, then print the resolved path to
+			// stdout so the calling shell function can cd to it.
+			cmd := exec.Command(*editor, matchPath)
+			if err := cmd.Start(); err != nil {
+				nc := globals.noColor
+				fmt.Fprintln(stderr, style.ResultWarning(nc, "Editor launch skipped: %v", err))
+			} else {
+				nc := globals.noColor
+				fmt.Fprintf(stderr, "%s\n", style.ResultSuccess(nc, "Opening   %s → %s", *editor, matchPath))
+			}
+			fmt.Fprintln(stdout, matchPath)
+			return 0
 		}
 
 		cmd := exec.Command(*editor, matchPath)

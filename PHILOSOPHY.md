@@ -69,27 +69,43 @@ Search tools — `grep`, Obsidian search, IDE find-in-files, even `find -name` �
 
 ## 🔗 IV. Originals In, Symlinks Out
 
-*The real file lives in sync folder. Anywhere else gets a pointer.*
+*The real file lives in the sync folder. Anywhere else gets a pointer.*
 
-Config files that the OS expects at specific paths (`~/.ssh/`, `~/.bashrc`, `/etc/docker/daemon.json`) have their **originals** stored inside `~/Workspace/ws/dotfiles/`. The system paths are symlinks pointing back in. The `ws dotfile add` command handles this: it moves the original into `ws/dotfiles/` and replaces the system path with a symlink.
+Config files that the OS expects at specific paths (`~/.ssh/config`, `~/.bashrc`, `/etc/docker/daemon.json`) have their **originals** stored inside `~/Workspace/ws/dotfiles/`. The system paths are symlinks pointing back in. The `ws dotfile add` command handles this: it moves the original into `ws/dotfiles/` and replaces the system path with a symlink.
 
 Never the reverse. Never store a symlink inside the sync directory. Why? If you keep the original at `~/.bashrc` and symlink it into sync, you're trusting a non-synced location as the source. One bad `apt upgrade` replaces the real file, and sync now points at a dangling link — or worse, a default-overwritten config.
+
+**Dotfiles are tracked as files, never as directories.**
+
+Directory symlinks are seductive — one symlink captures everything — but they trade clarity for convenience. The user loses sight of what is tracked, secrets and machine-specific state get swept in silently, and a restore can clobber unrelated files in the same directory (e.g. `~/.kube/` might contain per-cluster tokens from another machine).
+
+`ws` mirrors the original path structure inside its state: `~/.ssh/config` becomes `ws/dotfiles/ssh/config`, `~/.config/Code/User/settings.json` becomes `ws/dotfiles/config/Code/User/settings.json`. The directory hierarchy is preserved and navigable. But every tracked path is an explicit, individual decision.
+
+Pointing `add` at a directory is a shortcut for "show me the files inside so I can choose" — not a shortcut for "track them all blindly". `ws` expands the directory, classifies each entry (config / likely state / secret), and asks which ones to track. The `ws dotfile migrate` command converts existing directory-level entries to file-level ones.
+
+**Secrets may be tracked.** Private keys and credential files sometimes need to follow you across machines. The tool warns once and trusts the user. Rotation and access control are the user's responsibility. What `ws` enforces is that pushing dotfiles to a remote always targets a **private** repository — never a public one.
 
 ```text
 ┌─────────── ORIGINALS (in ~/Workspace/ws/dotfiles/) ────────────────────────┐
 │                                                                            │
-│  ws/dotfiles/ssh/*         ws/dotfiles/bashrc      ws/dotfiles/daemon.json │
-│  ws/dotfiles/kubeconfig    ws/dotfiles/vscode-settings.json                │
-│  ws/dotfiles/megaignore                                                    │
+│  ws/dotfiles/ssh/config      ws/dotfiles/bashrc                            │
+│  ws/dotfiles/ssh/known_hosts ws/dotfiles/gitconfig                         │
+│  ws/dotfiles/config/Code/User/settings.json                                │
 │                                                                            │
 └──────────────────────┬──────────────────────┬──────────────────────────────┘
                        │     SYMLINKS          │
                        ▼                       ▼
-          ~/.ssh/ → ws/dotfiles/ssh   ~/.bashrc → ws/dotfiles/bashrc
-          ~/.kube/config              /etc/docker/daemon.json
-          ~/.config/Code/User/
-            settings.json
+          ~/.ssh/config                  ~/.bashrc → ws/dotfiles/bashrc
+          ~/.ssh/known_hosts             ~/.gitconfig
+          ~/.config/Code/User/settings.json
 ```
+
+⚠️ **Eyes open:** Any changes to the symlinked files affect the originals in sync. Version-control important configs to prevent accidental overwrites (enable `dotfile.git.enabled` in `ws/config.json`).
+
+⚠️ **Hard rule:** When dotfile Git versioning pushes to a remote, the remote **must** be a private repository. This is enforced by `ws`, not left to user discipline. Dotfiles contain secrets by nature — SSH proxy-jump configs, Kubernetes cluster credentials, API tokens embedded in shell profiles. Pushing these to a public repo is an irreversible leak. `ws` verifies repository visibility on connect and before every push. There is no override.
+
+---
+
 
 ⚠️ **Eyes open:** Any changes to the symlinks affects the original file in sync as well. Version control important configs to prevent accidental overwrites (enable `dotfile.git.enabled` in `ws/config.json`).
 

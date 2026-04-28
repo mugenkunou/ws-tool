@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"testing"
 	"time"
-
-	"github.com/mugenkunou/ws-tool/internal/notify"
 )
 
 func TestRenderDashboardCompactFallback(t *testing.T) {
@@ -40,7 +38,7 @@ func TestRenderDashboardWithViolations(t *testing.T) {
 	d := DashboardData{
 		Workspace: "/home/user/Workspace",
 		LoadedAt:  time.Now(),
-		Violations: []notify.HealthViolation{
+		Violations: []Violation{
 			{Group: "ignore", Type: "bloat", Severity: "WARNING", Path: "big-file.zip", SizeMB: 100},
 		},
 		IgnoreWarning: 1,

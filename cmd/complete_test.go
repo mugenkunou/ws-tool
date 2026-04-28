@@ -89,17 +89,12 @@ func TestCompleteSubcommands(t *testing.T) {
 		},
 		{
 			args:      []string{"ignore", ""},
-			wantSome:  []string{"check", "scan", "fix", "ls", "tree", "edit", "generate"},
+			wantSome:  []string{"check", "scan", "fix", "ls", "tree", "edit"},
 			directive: compDirectiveNoFileComp,
 		},
 		{
 			args:      []string{"log", ""},
-			wantSome:  []string{"start", "stop", "ls", "show", "search", "scan", "prune"},
-			directive: compDirectiveNoFileComp,
-		},
-		{
-			args:      []string{"notify", ""},
-			wantSome:  []string{"start", "stop", "status", "test"},
+			wantSome:  []string{"start", "stop", "ls", "prune", "rm"},
 			directive: compDirectiveNoFileComp,
 		},
 		{
@@ -119,7 +114,7 @@ func TestCompleteSubcommands(t *testing.T) {
 		},
 		{
 			args:      []string{"repo", ""},
-			wantSome:  []string{"ls", "scan", "fetch", "fix", "pull", "sync", "run"},
+			wantSome:  []string{"ls", "scan", "fetch", "pull", "sync", "run"},
 			directive: compDirectiveNoFileComp,
 		},
 		{
@@ -139,7 +134,7 @@ func TestCompleteSubcommands(t *testing.T) {
 		},
 		{
 			args:      []string{"capture", ""},
-			wantSome:  []string{"edit", "ls"},
+			wantSome:  []string{"ls"},
 			directive: compDirectiveNoFileComp,
 		},
 	}
@@ -190,7 +185,7 @@ func TestCompleteCommandFlags(t *testing.T) {
 		},
 		{
 			args:     []string{"capture", "--"},
-			wantSome: []string{"--location", "--dry-run"},
+			wantSome: []string{"--edit", "--amend", "--dry-run"},
 		},
 	}
 
@@ -323,12 +318,12 @@ func TestCompleteDotfileRm(t *testing.T) {
 	}
 }
 
-func TestCompleteCaptureLocationFlag(t *testing.T) {
+func TestCompleteCaptureLocationPositional(t *testing.T) {
 	ctx := completionCtx{
 		captureLocations: []string{"personal", "work", "archive"},
 	}
-	// Simulate: ws capture -l <TAB>
-	comps, dir := completeCapture("", []string{"-l"}, "", ctx)
+	// Simulate: ws capture <TAB> — offer configured location names
+	comps, dir := completeCapture("", []string{}, "", ctx)
 	if dir != compDirectiveNoFileComp {
 		t.Fatalf("expected NoFileComp, got %d", dir)
 	}
@@ -341,16 +336,18 @@ func TestCompleteCaptureLocationPrefix(t *testing.T) {
 	ctx := completionCtx{
 		captureLocations: []string{"personal", "work", "archive"},
 	}
-	comps, _ := completeCapture("", []string{"--location"}, "p", ctx)
+	comps, _ := completeCapture("", []string{}, "p", ctx)
 	if len(comps) != 1 || comps[0] != "personal" {
 		t.Fatalf("expected [personal], got %v", comps)
 	}
 }
 
-func TestCompleteCaptureEditFileCompletion(t *testing.T) {
+func TestCaptureEditNotASubcommand(t *testing.T) {
+	// "edit" is a flag (-e/--edit), not a subcommand; tab after unknown word
+	// should suppress file completion.
 	_, dir := resolveCompletions([]string{"capture", "edit", ""}, globalFlags{})
-	if dir != compDirectiveDefault {
-		t.Fatalf("expected Default (file completion) for capture edit, got %d", dir)
+	if dir != compDirectiveNoFileComp {
+		t.Fatalf("expected NoFileComp for unknown capture positional, got %d", dir)
 	}
 }
 

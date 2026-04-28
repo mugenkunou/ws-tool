@@ -137,10 +137,19 @@ func Discover(workspacePath string, roots []string, excludeDirs []string) ([]Rep
 	return repos, nil
 }
 
+// absRepoPath returns the absolute path for a repo. If path is already
+// absolute it is returned as-is; otherwise it is joined with workspacePath.
+func absRepoPath(workspacePath, path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(workspacePath, filepath.FromSlash(path))
+}
+
 func Scan(workspacePath string, repos []Repository) []RepoStatus {
 	statuses := make([]RepoStatus, 0, len(repos))
 	for _, r := range repos {
-		absPath := filepath.Join(workspacePath, filepath.FromSlash(r.Path))
+		absPath := absRepoPath(workspacePath, r.Path)
 		statuses = append(statuses, scanOne(absPath, r.Path))
 	}
 	return statuses
@@ -149,7 +158,7 @@ func Scan(workspacePath string, repos []Repository) []RepoStatus {
 func FetchAll(workspacePath string, repos []Repository) []FetchResult {
 	results := make([]FetchResult, 0, len(repos))
 	for _, r := range repos {
-		absPath := filepath.Join(workspacePath, filepath.FromSlash(r.Path))
+		absPath := absRepoPath(workspacePath, r.Path)
 		_, err := runGit(absPath, "fetch", "--all", "--prune")
 		if err != nil {
 			results = append(results, FetchResult{Path: r.Path, Success: false, Error: err.Error()})
@@ -167,7 +176,7 @@ func PullAll(workspacePath string, repos []Repository, rebase bool) []OperationR
 		args = []string{"pull", "--rebase"}
 	}
 	for _, r := range repos {
-		absPath := filepath.Join(workspacePath, filepath.FromSlash(r.Path))
+		absPath := absRepoPath(workspacePath, r.Path)
 		out, err := runGit(absPath, args...)
 		if err != nil {
 			results = append(results, OperationResult{Path: r.Path, Success: false, Error: err.Error()})
@@ -264,7 +273,7 @@ func PlanSync(status RepoStatus) SyncPlan {
 
 // SyncOne executes the sync plan for a single repo.
 func SyncOne(workspacePath string, plan SyncPlan, opts SyncOptions) OperationResult {
-	absPath := filepath.Join(workspacePath, filepath.FromSlash(plan.Path))
+	absPath := absRepoPath(workspacePath, plan.Path)
 	result := OperationResult{Path: plan.Path}
 
 	dirty := plan.Status.Dirty
@@ -351,7 +360,7 @@ func RunAll(workspacePath string, repos []Repository, command []string) []Operat
 	}
 
 	for _, r := range repos {
-		absPath := filepath.Join(workspacePath, filepath.FromSlash(r.Path))
+		absPath := absRepoPath(workspacePath, r.Path)
 		cmd := exec.Command(command[0], command[1:]...)
 		cmd.Dir = absPath
 		var stdout bytes.Buffer
@@ -407,7 +416,7 @@ func Reconcile(workspacePath string, roots []string, excludeDirs []string, track
 }
 
 func FetchOne(workspacePath string, r Repository) FetchResult {
-	absPath := filepath.Join(workspacePath, filepath.FromSlash(r.Path))
+	absPath := absRepoPath(workspacePath, r.Path)
 	_, err := runGit(absPath, "fetch", "--all", "--prune")
 	if err != nil {
 		return FetchResult{Path: r.Path, Success: false, Error: err.Error()}
@@ -486,6 +495,8 @@ func scanOne(absPath, relPath string) RepoStatus {
 
 func runGit(repoPath string, args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"-C", repoPath}, args...)...)
+	// Prevent git from prompting for credentials — this tool is non-interactive.
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout

@@ -207,3 +207,40 @@ func TestScratchOpenSubstringMatch(t *testing.T) {
 		t.Fatalf("expected my-debug-session in output, got: %s", out.String())
 	}
 }
+
+func TestScratchOpenPrintPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(t.TempDir(), "Workspace")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := Execute([]string{"--workspace", workspace, "scratch", "new", "--no-open", "--no-date", "print-path-test"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("scratch new failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	// --print-path: stdout must be only the directory path (no decoration).
+	// We fake the editor with a no-op so exec.Command.Start() succeeds.
+	out.Reset()
+	errOut.Reset()
+	if code := Execute([]string{"--workspace", workspace, "scratch", "open", "--print-path", "--editor", "true", "print-path-test"}, strings.NewReader(""), &out, &errOut); code != 0 {
+		t.Fatalf("scratch open --print-path failed: code=%d stderr=%s", code, errOut.String())
+	}
+	gotPath := strings.TrimSpace(out.String())
+	if !strings.HasSuffix(gotPath, "print-path-test") {
+		t.Fatalf("expected path ending in print-path-test on stdout, got: %q", gotPath)
+	}
+	if strings.Contains(gotPath, "\n") {
+		t.Fatalf("stdout should be a single line path, got: %q", gotPath)
+	}
+	// Status/decoration must go to stderr, not stdout.
+	if strings.Contains(out.String(), "Opening") {
+		t.Fatalf("status line should go to stderr, not stdout")
+	}
+}

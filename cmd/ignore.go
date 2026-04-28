@@ -13,7 +13,17 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
 
-var ignoreHelp = cmdHelp{Usage: "ws ignore <scan|fix|edit|ls>"}
+var ignoreHelp = cmdHelp{
+	Usage: "ws ignore <check|ls|tree|scan|fix|edit>",
+	Subcommands: []string{
+		"  check <path>   Test whether a path would be synced or ignored",
+		"  ls             List all excluded files (pipe-safe, greppable)",
+		"  tree [dir] [-L level]  Browse workspace tree with sync/ignored status",
+		"  scan           Find bloat, excessive depth, and build artifacts",
+		"  fix            Interactively resolve violations",
+		"  edit           Open ws/ignore.json in your editor",
+	},
+}
 
 func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	if hasHelpArg(args) {
@@ -50,6 +60,48 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 	megaignorePath := filepath.Join(workspacePath, ".megaignore")
 
 	switch sub {
+	case "check":
+		fs := flag.NewFlagSet("ignore-check", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		registerGlobalFlags(fs, &globals)
+		if err := fs.Parse(subArgs); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		if len(fs.Args()) == 0 {
+			fmt.Fprintln(stderr, "usage: ws ignore check <path>")
+			return 1
+		}
+		return runIgnoreCheckPath(engine, workspacePath, fs.Args()[0], globals, stdout, stderr)
+	case "tree":
+		fs := flag.NewFlagSet("ignore-tree", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		depth := fs.Int("depth", 0, "max tree depth (0 = unlimited)")
+		level := fs.Int("L", 0, "max tree depth (like tree -L)")
+		pathFilter := fs.String("path", "", "start from a subpath (deprecated: use positional arg)")
+		registerGlobalFlags(fs, &globals)
+		if err := fs.Parse(subArgs); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		// Positional args: [directory] [level]
+		if len(fs.Args()) > 0 && strings.TrimSpace(*pathFilter) == "" {
+			*pathFilter = fs.Args()[0]
+		}
+		if len(fs.Args()) > 1 && *depth == 0 && *level == 0 {
+			if n, err := fmt.Sscanf(fs.Args()[1], "%d", depth); n != 1 || err != nil {
+				fmt.Fprintln(stderr, "level must be an integer")
+				return 1
+			}
+		}
+		// -L takes precedence over --depth; both default to 0 (unlimited)
+		if *level > 0 {
+			*depth = *level
+		}
+		if *depth == 0 {
+			*depth = -1 // signal: unlimited
+		}
+		return runIgnoreTreeView(engine, workspacePath, *pathFilter, *depth, globals, stdout, stderr)
 	case "ls":
 		return runIgnoreList(engine, workspacePath, subArgs, globals, stdout, stderr)
 	case "edit":

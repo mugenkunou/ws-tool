@@ -88,6 +88,13 @@ func Add(opts AddOptions) (AddResult, error) {
 		return result, fmt.Errorf("dotfile path not found: %s", absSystem)
 	}
 
+	// Directories must not be added directly. Callers should expand to individual
+	// files first (e.g. via ExpandDir) so every tracked entry is a specific file.
+	realInfo, statErr := os.Stat(absSystem)
+	if statErr == nil && realInfo.IsDir() {
+		return result, fmt.Errorf("cannot add a directory directly: expand it with 'ws dotfile add <dir>' to select individual files interactively")
+	}
+
 	m, err := manifest.Load(opts.ManifestPath)
 	if err != nil {
 		return result, err
@@ -111,17 +118,23 @@ func Add(opts AddOptions) (AddResult, error) {
 		return result, fmt.Errorf("workspace dotfile target already exists: %s", workspaceAbs)
 	}
 
+	needsSudo := NeedsSudo(absSystem)
 	record := manifest.DotfileRecord{
 		System: absSystem,
 		Name:   name,
+		Sudo:   needsSudo,
 	}
 	result.Record = record
 
 	if opts.DryRun {
 		result.DryRun = true
+		sudoNote := ""
+		if needsSudo {
+			sudoNote = " (requires sudo)"
+		}
 		result.Messages = append(result.Messages,
-			"Would move: "+absSystem+" -> "+workspaceAbs,
-			"Would symlink: "+absSystem+" -> "+workspaceAbs,
+			"Would move: "+absSystem+" -> "+workspaceAbs+sudoNote,
+			"Would symlink: "+absSystem+" -> "+workspaceAbs+sudoNote,
 			"Would register in manifest",
 		)
 		return result, nil
@@ -131,12 +144,20 @@ func Add(opts AddOptions) (AddResult, error) {
 		return result, err
 	}
 
-	if err := movePath(absSystem, workspaceAbs); err != nil {
-		return result, err
-	}
-
-	if err := os.Symlink(workspaceAbs, absSystem); err != nil {
-		return result, err
+	if needsSudo {
+		if err := sudoRename(absSystem, workspaceAbs); err != nil {
+			return result, err
+		}
+		if err := sudoSymlink(workspaceAbs, absSystem); err != nil {
+			return result, err
+		}
+	} else {
+		if err := movePath(absSystem, workspaceAbs); err != nil {
+			return result, err
+		}
+		if err := os.Symlink(workspaceAbs, absSystem); err != nil {
+			return result, err
+		}
 	}
 
 	m.Dotfiles = append(m.Dotfiles, record)
@@ -191,17 +212,51 @@ func Remove(opts RemoveOptions) (RemoveResult, error) {
 	}
 
 	if _, err := os.Lstat(absSystem); err == nil {
-		if err := os.RemoveAll(absSystem); err != nil {
+		if record.Sudo {
+			if err := sudoRemoveAll(absSystem); err != nil {
+				return result, err
+			}
+		} else {
+			if err := os.RemoveAll(absSystem); err != nil {
+				return result, err
+			}
+		}
+	}
+
+	if record.Sudo {
+		if err := sudoMkdirAll(filepath.Dir(absSystem)); err != nil {
+			return result, err
+		}
+		if err := sudoRename(targetAbs, absSystem); err != nil {
+			return result, err
+		}
+	} else {
+		if err := os.MkdirAll(filepath.Dir(absSystem), 0o755); err != nil {
+			return result, err
+		}
+		if err := movePath(targetAbs, absSystem); err != nil {
 			return result, err
 		}
 	}
 
-	if err := os.MkdirAll(filepath.Dir(absSystem), 0o755); err != nil {
-		return result, err
-	}
-
-	if err := movePath(targetAbs, absSystem); err != nil {
-		return result, err
+	// Remove any empty ancestor directories left behind under ws/dotfiles/.
+	// Walk up from the file's parent until we hit the dotfiles root, pruning
+	// each directory that is now empty.
+	dotfilesRoot := filepath.Clean(filepath.Join(opts.WorkspacePath, dotfilesDir))
+	pruneDir := filepath.Dir(targetAbs)
+	for {
+		pruneDir = filepath.Clean(pruneDir)
+		if pruneDir == dotfilesRoot || !strings.HasPrefix(pruneDir, dotfilesRoot+string(os.PathSeparator)) {
+			break
+		}
+		entries, readErr := os.ReadDir(pruneDir)
+		if readErr != nil || len(entries) > 0 {
+			break
+		}
+		if err := os.Remove(pruneDir); err != nil {
+			break
+		}
+		pruneDir = filepath.Dir(pruneDir)
 	}
 
 	m.Dotfiles = append(m.Dotfiles[:idx], m.Dotfiles[idx+1:]...)
@@ -336,17 +391,32 @@ func Fix(opts FixOptions) (FixResult, error) {
 				result.Messages = append(result.Messages, issue.Message)
 				continue
 			}
-			if err := os.MkdirAll(filepath.Dir(record.System), 0o755); err != nil {
-				issue.Status = StatusBroken
-				issue.Message = fmt.Sprintf("failed to create parent dir: %v", err)
-				result.Failed = append(result.Failed, issue)
-				continue
-			}
-			if err := os.Symlink(expectedTarget, record.System); err != nil {
-				issue.Status = StatusBroken
-				issue.Message = fmt.Sprintf("failed to create symlink: %v", err)
-				result.Failed = append(result.Failed, issue)
-				continue
+			if record.Sudo {
+				if mkErr := sudoMkdirAll(filepath.Dir(record.System)); mkErr != nil {
+					issue.Status = StatusBroken
+					issue.Message = fmt.Sprintf("failed to create parent dir: %v", mkErr)
+					result.Failed = append(result.Failed, issue)
+					continue
+				}
+				if lnErr := sudoSymlink(expectedTarget, record.System); lnErr != nil {
+					issue.Status = StatusBroken
+					issue.Message = fmt.Sprintf("failed to create symlink: %v", lnErr)
+					result.Failed = append(result.Failed, issue)
+					continue
+				}
+			} else {
+				if err := os.MkdirAll(filepath.Dir(record.System), 0o755); err != nil {
+					issue.Status = StatusBroken
+					issue.Message = fmt.Sprintf("failed to create parent dir: %v", err)
+					result.Failed = append(result.Failed, issue)
+					continue
+				}
+				if err := os.Symlink(expectedTarget, record.System); err != nil {
+					issue.Status = StatusBroken
+					issue.Message = fmt.Sprintf("failed to create symlink: %v", err)
+					result.Failed = append(result.Failed, issue)
+					continue
+				}
 			}
 			issue.Status = "CREATED"
 			issue.Message = fmt.Sprintf("created symlink %s → %s", record.System, expectedTarget)
@@ -384,20 +454,37 @@ func Fix(opts FixOptions) (FixResult, error) {
 		}
 
 		// Remove any stale backup.
-		_ = os.RemoveAll(backupPath)
-		if err := os.Rename(record.System, backupPath); err != nil {
-			issue.Status = StatusBroken
-			issue.Message = fmt.Sprintf("failed to backup: %v", err)
-			result.Failed = append(result.Failed, issue)
-			continue
-		}
-		if err := os.Symlink(expectedTarget, record.System); err != nil {
-			// Restore backup on failure.
-			_ = os.Rename(backupPath, record.System)
-			issue.Status = StatusBroken
-			issue.Message = fmt.Sprintf("failed to create symlink: %v", err)
-			result.Failed = append(result.Failed, issue)
-			continue
+		if record.Sudo {
+			_ = sudoRemoveAll(backupPath)
+			if err := sudoRename(record.System, backupPath); err != nil {
+				issue.Status = StatusBroken
+				issue.Message = fmt.Sprintf("failed to backup: %v", err)
+				result.Failed = append(result.Failed, issue)
+				continue
+			}
+			if err := sudoSymlink(expectedTarget, record.System); err != nil {
+				_ = sudoRename(backupPath, record.System)
+				issue.Status = StatusBroken
+				issue.Message = fmt.Sprintf("failed to create symlink: %v", err)
+				result.Failed = append(result.Failed, issue)
+				continue
+			}
+		} else {
+			_ = os.RemoveAll(backupPath)
+			if err := os.Rename(record.System, backupPath); err != nil {
+				issue.Status = StatusBroken
+				issue.Message = fmt.Sprintf("failed to backup: %v", err)
+				result.Failed = append(result.Failed, issue)
+				continue
+			}
+			if err := os.Symlink(expectedTarget, record.System); err != nil {
+				// Restore backup on failure.
+				_ = os.Rename(backupPath, record.System)
+				issue.Status = StatusBroken
+				issue.Message = fmt.Sprintf("failed to create symlink: %v", err)
+				result.Failed = append(result.Failed, issue)
+				continue
+			}
 		}
 		issue.Status = "FIXED"
 		issue.Message = fmt.Sprintf("backed up and re-linked %s → %s", record.System, expectedTarget)
@@ -406,6 +493,24 @@ func Fix(opts FixOptions) (FixResult, error) {
 	}
 
 	return result, nil
+}
+
+// FindDirEntries returns all manifest entries whose workspace copy is a directory.
+// These are candidates for migration to file-level entries.
+func FindDirEntries(workspacePath, manifestPath string) ([]manifest.DotfileRecord, error) {
+	m, err := manifest.Load(manifestPath)
+	if err != nil {
+		return nil, err
+	}
+	var dirs []manifest.DotfileRecord
+	for _, r := range m.Dotfiles {
+		wsPath := filepath.Join(workspacePath, filepath.FromSlash(DotfilePath(r.Name)))
+		info, err := os.Stat(wsPath)
+		if err == nil && info.IsDir() {
+			dirs = append(dirs, r)
+		}
+	}
+	return dirs, nil
 }
 
 func workspaceRelativePath(workspacePath, systemPath string) (string, error) {

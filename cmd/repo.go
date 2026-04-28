@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 
 	"github.com/mugenkunou/ws-tool/internal/config"
@@ -70,6 +71,50 @@ func filterRepos(workspacePath string, repos []repo.Repository, f repoFilterFlag
 	return result
 }
 
+// wsSpecialRepos returns repos managed by ws itself (dotfiles and pass store)
+// that should always be included in repo operations regardless of configured roots.
+func wsSpecialRepos(workspacePath string) []repo.Repository {
+	var special []repo.Repository
+
+	// Dotfiles repo: <workspace>/ws/dotfiles/
+	dotfilesPath := filepath.Join(workspacePath, "ws", "dotfiles")
+	if isGitRepo(dotfilesPath) {
+		special = append(special, repo.Repository{Path: "ws/dotfiles"})
+	}
+
+	// Pass store: $PASSWORD_STORE_DIR or ~/.password-store
+	passStorePath := os.Getenv("PASSWORD_STORE_DIR")
+	if passStorePath == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			passStorePath = filepath.Join(home, ".password-store")
+		}
+	}
+	if passStorePath != "" && isGitRepo(passStorePath) {
+		special = append(special, repo.Repository{Path: passStorePath})
+	}
+
+	return special
+}
+
+func isGitRepo(path string) bool {
+	info, err := os.Stat(filepath.Join(path, ".git"))
+	return err == nil && info.IsDir()
+}
+
+// appendMissingRepos appends repos from extra that are not already in repos.
+func appendMissingRepos(repos []repo.Repository, extra []repo.Repository) []repo.Repository {
+	seen := make(map[string]struct{}, len(repos))
+	for _, r := range repos {
+		seen[r.Path] = struct{}{}
+	}
+	for _, r := range extra {
+		if _, ok := seen[r.Path]; !ok {
+			repos = append(repos, r)
+		}
+	}
+	return repos
+}
+
 func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	if hasHelpArg(args) {
 		return printCmdHelp(stdout, repoHelp)
@@ -124,6 +169,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
+		repos = appendMissingRepos(repos, wsSpecialRepos(workspacePath))
 		repos = filterRepos(workspacePath, repos, filters)
 		return renderRepoList(globals, repos, stdout, stderr)
 	case "scan":
@@ -142,11 +188,15 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
+		repos = appendMissingRepos(repos, wsSpecialRepos(workspacePath))
 
 		// Fetch first (unless --no-fetch), then scan.
 		var fetchWarnings []string
 		if !*noFetch {
 			for _, r := range repos {
+				if filepath.IsAbs(r.Path) {
+					continue // skip external repos (e.g. pass store)
+				}
 				result := repo.FetchOne(workspacePath, r)
 				if !result.Success {
 					fetchWarnings = append(fetchWarnings, fmt.Sprintf("%s: %s", r.Path, result.Error))
@@ -174,6 +224,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
+		repos = appendMissingRepos(repos, wsSpecialRepos(workspacePath))
 		repos = filterRepos(workspacePath, repos, filters)
 		results := repo.FetchAll(workspacePath, repos)
 		return renderRepoFetch(globals, results, stdout, stderr)
@@ -193,6 +244,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
+		repos = appendMissingRepos(repos, wsSpecialRepos(workspacePath))
 		repos = filterRepos(workspacePath, repos, filters)
 		if globals.dryRun {
 			if globals.json {
@@ -238,12 +290,16 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
+		repos = appendMissingRepos(repos, wsSpecialRepos(workspacePath))
 
 		// Fetch first to get accurate ahead/behind counts.
 		nc := globals.noColor
 		if !globals.json && !globals.quiet {
 			out := textOut(globals, stdout)
 			for i, r := range repos {
+				if filepath.IsAbs(r.Path) {
+					continue // skip external repos (e.g. pass store)
+				}
 				fmt.Fprintf(out, "\r%s Fetching %s (%d/%d)…",
 					style.IconGit(nc), style.Infof(nc, "%s", r.Path), i+1, len(repos))
 				repo.FetchOne(workspacePath, r)
@@ -251,6 +307,9 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			fmt.Fprintln(out) // finish the progress line
 		} else {
 			for _, r := range repos {
+				if filepath.IsAbs(r.Path) {
+					continue // skip external repos (e.g. pass store)
+				}
 				repo.FetchOne(workspacePath, r)
 			}
 		}
@@ -365,6 +424,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
+		repos = appendMissingRepos(repos, wsSpecialRepos(workspacePath))
 		repos = filterRepos(workspacePath, repos, filters)
 		if globals.dryRun {
 			if globals.json {

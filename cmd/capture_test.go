@@ -619,3 +619,25 @@ func TestCapturePositionalLocationDefault(t *testing.T) {
 		t.Fatalf("content should be in default location, got: %s", string(content))
 	}
 }
+
+func TestCaptureUnknownLocationErrors(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(t.TempDir(), "Workspace")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	code := Execute([]string{"--workspace", workspace, "capture", "nonexistent"}, strings.NewReader(""), &out, &errOut)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for unknown location, got 0")
+	}
+	if !strings.Contains(errOut.String(), "unknown capture location") {
+		t.Fatalf("expected error about unknown location, got: %s", errOut.String())
+	}
+}

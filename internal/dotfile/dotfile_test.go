@@ -227,3 +227,112 @@ func TestAddDryRun(t *testing.T) {
 		t.Fatalf("dry-run should not modify manifest, got %d entries", len(m.Dotfiles))
 	}
 }
+
+// TestRemovePrunesEmptyDirs verifies that removing a file-level dotfile whose
+// workspace path lives inside a subdirectory (e.g. ws/dotfiles/ssh/config)
+// also removes the now-empty parent directory hierarchy under ws/dotfiles/.
+func TestRemovePrunesEmptyDirs(t *testing.T) {
+	workspaceRoot, manifestPath := setupWorkspace(t)
+
+	// Simulate ~/.ssh/config: create a file inside a subdirectory.
+	sshDir := filepath.Join(t.TempDir(), ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatalf("mkdir .ssh failed: %v", err)
+	}
+	systemFile := filepath.Join(sshDir, "config")
+	if err := os.WriteFile(systemFile, []byte("Host *\n"), 0o600); err != nil {
+		t.Fatalf("write file failed: %v", err)
+	}
+
+	if _, err := Add(AddOptions{
+		WorkspacePath: workspaceRoot,
+		ManifestPath:  manifestPath,
+		SystemPath:    systemFile,
+	}); err != nil {
+		t.Fatalf("add failed: %v", err)
+	}
+
+	// Workspace should contain the nested directory.
+	records, _ := List(manifestPath)
+	if len(records) != 1 {
+		t.Fatalf("expected 1 record, got %d", len(records))
+	}
+	wsFile := filepath.Join(workspaceRoot, filepath.FromSlash(DotfilePath(records[0].Name)))
+	wsParent := filepath.Dir(wsFile)
+	if _, err := os.Stat(wsParent); err != nil {
+		t.Fatalf("workspace parent dir should exist before remove: %v", err)
+	}
+
+	// Remove the dotfile.
+	if _, err := Remove(RemoveOptions{
+		WorkspacePath: workspaceRoot,
+		ManifestPath:  manifestPath,
+		SystemPath:    systemFile,
+	}); err != nil {
+		t.Fatalf("remove failed: %v", err)
+	}
+
+	// The workspace subdirectory should be gone.
+	if _, err := os.Stat(wsParent); err == nil {
+		t.Fatalf("expected workspace parent dir %s to be removed after dotfile rm, but it still exists", wsParent)
+	}
+
+	// The system file should be restored as a real file.
+	info, err := os.Lstat(systemFile)
+	if err != nil {
+		t.Fatalf("system file should be restored: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("expected restored system file to be a regular file, not a symlink")
+	}
+}
+
+// TestRemovePrunesOnlyEmptyDirs verifies that non-empty directories are not
+// removed when one sibling file is removed but others remain.
+func TestRemovePrunesOnlyEmptyDirs(t *testing.T) {
+	workspaceRoot, manifestPath := setupWorkspace(t)
+
+	sshDir := filepath.Join(t.TempDir(), ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatalf("mkdir .ssh failed: %v", err)
+	}
+
+	fileA := filepath.Join(sshDir, "config")
+	fileB := filepath.Join(sshDir, "known_hosts")
+	if err := os.WriteFile(fileA, []byte("Host *\n"), 0o600); err != nil {
+		t.Fatalf("write fileA: %v", err)
+	}
+	if err := os.WriteFile(fileB, []byte("github.com ...\n"), 0o600); err != nil {
+		t.Fatalf("write fileB: %v", err)
+	}
+
+	for _, f := range []string{fileA, fileB} {
+		if _, err := Add(AddOptions{
+			WorkspacePath: workspaceRoot,
+			ManifestPath:  manifestPath,
+			SystemPath:    f,
+		}); err != nil {
+			t.Fatalf("add %s failed: %v", f, err)
+		}
+	}
+
+	// Remove only fileA.
+	if _, err := Remove(RemoveOptions{
+		WorkspacePath: workspaceRoot,
+		ManifestPath:  manifestPath,
+		SystemPath:    fileA,
+	}); err != nil {
+		t.Fatalf("remove fileA failed: %v", err)
+	}
+
+	// The workspace subdirectory should still exist (fileB is still there).
+	records, _ := List(manifestPath)
+	if len(records) != 1 {
+		t.Fatalf("expected 1 remaining record, got %d", len(records))
+	}
+	wsBFile := filepath.Join(workspaceRoot, filepath.FromSlash(DotfilePath(records[0].Name)))
+	wsParent := filepath.Dir(wsBFile)
+	if _, err := os.Stat(wsParent); err != nil {
+		t.Fatalf("workspace parent dir should NOT be removed while sibling %s still exists: %v", wsBFile, err)
+	}
+}

@@ -75,27 +75,47 @@ func Reset(opts ResetOptions) (ResetResult, error) {
 
 		// Remove the symlink (or whatever is at the system path now).
 		if _, err := os.Lstat(record.System); err == nil {
-			if err := os.RemoveAll(record.System); err != nil {
+			var rmErr error
+			if record.Sudo {
+				rmErr = sudoRemoveAll(record.System)
+			} else {
+				rmErr = os.RemoveAll(record.System)
+			}
+			if rmErr != nil {
 				entry.Action = "failed"
-				entry.Message = fmt.Sprintf("failed to remove %s: %s", record.System, err)
+				entry.Message = fmt.Sprintf("failed to remove %s: %s", record.System, rmErr)
 				result.Entries = append(result.Entries, entry)
 				continue
 			}
 		}
 
 		// Restore original file from workspace → system path.
-		if err := os.MkdirAll(filepath.Dir(record.System), 0o755); err != nil {
-			entry.Action = "failed"
-			entry.Message = err.Error()
-			result.Entries = append(result.Entries, entry)
-			continue
-		}
-
-		if err := movePath(workspaceAbs, record.System); err != nil {
-			entry.Action = "failed"
-			entry.Message = fmt.Sprintf("failed to restore %s: %s", record.System, err)
-			result.Entries = append(result.Entries, entry)
-			continue
+		if record.Sudo {
+			if mkErr := sudoMkdirAll(filepath.Dir(record.System)); mkErr != nil {
+				entry.Action = "failed"
+				entry.Message = mkErr.Error()
+				result.Entries = append(result.Entries, entry)
+				continue
+			}
+			if mvErr := sudoRename(workspaceAbs, record.System); mvErr != nil {
+				entry.Action = "failed"
+				entry.Message = fmt.Sprintf("failed to restore %s: %s", record.System, mvErr)
+				result.Entries = append(result.Entries, entry)
+				continue
+			}
+		} else {
+			if err := os.MkdirAll(filepath.Dir(record.System), 0o755); err != nil {
+				entry.Action = "failed"
+				entry.Message = err.Error()
+				result.Entries = append(result.Entries, entry)
+				continue
+			}
+			if err := movePath(workspaceAbs, record.System); err != nil {
+				entry.Action = "failed"
+				entry.Message = fmt.Sprintf("failed to restore %s: %s", record.System, err)
+				result.Entries = append(result.Entries, entry)
+				continue
+			}
 		}
 
 		// Remove symlink provision.

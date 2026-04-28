@@ -57,7 +57,6 @@ RO commands never modify the workspace, config, manifest, or system state. They:
 | `ws scratch search` | Search scratch directories by tag/name/content |
 | `ws capture ls` | List configured capture locations |
 | `ws trash status` | |
-| `ws notify status`, `ws notify test` | |
 | `ws tui` | Interactive TUI (reads input but doesn't modify data) |
 | `ws completions` | |
 
@@ -102,9 +101,6 @@ RW commands modify state. They:
 | `ws scratch tag` | Per-tag actions (interactive or auto) |
 | `ws trash enable` | 2 actions: setup, record-provisions |
 | `ws trash disable` | Single action wrapping subsystem reset |
-| `ws notify start` | Single action |
-| `ws notify stop` | Single action |
-| `ws notify daemon` | Long-running: inotify + periodic scan loop (used by systemd ExecStart) |
 | `ws context create` | Single action |
 | `ws context rm` | Single action (or batch with `--all`) |
 | `ws git-credential-helper setup` | Per-action: set git config, create missing pass entries |
@@ -112,7 +108,7 @@ RW commands modify state. They:
 | `ws completions install` | Single action |
 | `ws completions uninstall` | Single action |
 | `ws capture` | Single action (append to captures file, RW exemption: no plan/confirm — append-only, non-destructive) |
-| `ws capture edit` | Opens editor (inherently interactive) |
+| `ws capture -e` | Opens editor (inherently interactive) |
 
 #### Implementation Contract
 
@@ -353,8 +349,8 @@ Ownership and edit policy:
 - `repo.state`: generated/updated by `ws repo` commands. Safe to delete (recreated by reconcile scan).
 - `dotfiles/`: managed by `ws dotfile add|rm`. When git versioning is enabled via `ws dotfile git setup`, this directory also serves as the git repo. Files here are the synced originals — system paths are symlinks pointing back. Safe to edit the contents (they *are* your dotfiles), but don't move or rename files manually; use `ws dotfile rm` instead.
 - `megaignore.state`: generated/updated by `ws ignore` commands (canonical parsed/normalized ignore state).
-- `health.json`: generated/updated by `ws notify daemon` after each scan. Runtime-only state — excluded from MEGA sync. Consumed by `ws tui` and `ws notify status`.
-- `notify.state`: generated/updated by `ws notify start|stop|daemon`. Tracks daemon lifecycle, last-scan time, and known violations for notification deduplication.
+- `health.json`: runtime-only workspace health state. Excluded from MEGA sync.
+- `notify.state`: runtime-only daemon lifecycle state. Excluded from MEGA sync.
 - `ws-log-index.md`: generated/updated by `ws log` commands.
 - `ws-log/`: created/rotated/pruned by `ws log start|ls|prune`.
 - `captures/captures.md`: append-only knowledge capture file managed by `ws capture`. Safe to hand-edit (add entries, delete entries, reformat). The file is the user's knowledge base.
@@ -764,7 +760,7 @@ Content body — markdown, code blocks, embedded images.
 - Free-form body — markdown. No schema. No required fields.
 - `---` — horizontal rule separator between entries.
 
-**Location as positional argument:** The location is the first positional argument: `ws capture work`. Tab-completion suggests configured location names. If omitted, defaults to the default location. No `-l` flag, no location prompt — the positional arg or its absence is the entire UX.
+**Location as positional argument:** The location is the first positional argument: `ws capture work`. Tab-completion suggests configured location names. If omitted, defaults to the default location. If an unknown name is given, the command exits with an error: `unknown capture location "<name>" — use 'ws capture ls' to see configured locations`. No `-l` flag, no location prompt — the positional arg or its absence is the entire UX.
 
 **Amend (`--amend` / `-a`):** Appends content to the most recent entry instead of creating a new one. No topic prompt — reuses the existing entry's topic. Typical workflow: copy webpage text → `ws capture` → take screenshot → `ws capture -a`. The screenshot lands in the same entry as the text. Works with clipboard (any format) and stdin pipe. Fails with a clear error if no existing entry is found in the captures file.
 
@@ -1020,12 +1016,6 @@ ws completions uninstall             Remove installed shell completions from she
 
 ws tui                               Interactive TUI dashboard
 
-ws notify start                      Start the notification daemon
-ws notify stop                       Stop the notification daemon
-ws notify status                     Check daemon status
-ws notify test                       Send a test notification
-ws notify daemon                     Run daemon in foreground (used by systemd ExecStart)
-
 ws trash setup                       Configure soft-delete integrations (rm, VS Code, file explorer)
 ws trash disable                     Remove soft-delete integrations
 ws trash status                      Check integration status and trash size
@@ -1093,7 +1083,7 @@ ws scratch prune                     Remove old scratch directories
 ws scratch rm [name]                 Delete a scratch directory by name
 
 ws capture                           Pin clipboard content to captures file
-ws capture edit                      Open captures file in editor
+ws capture -e                        Open captures file in editor
 ws capture ls                        List configured capture locations
 ```
 
@@ -2067,7 +2057,9 @@ Open an existing scratch directory in the configured editor. When no name is giv
 ```text
 ws scratch open [name] [flags]
 
---editor <cmd>    Override scratch.editor_cmd for this invocation
+--editor <cmd>      Override scratch.editor_cmd for this invocation
+--print-path        Print resolved path to stdout; TUI goes to stderr.
+                    Skips interactive output. Useful for shell cd wrappers.
 ```
 
 **Output (interactive — no name argument):**
@@ -2107,6 +2099,21 @@ ws scratch open proxy-auth-header
 | Non-TTY stdin (pipe, `--json`, test) | Ghost panel skipped; reads name from stdin line. |
 | `--json` | Emits `{"name": "...", "path": "..."}`, skips editor launch. |
 | Ctrl+C during prompt | Exits cleanly (code 130). |
+| `--print-path` | Editor launched in background; resolved path printed to stdout; status lines go to stderr. Exits 0. |
+
+**Shell cd wrapper (installed by `ws completions install`):**
+
+The completion scripts include a `wsopen` shell function that opens the scratch directory in VS Code **and** `cd`s the current terminal into it:
+
+```bash
+# bash / zsh
+wsopen [name]   # interactive ghost panel if name omitted
+
+# fish
+wsopen [name]
+```
+
+The function calls `ws scratch open --print-path` internally.
 
 #### `ws scratch rm`
 
@@ -2865,7 +2872,7 @@ ws ignore [subcommand]
 
 #### `ws ignore check`
 
-Test whether a file path would be synced or ignored.
+Test whether a file path would be synced or ignored. Exits 0 if synced, 2 if ignored, 1 on error.
 
 ```text
 ws ignore check <path>
@@ -2878,22 +2885,47 @@ ws ignore check experiments/debug-proxy.sh
 
 ✔ SYNCED      experiments/debug-proxy.sh
   Reason: no matching exclude rule
-  File size: 4 KB (below thresholds)
+  File size: 4 KB
 ```
 
 ```text
 ws ignore check artifacts/datasets/node-metrics.csv
 
 ✗ IGNORED     artifacts/datasets/node-metrics.csv
-  Reason: rule `-g:*.csv` on line 31 of .megaignore
+  Reason: excluded by rule `-g:*.csv`
 ```
 
 ```text
 ws ignore check archive/incident-2026.tar.gz
 
 ✔ SYNCED      archive/incident-2026.tar.gz
-  Reason: safe harbor — Archive/ overrides `-g:*.tar.gz` (line 44)
-  File size: 230 MB (above crit_size threshold — bloat warning will fire)
+  Reason: safe harbor — Archive/** overrides an exclude rule
+  File size: 230 MB
+```
+
+**Exit codes:**
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Path would be synced |
+| 1 | Error (path not found, workspace not initialised) |
+| 2 | Path is ignored |
+
+**JSON output** (`--json`):
+
+```json
+{
+  "ws_version": "0.1.0",
+  "schema": 1,
+  "command": "ignore.check",
+  "data": {
+    "path": "artifacts/datasets/node-metrics.csv",
+    "included": false,
+    "rule": "-g:*.csv",
+    "safe_harbor": false,
+    "size_bytes": 119537664
+  }
+}
 ```
 
 #### `ws ignore ls`
@@ -2945,7 +2977,14 @@ ws ignore ls --json | jq ...      # machine-readable
 
 #### `ws ignore tree`
 
-Browse the workspace as a directory tree with a sync/ignored column on every entry. Directories where all children are excluded collapse to a single line.
+Browse the workspace as a directory tree with a sync/ignored status icon on every entry.
+
+Status icons:
+- ✔ — fully synced (no excluded children)
+- ✗ — excluded (the item itself matches an exclude rule)
+- ◐ — partially excluded (at least one descendant is excluded, item itself is synced)
+
+Two-pass algorithm: all entries are collected first; then ◐ status is propagated upward from excluded items to their ancestors, skipping double-counting when a parent is itself excluded.
 
 ```text
 ws ignore tree [flags]
@@ -2953,6 +2992,8 @@ ws ignore tree [flags]
 --path     Start from a subpath instead of workspace root
 --depth    Limit tree depth (default: 1)
 ```
+
+`--depth N` shows N levels of the tree. `--depth 1` (default) shows only direct children.
 
 **Output (default depth=1):**
 
@@ -2962,16 +3003,14 @@ ws ignore tree
 ~/Workspace/
 ├── ✔ configs/                      18 KB
 ├── ✔ ws-tool/                       4 KB
-├── ◐ artifacts/                   682 MB   (5 files excluded)
-├── ◐ experiments/                 410 MB   (2 files excluded)
-├── ◐ notes/                        42 MB   (1 file excluded)
+├── ◐ artifacts/                   682 MB   (5 excluded)
+├── ◐ experiments/                 410 MB   (2 excluded)
+├── ◐ notes/                        42 MB   (1 excluded)
 ├── ✔ README.md                      2 KB
 └── ✔ PHILOSOPHY.md                  1 KB
 
 38 files excluded · 812 MB not synced
 ```
-
-Legend: ✔ fully synced · ✗ excluded · ◐ partially excluded (has excluded children).
 
 **Deeper traversal:**
 
@@ -2979,25 +3018,25 @@ Legend: ✔ fully synced · ✗ excluded · ◐ partially excluded (has excluded
 ws ignore tree --depth 3
 
 ~/Workspace/
-├── artifacts/
-│   └── datasets/
-│       ├── ✗ node-metrics-2026.csv    114 MB   -g:*.csv
-│       ├── ✗ city_temperature.csv      44 MB   -g:*.csv
-│       ├── ✗ house_prices.csv           4 MB   -g:*.csv
-│       ├── ✗ car_prices.orc               8 MB   -g:*.orc
-│       ├── ✗ weather.orc                 10 MB   -g:*.orc
-│       └── ✔ AgentCrewPrompt.txt          2 KB
-├── configs/
+├── ✔ configs/
 │   ├── ✔ bashrc                       4 KB
 │   ├── ✔ daemon.json                  2 KB
 │   └── ✔ ssh/                        12 KB
-├── experiments/
-│   ├── proxy-debug/
+├── ◐ artifacts/
+│   └── ◐ datasets/
+│       ├── ✗ node-metrics-2026.csv    114 MB   -g:*.csv
+│       ├── ✗ city_temperature.csv      44 MB   -g:*.csv
+│       ├── ✗ house_prices.csv           4 MB   -g:*.csv
+│       ├── ✗ car_prices.orc             8 MB   -g:*.orc
+│       ├── ✗ weather.orc               10 MB   -g:*.orc
+│       └── ✔ AgentCrewPrompt.txt        2 KB
+├── ◐ experiments/
+│   ├── ◐ proxy-debug/
 │   │   └── ✗ capture.tar.gz           230 MB   -g:*.tar.gz
-│   └── pip-madness/
+│   └── ◐ pip-madness/
 │       └── ✗ .venv/                   180 MB   -:.*
-└── notes/
-    └── second-brain/
+└── ◐ notes/
+    └── ◐ second-brain/
         └── ✗ .git/                     42 MB   -:.*
 
 38 files excluded · 812 MB not synced
@@ -3012,9 +3051,9 @@ artifacts/datasets/
 ├── ✗ node-metrics-2026.csv    114 MB   -g:*.csv
 ├── ✗ city_temperature.csv      44 MB   -g:*.csv
 ├── ✗ house_prices.csv           4 MB   -g:*.csv
-├── ✗ car_prices.orc               8 MB   -g:*.orc
-├── ✗ weather.orc                 10 MB   -g:*.orc
-└── ✔ AgentCrewPrompt.txt          2 KB
+├── ✗ car_prices.orc             8 MB   -g:*.orc
+├── ✗ weather.orc               10 MB   -g:*.orc
+└── ✔ AgentCrewPrompt.txt        2 KB
 
 5 files excluded · 180 MB not synced
 ```
@@ -4096,59 +4135,6 @@ Each step is self-contained. If a step fails, the wizard reports the failure and
 
 ---
 
-### `ws notify`
-
-Background notification daemon. Monitors workspace state via `inotify` and periodic scans, then pushes desktop notifications via `notify-send` when actionable events occur. Runs as a systemd user service.
-
-```text
-ws notify start                      Start the notification daemon
-ws notify stop                       Stop the notification daemon
-ws notify status                     Check daemon status
-ws notify test                       Send a test notification
-```
-
-**Events that trigger notifications:**
-
-| Event | Severity | Notification |
-| --- | --- | --- |
-| Dotfile symlink broken | Critical | `⚠ ws: ~/.bashrc symlink is broken — target missing` |
-| Dotfile overwritten by package manager | Warning | `⚠ ws: /etc/docker/daemon.json was overwritten (real file, not symlink)` |
-| Secret pattern detected after sync | Critical | `🔒 ws: new secret pattern found in experiments/debug-auth.sh` |
-| Sync storage cap > 80% | Warning | `📦 ws: log storage at 420 MB / 500 MB (84%)` |
-| Sync storage cap > 95% | Critical | `📦 ws: log storage at 485 MB / 500 MB — prune needed` |
-| Bloat file detected after sync | Warning | `📁 ws: new 114 MB file detected — artifacts/datasets/node-metrics.csv` |
-
-**Setup:**
-
-```text
-ws notify start
-
-✔ Created   ~/.config/systemd/user/ws-notify.service
-✔ Enabled   ws-notify.service
-✔ Started   ws-notify.service
-
-Notification daemon is running.
-Mode: inotify + periodic scan
-Notify via: notify-send
-
-Test with: ws notify test
-```
-
-```text
-ws notify status
-
-● ws-notify.service — ws notification daemon
-  Status:       active (running)
-  Mode:         inotify on ~/Workspace + periodic scan (every 10 min)
-  Last scan:    2026-03-29 09:14:22
-  Last alert:   2026-03-29 08:42:10 (bloat: infra-review.pptx)
-  Health file:  ~/Workspace/ws/health.json (2 min ago)
-```
-
-See **Beyond CLI → Notification Daemon Design** for implementation details.
-
----
-
 ### `ws completions`
 
 Generate shell completion scripts for bash, zsh, or fish. Also supports install/uninstall helpers that manage shell rc/config files directly.
@@ -4206,6 +4192,18 @@ ws completions fish
 ```
 
 The completion script covers all commands, subcommands, flags, and flag values. It is regenerated from the command tree at build time — no manual maintenance.
+
+Each script also includes a `wsopen` shell function that opens a scratch directory in VS Code **and** `cd`s the terminal into it:
+
+```bash
+# bash / zsh
+wsopen [name]
+
+# fish
+wsopen [name]
+```
+
+This function uses `ws scratch open --print-path` internally so the `cd` runs in the calling shell.
 
 ---
 
@@ -4447,87 +4445,5 @@ ws tui
 - TUI is read-heavy. Write actions (`f` for fix) drop to the normal interactive CLI and return to TUI when done.
 - Panels refresh on launch. Manual `r` for subsequent refreshes. No background polling inside the TUI itself.
 - Terminal size detection via `TIOCGWINSZ` ioctl. Graceful degradation if terminal is too small (show summary only).
-
----
-
-### Notification Daemon Design
-
-Implementation details for `ws notify` (command reference in CLI Reference above).
-
-#### Detection: inotify + periodic scan
-
-The daemon uses two complementary detection mechanisms:
-
-1. **inotify watches** — real-time, event-driven:
-   - Watches `<workspace>/ws/dotfiles/` for deletions and modifications (detects broken/overwritten dotfiles immediately).
-   - Watches MEGA's sync state directory (`~/.local/share/data/Mega Limited/MEGAsync/`) for sync completion transitions. When sync goes from "syncing" → "up to date", the daemon triggers a full `ws scan --json --quiet` to catch new bloat, secrets, or depth violations that arrived via sync.
-
-2. **Periodic scan** — fallback and catch-all:
-   - Runs `ws scan --json --quiet` every N minutes (default: 10, configurable).
-   - Catches anything inotify misses: storage cap pressure, secret patterns in new files, depth violations in new directories.
-   - Interval is reset after every inotify-triggered scan to avoid redundant work.
-
-#### State: `ws/health.json`
-
-After every scan (inotify-triggered or periodic), the daemon writes the result to `ws/health.json`. This file is consumed by `ws tui` and shell prompt integrations for near-real-time workspace health without running scans themselves.
-
-`ws/health.json` is excluded from MEGA sync via `.megaignore` (runtime-only state).
-
-```json
-{
-  "timestamp": "2026-03-29T09:14:22Z",
-  "trigger": "mega-sync",
-  "summary": {
-    "ignore": { "critical": 0, "warning": 1 },
-    "secret": { "critical": 0, "warning": 0 },
-    "dotfile": { "critical": 0, "warning": 0 },
-    "log": { "active": true, "cap_percent": 62 },
-    "trash": { "configured": false, "warnings": 2 }
-  },
-  "violations_count": 2,
-  "violations": [
-    {
-      "group": "ignore",
-      "type": "bloat",
-      "severity": "warning",
-      "size_mb": 22,
-      "path": "artifacts/presentations/quarterly-review.pptx"
-    },
-    {
-      "group": "trash",
-      "type": "machine-setup",
-      "severity": "warning",
-      "path": "vscode",
-      "message": "VS Code delete-to-trash is not configured"
-    }
-  ]
-}
-```
-
-#### Deduplication: `ws/notify.state`
-
-The daemon maintains `ws/notify.state` — a record of the last-notified violations. It compares each scan result against this state and only fires notifications for *new* or *changed* violations. Known issues are never re-notified until they change or are resolved and reappear.
-
-#### Systemd integration
-
-- Runs as `systemd --user` service (`ws-notify.service`).
-- `ws notify start` generates and enables the systemd unit file at `~/.config/systemd/user/ws-notify.service`.
-- `ws notify stop` stops and disables the unit.
-- `ws notify status` queries `systemctl --user status ws-notify.service` and enriches it with last-scan and last-alert metadata from `ws/notify.state`.
-
-#### Config keys (in `ws/config.json`)
-
-```json
-{
-  "notify": {
-    "enabled": true,
-    "poll_interval_min": 10,
-    "push_interval_min": 5,
-    "events": ["dotfile", "secret", "bloat", "storage"]
-  }
-}
-```
-
-- `push_interval_min`: How often the daemon pushes dotfile and pass store git repos to their remotes (default 5). Acts as a safety net for failed at-commit pushes.
 
 ---
