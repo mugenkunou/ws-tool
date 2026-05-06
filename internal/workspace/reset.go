@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mugenkunou/ws-tool/internal/context"
 	"github.com/mugenkunou/ws-tool/internal/dotfile"
 	"github.com/mugenkunou/ws-tool/internal/provision"
 	"github.com/mugenkunou/ws-tool/internal/trash"
@@ -18,7 +17,7 @@ type ResetOptions struct {
 	DryRun        bool
 }
 
-// SubResetResult summarises one subsystem reset (dotfile, context, trash).
+// SubResetResult summarises one subsystem reset (dotfile, trash).
 type SubResetResult struct {
 	Subsystem string   `json:"subsystem"`
 	Messages  []string `json:"messages"`
@@ -35,7 +34,7 @@ type ResetResult struct {
 }
 
 // Reset tears down a workspace by delegating to subsystem resets
-// (dotfile, context, trash) and then removing the ws/ directory.
+// (dotfile, trash) and then removing the ws/ directory.
 //
 // Pre-condition: the ws/ directory must exist; callers should verify this
 // before calling Reset so they can render an appropriate error.
@@ -81,26 +80,7 @@ func Reset(opts ResetOptions) (ResetResult, error) {
 	}
 	result.Subsystems = append(result.Subsystems, sub)
 
-	// --- Phase 2: context remove all ---
-	ctxResult, err := context.Remove(context.RemoveOptions{
-		WorkspacePath: opts.WorkspacePath,
-		All:           true,
-		DryRun:        opts.DryRun,
-	})
-	sub = SubResetResult{Subsystem: "context"}
-	if err != nil {
-		sub.Errors = append(sub.Errors, err.Error())
-		result.Errors = append(result.Errors, "context: "+err.Error())
-	} else {
-		for _, e := range ctxResult.Entries {
-			if e.Action == "removed" || e.Action == "would-remove" {
-				sub.Messages = append(sub.Messages, e.Action+": "+e.Path)
-			}
-		}
-	}
-	result.Subsystems = append(result.Subsystems, sub)
-
-	// --- Phase 3: trash reset ---
+	// --- Phase 2: trash reset ---
 	trashResult, err := trash.Reset(trash.ResetOptions{
 		WorkspacePath: opts.WorkspacePath,
 		DryRun:        opts.DryRun,

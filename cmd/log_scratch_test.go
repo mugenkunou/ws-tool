@@ -64,6 +64,9 @@ func TestScratchCommandsFlow(t *testing.T) {
 	if !strings.Contains(out.String(), "Create scratch") {
 		t.Fatalf("unexpected scratch new output: %s", out.String())
 	}
+	if !strings.Contains(out.String(), "demo-scratch") {
+		t.Fatalf("expected path containing demo-scratch in scratch new output: %s", out.String())
+	}
 
 	out.Reset()
 	errOut.Reset()
@@ -72,6 +75,10 @@ func TestScratchCommandsFlow(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "demo-scratch") {
 		t.Fatalf("unexpected scratch ls output: %s", out.String())
+	}
+	// ls must show a path line (starts with whitespace and contains the scratch root)
+	if !strings.Contains(out.String(), filepath.Join(home, "Scratch")) {
+		t.Fatalf("expected path line in scratch ls output: %s", out.String())
 	}
 
 	out.Reset()
