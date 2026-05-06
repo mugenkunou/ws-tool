@@ -128,11 +128,6 @@ func TestCompleteSubcommands(t *testing.T) {
 			directive: compDirectiveNoFileComp,
 		},
 		{
-			args:      []string{"context", ""},
-			wantSome:  []string{"create"},
-			directive: compDirectiveNoFileComp,
-		},
-		{
 			args:      []string{"capture", ""},
 			wantSome:  []string{"ls"},
 			directive: compDirectiveNoFileComp,

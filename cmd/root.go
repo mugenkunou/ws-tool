@@ -86,8 +86,6 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runScratch(commandArgs, globals, stdin, stdout, stderr)
 	case "repo":
 		return runRepo(commandArgs, globals, stdin, stdout, stderr)
-	case "context":
-		return runContext(commandArgs, globals, stdin, stdout, stderr)
 	case "trash":
 		return runTrash(commandArgs, globals, stdin, stdout, stderr)
 	case "capture":
@@ -450,7 +448,6 @@ func printHelpStyled(stdout io.Writer, noColor bool) {
 		{"restore", "Guided restore workflow"},
 		{"dotfile", "Manage workspace-backed dotfiles"},
 		{"repo", "Repository fleet operations"},
-		{"context", "Task context sidecar management"},
 		{"trash", "Soft-delete setup and status"},
 		{"tui", "Interactive dashboard summary"},
 		{"log", "Session recording commands"},

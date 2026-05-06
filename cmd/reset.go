@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 
 	"github.com/mugenkunou/ws-tool/internal/config"
-	ctx "github.com/mugenkunou/ws-tool/internal/context"
 	"github.com/mugenkunou/ws-tool/internal/dotfile"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/trash"
@@ -115,18 +114,6 @@ func runReset(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 				WorkspacePath: resolvedWorkspace,
 				ManifestPath:  manifestPath,
 				DryRun:        false,
-			})
-			return err
-		},
-	})
-
-	plan.Actions = append(plan.Actions, Action{
-		ID:          "reset-context",
-		Description: "Remove all context directories",
-		Execute: func() error {
-			_, err := ctx.Remove(ctx.RemoveOptions{
-				WorkspacePath: resolvedWorkspace,
-				All:           true,
 			})
 			return err
 		},

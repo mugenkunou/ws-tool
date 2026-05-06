@@ -26,7 +26,6 @@ var topLevelCommands = []string{
 	"capture",
 	"completions",
 	"config",
-	"context",
 	"dotfile",
 	"git-credential-helper",
 	"help",
@@ -59,7 +58,6 @@ var completers = map[string]completer{
 	"capture":               {subcommands: []string{"ls"}, resolve: completeCapture},
 	"completions":           {subcommands: []string{"bash", "zsh", "fish", "install", "uninstall"}},
 	"config":                {subcommands: []string{"view", "defaults"}},
-	"context":               {subcommands: []string{"create", "list", "rm"}, resolve: completeContext},
 	"dotfile":               {subcommands: []string{"add", "rm", "ls", "scan", "fix", "reset", "git"}, resolve: completeDotfile},
 	"git-credential-helper": {subcommands: []string{"setup", "status", "disconnect"}},
 	"ignore":                {subcommands: []string{"check", "scan", "fix", "ls", "tree", "edit"}, resolve: completeIgnore},
@@ -277,16 +275,6 @@ func completeCapture(sub string, args []string, toComplete string, ctx completio
 	}
 }
 
-func completeContext(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
-	switch sub {
-	case "create":
-		// task name is free-form; --path is handled as a flag.
-		return nil, compDirectiveNoFileComp
-	default:
-		return nil, compDirectiveNoFileComp
-	}
-}
-
 // ── Flag-value completions ─────────────────────────────────────────
 
 // commandFlags returns command- and subcommand-specific flag names.
@@ -382,10 +370,6 @@ func commandFlags(command string, rest []string) []string {
 	case "git-credential-helper":
 		if sub == "setup" || sub == "disconnect" {
 			return []string{dryRun}
-		}
-	case "context":
-		if sub == "init" {
-			return []string{"--path", dryRun}
 		}
 	case "trash":
 		if sub == "enable" || sub == "setup" {

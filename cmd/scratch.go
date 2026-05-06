@@ -116,12 +116,15 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		if globals.json {
 			return writeJSON(stdout, stderr, "scratch.new", map[string]any{"result": res, "actions": planResult.Actions})
 		}
-		if planResult.WasExecuted("scratch-new") && !*noOpen {
-			cmd := exec.Command(*editor, res.Path)
-			if err := cmd.Start(); err != nil {
-				out := textOut(globals, stdout)
-				nc := globals.noColor
-				fmt.Fprintln(out, style.ResultWarning(nc, "Editor launch skipped: %v", err))
+		if planResult.WasExecuted("scratch-new") {
+			out := textOut(globals, stdout)
+			nc := globals.noColor
+			fmt.Fprintf(out, "  %s\n", style.Mutedf(nc, "%s", res.Path))
+			if !*noOpen {
+				cmd := exec.Command(*editor, res.Path)
+				if err := cmd.Start(); err != nil {
+					fmt.Fprintln(out, style.ResultWarning(nc, "Editor launch skipped: %v", err))
+				}
 			}
 		}
 		return planResult.ExitCode()
@@ -159,6 +162,7 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 				style.Mutedf(nc, "size=%s", style.HumanBytes(e.SizeBytes)),
 				style.Mutedf(nc, "items=%d", e.Items),
 				tagStr)
+			fmt.Fprintf(out, "  %s\n", style.Mutedf(nc, "%s", e.Path))
 		}
 		return 0
 	case "prune":
@@ -463,6 +467,7 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fmt.Fprintf(out, "Tagged %s: %s\n",
 			style.Boldf(nc, "%s", targetName),
 			style.Mutedf(nc, "[%s]", strings.Join(meta.Tags, ", ")))
+		fmt.Fprintf(out, "  %s\n", style.Mutedf(nc, "%s", targetPath))
 		return 0
 
 	case "search":
@@ -536,6 +541,7 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 				style.Boldf(nc, "%-30s", r.Entry.Name),
 				style.Mutedf(nc, "match=%s", r.MatchOn),
 				tagStr)
+			fmt.Fprintf(out, "  %s\n", style.Mutedf(nc, "%s", r.Entry.Path))
 			if r.Snippet != "" {
 				fmt.Fprintf(out, "  %s\n", style.Mutedf(nc, "%s", r.Snippet))
 			}

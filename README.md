@@ -175,20 +175,17 @@ Your `.bashrc` now lives in the workspace (synced). The system path is a symlink
 </details>
 
 <details>
-<summary><strong>⚡ Scratch & Context</strong></summary>
+<summary><strong>⚡ Scratch</strong></summary>
 
 | Command | What it does |
 | --- | --- |
-| `ws scratch new [name]` | Create a named scratch directory, open in VS Code |
+| `ws scratch new [name]` | Create a named scratch directory, open in VS Code; prints the path |
 | `ws scratch open [name]` | Open an existing scratch directory in VS Code (use `wsopen` to also cd into it) |
-| `ws scratch ls` | List scratch directories with age, size, items |
-| `ws scratch tag [name]` | Add tags to a scratch directory |
-| `ws scratch search [query]` | Search scratch directories by tag/name/content |
+| `ws scratch ls` | List scratch directories with age, size, items, and path |
+| `ws scratch tag [name]` | Add tags to a scratch directory; prints path on completion |
+| `ws scratch search [query]` | Search scratch directories by tag/name/content; shows path per result |
 | `ws scratch prune` | Remove old scratch directories |
 | `ws scratch rm <name>` | Delete a scratch directory by name |
-| `ws context create <task>` | Create a `.ws-context/` sidecar for agent-assisted dev |
-| `ws context list [--update|--find]` | List tracked contexts from `ws/contexts.json`; refresh by scanning workspace when requested |
-| `ws context rm` | Remove context sidecars (single or all with `--all`) |
 
 </details>
 
@@ -285,7 +282,7 @@ Full philosophy: [PHILOSOPHY.md](PHILOSOPHY.md) — an eleven-factor methodology
 This is a core design constraint, not a nice-to-have. Every command is classified as **RO** (read-only) or **RW** (read-write):
 
 - **RO commands** (`ls`, `show`, `check`, `status`, `version`, `config view`, subsystem `scan`) are non-interactive and pipe-safe. They never prompt for input and produce deterministic output to stdout.
-- **RW commands** (`init`, `restore`, `dotfile add/rm/fix`, `ignore fix/generate`, `secret fix/setup`, `git-credential-helper setup/disconnect`, `repo pull/push/run`, `log start/stop/prune`, `scratch new/prune/rm`, `trash enable/disable`, `context init/reset`, `completions install/uninstall`) use **per-action confirmation** (`git add -p` style). Each discrete mutation gets its own `y/n/a/q` prompt — never a single gate before N operations.
+- **RW commands** (`init`, `restore`, `dotfile add/rm/fix`, `ignore fix/generate`, `secret fix/setup`, `git-credential-helper setup/disconnect`, `repo pull/push/run`, `log start/stop/prune`, `scratch new/prune/rm`, `trash enable/disable`, `completions install/uninstall`) use **per-action confirmation** (`git add -p` style). Each discrete mutation gets its own `y/n/a/q` prompt — never a single gate before N operations.
 
 Prompt vocabulary for RW commands:
 

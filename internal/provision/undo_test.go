@@ -108,9 +108,9 @@ func TestUndoConfigLineNotFound(t *testing.T) {
 func TestUndoGitExclude(t *testing.T) {
 	dir := t.TempDir()
 	exclude := filepath.Join(dir, "exclude")
-	os.WriteFile(exclude, []byte("# local excludes\n.ws-context/\n"), 0o644)
+	os.WriteFile(exclude, []byte("# local excludes\n.local-tmp/\n"), 0o644)
 
-	r := Undo(Entry{Type: TypeGitExclude, Path: exclude, Line: ".ws-context/"})
+	r := Undo(Entry{Type: TypeGitExclude, Path: exclude, Line: ".local-tmp/"})
 	if r.Action != "removed" {
 		t.Fatalf("expected removed, got %s: %s", r.Action, r.Message)
 	}

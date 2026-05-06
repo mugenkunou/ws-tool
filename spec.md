@@ -74,7 +74,7 @@ RW commands modify state. They:
 | Command | Actions |
 |---|---|
 | `ws init` | Per-file: config.json, manifest.json, .megaignore, ws/ dir |
-| `ws reset` | Per-subsystem: dotfiles, context, trash, ws/ dir removal |
+| `ws reset` | Per-subsystem: dotfiles, trash, ws/ dir removal |
 | `ws restore` | Per-step: trash-enable, dotfile-fix, ignore-generate |
 | `ws dotfile add` | Single action per file |
 | `ws dotfile rm` | Single action per file |
@@ -101,8 +101,6 @@ RW commands modify state. They:
 | `ws scratch tag` | Per-tag actions (interactive or auto) |
 | `ws trash enable` | 2 actions: setup, record-provisions |
 | `ws trash disable` | Single action wrapping subsystem reset |
-| `ws context create` | Single action |
-| `ws context rm` | Single action (or batch with `--all`) |
 | `ws git-credential-helper setup` | Per-action: set git config, create missing pass entries |
 | `ws git-credential-helper disconnect` | Per-action: unset credential.helper from git config |
 | `ws completions install` | Single action |
@@ -701,16 +699,6 @@ This makes state helpful for speed and UX while keeping commands grounded in cur
 
 Read commands (`ws repo ls`, `ws repo scan`) are non-interactive and pipe-safe. Write commands (`ws repo pull`, `ws repo sync`, `ws repo run`) are interactive by default and support `--dry-run`.
 
-### Context Sidecar: Local Git Exclusion
-
-`ws context create` creates a `.ws-context/` directory alongside the project it supports. This directory holds task-scoped agent context (design notes, constraints, resources) that should stay close to the code but never be pushed to a remote.
-
-Git exclusion uses `.git/info/exclude` — a per-clone ignore file that is never committed, never pushed, and leaves zero trace in the repository. This is preferred over `.gitignore` (which would be committed and expose `ws` conventions to collaborators) and over `.git/config` sparse rules (which serve a different purpose).
-
-The dot prefix (`.ws-context/`) makes the directory hidden on Linux. Inside `<workspace>`, hidden files are already excluded from MEGA sync by the `-:.*` rule in `.megaignore`, so no additional MEGA configuration is needed. For repos outside `<workspace>` (e.g. `~/Repositories/`), MEGA is not involved at all.
-
-Idempotency: `ws context create` can be run multiple times safely. The directory is created only if absent. The `.git/info/exclude` entry is appended only if not already present. If the project is not a git repo, the exclude step is silently skipped — but a later invocation after `git init` will retroactively add the exclude rule.
-
 ### Knowledge Capture: Clipboard-First, Append-Only
 
 `ws capture` is a frictionless knowledge capture tool. The problem it solves: valuable information flows past you constantly — Slack messages, wiki pages, terminal output, screenshots — and the clipboard is a single-slot buffer that forgets the moment you copy something else. `ws capture` pins clipboard content to a persistent, searchable markdown file before it's lost.
@@ -1026,10 +1014,6 @@ ws repo fetch                        Fetch remotes across repos
 ws repo pull                         Interactive fleet pull
 ws repo sync                         Interactive fleet sync (pull/push per state)
 ws repo run -- <cmd>                 Run command in each selected repo
-
-ws context create <task>             Create a task-scoped context sidecar in the current repo/directory
-ws context list                      List tracked context sidecars
-ws context rm                        Remove a context sidecar (or all with --all)
 
 ws dotfile add <system-path>          Capture a system file into ws/dotfiles/ + symlink back
 ws dotfile rm <path>                 Restore file to system path, unregister
@@ -1999,6 +1983,7 @@ Name: CA-debug█
   ▒CA-registry-migration.2026-04▒
 
 ✔ Created   ~/Scratch/CA-debug.2026-04/
+  ~/Scratch/CA-debug.2026-04/
 ✔ Opening   VS Code → ~/Scratch/CA-debug.2026-04/
 ```
 
@@ -2010,6 +1995,7 @@ The ghost panel is display-only for `new` — Tab does not complete (you are pic
 ws scratch new proxy-auth-header
 
 ✔ Created   ~/Scratch/proxy-auth-header.2026-04/
+  ~/Scratch/proxy-auth-header.2026-04/
 ✔ Opening   VS Code → ~/Scratch/proxy-auth-header.2026-04/
 ```
 
@@ -2041,13 +2027,14 @@ ws scratch ls [flags]
 ```text
 ws scratch ls
 
-NAME                              AGE     SIZE    ITEMS
-proxy-auth-header.2026-04         2h      —       0 files
-proxy-timeout.2026-03             8d      312 MB  14 files
-dns-resolution.2026-03            12d     48 MB   6 files
-gpu-driver-debug.2026-02          34d     1.2 GB  23 files
-                                          ──────
-                                 4 dirs   1.5 GB
+proxy-auth-header.2026-04              age=2h    size=—        items=0
+  ~/Scratch/proxy-auth-header.2026-04/
+proxy-timeout.2026-03                  age=8d    size=312 MB   items=14
+  ~/Scratch/proxy-timeout.2026-03/
+dns-resolution.2026-03                 age=12d   size=48 MB    items=6
+  ~/Scratch/dns-resolution.2026-03/
+gpu-driver-debug.2026-02               age=34d   size=1.2 GB   items=23
+  ~/Scratch/gpu-driver-debug.2026-02/
 ```
 
 #### `ws scratch open`
@@ -2199,6 +2186,7 @@ Tag: [k8s] cgroups█
 Tag: [k8s, cgroups] █   ← empty Enter finishes
 
 Tagged pid-limit-debug.2026-04: [k8s, cgroups]
+  ~/Scratch/pid-limit-debug.2026-04/
 ```
 
 **Output (auto-tag):**
@@ -2211,6 +2199,7 @@ Add tag "k8s" to pid-limit-debug.2026-04? [y/n/a/q] y
 Add tag "cgroups" to pid-limit-debug.2026-04? [y/n/a/q] y
 
 Tagged pid-limit-debug.2026-04: [bash, k8s, cgroups]
+  ~/Scratch/pid-limit-debug.2026-04/
 ```
 
 Auto-tag heuristics:
@@ -2236,6 +2225,7 @@ ws scratch search [query] [flags]
 ws scratch search "k8s pid"
 
 pid-limit-debug.2026-04            match=tag     [k8s, pid-limit, cgroups]
+  ~/Scratch/pid-limit-debug.2026-04/
 ```
 
 **Output (interactive — no query):**
@@ -2689,166 +2679,6 @@ Run now? [Y/n]: ↵
 [3/3] data/bruno           ✔ exit 0
 
 Succeeded: 3   Failed: 0
-```
-
----
-
-### `ws context`
-
-Create task-scoped context directories alongside a project. Designed for agent-assisted development: drop design notes, constraints, and resources next to the code so AI agents discover them naturally without path redirection.
-
-The context sidecar lives at `.ws-context/` in the project root. Each task or feature gets its own subdirectory inside it. The parent `.ws-context/` is excluded from git via `.git/info/exclude` (local-only, never committed, zero trace in the repo). If the project is not a git repository, the exclude step is silently skipped; if the project becomes a git repo later, the next `ws context create` retroactively adds the exclude rule.
-
-See **Technical Design Decisions → Context Sidecar: Local Git Exclusion** for rationale.
-
-```text
-ws context [subcommand]
-```
-
-#### `ws context create`
-
-Create a new task context directory under `.ws-context/`. The task name is required and becomes the subdirectory name.
-
-```text
-ws context create <task> [flags]
-
---path       Project root to create context in (default: current directory)
---dry-run    Preview actions without applying
-```
-
-**Behavior:**
-
-| Step | Action | Condition |
-| --- | --- | --- |
-| 1. Resolve project root | Use `--path` if given, else CWD | Always |
-| 2. Create `.ws-context/<task>/` | `mkdir -p` | Directory does not exist |
-| 3. Git exclude | Append `.ws-context/` to `.git/info/exclude` | CWD is inside a git repo AND entry not already present |
-
-Step 3 uses `git rev-parse --show-toplevel` to locate the repo root and its `.git/info/exclude` file. If the command fails (not a git repo), step 3 is silently skipped.
-
-**Output — first task in a git repo:**
-
-```text
-ws context create auth-redesign
-──────────────────────────────────────────────────────
-Project: ~/Repositories/my-service
-Task:    auth-redesign
-
-  Create  .ws-context/auth-redesign/
-  Exclude .ws-context/ via .git/info/exclude
-
-Apply? [Y/n]: ↵
-
-✔ Created  .ws-context/auth-redesign/
-✔ Updated  .git/info/exclude
-```
-
-**Output — second task (exclude already present):**
-
-```text
-ws context create rate-limiter
-──────────────────────────────────────────────────────
-Project: ~/Repositories/my-service
-Task:    rate-limiter
-
-  Create  .ws-context/rate-limiter/
-
-Apply? [Y/n]: ↵
-
-✔ Created  .ws-context/rate-limiter/
-✔ .git/info/exclude already has .ws-context/ — skipped
-```
-
-**Output — task directory already exists:**
-
-```text
-ws context create auth-redesign
-
-.ws-context/auth-redesign/ already exists. Nothing to create.
-✔ .git/info/exclude already has .ws-context/ — skipped
-```
-
-When the task directory already exists but the project was not previously a git repo and now is, the exclude step runs:
-
-```text
-ws context create auth-redesign
-
-.ws-context/auth-redesign/ already exists. Nothing to create.
-✔ Updated  .git/info/exclude
-```
-
-**Output — not a git repo:**
-
-```text
-ws context create dns-investigation
-──────────────────────────────────────────────────────
-Project: ~/Workspace/Experiments/dns-debug
-Task:    dns-investigation
-
-  Create  .ws-context/dns-investigation/
-
-Apply? [Y/n]: ↵
-
-✔ Created  .ws-context/dns-investigation/
-  (not a git repo — skipped exclude step)
-```
-
-**Output — dry-run:**
-
-```text
-ws context create auth-redesign --dry-run
-
-Would create:
-  ~/Repositories/my-service/.ws-context/auth-redesign/
-Would append to .git/info/exclude:
-  .ws-context/
-
-No changes made.
-```
-
-**Output — JSON:**
-
-```json
-{
-  "ws_version": "0.1.0",
-  "schema": 1,
-  "command": "context.create",
-  "data": {
-    "project": "~/Repositories/my-service",
-    "task": "auth-redesign",
-    "context_dir": ".ws-context/auth-redesign",
-    "created": true,
-    "git_repo": true,
-    "git_exclude_updated": true
-  }
-}
-```
-
-**Resulting structure:**
-
-```text
-my-service/
-├── .git/
-│   └── info/
-│       └── exclude          ← ".ws-context/" appended
-├── .ws-context/
-│   ├── auth-redesign/       ← task 1
-│   └── rate-limiter/        ← task 2
-├── src/
-├── go.mod
-└── README.md
-```
-
-#### `ws context rm`
-
-Remove context sidecars. Use `--all` to remove all tracked context sidecars and reset context subsystem state.
-
-```text
-ws context rm [<task>] [flags]
-
---all        Remove all contexts
---path       Project root (default: current directory)
---dry-run    Preview actions without applying
 ```
 
 ---
