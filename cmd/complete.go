@@ -9,6 +9,7 @@ import (
 
 	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/manifest"
+	"github.com/mugenkunou/ws-tool/internal/repo"
 )
 
 // Shell completion directives — values match Cobra's protocol so standard
@@ -26,6 +27,7 @@ var topLevelCommands = []string{
 	"capture",
 	"completions",
 	"config",
+	"cron",
 	"dotfile",
 	"git-credential-helper",
 	"help",
@@ -33,14 +35,11 @@ var topLevelCommands = []string{
 	"init",
 	"log",
 	"repo",
+	"reset",
 	"restore",
-	"scan",
 	"scratch",
-	"search",
 	"secret",
 	"trash",
-	"tui",
-	"reset",
 	"version",
 }
 
@@ -58,14 +57,14 @@ var completers = map[string]completer{
 	"capture":               {subcommands: []string{"ls"}, resolve: completeCapture},
 	"completions":           {subcommands: []string{"bash", "zsh", "fish", "install", "uninstall"}},
 	"config":                {subcommands: []string{"view", "defaults"}},
+	"cron":                  {subcommands: []string{"add", "rm", "ls", "status", "log"}, resolve: completeCron},
 	"dotfile":               {subcommands: []string{"add", "rm", "ls", "scan", "fix", "reset", "git"}, resolve: completeDotfile},
 	"git-credential-helper": {subcommands: []string{"setup", "status", "disconnect"}},
 	"ignore":                {subcommands: []string{"check", "scan", "fix", "ls", "tree", "edit"}, resolve: completeIgnore},
 	"log":                   {subcommands: []string{"start", "stop", "ls", "prune", "rm"}, resolve: completeLog},
-	"repo":                  {subcommands: []string{"ls", "scan", "fetch", "pull", "sync", "run"}},
+	"repo":                  {subcommands: []string{"ls", "scan", "fetch", "pull", "sync", "run"}, resolve: completeRepo},
 	"scratch":               {subcommands: []string{"new", "open", "ls", "tag", "search", "prune", "rm"}, resolve: completeScratch},
 	"secret":                {subcommands: []string{"scan", "fix", "setup", "status", "git"}, resolve: completeSecret},
-	"search":                {resolve: completeSearch},
 	"trash":                 {subcommands: []string{"enable", "disable", "status"}},
 }
 
@@ -79,6 +78,7 @@ type completionCtx struct {
 	logTags          []string // session tag directory names
 	scratchIDs       []string // scratch directory names
 	captureLocations []string // configured capture location names
+	repoPaths        []string // discovered repo relative paths
 }
 
 // globalFlagCompletions is the static list offered when the current word
@@ -210,13 +210,29 @@ func completeDotfile(sub string, args []string, toComplete string, ctx completio
 
 func completeLog(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
 	switch sub {
-	case "show", "remove":
+	case "rm", "prune":
 		if len(args) == 0 {
 			return filterPrefix(ctx.logTags, toComplete), compDirectiveNoFileComp
 		}
 		return nil, compDirectiveNoFileComp
 	case "search":
 		// free-form query — no completions, but no file fallback either.
+		return nil, compDirectiveNoFileComp
+	default:
+		return nil, compDirectiveNoFileComp
+	}
+}
+
+func completeRepo(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
+	switch sub {
+	case "ls", "scan", "fetch", "pull", "sync":
+		// Complete repo paths as positional argument for targeting.
+		if len(args) == 0 {
+			return filterPrefix(ctx.repoPaths, toComplete), compDirectiveNoFileComp
+		}
+		return nil, compDirectiveNoFileComp
+	case "run":
+		// 'run' uses positional args for the command to execute, not repo names.
 		return nil, compDirectiveNoFileComp
 	default:
 		return nil, compDirectiveNoFileComp
@@ -257,11 +273,6 @@ func completeSecret(sub string, args []string, toComplete string, ctx completion
 	}
 }
 
-func completeSearch(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
-	// free-form query — nothing to complete.
-	return nil, compDirectiveNoFileComp
-}
-
 func completeCapture(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
 	switch sub {
 	case "ls":
@@ -272,6 +283,40 @@ func completeCapture(sub string, args []string, toComplete string, ctx completio
 			return filterPrefix(ctx.captureLocations, toComplete), compDirectiveNoFileComp
 		}
 		return nil, compDirectiveNoFileComp
+	}
+}
+
+func completeCron(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
+	switch sub {
+	case "add", "rm", "remove", "status", "log":
+		// Complete job names and presets as the first positional argument.
+		if len(args) == 0 {
+			var names []string
+			for _, name := range cronJobNames() {
+				if strings.HasPrefix(name, toComplete) {
+					names = append(names, name)
+				}
+			}
+			return names, compDirectiveNoFileComp
+		}
+		return nil, compDirectiveNoFileComp
+	default:
+		return nil, compDirectiveNoFileComp
+	}
+}
+
+// cronJobNames returns all built-in job names and preset names for completion.
+func cronJobNames() []string {
+	return []string{
+		"dotfile-sync",
+		"ignore-scan",
+		"log-prune",
+		"maintenance",
+		"mega-sync",
+		"repo-sync",
+		"scratch-prune",
+		"secret-scan",
+		"sync",
 	}
 }
 
@@ -292,8 +337,15 @@ func commandFlags(command string, rest []string) []string {
 		return []string{"-e", "--edit", "-a", "--amend", "--dry-run"}
 	case "version":
 		return []string{"--short"}
-	case "search":
-		return []string{"--type", "--path", "--context", "--max-results", "--no-pager"}
+	case "cron":
+		switch sub {
+		case "add":
+			return []string{"--display", dryRun}
+		case "rm", "remove":
+			return []string{dryRun}
+		case "log":
+			return []string{"--lines"}
+		}
 	case "scratch":
 		switch sub {
 		case "new":
@@ -304,7 +356,7 @@ func commandFlags(command string, rest []string) []string {
 			return []string{"--sort"}
 		case "prune":
 			return []string{"--older-than", "--all", "--name", dryRun}
-		case "delete":
+		case "rm":
 			return []string{dryRun}
 		}
 	case "log":
@@ -320,8 +372,10 @@ func commandFlags(command string, rest []string) []string {
 		}
 	case "ignore":
 		switch sub {
-		case "generate":
-			return []string{"--merge", "--force", dryRun}
+		case "scan":
+			return []string{"--expand-harbors"}
+		case "fix":
+			return []string{dryRun}
 		case "ls":
 			return []string{"--path", "--rule"}
 		case "tree":
@@ -332,11 +386,11 @@ func commandFlags(command string, rest []string) []string {
 	case "dotfile":
 		switch sub {
 		case "add":
-			return []string{"--sudo", "--name", dryRun}
+			return []string{dryRun}
 		case "rm":
 			return []string{dryRun}
 		case "fix":
-			return []string{"--sudo", dryRun}
+			return []string{dryRun}
 		}
 		if sub == "git" {
 			// rest[0] is "git", check for sub-sub in rest[1:]
@@ -344,18 +398,21 @@ func commandFlags(command string, rest []string) []string {
 				switch rest[1] {
 				case "remote":
 					return []string{"--pass-entry", dryRun}
-				case "init", "setup", "disconnect":
+				case "setup", "disconnect":
 					return []string{dryRun}
 				case "log":
 					return []string{"-n"}
-				case "sync":
-					return []string{"-m"}
+				case "push":
+					return []string{"-m", "--pass-entry"}
 				}
 			}
 		}
 	case "secret":
 		if sub == "fix" {
-			return []string{"--mode"}
+			return []string{"--secret-mode", "--skip-dir", dryRun}
+		}
+		if sub == "scan" {
+			return []string{"--pass", "--skip-dir"}
 		}
 		if sub == "git" {
 			if len(rest) > 1 {
@@ -380,15 +437,20 @@ func commandFlags(command string, rest []string) []string {
 			return []string{"--shell", dryRun}
 		}
 	case "repo":
+		filterFlags := []string{"--path", "--dirty", "--ahead", "--behind", "--detached"}
 		switch sub {
+		case "ls":
+			return filterFlags
+		case "scan":
+			return append([]string{"--no-fetch"}, filterFlags...)
+		case "fetch":
+			return filterFlags
 		case "pull":
-			return []string{"--all", dryRun}
+			return append([]string{"--rebase", dryRun}, filterFlags...)
 		case "sync":
-			return []string{"--rebase", dryRun}
-		case "fix":
-			return []string{dryRun}
+			return append([]string{"--rebase", dryRun}, filterFlags...)
 		case "run":
-			return []string{dryRun}
+			return append([]string{dryRun}, filterFlags...)
 		}
 	}
 	return nil
@@ -411,12 +473,13 @@ func loadCompletionCtx(globals globalFlags) completionCtx {
 	}
 	ctx.workspace = resolved
 
-	// Load config for scratch.root_dir.
+	// Load config for scratch.root_dir, capture locations, and repo roots.
 	configPath := globals.config
 	if configPath == "" {
 		configPath = filepath.Join(resolved, "ws", "config.json")
 	}
-	if cfg, err := config.Load(configPath); err == nil {
+	cfg, cfgErr := config.Load(configPath)
+	if cfgErr == nil {
 		if dir, err := config.ResolvePath(resolved, cfg.Scratch.RootDir); err == nil {
 			ctx.scratchDir = dir
 		}
@@ -448,6 +511,23 @@ func loadCompletionCtx(globals globalFlags) completionCtx {
 
 	// Scratch directory names.
 	ctx.scratchIDs = listDirNames(ctx.scratchDir)
+
+	// Discovered repo paths.
+	if cfgErr == nil {
+		roots := make([]string, 0, len(cfg.Repo.Roots))
+		for _, r := range cfg.Repo.Roots {
+			if res, err := config.ResolvePath(resolved, r); err == nil {
+				if rel, err := filepath.Rel(resolved, res); err == nil {
+					roots = append(roots, filepath.ToSlash(rel))
+				}
+			}
+		}
+		if repos, err := repo.Discover(resolved, roots, cfg.Repo.ExcludeDirs); err == nil {
+			for _, r := range repos {
+				ctx.repoPaths = append(ctx.repoPaths, r.Path)
+			}
+		}
+	}
 
 	return ctx
 }

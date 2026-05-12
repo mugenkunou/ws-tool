@@ -3,6 +3,7 @@ package provision
 import (
 	"bufio"
 	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -27,6 +28,8 @@ func Undo(e Entry) UndoResult {
 		return undoConfigLine(e)
 	case TypeGitExclude:
 		return undoConfigLine(e) // same mechanism: remove a line from a file
+	case TypeCronJob:
+		return undoCronJob(e)
 	default:
 		return UndoResult{Entry: e, Action: "skipped", Message: "unknown provision type"}
 	}
@@ -106,4 +109,59 @@ func undoConfigLine(e Entry) UndoResult {
 		return UndoResult{Entry: e, Action: "failed", Message: err.Error()}
 	}
 	return UndoResult{Entry: e, Action: "removed", Message: "line removed"}
+}
+
+// undoCronJob removes a ws-managed crontab block (identified by e.Line as the
+// job name) and deletes the wrapper script at e.Path.
+func undoCronJob(e Entry) UndoResult {
+	jobName := e.Line
+	if jobName == "" {
+		return UndoResult{Entry: e, Action: "skipped", Message: "no job name recorded"}
+	}
+
+	// Remove the crontab block using crontab -l / crontab -.
+	// Read current crontab.
+	ctOut, err := exec.Command("crontab", "-l").Output()
+	ct := string(ctOut)
+	if err != nil {
+		ct = "" // no crontab — nothing to remove
+	}
+
+	markerStart := "# >>> ws:" + jobName + " >>>"
+	markerEnd := "# <<< ws:" + jobName + " <<<"
+
+	if strings.Contains(ct, markerStart) {
+		lines := strings.Split(ct, "\n")
+		var out []string
+		inBlock := false
+		for _, line := range lines {
+			if strings.TrimSpace(line) == markerStart {
+				inBlock = true
+				continue
+			}
+			if inBlock {
+				if strings.TrimSpace(line) == markerEnd {
+					inBlock = false
+				}
+				continue
+			}
+			out = append(out, line)
+		}
+		updated := strings.Join(out, "\n")
+		for strings.Contains(updated, "\n\n\n") {
+			updated = strings.ReplaceAll(updated, "\n\n\n", "\n\n")
+		}
+		cmd := exec.Command("crontab", "-")
+		cmd.Stdin = strings.NewReader(updated)
+		if cmdErr := cmd.Run(); cmdErr != nil {
+			return UndoResult{Entry: e, Action: "failed", Message: "crontab write: " + cmdErr.Error()}
+		}
+	}
+
+	// Delete the wrapper script.
+	if e.Path != "" {
+		_ = os.Remove(e.Path)
+	}
+
+	return UndoResult{Entry: e, Action: "removed", Message: "crontab block removed, script deleted"}
 }

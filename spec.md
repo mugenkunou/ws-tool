@@ -8,7 +8,7 @@ The spec is organized in five parts:
 2. **Technical Design Decisions** — Implementation choices, trade-offs, and rationale behind key subsystems. Interface-agnostic.
 3. **Dependencies & Environment** — Runtime tools, build chain, ecosystem software.
 4. **CLI Reference** — Flags, exit codes, command catalog, output examples.
-5. **Beyond CLI** — Daemon, TUI, desktop notifications, and guided workflows that build on the CLI foundation.
+5. **Beyond CLI** — Daemon, desktop notifications, and guided workflows that build on the CLI foundation.
 
 ---
 
@@ -57,7 +57,6 @@ RO commands never modify the workspace, config, manifest, or system state. They:
 | `ws scratch search` | Search scratch directories by tag/name/content |
 | `ws capture ls` | List configured capture locations |
 | `ws trash status` | |
-| `ws tui` | Interactive TUI (reads input but doesn't modify data) |
 | `ws completions` | |
 
 #### RW Commands (interactive, confirm-before-write)
@@ -391,7 +390,7 @@ The config file path resolves first (flag → env → `<workspace>/ws/config.jso
 
 ## Technical Design Decisions
 
-Implementation choices and rationale behind key subsystems. These designs are interface-agnostic — they apply regardless of whether `ws` is invoked via CLI, daemon, TUI, or API.
+Implementation choices and rationale behind key subsystems. These designs are interface-agnostic — they apply regardless of whether `ws` is invoked via CLI, daemon, or API.
 
 ### Batch Resilience: No Single Failure Breaks the Chain
 
@@ -450,7 +449,7 @@ The user sees everything that worked plus a clear list of what didn't. They neve
 
 **Structural elements:**
 
-- **Headers:** Bold title + dimmed divider line (`────────`). Used by `ws tui`, `ws restore`.
+- **Headers:** Bold title + dimmed divider line (`────────`). Used by `ws restore`.
 - **Key-value rows:** Bold left-aligned label (18-char column) + value. Used by `ws version`, `ws trash status`.
 - **Result lines:** Icon + message (`✔ Workspace is clean.`, `▲ Violations found: 3`). Used by every command's success/failure path.
 - **Severity counters:** `0 critical · 2 warning` with conditional coloring — zero counts are dimmed, non-zero counts use severity color.
@@ -786,7 +785,6 @@ Content body — markdown, code blocks, embedded images.
 
 **Integration with existing `ws` systems:**
 
-- `ws tui` — "Recent Captures" panel showing last 5 entries.
 - `ws restore` — No action needed. `ws/captures/` is synced. Restore a machine → captures are already there.
 - `ws ignore` — `ws/captures/assets/` is inside the `ws/` safe harbor, so attachments sync regardless of extension rules.
 - `ws completions` — `ws capture <TAB>` completes to configured location names.
@@ -1001,8 +999,6 @@ ws restore                           Guided full-machine restore wizard
 ws completions <shell>               Generate shell completions (bash/zsh/fish)
 ws completions install               Install shell completions into shell rc/config
 ws completions uninstall             Remove installed shell completions from shell rc/config
-
-ws tui                               Interactive TUI dashboard
 
 ws trash setup                       Configure soft-delete integrations (rm, VS Code, file explorer)
 ws trash disable                     Remove soft-delete integrations
@@ -2045,7 +2041,7 @@ Open an existing scratch directory in the configured editor. When no name is giv
 ws scratch open [name] [flags]
 
 --editor <cmd>      Override scratch.editor_cmd for this invocation
---print-path        Print resolved path to stdout; TUI goes to stderr.
+--print-path        Print resolved path to stdout; interactive output goes to stderr.
                     Skips interactive output. Useful for shell cd wrappers.
 ```
 
@@ -3958,7 +3954,6 @@ No violations found. Nothing to fix.
 
 Your machine is configured. Suggested next steps:
   ws completions bash    Generate shell completions
-  ws tui                 Open the workspace dashboard
 ```
 
 Each step is self-contained. If a step fails, the wizard reports the failure and continues to the next step. The user can re-run `ws restore` safely — every sub-step is idempotent.
@@ -4208,72 +4203,267 @@ ws capture ls
 
 ---
 
+### `ws cron`
+
+Manage ws-scheduled cron jobs for workspace maintenance. Each job is a named, self-contained bash wrapper script installed under `~/.local/share/ws/cron-jobs/`. A crontab block with start/end markers is written per job so `ws` can reliably remove it later.
+
+Three shortcomings of vanilla crontab are bridged:
+
+| Shortcoming | Fix |
+| --- | --- |
+| No missed-run recovery | An `@reboot` crontab entry fires the wrapper on boot. The wrapper checks the state file; if more than half the job's interval has elapsed since the last run (machine was suspended through a scheduled window), it runs immediately — equivalent to `systemd Persistent=true`. |
+| No structured log | All output is redirected to `~/.local/share/ws/cron.log` with RFC 3339 timestamps and `[<job>]` prefixes. The log is size-capped at 5 MB (keeps last 2.5 MB) by the wrapper itself — no external logrotate needed. |
+| No status inspection | `ws cron status` reads the state file and last log lines — equivalent to `systemctl --user status`. |
+
+```text
+ws cron <add|rm|ls|status|log>
+```
+
+#### Built-in jobs
+
+| Job | Schedule | Description |
+| --- | --- | --- |
+| `mega-sync` | `*/30 * * * *` | Kill/restart megasync for a 5-minute sync window every 30 min |
+| `dotfile-sync` | `0 * * * *` | Commit and push dotfiles to remote git (requires `dotfile.git.enabled=true`) |
+| `repo-sync` | `*/30 * * * *` | Sync workspace git fleet (pull behind, push ahead) |
+| `secret-scan` | `0 * * * *` | Scan for exposed secrets; emit notification if violations found |
+| `ignore-scan` | `0 */6 * * *` | Scan workspace sync hygiene (bloat, depth, project-meta) every 6 hours |
+| `log-prune` | `0 2 * * *` | Evict old log sessions exceeding `log.cap_mb` (nightly at 02:00) |
+| `scratch-prune` | `0 3 * * 0` | Remove scratch dirs older than `scratch.prune_after_days` (weekly, Sunday 03:00) |
+
+#### Presets
+
+| Preset | Expands to |
+| --- | --- |
+| `maintenance` | `ignore-scan`, `log-prune`, `scratch-prune` |
+| `sync` | `mega-sync`, `dotfile-sync`, `repo-sync` |
+
+#### Runtime files
+
+All runtime files live under `~/.local/share/ws/` and are **not** synced to MEGA (runtime-only):
+
+| File | Purpose |
+| --- | --- |
+| `cron-jobs/<name>.sh` | Wrapper script for each installed job |
+| `cron.state` | Plain-text run history: `<job> <RFC3339-timestamp> <exit-code>` per line |
+| `cron.log` | Shared log file; all jobs append timestamped `[<job>]`-prefixed lines |
+
+#### Provisioning
+
+Each installed job records a `cron_job` entry in `ws/provisions.json`:
+
+```json
+{ "type": "cron_job", "path": "~/.local/share/ws/cron-jobs/mega-sync.sh", "line": "mega-sync", "command": "cron add" }
+```
+
+`ws reset` undoes all `cron_job` provision entries (removes crontab blocks and script files) as part of full workspace reset.
+
+---
+
+#### `ws cron add`
+
+Install a named job or preset. Writes the wrapper script to `~/.local/share/ws/cron-jobs/<name>.sh` and adds a crontab block with a scheduled entry and an `@reboot` entry for missed-run recovery. Idempotent: running `add` on an already-installed job replaces the existing block.
+
+```text
+ws cron add <job|preset> [flags]
+
+--display string   X11 DISPLAY for mega-sync (default: $DISPLAY, then :1)
+--dry-run          Preview actions without writing
+```
+
+**Output:**
+
+```text
+ws cron add mega-sync
+
+  Write wrapper script ~/.local/share/ws/cron-jobs/mega-sync.sh         [y/n/a/q] y
+  ✔ Written
+
+  Install crontab entries for mega-sync (*/30 * * * * + @reboot)         [y/n/a/q] y
+  ✔ Installed
+
+✔ Cron job(s) installed. Run `ws cron status` to verify.
+```
+
+**Preset output:**
+
+```text
+ws cron add sync
+
+  Write wrapper script ~/.local/share/ws/cron-jobs/mega-sync.sh         [y/n/a/q] a
+  ✔ Written
+  Install crontab entries for mega-sync (*/30 * * * * + @reboot)
+  ✔ Installed
+  Write wrapper script ~/.local/share/ws/cron-jobs/dotfile-sync.sh
+  ✔ Written
+  Install crontab entries for dotfile-sync (0 * * * * + @reboot)
+  ✔ Installed
+  Write wrapper script ~/.local/share/ws/cron-jobs/repo-sync.sh
+  ✔ Written
+  Install crontab entries for repo-sync (*/30 * * * * + @reboot)
+  ✔ Installed
+
+✔ Cron job(s) installed. Run `ws cron status` to verify.
+```
+
+**Crontab block written (example for mega-sync):**
+
+```text
+# >>> ws:mega-sync >>>
+SHELL=/usr/bin/bash
+*/30 * * * * /home/user/.local/share/ws/cron-jobs/mega-sync.sh
+@reboot /home/user/.local/share/ws/cron-jobs/mega-sync.sh
+# <<< ws:mega-sync <<<
+```
+
+---
+
+#### `ws cron rm`
+
+Remove a named job or preset: deletes the crontab block (identified by markers) and the wrapper script. Removes the `cron_job` provision entry. Idempotent.
+
+```text
+ws cron rm <job|preset> [flags]
+
+--dry-run   Preview without removing
+```
+
+**Output:**
+
+```text
+ws cron rm mega-sync
+
+  Remove crontab entries and wrapper script for mega-sync                 [y/n/a/q] y
+  ✔ Removed
+
+✔ Removed.
+```
+
+---
+
+#### `ws cron ls`
+
+List all available jobs and presets with their schedule, description, and install status. Shows last-run time for installed jobs.
+
+```text
+ws cron ls
+```
+
+**Output:**
+
+```text
+Available cron jobs:
+  NAME            SCHEDULE        DESCRIPTION                                                          STATUS
+  dotfile-sync    0 * * * *       Commit and push dotfiles to remote git                               installed
+  ignore-scan     0 */6 * * *     Scan workspace sync hygiene every 6 hours                            not installed
+  log-prune       0 2 * * *       Evict old log sessions exceeding log.cap_mb (nightly at 02:00)       installed
+  maintenance     (preset)        installs: ignore-scan, log-prune, scratch-prune                      not installed
+  mega-sync       */30 * * * *    Restart megasync for a 5-minute sync window every 30 minutes         installed
+  repo-sync       */30 * * * *    Sync workspace git fleet (pull behind, push ahead)                   not installed
+  scratch-prune   0 3 * * 0       Remove scratch dirs older than scratch.prune_after_days              installed
+  secret-scan     0 * * * *       Scan for exposed secrets; notify if violations found                 not installed
+  sync            (preset)        installs: mega-sync, dotfile-sync, repo-sync                         not installed
+
+Last run:
+  dotfile-sync    2026-05-08 10:00    exit 0
+  log-prune       2026-05-08 02:00    exit 0
+  mega-sync       2026-05-08 10:30    exit 0
+  scratch-prune   2026-05-04 03:00    exit 0
+```
+
+---
+
+#### `ws cron status`
+
+Show detailed status for one or all installed jobs: install state, last run time/exit code, approximate next run, and last 5 log lines.
+
+```text
+ws cron status [job]
+```
+
+**Output (no argument — all installed jobs):**
+
+```text
+mega-sync
+──────────────────────────────────────────────────────
+  Status      installed  (*/30 * * * * + @reboot)
+  Last run    2026-05-08 10:30:00  (4m 12s ago)  exit 0
+  Next run    ~2026-05-08 11:00
+  Recent log:
+    2026-05-08T10:30:00Z [mega-sync] Starting
+    2026-05-08T10:30:01Z [mega-sync] Megasync already running, killing it...
+    2026-05-08T10:30:02Z [mega-sync] Starting Megasync...
+    2026-05-08T10:35:02Z [mega-sync] Stopping Megasync...
+    2026-05-08T10:35:02Z [mega-sync] Done (exit 0)
+
+dotfile-sync
+──────────────────────────────────────────────────────
+  Status      installed  (0 * * * * + @reboot)
+  Last run    2026-05-08 10:00:00  (34m 12s ago)  exit 0
+  Next run    ~2026-05-08 11:00
+  Recent log:
+    2026-05-08T10:00:00Z [dotfile-sync] Starting
+    2026-05-08T10:00:01Z [dotfile-sync] Done (exit 0)
+```
+
+**Output — specific job with no records:**
+
+```text
+ws cron status log-prune
+
+log-prune
+──────────────────────────────────────────────────────
+  Status      installed  (0 2 * * * + @reboot)
+  Last run    never
+```
+
+---
+
+#### `ws cron log`
+
+Show recent log entries from `~/.local/share/ws/cron.log`. Optionally filtered to a specific job.
+
+```text
+ws cron log [job] [flags]
+
+--lines int   Number of log lines to show (default: 20)
+```
+
+**Output:**
+
+```text
+ws cron log mega-sync
+
+2026-05-08T10:00:00Z [mega-sync] Starting
+2026-05-08T10:00:01Z [mega-sync] Megasync already running, killing it...
+2026-05-08T10:00:02Z [mega-sync] Starting Megasync...
+2026-05-08T10:05:02Z [mega-sync] Stopping Megasync...
+2026-05-08T10:05:02Z [mega-sync] Done (exit 0)
+2026-05-08T10:30:00Z [mega-sync] Starting
+2026-05-08T10:30:01Z [mega-sync] Starting Megasync...
+2026-05-08T10:35:02Z [mega-sync] Stopping Megasync...
+2026-05-08T10:35:02Z [mega-sync] Done (exit 0)
+```
+
+**Without job filter — all jobs, last 20 lines:**
+
+```text
+ws cron log
+
+2026-05-08T02:00:00Z [log-prune] Starting
+2026-05-08T02:00:01Z [log-prune] Done (exit 0)
+2026-05-08T10:00:00Z [dotfile-sync] Starting
+2026-05-08T10:00:01Z [dotfile-sync] Done (exit 0)
+2026-05-08T10:00:00Z [mega-sync] Starting
+...
+```
+
+---
+
 ## Beyond CLI
 
 The following features build on top of the CLI foundation. They reuse the same config, manifest, and violation model — no new data formats. Each one is an optional layer: the CLI works without them, they work because of the CLI.
 
 ---
-
-### `ws tui`
-
-Full-screen interactive terminal dashboard. Shows workspace health, violations, dotfile status, log sessions, and storage in a single view. Built with Go's native terminal capabilities (raw mode, ANSI escape sequences) — no third-party TUI libraries.
-
-```text
-ws tui
-```
-
-**Layout:**
-
-```text
-┌─ ws — ~/Workspace ──────────────────────────────────────────────────────┐
-│                                                                         │
-│  HEALTH          DOTFILES           LOG             STORAGE             │
-│  ✔ 0 critical    5 registered       ● recording     Workspace  4.3 GB  │
-│  ⚠ 1 warning     5 ok / 0 broken    tag: daily-29   Scratch    1.2 GB  │
-│                                      42 min          Log        312 MB  │
-│                                                                         │
-├─ Violations (1) ────────────────────────────────────────────────────────┤
-│                                                                         │
-│  WARNING  bloat  22 MB  artifacts/presentations/quarterly-review.pptx  │
-│                                                                         │
-├─ Recent sessions ───────────────────────────────────────────────────────┤
-│                                                                         │
-│  daily-29   ● active     42 min     18 commands     12 MB              │
-│  daily-28   2026-03-28   1h 14m     47 commands     28 MB              │
-│  daily-27   2026-03-27   2h 03m     63 commands     34 MB              │
-│                                                                         │
-├─ Dotfiles ──────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ✔ ~/.ssh                → ssh/                                         │
-│  ✔ ~/.bashrc             → bashrc                                       │
-│  ✔ /etc/docker/daemon…   → daemon.json           (sudo)                │
-│  ✔ ~/.kube/config        → kubeconfig                                   │
-│  ✔ ~/.config/Code/User/… → vscode-settings.json                        │
-│                                                                         │
-├─ Keys ──────────────────────────────────────────────────────────────────┤
-│  q quit   r refresh   s scan   f fix   d dotfiles   l logs   ? help    │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-**Key bindings:**
-
-| Key | Action |
-| --- | --- |
-| `q` | Quit |
-| `r` | Refresh all panels (re-runs scan) |
-| `s` | Run `ws scan`, update violations panel |
-| `f` | Run `ws fix` (drops to interactive CLI, returns to TUI after) |
-| `d` | Focus dotfiles panel — show full `ws dotfile ls` view |
-| `l` | Focus log panel — browse sessions, preview commands |
-| `↑`/`↓` | Navigate within focused panel |
-| `Enter` | Drill into selected item (show details / run action) |
-| `?` | Show help overlay |
-
-**Design constraints:**
-
-- No third-party TUI libraries (no bubbletea, no tview). Raw ANSI escape sequences + Go's `os.Stdin` raw mode.
-- TUI is read-heavy. Write actions (`f` for fix) drop to the normal interactive CLI and return to TUI when done.
-- Panels refresh on launch. Manual `r` for subsequent refreshes. No background polling inside the TUI itself.
-- Terminal size detection via `TIOCGWINSZ` ioctl. Graceful degradation if terminal is too small (show summary only).
 
 ---

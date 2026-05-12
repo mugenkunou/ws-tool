@@ -35,12 +35,12 @@ func TestCompleteTopLevelPrefix(t *testing.T) {
 			t.Errorf("completion %q does not start with 'sc'", c)
 		}
 	}
-	// "sc" matches scan and scratch (search/secret start with "se").
-	if !contains(comps, "scratch") || !contains(comps, "scan") {
-		t.Errorf("expected scratch, scan in completions, got %v", comps)
+	// "sc" matches scratch (scan and search are removed from top-level).
+	if !contains(comps, "scratch") {
+		t.Errorf("expected scratch in completions, got %v", comps)
 	}
-	if contains(comps, "search") || contains(comps, "secret") {
-		t.Errorf("search/secret should NOT match 'sc' prefix, got %v", comps)
+	if contains(comps, "scan") || contains(comps, "search") {
+		t.Errorf("scan/search should NOT be top-level commands, got %v", comps)
 	}
 }
 
@@ -171,12 +171,8 @@ func TestCompleteCommandFlags(t *testing.T) {
 			wantSome: []string{"--tag", "--quiet-start"},
 		},
 		{
-			args:     []string{"ignore", "generate", "--"},
-			wantSome: []string{"--merge", "--force", "--dry-run"},
-		},
-		{
-			args:     []string{"search", "--"},
-			wantSome: []string{"--type", "--path", "--context"},
+			args:     []string{"ignore", "scan", "--"},
+			wantSome: []string{"--expand-harbors"},
 		},
 		{
 			args:     []string{"capture", "--"},
@@ -236,13 +232,14 @@ func TestCompleteDotfileGitSubSub(t *testing.T) {
 	}
 }
 
-func TestCompleteSearchNoCompletions(t *testing.T) {
+func TestCompleteSearchRemoved(t *testing.T) {
+	// search is not a top-level command; completion should return nothing.
 	comps, dir := resolveCompletions([]string{"search", ""}, globalFlags{})
 	if dir != compDirectiveNoFileComp {
 		t.Fatalf("expected NoFileComp for search, got %d", dir)
 	}
 	if len(comps) != 0 {
-		t.Fatalf("expected no completions for search positional, got %v", comps)
+		t.Fatalf("expected no completions for removed search command, got %v", comps)
 	}
 }
 
@@ -277,11 +274,11 @@ func TestCompleteScratchDeletePrefix(t *testing.T) {
 	}
 }
 
-func TestCompleteLogShow(t *testing.T) {
+func TestCompleteLogRm(t *testing.T) {
 	ctx := completionCtx{
 		logTags: []string{"work", "personal", "project-x"},
 	}
-	comps, dir := completeLog("show", nil, "", ctx)
+	comps, dir := completeLog("rm", nil, "", ctx)
 	if dir != compDirectiveNoFileComp {
 		t.Fatalf("expected NoFileComp, got %d", dir)
 	}
@@ -290,11 +287,11 @@ func TestCompleteLogShow(t *testing.T) {
 	}
 }
 
-func TestCompleteLogShowPrefix(t *testing.T) {
+func TestCompleteLogRmPrefix(t *testing.T) {
 	ctx := completionCtx{
 		logTags: []string{"work", "personal", "project-x"},
 	}
-	comps, _ := completeLog("show", nil, "p", ctx)
+	comps, _ := completeLog("rm", nil, "p", ctx)
 	if len(comps) != 2 {
 		t.Fatalf("expected personal and project-x, got %v", comps)
 	}

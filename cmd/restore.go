@@ -195,7 +195,6 @@ func runRestore(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, style.Mutedf(nc, "Your machine is configured. Suggested next steps:"))
 		fmt.Fprintln(out, style.Mutedf(nc, "  ws completions bash    Generate shell completions"))
-		fmt.Fprintln(out, style.Mutedf(nc, "  ws tui                 Open the workspace dashboard"))
 	}
 
 	if globals.json {

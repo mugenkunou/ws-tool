@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/repo"
@@ -69,6 +70,22 @@ func filterRepos(workspacePath string, repos []repo.Repository, f repoFilterFlag
 		result = append(result, repo.Repository{Path: s.Path})
 	}
 	return result
+}
+
+// targetRepo filters the repo list to a single repo matching the positional
+// argument. Returns the original list if target is empty. Returns an error
+// message and nil slice if the target does not match any repo.
+func targetRepo(repos []repo.Repository, target string) ([]repo.Repository, string) {
+	if target == "" {
+		return repos, ""
+	}
+	normalized := filepath.ToSlash(filepath.Clean(target))
+	for _, r := range repos {
+		if filepath.ToSlash(r.Path) == normalized {
+			return []repo.Repository{r}, ""
+		}
+	}
+	return nil, fmt.Sprintf("no repo matching %q — run `ws repo ls` to see available repos", target)
 }
 
 // wsSpecialRepos returns repos managed by ws itself (dotfiles and pass store)
@@ -171,7 +188,15 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		}
 		repos = appendMissingRepos(repos, wsSpecialRepos(workspacePath))
 		repos = filterRepos(workspacePath, repos, filters)
-		return renderRepoList(globals, repos, stdout, stderr)
+		if target := strings.Join(fs.Args(), ""); target != "" {
+			var errMsg string
+			repos, errMsg = targetRepo(repos, target)
+			if errMsg != "" {
+				fmt.Fprintln(stderr, errMsg)
+				return 1
+			}
+		}
+		return renderRepoList(globals, workspacePath, repos, stdout, stderr)
 	case "scan":
 		fs := flag.NewFlagSet("repo-scan", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -189,6 +214,14 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			return 1
 		}
 		repos = appendMissingRepos(repos, wsSpecialRepos(workspacePath))
+		if target := strings.Join(fs.Args(), ""); target != "" {
+			var errMsg string
+			repos, errMsg = targetRepo(repos, target)
+			if errMsg != "" {
+				fmt.Fprintln(stderr, errMsg)
+				return 1
+			}
+		}
 
 		// Fetch first (unless --no-fetch), then scan.
 		var fetchWarnings []string
@@ -208,7 +241,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		if filters.hasFilter() {
 			statuses = repo.Filter(statuses, filters.toFilterOptions())
 		}
-		return renderRepoScan(globals, statuses, fetchWarnings, stdout, stderr)
+		return renderRepoScan(globals, workspacePath, statuses, fetchWarnings, stdout, stderr)
 	case "fetch":
 		fs := flag.NewFlagSet("repo-fetch", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -226,8 +259,16 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		}
 		repos = appendMissingRepos(repos, wsSpecialRepos(workspacePath))
 		repos = filterRepos(workspacePath, repos, filters)
+		if target := strings.Join(fs.Args(), ""); target != "" {
+			var errMsg string
+			repos, errMsg = targetRepo(repos, target)
+			if errMsg != "" {
+				fmt.Fprintln(stderr, errMsg)
+				return 1
+			}
+		}
 		results := repo.FetchAll(workspacePath, repos)
-		return renderRepoFetch(globals, results, stdout, stderr)
+		return renderRepoFetch(globals, workspacePath, results, stdout, stderr)
 	case "pull":
 		fs := flag.NewFlagSet("repo-pull", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -246,6 +287,14 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		}
 		repos = appendMissingRepos(repos, wsSpecialRepos(workspacePath))
 		repos = filterRepos(workspacePath, repos, filters)
+		if target := strings.Join(fs.Args(), ""); target != "" {
+			var errMsg string
+			repos, errMsg = targetRepo(repos, target)
+			if errMsg != "" {
+				fmt.Fprintln(stderr, errMsg)
+				return 1
+			}
+		}
 		if globals.dryRun {
 			if globals.json {
 				return writeJSONDryRun(stdout, stderr, "repo.pull", true, map[string]any{"repos": repos})
@@ -257,9 +306,10 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		plan := Plan{Command: "repo.pull"}
 		for _, r := range repos {
 			r := r // capture
+			short, _ := style.DisplayPath(workspacePath, r.Path)
 			plan.Actions = append(plan.Actions, Action{
 				ID:          "pull-" + r.Path,
-				Description: fmt.Sprintf("Pull %s", r.Path),
+				Description: fmt.Sprintf("Pull %s", short),
 				Execute: func() error {
 					results := repo.PullAll(workspacePath, []repo.Repository{r}, *rebase)
 					if len(results) > 0 && !results[0].Success {
@@ -291,6 +341,14 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			return 1
 		}
 		repos = appendMissingRepos(repos, wsSpecialRepos(workspacePath))
+		if target := strings.Join(fs.Args(), ""); target != "" {
+			var errMsg string
+			repos, errMsg = targetRepo(repos, target)
+			if errMsg != "" {
+				fmt.Fprintln(stderr, errMsg)
+				return 1
+			}
+		}
 
 		// Fetch first to get accurate ahead/behind counts.
 		nc := globals.noColor
@@ -300,8 +358,9 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 				if filepath.IsAbs(r.Path) {
 					continue // skip external repos (e.g. pass store)
 				}
+				short, _ := style.DisplayPath(workspacePath, r.Path)
 				fmt.Fprintf(out, "\r%s Fetching %s (%d/%d)…",
-					style.IconGit(nc), style.Infof(nc, "%s", r.Path), i+1, len(repos))
+					style.IconGit(nc), style.Infof(nc, "%s", short), i+1, len(repos))
 				repo.FetchOne(workspacePath, r)
 			}
 			fmt.Fprintln(out) // finish the progress line
@@ -351,6 +410,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			}
 			out := textOut(globals, stdout)
 			for _, sp := range syncPlans {
+				short, _ := style.DisplayPath(workspacePath, sp.Path)
 				strategy := string(sp.Strategy)
 				switch sp.Strategy {
 				case repo.SyncPullPush:
@@ -368,7 +428,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 				case repo.SyncCommitPush:
 					strategy = "commit+push"
 				}
-				fmt.Fprintf(out, "[dry-run] %-12s %s  (%s)\n", strategy, style.Infof(nc, "%s", sp.Path), sp.Detail)
+				fmt.Fprintf(out, "[dry-run] %-12s %s  (%s)\n", strategy, style.Infof(nc, "%s", short), sp.Detail)
 			}
 			for _, w := range warnings {
 				fmt.Fprintf(out, "%s %s\n", style.IconWarning(nc), style.Mutedf(nc, "Skipped: %s", w))
@@ -380,7 +440,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		plan := Plan{Command: "repo.sync"}
 		for _, sp := range syncPlans {
 			sp := sp // capture
-			desc := syncActionDescription(sp, *rebase)
+			desc := syncActionDescription(workspacePath, sp, *rebase)
 			plan.Actions = append(plan.Actions, Action{
 				ID:          "sync-" + sp.Path,
 				Description: desc,
@@ -437,9 +497,10 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		plan := Plan{Command: "repo.run"}
 		for _, r := range repos {
 			r := r
+			short, _ := style.DisplayPath(workspacePath, r.Path)
 			plan.Actions = append(plan.Actions, Action{
 				ID:          "run-" + r.Path,
-				Description: fmt.Sprintf("Run in %s", r.Path),
+				Description: fmt.Sprintf("Run in %s", short),
 				Execute: func() error {
 					results := repo.RunAll(workspacePath, []repo.Repository{r}, command)
 					if len(results) > 0 && !results[0].Success {
@@ -460,25 +521,26 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 	}
 }
 
-func syncActionDescription(sp repo.SyncPlan, rebase bool) string {
+func syncActionDescription(workspacePath string, sp repo.SyncPlan, rebase bool) string {
+	short, _ := style.DisplayPath(workspacePath, sp.Path)
 	switch sp.Strategy {
 	case repo.SyncPull:
 		if sp.Status.Dirty {
-			return fmt.Sprintf("Commit, pull (%s), push %s  (%s)", rebaseOrMerge(rebase), sp.Path, sp.Detail)
+			return fmt.Sprintf("Commit, pull (%s), push %s  (%s)", rebaseOrMerge(rebase), short, sp.Detail)
 		}
-		return fmt.Sprintf("Pull %s  (%s, ff)", sp.Path, sp.Detail)
+		return fmt.Sprintf("Pull %s  (%s, ff)", short, sp.Detail)
 	case repo.SyncPush:
-		return fmt.Sprintf("Push %s  (%s)", sp.Path, sp.Detail)
+		return fmt.Sprintf("Push %s  (%s)", short, sp.Detail)
 	case repo.SyncCommitPush:
-		return fmt.Sprintf("Commit and push %s  (%s)", sp.Path, sp.Detail)
+		return fmt.Sprintf("Commit and push %s  (%s)", short, sp.Detail)
 	case repo.SyncPullPush:
 		mode := rebaseOrMerge(rebase)
 		if sp.Status.Dirty {
-			return fmt.Sprintf("Commit, pull (%s), push %s  (%s)", mode, sp.Path, sp.Detail)
+			return fmt.Sprintf("Commit, pull (%s), push %s  (%s)", mode, short, sp.Detail)
 		}
-		return fmt.Sprintf("Pull (%s) + push %s  (%s)", mode, sp.Path, sp.Detail)
+		return fmt.Sprintf("Pull (%s) + push %s  (%s)", mode, short, sp.Detail)
 	default:
-		return fmt.Sprintf("Sync %s", sp.Path)
+		return fmt.Sprintf("Sync %s", short)
 	}
 }
 
@@ -489,7 +551,7 @@ func rebaseOrMerge(rebase bool) string {
 	return "merge"
 }
 
-func renderRepoList(globals globalFlags, repos []repo.Repository, stdout, stderr io.Writer) int {
+func renderRepoList(globals globalFlags, workspacePath string, repos []repo.Repository, stdout, stderr io.Writer) int {
 	if globals.json {
 		return writeJSON(stdout, stderr, "repo.ls", repos)
 	}
@@ -499,13 +561,18 @@ func renderRepoList(globals globalFlags, repos []repo.Repository, stdout, stderr
 		fmt.Fprintln(out, "No repositories found.")
 		return 0
 	}
+	nc := globals.noColor
 	for _, r := range repos {
-		fmt.Fprintln(out, r.Path)
+		short, full := style.DisplayPath(workspacePath, r.Path)
+		fmt.Fprintln(out, short)
+		if full != "" {
+			fmt.Fprintf(out, "  %s\n", style.Mutedf(nc, "%s", full))
+		}
 	}
 	return 0
 }
 
-func renderRepoScan(globals globalFlags, statuses []repo.RepoStatus, fetchWarnings []string, stdout, stderr io.Writer) int {
+func renderRepoScan(globals globalFlags, workspacePath string, statuses []repo.RepoStatus, fetchWarnings []string, stdout, stderr io.Writer) int {
 	if globals.json {
 		data := map[string]any{"statuses": statuses}
 		if len(fetchWarnings) > 0 {
@@ -530,8 +597,12 @@ func renderRepoScan(globals globalFlags, statuses []repo.RepoStatus, fetchWarnin
 		return 0
 	}
 	for _, s := range statuses {
+		short, full := style.DisplayPath(workspacePath, s.Path)
 		if s.Error != "" {
-			fmt.Fprintf(out, "%s %s %s\n", style.IconGit(nc), style.Infof(nc, "%s", s.Path), style.Badge("error", nc)+" "+style.Errorf(nc, "%s", s.Error))
+			fmt.Fprintf(out, "%s %s %s\n", style.IconGit(nc), style.Infof(nc, "%s", short), style.Badge("error", nc)+" "+style.Errorf(nc, "%s", s.Error))
+			if full != "" {
+				fmt.Fprintf(out, "   %s\n", style.Mutedf(nc, "%s", full))
+			}
 			continue
 		}
 		dirtyBadge := style.Badge("clean", nc)
@@ -550,11 +621,14 @@ func renderRepoScan(globals globalFlags, statuses []repo.RepoStatus, fetchWarnin
 		}
 		fmt.Fprintf(out, "%s %s  %s %s%s%s\n",
 			style.IconGit(nc),
-			style.Infof(nc, "%s", s.Path),
+			style.Infof(nc, "%s", short),
 			style.Accentf(nc, "%s", s.Branch),
 			dirtyBadge,
 			detached,
 			aheadBehind)
+		if full != "" {
+			fmt.Fprintf(out, "   %s\n", style.Mutedf(nc, "%s", full))
+		}
 	}
 
 	for _, s := range statuses {
@@ -565,7 +639,7 @@ func renderRepoScan(globals globalFlags, statuses []repo.RepoStatus, fetchWarnin
 	return 0
 }
 
-func renderRepoFetch(globals globalFlags, results []repo.FetchResult, stdout, stderr io.Writer) int {
+func renderRepoFetch(globals globalFlags, workspacePath string, results []repo.FetchResult, stdout, stderr io.Writer) int {
 	if globals.json {
 		return writeJSON(stdout, stderr, "repo.fetch", results)
 	} else {
@@ -576,10 +650,11 @@ func renderRepoFetch(globals globalFlags, results []repo.FetchResult, stdout, st
 		}
 		for _, r := range results {
 			nc := globals.noColor
+			short, _ := style.DisplayPath(workspacePath, r.Path)
 			if r.Success {
-				fmt.Fprintln(out, style.ResultSuccess(nc, "%s fetched", style.Infof(nc, "%s", r.Path)))
+				fmt.Fprintln(out, style.ResultSuccess(nc, "%s fetched", style.Infof(nc, "%s", short)))
 			} else {
-				fmt.Fprintln(out, style.ResultError(nc, "%s failed: %s", r.Path, r.Error))
+				fmt.Fprintln(out, style.ResultError(nc, "%s failed: %s", short, r.Error))
 			}
 		}
 	}

@@ -31,6 +31,9 @@ const (
 	TypeSymlink    Type = "symlink"
 	TypeConfigLine Type = "config_line"
 	TypeGitExclude Type = "git_exclude"
+	// TypeCronJob tracks a ws-managed crontab block + wrapper script.
+	// Path holds the absolute script path; Line holds the job name (marker key).
+	TypeCronJob Type = "cron_job"
 )
 
 // Entry records a single external side-effect.
@@ -171,6 +174,26 @@ func RecordAll(ledgerPath string, entries []Entry) error {
 		}
 	}
 
+	return Save(ledgerPath, l)
+}
+
+// RemoveCronJob removes the TypeCronJob ledger entry whose Line matches jobName.
+// Used by ws cron rm to clean up after the job's crontab block and script are removed.
+func RemoveCronJob(ledgerPath string, jobName string) error {
+	l, err := Load(ledgerPath)
+	if err != nil {
+		return err
+	}
+
+	filtered := make([]Entry, 0, len(l.Entries))
+	for _, e := range l.Entries {
+		if e.Type == TypeCronJob && e.Line == jobName {
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+
+	l.Entries = filtered
 	return Save(ledgerPath, l)
 }
 

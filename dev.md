@@ -431,7 +431,59 @@ Tests pass `strings.NewReader("y\n")` as stdin. `promptChoice` returns the defau
 
 ---
 
-## 10) Troubleshooting quick hits
+## 10) Testing `ws cron` manually
+
+### Unit + integration tests (fast, no crontab touched)
+
+```bash
+TMPDIR=/home/siva-14414/tmp go test ./internal/cron/... ./cmd/... -run TestCron -v -count=1
+```
+
+### Smoke-test the CLI
+
+```bash
+# 1. List all built-in jobs and presets
+ws cron ls
+
+# 2. Preview what "add" would do — dry-run writes nothing
+ws cron add mega-sync --dry-run
+
+# 3. Actually install a job (writes script + crontab entry)
+ws cron add mega-sync
+
+# 4. Confirm the entry is in your crontab
+crontab -l | grep -A5 "ws:mega-sync"
+
+# 5. Check job status (last run, next estimated run)
+ws cron status mega-sync
+
+# 6. View recent log lines for the job
+ws cron log mega-sync
+
+# 7. Install a whole preset at once
+ws cron add sync --dry-run   # preview
+ws cron add sync             # install mega-sync + dotfile-sync + repo-sync
+
+# 8. Remove a single job
+ws cron rm mega-sync
+
+# 9. Remove a preset (removes all jobs in it)
+ws cron rm sync
+```
+
+### What to verify
+
+| Check | Expected |
+| --- | --- |
+| `ws cron ls` | Table with 7 jobs; installed column shows `yes`/`no` |
+| `ws cron add <job> --dry-run` | Prints plan with two actions (write script, install crontab); crontab unchanged |
+| `ws cron add <job>` | Script written to `~/.local/share/ws/cron/<job>.sh`; two crontab lines added (schedule + `@reboot`) |
+| `ws cron status` | Shows "no managed jobs installed" when none are installed |
+| `ws cron rm <job>` | Crontab block removed; script file deleted |
+
+---
+
+## 11) Troubleshooting quick hits
 
 - **`go: toolchain not available`**
   - Install Go 1.23+ via official tarball.
@@ -454,3 +506,84 @@ make fmt && make test && make build
 ```
 
 If this passes, you're in a very good place. ✅
+
+---
+
+## 12) Design invariants for CLI UX
+
+These invariants exist because the codebase already violated them. They codify what went wrong and what every future change must satisfy. Run through this checklist before adding or modifying any command.
+
+### 12.1) Completion fidelity: completions must mirror reality
+
+The completion system (`cmd/complete.go`) is a **derived artifact** of the command implementations in `cmd/*.go`. It must never diverge.
+
+**Rules:**
+
+1. **`topLevelCommands` must equal the set of routed commands.** Every entry in `topLevelCommands` must have a matching `case` in `Execute()` (`cmd/root.go`). A command that tab-completes but returns "unknown command" is worse than no completion at all.
+
+2. **`completers` subcommand lists must match actual subcommand switches.** When a command's `switch sub` block adds, removes, or renames a subcommand, the corresponding `completers` entry must update in the same commit. Stale names (e.g. `"show"` when the real subcommand is `"rm"`, `"delete"` when it's `"rm"`, `"sync"` when it's `"push"`) are silent failures — the user types the suggested name, nothing happens, and they blame the tool.
+
+3. **`commandFlags()` must list every flag a subcommand actually registers.** Cross-reference against the `flag.NewFlagSet` + `fs.StringVar`/`fs.BoolVar` calls in the command handler. Ghost flags (suggesting `--all` when the command has `--rebase`) actively mislead. Missing flags (omitting `--path`, `--dirty`, etc.) silently degrade the experience.
+
+4. **Commands with dynamic positional arguments must have a `resolve` function.** If a subcommand accepts a repo name, a scratch ID, a dotfile name, a capture location, or any value that can be enumerated at tab-time, the `completers` entry needs a `resolve` function that loads the relevant data from `completionCtx`. A completer with `subcommands` but no `resolve` is only half-wired.
+
+5. **`completionCtx` must carry data for every dynamic completion.** When a new `resolve` function needs workspace state (repo list, tag list, etc.), add the field to `completionCtx` and load it in `loadCompletionCtx`. Do not inline filesystem calls inside resolvers — the context loader is the single best-effort loading point.
+
+**Enforcement:** There is no automated check yet. The developer adding or renaming a command is responsible. When in doubt, run `ws completions install && exec bash` and test every subcommand + flag with Tab.
+
+### 12.2) Path display: one rule for all rendered paths
+
+Every path shown to the user must be **actionable** — the user should be able to copy it and use it in a `cd` or `ls` command without mental translation.
+
+**Reference implementation: `ws scratch ls`.** Scratch already does this correctly — it shows a bold short name on line 1 (the identifier the user thinks in), then the full absolute path in muted style on line 2 (the value the user copies for `cd`). This two-line pattern is the model for all commands that list items the user may want to navigate to.
+
+```
+proxy-debug.2026-04          age=2d  size=1.2M  items=7  [k8s]
+  ~/Scratch/proxy-debug.2026-04
+```
+
+**Rules:**
+
+1. **Short name first, full path second.** The primary line shows the compact identifier (relative path for workspace items, tilde-shortened path for external items) plus metadata. The secondary line (indented, muted) shows the tilde-shortened absolute path — copy-pasteable for `cd`. This is the scratch pattern and applies to all list/scan output where users need to navigate to the item.
+
+2. **External paths use tilde-shortened absolute form as their short name.** Never display a raw absolute path like `/home/user/.password-store` when `~/.password-store` is equivalent. For external items, the short name and the full path are the same value, so the secondary line can be omitted.
+
+3. **Never mix conventions in the same output.** If a command lists 6 repos and 5 are relative while 1 is absolute, the output is broken. A single `DisplayPath(workspacePath, rawPath)` helper in `internal/style/` must handle the normalization so call sites never make ad-hoc decisions.
+
+4. **Storage vs display are separate concerns.** Internal data structures and JSON output may store paths however is convenient (relative, absolute, whatever). The normalization happens at render time, not at storage time. This keeps the internal APIs simple and the display logic centralized.
+
+**Applied to `ws repo scan`** — the target output:
+
+```
+⎇  Data/bruno  main DIRTY
+   ~/Workspace/Data/bruno
+⎇  Experiments/ws-tool  master DIRTY
+   ~/Workspace/Experiments/ws-tool
+⎇  ~/.password-store  master CLEAN ↑19 ↓0
+```
+
+Workspace repos get the two-line treatment (relative name + absolute path). External repos like the pass store show tilde-shortened path as their name — no secondary line needed since the short name is already cd-ready.
+
+### 12.3) Positional targeting: fleet commands should support single-item operation
+
+Fleet commands (`ws repo sync`, `ws repo fetch`, `ws repo pull`) operate on all discovered repos by default. This is correct for the common case. But the user frequently wants to act on a single repo — especially after `ws repo scan` shows one repo that needs attention.
+
+**Rules:**
+
+1. **Fleet commands should accept an optional positional repo path** as a filter. `ws repo sync Data/bruno` should sync only that repo. The positional arg is the same relative path shown by `ws repo scan` / `ws repo ls`.
+
+2. **Positional targeting and `--path` filtering are complementary, not redundant.** `--path` is a prefix filter (all repos under a subpath). A positional arg is an exact match (one specific repo). Both can coexist.
+
+3. **Tab completion for positional repo args** must offer discovered repo paths. This is what makes the feature ergonomic — the user types `ws repo sync D<TAB>` and gets `Data/bruno`.
+
+4. **This pattern may extend to other fleet-style commands** in the future (e.g. `ws dotfile fix <name>`). The same principle applies: if a command operates on a list and the user commonly wants to target one item, accept a positional filter.
+
+### 12.4) Global flag registration: every subcommand must parse global flags
+
+Global flags (`--json`, `--quiet`, `--verbose`, `--no-color`, `--dry-run`) are pre-parsed from the raw args in `parseGlobalFlags`. But subcommands that create their own `flag.FlagSet` must also call `registerGlobalFlags(fs, &globals)` — otherwise a global flag placed after the subcommand position (e.g. `ws cron ls --json`) is treated as an unknown flag and the command errors out.
+
+**Rule:** Every `flag.NewFlagSet` in a command handler must be followed by `registerGlobalFlags(fs, &globals)`. Subcommands that skip `FlagSet` creation entirely (parsing args manually) must not reject recognized global flags.
+
+### 12.5) Dead code in the completion table is a bug, not tech debt
+
+A stale entry in `commandFlags()` or `completers` is not harmless dead code — it is a user-facing lie. The shell will suggest a flag or subcommand that does not exist, or fail to suggest one that does. Treat stale completion entries with the same severity as a broken command handler.

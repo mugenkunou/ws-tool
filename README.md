@@ -33,6 +33,7 @@ Your digital life is scattered:
 | **Machine restore** | New laptop, two days of setup | `ws restore` — guided wizard, working machine in minutes |
 | **Soft delete** | `rm -rf` regrets | `ws trash setup` configures your shell, VS Code, and file explorer to soft-delete |
 | **Knowledge capture** | Valuable info from Slack, wikis, emails lost in clipboard | `ws capture` — pins clipboard (text, HTML, images) to a searchable markdown file |
+| **Cron jobs** | MEGA sync, dotfile push, repo sync, secret scan — all manual | `ws cron add mega-sync` installs a managed crontab job with logging, log-rotation, and missed-run recovery |
 
 ---
 
@@ -203,6 +204,23 @@ Your `.bashrc` now lives in the workspace (synced). The system path is a symlink
 </details>
 
 <details>
+<summary><strong>⏰ Cron Jobs</strong></summary>
+
+| Command | What it does |
+| --- | --- |
+| `ws cron add <job>` | Install a managed cron job (writes wrapper script + crontab block) |
+| `ws cron rm <job>` | Remove a managed cron job (cleans crontab block + script) |
+| `ws cron ls` | List available jobs and presets with schedule and install status |
+| `ws cron status [job]` | Last run, exit code, next scheduled run, recent log lines |
+| `ws cron log [job]` | Show recent entries from the shared cron log |
+
+Built-in jobs: `mega-sync`, `dotfile-sync`, `repo-sync`, `secret-scan`, `ignore-scan`, `log-prune`, `scratch-prune`
+
+Presets: `sync` (mega-sync + dotfile-sync + repo-sync), `maintenance` (ignore-scan + log-prune + scratch-prune)
+
+</details>
+
+<details>
 <summary><strong>⚙️ Config & Meta</strong></summary>
 
 | Command | What it does |
@@ -211,7 +229,6 @@ Your `.bashrc` now lives in the workspace (synced). The system path is a symlink
 | `ws config` | Configuration commands (`view`, `defaults`) |
 | `ws completions <shell>` | Generate shell completions (bash/zsh/fish) |
 | `ws completions install/uninstall` | Install or remove completions in shell rc/config files |
-| `ws tui` | Full-screen interactive dashboard |
 
 </details>
 

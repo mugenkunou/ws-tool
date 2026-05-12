@@ -78,8 +78,6 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runIgnore(commandArgs, globals, stdin, stdout, stderr)
 	case "secret":
 		return runSecret(commandArgs, globals, stdin, stdout, stderr)
-	case "tui":
-		return runTUI(commandArgs, globals, stdout, stderr)
 	case "log":
 		return runLog(commandArgs, globals, stdin, stdout, stderr)
 	case "scratch":
@@ -90,6 +88,8 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runTrash(commandArgs, globals, stdin, stdout, stderr)
 	case "capture":
 		return runCapture(commandArgs, globals, stdin, stdout, stderr)
+	case "cron":
+		return runCron(commandArgs, globals, stdin, stdout, stderr)
 	case "credential", "git-credential-helper":
 		return runGitCredentialHelper(commandArgs, globals, stdin, stdout, stderr)
 	case "completions":
@@ -449,7 +449,6 @@ func printHelpStyled(stdout io.Writer, noColor bool) {
 		{"dotfile", "Manage workspace-backed dotfiles"},
 		{"repo", "Repository fleet operations"},
 		{"trash", "Soft-delete setup and status"},
-		{"tui", "Interactive dashboard summary"},
 		{"log", "Session recording commands"},
 		{"scratch", "Scratch directory commands"},
 		{"capture", "Frictionless knowledge capture"},
