@@ -14,10 +14,11 @@ import (
 )
 
 var trashHelp = cmdHelp{
-	Usage: "ws trash <enable|disable|status>",
+	Usage: "ws trash <enable|disable|empty|status>",
 	Subcommands: []string{
 		"  enable   Configure soft-delete integrations",
 		"  disable  Remove soft-delete integrations",
+		"  empty    Remove all entries from trash root",
 		"  status   Show integration status and trash size",
 	},
 	SetupFlags: []string{
@@ -204,6 +205,80 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 			fmt.Fprintln(out, style.ResultInfo(nc, "Dry run complete. No changes made."))
 		} else if planResult.ExecutedCount() > 0 {
 			fmt.Fprintln(out, style.ResultSuccess(nc, "Trash reset."))
+		}
+		return planResult.ExitCode()
+
+	case "empty":
+		fs := flag.NewFlagSet("trash-empty", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		rootDir := fs.String("root-dir", cfg.Trash.RootDir, "trash root directory")
+		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
+		registerGlobalFlags(fs, &globals)
+		if err := fs.Parse(subArgs); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		if *dryRun {
+			globals.dryRun = true
+		}
+
+		preview, err := trash.Empty(trash.EmptyOptions{RootDir: *rootDir, DryRun: true})
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+
+		result := preview
+		plan := Plan{Command: "trash.empty"}
+		plan.Actions = append(plan.Actions, Action{
+			ID:          "trash-empty",
+			Description: "Empty trash directory",
+			Execute: func() error {
+				execResult, err := trash.Empty(trash.EmptyOptions{RootDir: *rootDir, DryRun: false})
+				if err != nil {
+					return err
+				}
+				result = execResult
+				return nil
+			},
+		})
+
+		planResult := RunPlan(plan, stdin, stdout, globals)
+		if globals.dryRun || !planResult.WasExecuted("trash-empty") {
+			result = preview
+		}
+
+		if globals.json {
+			return writeJSON(stdout, stderr, "trash.empty", map[string]any{
+				"result":  result,
+				"actions": planResult.Actions,
+			})
+		}
+
+		out := textOut(globals, stdout)
+		nc := globals.noColor
+		if globals.dryRun {
+			if !result.Exists {
+				fmt.Fprintln(out, style.ResultInfo(nc, "Trash directory does not exist. Nothing to empty."))
+			} else if result.EntryCount == 0 {
+				fmt.Fprintln(out, style.ResultInfo(nc, "Trash is already empty."))
+			} else {
+				fmt.Fprintln(out, style.ResultInfo(nc, "Would empty trash."))
+				style.KV(out, "Entries", fmt.Sprintf("%d", result.EntryCount), nc)
+				style.KV(out, "Files", fmt.Sprintf("%d", result.FileCount), nc)
+				style.KV(out, "Size", style.HumanBytes(result.SizeBytes), nc)
+			}
+		} else if planResult.WasExecuted("trash-empty") {
+			if !result.Exists {
+				fmt.Fprintln(out, style.ResultInfo(nc, "Trash directory does not exist. Nothing to empty."))
+			} else if result.EntryCount == 0 {
+				fmt.Fprintln(out, style.ResultInfo(nc, "Trash is already empty."))
+			} else {
+				fmt.Fprintln(out, style.ResultSuccess(nc, "Trash emptied."))
+				style.KV(out, "Entries removed", fmt.Sprintf("%d", result.EntryCount), nc)
+				style.KV(out, "Files removed", fmt.Sprintf("%d", result.FileCount), nc)
+				style.KV(out, "Freed", style.HumanBytes(result.SizeBytes), nc)
+			}
 		}
 		return planResult.ExitCode()
 

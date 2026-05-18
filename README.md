@@ -85,6 +85,7 @@ Your `.bashrc` now lives in the workspace (synced). The system path is a symlink
 | `ws restore` | Guided full-machine restore wizard (requires initialized workspace) |
 | `ws trash setup` | Configure soft-delete for shell `rm`, VS Code, and file explorer |
 | `ws trash disable` | Remove soft-delete integrations |
+| `ws trash empty` | Empty trash contents if the trash root exists |
 | `ws trash status` | Check integration status and trash size |
 
 </details>
@@ -299,7 +300,7 @@ Full philosophy: [PHILOSOPHY.md](PHILOSOPHY.md) — an eleven-factor methodology
 This is a core design constraint, not a nice-to-have. Every command is classified as **RO** (read-only) or **RW** (read-write):
 
 - **RO commands** (`ls`, `show`, `check`, `status`, `version`, `config view`, subsystem `scan`) are non-interactive and pipe-safe. They never prompt for input and produce deterministic output to stdout.
-- **RW commands** (`init`, `restore`, `dotfile add/rm/fix`, `ignore fix/generate`, `secret fix/setup`, `git-credential-helper setup/disconnect`, `repo pull/push/run`, `log start/stop/prune`, `scratch new/prune/rm`, `trash enable/disable`, `completions install/uninstall`) use **per-action confirmation** (`git add -p` style). Each discrete mutation gets its own `y/n/a/q` prompt — never a single gate before N operations.
+- **RW commands** (`init`, `restore`, `dotfile add/rm/fix`, `ignore fix/generate`, `secret fix/setup`, `git-credential-helper setup/disconnect`, `repo pull/push/run`, `log start/stop/prune`, `scratch new/prune/rm`, `trash enable/disable/empty`, `completions install/uninstall`) use **per-action confirmation** (`git add -p` style). Each discrete mutation gets its own `y/n/a/q` prompt — never a single gate before N operations.
 
 Prompt vocabulary for RW commands:
 

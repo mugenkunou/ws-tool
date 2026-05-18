@@ -171,6 +171,22 @@ type ScanResult struct {
 	OverLimit  bool   `json:"over_limit"`
 }
 
+// EmptyOptions configures emptying the trash directory.
+type EmptyOptions struct {
+	RootDir string
+	DryRun  bool
+}
+
+// EmptyResult describes the outcome of emptying the trash directory.
+type EmptyResult struct {
+	RootDir    string `json:"root_dir"`
+	Exists     bool   `json:"exists"`
+	EntryCount int    `json:"entry_count"`
+	FileCount  int    `json:"file_count"`
+	SizeBytes  int64  `json:"size_bytes"`
+	DryRun     bool   `json:"dry_run"`
+}
+
 // Scan walks the trash root directory and reports its total size.
 func Scan(opts ScanOptions) (ScanResult, error) {
 	root := strings.TrimSpace(opts.RootDir)
@@ -217,6 +233,62 @@ func Scan(opts ScanOptions) (ScanResult, error) {
 
 	if opts.WarnSizeMB > 0 && res.SizeBytes > int64(opts.WarnSizeMB)*1024*1024 {
 		res.OverLimit = true
+	}
+
+	return res, nil
+}
+
+// Empty removes all entries inside the trash root directory while keeping the
+// root directory itself intact. If the trash directory does not exist, the
+// operation is a successful no-op.
+func Empty(opts EmptyOptions) (EmptyResult, error) {
+	root := strings.TrimSpace(opts.RootDir)
+	if root == "" {
+		root = "~/.Trash"
+	}
+	resolvedRoot, err := expandPath(root)
+	if err != nil {
+		return EmptyResult{}, err
+	}
+
+	res := EmptyResult{
+		RootDir: resolvedRoot,
+		DryRun:  opts.DryRun,
+	}
+
+	info, err := os.Stat(resolvedRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return res, nil
+		}
+		return EmptyResult{}, err
+	}
+	if !info.IsDir() {
+		return EmptyResult{}, fmt.Errorf("trash root is not a directory: %s", resolvedRoot)
+	}
+	res.Exists = true
+
+	entries, err := os.ReadDir(resolvedRoot)
+	if err != nil {
+		return EmptyResult{}, err
+	}
+	res.EntryCount = len(entries)
+
+	scanRes, err := Scan(ScanOptions{RootDir: resolvedRoot, WarnSizeMB: 0})
+	if err != nil {
+		return EmptyResult{}, err
+	}
+	res.FileCount = scanRes.FileCount
+	res.SizeBytes = scanRes.SizeBytes
+
+	if opts.DryRun {
+		return res, nil
+	}
+
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(resolvedRoot, e.Name())); err != nil {
+			return EmptyResult{}, err
+		}
 	}
 
 	return res, nil

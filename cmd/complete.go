@@ -65,7 +65,7 @@ var completers = map[string]completer{
 	"repo":                  {subcommands: []string{"ls", "scan", "fetch", "pull", "sync", "run"}, resolve: completeRepo},
 	"scratch":               {subcommands: []string{"new", "open", "ls", "tag", "search", "prune", "rm"}, resolve: completeScratch},
 	"secret":                {subcommands: []string{"scan", "fix", "setup", "status", "git"}, resolve: completeSecret},
-	"trash":                 {subcommands: []string{"enable", "disable", "status"}},
+	"trash":                 {subcommands: []string{"enable", "disable", "empty", "status"}},
 }
 
 // completionCtx holds best-effort workspace state loaded once per
@@ -431,6 +431,9 @@ func commandFlags(command string, rest []string) []string {
 	case "trash":
 		if sub == "enable" || sub == "setup" {
 			return []string{"--root-dir", "--no-shell-rm", "--no-vscode", "--no-file-explorer", dryRun}
+		}
+		if sub == "empty" {
+			return []string{"--root-dir", dryRun}
 		}
 	case "completions":
 		if sub == "install" || sub == "uninstall" {

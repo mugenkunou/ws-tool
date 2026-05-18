@@ -247,3 +247,85 @@ func TestFileExplorerNotConfiguredWhenSymlinkAbsent(t *testing.T) {
 		t.Fatal("expected fileExplorerConfigured=false when no symlink exists")
 	}
 }
+
+func TestEmptyNonExistentTrashDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	res, err := Empty(EmptyOptions{RootDir: filepath.Join(home, "no-such-trash")})
+	if err != nil {
+		t.Fatalf("empty failed: %v", err)
+	}
+	if res.Exists {
+		t.Fatal("expected Exists=false")
+	}
+	if res.EntryCount != 0 || res.FileCount != 0 || res.SizeBytes != 0 {
+		t.Fatalf("expected zeroed result for missing trash dir, got %+v", res)
+	}
+}
+
+func TestEmptyRemovesContentsButKeepsRootDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	trashDir := filepath.Join(home, ".Trash")
+	if err := os.MkdirAll(filepath.Join(trashDir, "nested"), 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(trashDir, "a.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(trashDir, "nested", "b.txt"), []byte("b"), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+
+	res, err := Empty(EmptyOptions{RootDir: trashDir})
+	if err != nil {
+		t.Fatalf("empty failed: %v", err)
+	}
+	if !res.Exists {
+		t.Fatal("expected Exists=true")
+	}
+	if res.EntryCount != 2 {
+		t.Fatalf("expected 2 top-level entries, got %d", res.EntryCount)
+	}
+	if res.FileCount != 2 {
+		t.Fatalf("expected 2 files removed, got %d", res.FileCount)
+	}
+
+	entries, err := os.ReadDir(trashDir)
+	if err != nil {
+		t.Fatalf("readdir failed: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected trash dir to be empty, found %d entries", len(entries))
+	}
+}
+
+func TestEmptyDryRunDoesNotRemoveFiles(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	trashDir := filepath.Join(home, ".Trash")
+	if err := os.MkdirAll(trashDir, 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	filePath := filepath.Join(trashDir, "keep.txt")
+	if err := os.WriteFile(filePath, []byte("keep"), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+
+	res, err := Empty(EmptyOptions{RootDir: trashDir, DryRun: true})
+	if err != nil {
+		t.Fatalf("dry-run empty failed: %v", err)
+	}
+	if !res.DryRun {
+		t.Fatal("expected dry-run result")
+	}
+	if res.EntryCount != 1 || res.FileCount != 1 {
+		t.Fatalf("unexpected dry-run counts: %+v", res)
+	}
+	if _, err := os.Stat(filePath); err != nil {
+		t.Fatalf("expected file to still exist after dry-run: %v", err)
+	}
+}

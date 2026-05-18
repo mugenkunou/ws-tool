@@ -124,7 +124,7 @@ func TestCompleteSubcommands(t *testing.T) {
 		},
 		{
 			args:      []string{"trash", ""},
-			wantSome:  []string{"enable", "status"},
+			wantSome:  []string{"enable", "empty", "status"},
 			directive: compDirectiveNoFileComp,
 		},
 		{
@@ -177,6 +177,10 @@ func TestCompleteCommandFlags(t *testing.T) {
 		{
 			args:     []string{"capture", "--"},
 			wantSome: []string{"--edit", "--amend", "--dry-run"},
+		},
+		{
+			args:     []string{"trash", "empty", "--"},
+			wantSome: []string{"--root-dir", "--dry-run"},
 		},
 	}
 
