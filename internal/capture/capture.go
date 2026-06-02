@@ -156,7 +156,7 @@ func pinClipboardPlainText(tool string, opts PinOptions, windowTitle string) (Pi
 	body := text
 	if looksLikeCode(text) {
 		lang := detectLanguageHint(text)
-		body = "```" + lang + "\n" + text + "\n```"
+		body = "```" + lang + "\n" + text + "\n```\n"
 	}
 	entry := formatEntry(topic, source, body)
 	if opts.DryRun {
@@ -338,7 +338,7 @@ func formatEntry(topic, source, body string) string {
 	var sb strings.Builder
 	sb.WriteString("## ")
 	sb.WriteString(topic)
-	sb.WriteString("\n")
+	sb.WriteString("\n\n")
 	sb.WriteString("_")
 	sb.WriteString(time.Now().Format("2006-01-02 15:04"))
 	sb.WriteString(" · ")
@@ -346,7 +346,7 @@ func formatEntry(topic, source, body string) string {
 	sb.WriteString("_\n\n")
 	sb.WriteString(body)
 	sb.WriteString("\n")
-	sb.WriteString("\n---\n")
+	sb.WriteString("\n---\n\n")
 	return sb.String()
 }
 
@@ -379,7 +379,7 @@ func amendEntry(capturesFile, body string) (string, error) {
 	content := string(data)
 
 	// Find the last "---" separator
-	lastSep := strings.LastIndex(content, "\n---\n")
+	lastSep := strings.LastIndex(content, "\n---\n\n")
 	if lastSep < 0 {
 		return "", errors.New("cannot amend: no existing entry found")
 	}
