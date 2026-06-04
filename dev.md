@@ -144,32 +144,51 @@ ws version
 make test
 ```
 
-### Verbose test run
+### Verbose / targeted test run
 
 ```bash
-go test -v ./...
+TMPDIR=$PWD/tmp GOCACHE=$PWD/.gocache GOTMPDIR=$PWD/.gotmp go test -v -run TestFoo ./cmd/...
 ```
 
 ### Coverage run
 
 ```bash
-go test -cover ./...
+TMPDIR=$PWD/tmp GOCACHE=$PWD/.gocache GOTMPDIR=$PWD/.gotmp go test -cover ./...
 ```
 
-### Use repo-local temp/cache dirs (recommended on corp/dev boxes)
+> **Why the env vars?** This machine mounts `/tmp` with `noexec`. Go needs to
+> execute temp artifacts during compilation and testing. The Makefile sets
+> `TMPDIR`, `GOCACHE`, and `GOTMPDIR` to repo-local directories automatically.
+> When running `go test` directly (for extra flags), you **must** set these
+> yourself. The directories (`tmp/`, `.gocache/`, `.gotmp/`) are gitignored.
+
+### Test isolation guarantees
+
+The test suite (`cmd/testmain_test.go` → `TestMain`) automatically isolates:
+
+| Scope | Mechanism | Protects |
+|---|---|---|
+| XDG config | `XDG_CONFIG_HOME` → temp dir | Real `~/.config` |
+| Git global config | `GIT_CONFIG_GLOBAL` → temp file | Real `~/.gitconfig` (credential helper, user settings) |
+| Editor shims | Fake `code` binary in `PATH` | Tests that invoke editor don't open VS Code |
+
+This means:
+- **No test can clobber your `ws git-credential-helper setup`.** Git global
+  config writes go to an isolated temp file, not your real `~/.gitconfig`.
+- **No test needs network access or real credentials.** Tests that hit pass/GPG
+  boundaries will degrade gracefully.
+- **You never need to re-run `ws git-credential-helper setup` after tests.**
+
+### NEVER run bare `go test` / `go build`
 
 ```bash
-mkdir -p tmp .gocache
-TMPDIR=$PWD/tmp GOCACHE=$PWD/.gocache go test ./...
+# ALL WRONG — will fail on noexec /tmp
+go test ./...
+go build .
+go run .
 ```
 
-Why this helps: some managed Linux environments mount `/tmp` with `noexec`, which can break `go test`/`go build` when Go needs to execute temp artifacts during compilation or tests.
-
-Use the same env vars for build commands too:
-
-```bash
-TMPDIR=$PWD/tmp GOCACHE=$PWD/.gocache make build
-```
+Always use `make test`, `make build`, or set the env vars explicitly.
 
 ---
 
@@ -487,13 +506,19 @@ ws cron rm sync
 
 - **`go: toolchain not available`**
   - Install Go 1.23+ via official tarball.
-- **Build/tests fail with temp-dir execution restrictions**
-  - Common cause: `/tmp` is mounted with `noexec`.
-  - Use the repo-local `TMPDIR` + `GOCACHE` setup from the test section for both `go test` and `go build`/`make build`.
+- **Build/tests fail with `permission denied` or `exec format error`**
+  - `/tmp` is mounted with `noexec`. Use `make build` / `make test` — the
+    Makefile sets `TMPDIR`, `GOCACHE`, `GOTMPDIR` to repo-local directories.
+  - Never run bare `go test ./...` or `go build .`.
 - **`ws` command not found**
   - Ensure `/usr/local/bin` is in `PATH`.
 - **Formatting drift in PRs**
   - Run `make fmt` before commit.
+- **Credential helper points to wrong binary after tests**
+  - This should no longer happen — `TestMain` isolates `GIT_CONFIG_GLOBAL`.
+  - If it does happen: `ws git-credential-helper setup` (from `/usr/local/bin/ws`).
+  - Never run `./ws git-credential-helper setup` — it points the config at the
+    repo-local dev binary instead of the system-installed one.
 
 ---
 

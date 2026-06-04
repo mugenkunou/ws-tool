@@ -433,4 +433,5 @@ $RECYCLE.BIN/
 tmp/
 .gocache/
 .gomodcache/
+.gotmp/
 ws

@@ -3,15 +3,16 @@
 VERSION ?= dev
 TMPDIR ?= $(CURDIR)/tmp
 GOCACHE ?= $(CURDIR)/.gocache
+GOTMPDIR ?= $(CURDIR)/.gotmp
 LDFLAGS := -s -w -X github.com/mugenkunou/ws-tool/cmd.appVersion=$(VERSION)
 
 build:
-	@mkdir -p "$(TMPDIR)" "$(GOCACHE)"
-	TMPDIR="$(TMPDIR)" GOCACHE="$(GOCACHE)" go build -ldflags "$(LDFLAGS)" -o ws .
+	@mkdir -p "$(TMPDIR)" "$(GOCACHE)" "$(GOTMPDIR)"
+	TMPDIR="$(TMPDIR)" GOCACHE="$(GOCACHE)" GOTMPDIR="$(GOTMPDIR)" go build -ldflags "$(LDFLAGS)" -o ws .
 
 test:
-	@mkdir -p "$(TMPDIR)" "$(GOCACHE)"
-	TMPDIR="$(TMPDIR)" GOCACHE="$(GOCACHE)" go test ./...
+	@mkdir -p "$(TMPDIR)" "$(GOCACHE)" "$(GOTMPDIR)"
+	TMPDIR="$(TMPDIR)" GOCACHE="$(GOCACHE)" GOTMPDIR="$(GOTMPDIR)" go test ./...
 
 fmt:
 	gofmt -w $(shell find . -name '*.go' -not -path './.git/*')
@@ -26,7 +27,7 @@ hooks:
 	@echo "pre-push hook installed"
 
 release-check:
-	@mkdir -p "$(TMPDIR)" "$(GOCACHE)"
+	@mkdir -p "$(TMPDIR)" "$(GOCACHE)" "$(GOTMPDIR)"
 	@GITLEAKS_BIN="$$(command -v gitleaks || true)"; \
 	if [ -z "$$GITLEAKS_BIN" ]; then \
 		gobin="$$(go env GOBIN)"; \
@@ -45,5 +46,5 @@ release-check:
 		exit 1; \
 	fi; \
 	"$$GITLEAKS_BIN" detect --source . --verbose
-	TMPDIR="$(TMPDIR)" GOCACHE="$(GOCACHE)" go vet ./...
-	TMPDIR="$(TMPDIR)" GOCACHE="$(GOCACHE)" go test -race -count=1 ./...
+	TMPDIR="$(TMPDIR)" GOCACHE="$(GOCACHE)" GOTMPDIR="$(GOTMPDIR)" go vet ./...
+	TMPDIR="$(TMPDIR)" GOCACHE="$(GOCACHE)" GOTMPDIR="$(GOTMPDIR)" go test -race -count=1 ./...

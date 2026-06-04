@@ -27,6 +27,17 @@ func TestMain(m *testing.M) {
 		defer os.RemoveAll(xdgDir)
 	}
 
+	// Isolate git global config so tests never clobber the real ~/.gitconfig.
+	// This prevents credential-helper setup (and any other global git config
+	// mutation) from overwriting the user's real configuration.
+	gitCfgDir, err := os.MkdirTemp("", "ws-tool-test-gitcfg-")
+	if err == nil {
+		globalCfg := filepath.Join(gitCfgDir, "config")
+		_ = os.WriteFile(globalCfg, []byte("[core]\n"), 0o644)
+		_ = os.Setenv("GIT_CONFIG_GLOBAL", globalCfg)
+		defer os.RemoveAll(gitCfgDir)
+	}
+
 	os.Exit(m.Run())
 }
 
