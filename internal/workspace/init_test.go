@@ -9,8 +9,9 @@ import (
 func TestInitCreatesWorkspaceScaffold(t *testing.T) {
 	tmp := t.TempDir()
 	root := filepath.Join(tmp, "Workspace")
+	cfgPath := filepath.Join(tmp, "config", "ws-tool", "config.json")
 
-	res, err := Init(InitOptions{WorkspacePath: root})
+	res, err := Init(InitOptions{WorkspacePath: root, ConfigPath: cfgPath})
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
@@ -19,7 +20,7 @@ func TestInitCreatesWorkspaceScaffold(t *testing.T) {
 		t.Fatal("expected created files")
 	}
 
-	mustExist(t, filepath.Join(root, "ws", "config.json"))
+	mustExist(t, cfgPath)
 	mustExist(t, filepath.Join(root, "ws", "manifest.json"))
 	mustExist(t, filepath.Join(root, ".megaignore"))
 }

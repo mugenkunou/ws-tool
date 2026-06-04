@@ -11,6 +11,23 @@ import (
 
 const CurrentSchema = 1
 
+// DefaultPath returns the XDG-compliant config file path.
+// Resolution: $WS_CONFIG → $XDG_CONFIG_HOME/ws-tool/config.json → ~/.config/ws-tool/config.json
+func DefaultPath() (string, error) {
+	if p := os.Getenv("WS_CONFIG"); p != "" {
+		return ExpandUserPath(p)
+	}
+	dir := os.Getenv("XDG_CONFIG_HOME")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		dir = filepath.Join(home, ".config")
+	}
+	return filepath.Join(dir, "ws-tool", "config.json"), nil
+}
+
 type Config struct {
 	ConfigSchema int     `json:"config_schema"`
 	Workspace    string  `json:"workspace,omitempty"`
@@ -86,7 +103,8 @@ type Secret struct {
 }
 
 type Log struct {
-	CapMB int `json:"cap_mb"`
+	CapMB        int `json:"cap_mb"`
+	MaxSessionMB int `json:"max_session_mb"`
 }
 
 type Capture struct {
@@ -121,7 +139,7 @@ func Default() Config {
 				WarnUnconfigured: true,
 			},
 		},
-		Log: Log{CapMB: 500},
+		Log: Log{CapMB: 500, MaxSessionMB: 100},
 		Search: Search{
 			DefaultContext: 2,
 			MaxResults:     0,

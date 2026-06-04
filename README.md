@@ -59,7 +59,7 @@ sudo cp ws /usr/local/bin/
 ws init
 ```
 
-This creates `ws/config.json`, `ws/manifest.json`, and `.megaignore` in your workspace root. It also walks you through configuring soft-delete on your machine.
+This creates `ws/manifest.json` and `.megaignore` in your workspace root, and `config.json` at `~/.config/ws-tool/config.json`. It also walks you through configuring soft-delete on your machine.
 
 ### Capture Your First Dotfile
 
@@ -291,7 +291,7 @@ ws ignore generate --merge  # keep your custom rules, add missing template rules
 | **`--json` everywhere** | Every command supports `--json` for scripting. Stable schema envelope with version. |
 | **Colored & accessible** | ANSI colors + Unicode icons for scannable output. `--no-color` and `NO_COLOR` env for accessibility. |
 | **Soft-delete first** | `rm` is the delete primitive. `ws trash setup` makes it route to Trash. |
-| **Workspace-sourced metadata** | Config and manifest live inside the workspace. Sync the folder, get the tool state too. |
+| **Workspace-sourced metadata** | Manifest lives inside the workspace; config is machine-local at the XDG path. Sync the folder, get the tool state too. |
 
 Full philosophy: [PHILOSOPHY.md](PHILOSOPHY.md) — an eleven-factor methodology for workspace management, inspired by the Twelve-Factor App.
 
@@ -342,7 +342,7 @@ Scripts can branch on these without parsing output:
 
 ```text
 --workspace, -w   Path to workspace root     (default: $WS_WORKSPACE or ~/Workspace)
---config, -c      Path to config file        (default: <workspace>/ws/config.json)
+--config, -c      Path to config file        (default: ~/.config/ws-tool/config.json)
 --quiet, -q       Errors only
 --verbose         Show internal decisions
 --json            Machine-readable output

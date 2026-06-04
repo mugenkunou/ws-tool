@@ -12,7 +12,7 @@ import (
 
 type InitOptions struct {
 	WorkspacePath string
-	ConfigPath    string
+	ConfigPath    string // XDG config path (outside workspace)
 	ManifestPath  string
 	DryRun        bool
 }
@@ -47,7 +47,11 @@ func Init(opts InitOptions) (InitResult, error) {
 	megaignorePath := filepath.Join(opts.WorkspacePath, ".megaignore")
 
 	if opts.ConfigPath == "" {
-		opts.ConfigPath = filepath.Join(wsDir, "config.json")
+		p, err := config.DefaultPath()
+		if err != nil {
+			return result, err
+		}
+		opts.ConfigPath = p
 	}
 	if opts.ManifestPath == "" {
 		opts.ManifestPath = filepath.Join(wsDir, "manifest.json")
@@ -82,19 +86,15 @@ func Init(opts InitOptions) (InitResult, error) {
 		return result, err
 	}
 
-	userRulesPath := ignore.UserRulesPath(opts.WorkspacePath)
-	if err := writeIfMissing(userRulesPath, func() error {
-		return ignore.SaveUserRules(userRulesPath, ignore.DefaultUserRules())
-	}, &result); err != nil {
-		return result, err
-	}
+	// Ignore rules live inside manifest.json (schema 2). No standalone
+	// ignore.json is created.
 
 	if err := writeIfMissing(megaignorePath, func() error {
-		userRules, err := ignore.LoadUserRules(userRulesPath)
+		m, err := manifest.Load(opts.ManifestPath)
 		if err != nil {
-			userRules = ignore.DefaultUserRules()
+			return ignore.WriteMegaignore(megaignorePath, ignore.DefaultUserRules())
 		}
-		return ignore.WriteMegaignore(megaignorePath, userRules)
+		return ignore.WriteMegaignore(megaignorePath, m.Ignore)
 	}, &result); err != nil {
 		return result, err
 	}

@@ -10,6 +10,7 @@ import (
 )
 
 func TestExecuteHelp(t *testing.T) {
+	testSetXDG(t)
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 
@@ -23,6 +24,7 @@ func TestExecuteHelp(t *testing.T) {
 }
 
 func TestVersionShort(t *testing.T) {
+	testSetXDG(t)
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 
@@ -37,6 +39,7 @@ func TestVersionShort(t *testing.T) {
 }
 
 func TestHelpFlags(t *testing.T) {
+	testSetXDG(t)
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 
@@ -58,6 +61,7 @@ func TestHelpFlags(t *testing.T) {
 }
 
 func TestVersionJSON(t *testing.T) {
+	testSetXDG(t)
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 
@@ -89,6 +93,7 @@ func TestVersionJSON(t *testing.T) {
 }
 
 func TestInitAndConfigView(t *testing.T) {
+	testSetXDG(t)
 	tmp := t.TempDir()
 	workspace := filepath.Join(tmp, "Workspace")
 
@@ -112,6 +117,7 @@ func TestInitAndConfigView(t *testing.T) {
 }
 
 func TestConfigViewRequiresInit(t *testing.T) {
+	testSetXDG(t)
 	tmp := t.TempDir()
 	workspace := filepath.Join(tmp, "Workspace")
 
@@ -128,6 +134,7 @@ func TestConfigViewRequiresInit(t *testing.T) {
 }
 
 func TestConfigDefaultsFlag(t *testing.T) {
+	testSetXDG(t)
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 
@@ -141,6 +148,7 @@ func TestConfigDefaultsFlag(t *testing.T) {
 }
 
 func TestConfigDumpIsRejected(t *testing.T) {
+	testSetXDG(t)
 	tmp := t.TempDir()
 	workspace := filepath.Join(tmp, "Workspace")
 

@@ -14,6 +14,7 @@ import (
 // initIgnoreWorkspace creates a fresh workspace and returns its path.
 func initIgnoreWorkspace(t *testing.T) string {
 	t.Helper()
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")

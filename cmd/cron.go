@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mugenkunou/ws-tool/internal/cron"
+	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/provision"
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
@@ -83,7 +84,7 @@ func runCronAdd(args []string, globals globalFlags, stdin io.Reader, stdout, std
 	}
 	jobName := remaining[0]
 
-	workspacePath, _, _, err := requireWorkspaceInitialized(globals, stderr)
+	workspacePath, _, manifestPath, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -124,7 +125,6 @@ func runCronAdd(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		return 1
 	}
 
-	provPath := provision.LedgerPath(workspacePath)
 	nc := globals.noColor
 	out := textOut(globals, stdout)
 
@@ -156,7 +156,7 @@ func runCronAdd(args []string, globals globalFlags, stdin io.Reader, stdout, std
 				if addErr := cron.AddJob(j, scriptPath); addErr != nil {
 					return addErr
 				}
-				return provision.Record(provPath, provision.Entry{
+				return manifest.RecordProvision(manifestPath, provision.Entry{
 					Type:    provision.TypeCronJob,
 					Path:    scriptPath,
 					Line:    j.Name,
@@ -214,7 +214,7 @@ func runCronRm(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 	}
 	jobName := remaining[0]
 
-	workspacePath, _, _, err := requireWorkspaceInitialized(globals, stderr)
+	_, _, manifestPath, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -228,7 +228,6 @@ func runCronRm(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 
 	nc := globals.noColor
 	out := textOut(globals, stdout)
-	provPath := provision.LedgerPath(workspacePath)
 
 	plan := Plan{Command: "cron.rm"}
 	for _, job := range jobs {
@@ -242,7 +241,7 @@ func runCronRm(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 				}
 				scriptPath, _ := cron.ScriptPath(j.Name)
 				_ = os.Remove(scriptPath) // best-effort; may already be absent
-				return provision.RemoveCronJob(provPath, j.Name)
+				return manifest.RemoveCronJobProvision(manifestPath, j.Name)
 			},
 		})
 	}

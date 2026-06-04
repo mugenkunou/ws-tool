@@ -13,6 +13,7 @@ import (
 	"unsafe"
 
 	"github.com/mugenkunou/ws-tool/internal/config"
+	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
 )
@@ -314,9 +315,25 @@ func writeJSONDryRun(stdout, stderr io.Writer, command string, dryRun bool, data
 }
 
 func requireWorkspaceInitialized(globals globalFlags, stderr ...io.Writer) (string, string, string, error) {
+	configPath := globals.config
+	if configPath == "" {
+		p, err := config.DefaultPath()
+		if err != nil {
+			return "", "", "", err
+		}
+		configPath = p
+	}
+
+	// Try to read workspace from config if not set via flag/env.
 	workspacePath := globals.workspace
 	if workspacePath == "" {
 		workspacePath = os.Getenv("WS_WORKSPACE")
+	}
+	if workspacePath == "" {
+		// Attempt to load config to get workspace path.
+		if cfg, err := config.Load(configPath); err == nil && cfg.Workspace != "" {
+			workspacePath = cfg.Workspace
+		}
 	}
 	if workspacePath == "" {
 		workspacePath = "~/Workspace"
@@ -327,14 +344,17 @@ func requireWorkspaceInitialized(globals globalFlags, stderr ...io.Writer) (stri
 		return "", "", "", err
 	}
 
-	configPath := globals.config
-	if configPath == "" {
-		configPath = resolvedWorkspace + "/ws/config.json"
-	}
-
 	manifestPath := globals.manifest
 	if manifestPath == "" {
 		manifestPath = resolvedWorkspace + "/ws/manifest.json"
+	}
+
+	// Migration: if XDG config doesn't exist, fall back to old workspace-embedded config.
+	if globals.config == "" && !workspace.ConfigExists(configPath) {
+		oldPath := resolvedWorkspace + "/ws/config.json"
+		if workspace.ConfigExists(oldPath) {
+			configPath = oldPath
+		}
 	}
 
 	// Verbose: log resolved paths if stderr was provided.
@@ -345,6 +365,9 @@ func requireWorkspaceInitialized(globals globalFlags, stderr ...io.Writer) (stri
 	if !workspace.ConfigExists(configPath) {
 		return "", "", "", errors.New("Error: workspace not initialized.\nRun `ws init` to set up this directory as a ws workspace.")
 	}
+
+	// Migrate manifest to schema 2 if needed (absorbs provisions.json + ignore.json).
+	_ = manifest.MigrateIfNeeded(manifestPath)
 
 	return resolvedWorkspace, configPath, manifestPath, nil
 }
@@ -465,8 +488,8 @@ func printHelpStyled(stdout io.Writer, noColor bool) {
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, style.Boldf(noColor, "Global Flags:"))
 	flags := []string{
-		"  -w, --workspace string   Path to workspace root (default: ~/Workspace)",
-		"  -c, --config string      Path to config file (default: <workspace>/ws/config.json)",
+		"  -w, --workspace string   Path to workspace root (default: from config, or ~/Workspace)",
+		"  -c, --config string      Path to config file (default: $XDG_CONFIG_HOME/ws-tool/config.json)",
 		"      --manifest string    Path to manifest file (default: <workspace>/ws/manifest.json)",
 		"  -q, --quiet              Errors only (default: false)",
 		"      --verbose            Show internal decisions (default: false)",

@@ -10,6 +10,7 @@ import (
 
 	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/dotfile"
+	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/provision"
 	"github.com/mugenkunou/ws-tool/internal/repo"
 	"github.com/mugenkunou/ws-tool/internal/secret"
@@ -121,7 +122,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 					if addErr != nil {
 						return addErr
 					}
-					_ = provision.Record(provision.LedgerPath(workspacePath), provision.Entry{
+					_ = manifest.RecordProvision(manifestPath, provision.Entry{
 						Type:    provision.TypeSymlink,
 						Path:    result.Record.System,
 						Target:  dotfile.DotfilePath(result.Record.Name),
@@ -170,7 +171,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 				if err != nil {
 					return err
 				}
-				_ = provision.Remove(provision.LedgerPath(workspacePath), provision.TypeSymlink, result.Record.System)
+				_ = manifest.RemoveProvision(manifestPath, provision.TypeSymlink, result.Record.System)
 				return nil
 			},
 		})
@@ -874,7 +875,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 					exitCode = 1
 					continue
 				}
-				_ = provision.Record(provision.LedgerPath(workspacePath), provision.Entry{
+				_ = manifest.RecordProvision(manifestPath, provision.Entry{
 					Type:    provision.TypeSymlink,
 					Path:    addResult.Record.System,
 					Target:  dotfile.DotfilePath(addResult.Record.Name),

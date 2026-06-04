@@ -103,7 +103,7 @@ func runSecretScan(args []string, globals globalFlags, workspacePath, configPath
 	}
 	skipDirs := mergeSkipDirs(cfg.Secret.SkipDirs, skipDirFlags)
 
-	userRules, err := ignore.LoadUserRules(ignore.UserRulesPath(workspacePath))
+	userRules, err := manifest.LoadIgnoreRules(manifestPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -369,8 +369,7 @@ func runSecretFix(args []string, globals globalFlags, workspacePath, configPath,
 	}
 	skipDirs := mergeSkipDirs(cfg.Secret.SkipDirs, skipDirFlags)
 
-	userRulesPath := ignore.UserRulesPath(workspacePath)
-	userRules, err := ignore.LoadUserRules(userRulesPath)
+	userRules, err := manifest.LoadIgnoreRules(manifestPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -443,7 +442,6 @@ func runSecretFixBatch(violations []secret.Violation, mode string, workspacePath
 		return 1
 	}
 
-	userRulesPath := ignore.UserRulesPath(workspacePath)
 	plan := Plan{Command: "secret.fix"}
 	excludeSeen := make(map[string]bool) // dedup file-level excludes
 
@@ -469,11 +467,11 @@ func runSecretFixBatch(violations []secret.Violation, mode string, workspacePath
 				ID:          "exclude-" + v.Path,
 				Description: fmt.Sprintf("Add exclude rule for %s", v.Path),
 				Execute: func() error {
-					_, err := ignore.AddUserExclude(userRulesPath, v.Path, "secret: excluded by ws secret fix")
+					_, err := manifest.AddIgnoreExclude(manifestPath, v.Path, "secret: excluded by ws secret fix")
 					if err != nil {
 						return err
 					}
-					ur, err := ignore.LoadUserRules(userRulesPath)
+					ur, err := manifest.LoadIgnoreRules(manifestPath)
 					if err != nil {
 						return err
 					}
@@ -515,7 +513,6 @@ func runSecretFixBatch(violations []secret.Violation, mode string, workspacePath
 func runSecretFixInteractive(violations []secret.Violation, workspacePath, configPath, manifestPath, megaignorePath string, passHealth secret.PassHealth, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	out := textOut(globals, stdout)
 	nc := globals.noColor
-	userRulesPath := ignore.UserRulesPath(workspacePath)
 
 	var result secret.FixResult
 	result.Mode = "interactive"
@@ -603,13 +600,13 @@ func runSecretFixInteractive(violations []secret.Violation, workspacePath, confi
 				}
 
 			case "a":
-				ok, err := ignore.AddUserExclude(userRulesPath, v.Path, "secret: excluded by ws secret fix")
+				ok, err := manifest.AddIgnoreExclude(manifestPath, v.Path, "secret: excluded by ws secret fix")
 				if err != nil {
 					fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
 					result.Skipped++
 				} else if ok {
 					// Regenerate .megaignore.
-					ur, loadErr := ignore.LoadUserRules(userRulesPath)
+					ur, loadErr := manifest.LoadIgnoreRules(manifestPath)
 					if loadErr == nil {
 						_ = ignore.WriteMegaignore(megaignorePath, ur)
 					}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/ignore"
+	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
 
@@ -30,7 +31,7 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 		return printCmdHelp(stdout, ignoreHelp)
 	}
 
-	workspacePath, configPath, _, err := requireWorkspaceInitialized(globals, stderr)
+	workspacePath, configPath, manifestPath, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -42,9 +43,8 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 		return 1
 	}
 
-	// Load layered ignore rules: built-in defaults + user overrides.
-	userRulesPath := ignore.UserRulesPath(workspacePath)
-	userRules, err := ignore.LoadUserRules(userRulesPath)
+	// Load layered ignore rules: built-in defaults + user overrides (from manifest).
+	userRules, err := manifest.LoadIgnoreRules(manifestPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -105,7 +105,7 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 	case "ls":
 		return runIgnoreList(engine, workspacePath, subArgs, globals, stdout, stderr)
 	case "edit":
-		return runIgnoreEdit(userRulesPath, megaignorePath, userRules, subArgs, globals, stdin, stdout, stderr)
+		return runIgnoreEdit(manifestPath, megaignorePath, userRules, subArgs, globals, stdin, stdout, stderr)
 	case "scan":
 		fs := flag.NewFlagSet("ignore-scan", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -180,7 +180,7 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 			fmt.Fprintln(textOut(globals, stdout), style.ResultSuccess(globals.noColor, "No ignore violations to fix."))
 			return 0
 		}
-		return runIgnoreFixInteractive(actionable, userRulesPath, megaignorePath, workspacePath, cfg, globals, stdin, stdout, stderr)
+		return runIgnoreFixInteractive(actionable, manifestPath, megaignorePath, workspacePath, cfg, globals, stdin, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown ignore subcommand: %s\n", sub)
 		return 1
@@ -189,8 +189,8 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 
 // runIgnoreFixInteractive walks through violations one by one, prompting
 // the user for an action on each. Actions vary by violation type.
-// Rules are added to ws/ignore.json and .megaignore is regenerated.
-func runIgnoreFixInteractive(violations []ignore.Violation, userRulesPath, megaignorePath, workspacePath string, cfg config.Config, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+// Rules are added to manifest.json and .megaignore is regenerated.
+func runIgnoreFixInteractive(violations []ignore.Violation, manifestPath, megaignorePath, workspacePath string, cfg config.Config, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	out := textOut(globals, stdout)
 	nc := globals.noColor
 
@@ -251,11 +251,11 @@ func runIgnoreFixInteractive(violations []ignore.Violation, userRulesPath, megai
 
 		switch choice {
 		case "a":
-			ok, err := ignore.AddUserExclude(userRulesPath, v.Path, "")
+			ok, err := manifest.AddIgnoreExclude(manifestPath, v.Path, "")
 			if err != nil {
 				fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
 			} else if ok {
-				fmt.Fprintf(out, "  %s Added exclude: %s %s ws/ignore.json\n", style.IconCheck(nc), style.Infof(nc, "%s", v.Path), style.IconArrow(nc))
+				fmt.Fprintf(out, "  %s Added exclude: %s %s manifest.json\n", style.IconCheck(nc), style.Infof(nc, "%s", v.Path), style.IconArrow(nc))
 				added++
 				needsRegen = true
 			} else {
@@ -268,11 +268,11 @@ func runIgnoreFixInteractive(violations []ignore.Violation, userRulesPath, megai
 				continue
 			}
 			harborPattern := harborDir + "/**"
-			ok, err := ignore.AddUserSafeHarbor(userRulesPath, harborPattern, "")
+			ok, err := manifest.AddIgnoreSafeHarbor(manifestPath, harborPattern, "")
 			if err != nil {
 				fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
 			} else if ok {
-				fmt.Fprintf(out, "  %s Added safe harbor: %s %s ws/ignore.json\n", style.IconCheck(nc), style.Infof(nc, "%s", harborPattern), style.IconArrow(nc))
+				fmt.Fprintf(out, "  %s Added safe harbor: %s %s manifest.json\n", style.IconCheck(nc), style.Infof(nc, "%s", harborPattern), style.IconArrow(nc))
 				harbored++
 				needsRegen = true
 			} else {
@@ -318,9 +318,9 @@ func runIgnoreFixInteractive(violations []ignore.Violation, userRulesPath, megai
 	}
 
 done:
-	// Regenerate .megaignore if any rules were added to ws/ignore.json.
+	// Regenerate .megaignore if any rules were added to manifest.
 	if needsRegen {
-		userRules, err := ignore.LoadUserRules(userRulesPath)
+		userRules, err := manifest.LoadIgnoreRules(manifestPath)
 		if err != nil {
 			fmt.Fprintf(stderr, "warning: could not reload user rules: %s\n", err)
 		} else {

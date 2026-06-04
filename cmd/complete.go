@@ -479,7 +479,20 @@ func loadCompletionCtx(globals globalFlags) completionCtx {
 	// Load config for scratch.root_dir, capture locations, and repo roots.
 	configPath := globals.config
 	if configPath == "" {
-		configPath = filepath.Join(resolved, "ws", "config.json")
+		if p, err := config.DefaultPath(); err == nil {
+			configPath = p
+		} else {
+			configPath = filepath.Join(resolved, "ws", "config.json")
+		}
+	}
+	// Migration: fall back to old workspace-embedded config.
+	if globals.config == "" {
+		if _, err := os.Stat(configPath); err != nil {
+			oldPath := filepath.Join(resolved, "ws", "config.json")
+			if _, err := os.Stat(oldPath); err == nil {
+				configPath = oldPath
+			}
+		}
 	}
 	cfg, cfgErr := config.Load(configPath)
 	if cfgErr == nil {

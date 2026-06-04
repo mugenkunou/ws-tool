@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/mugenkunou/ws-tool/internal/ignore"
+	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
 
@@ -481,9 +483,10 @@ func treeStatusIcon(status string, nc bool) string {
 	}
 }
 
-// runIgnoreEdit opens ws/ignore.json in $EDITOR, validates on save,
-// and regenerates .megaignore.
-func runIgnoreEdit(userRulesPath, megaignorePath string, currentRules ignore.UserRules, args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+// runIgnoreEdit extracts ignore rules from manifest.json to a temp file,
+// opens it in $EDITOR, validates on save, merges back, and regenerates
+// .megaignore.
+func runIgnoreEdit(manifestPath, megaignorePath string, currentRules ignore.UserRules, args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ignore-edit", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	registerGlobalFlags(fs, &globals)
@@ -493,13 +496,20 @@ func runIgnoreEdit(userRulesPath, megaignorePath string, currentRules ignore.Use
 		return 1
 	}
 
-	// Ensure ws/ignore.json exists so the editor has something to open.
-	if _, err := os.Stat(userRulesPath); os.IsNotExist(err) {
-		if err := ignore.SaveUserRules(userRulesPath, currentRules); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
+	// Write current ignore rules to a temp file for editing.
+	wsDir := filepath.Dir(manifestPath)
+	editPath := filepath.Join(wsDir, ".ignore-edit.json")
+	data, err := json.MarshalIndent(currentRules, "", "  ")
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
 	}
+	data = append(data, '\n')
+	if err := os.WriteFile(editPath, data, 0o644); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	defer os.Remove(editPath)
 
 	cmdName := strings.TrimSpace(*editor)
 	if cmdName == "" {
@@ -511,7 +521,7 @@ func runIgnoreEdit(userRulesPath, megaignorePath string, currentRules ignore.Use
 	if cmdName == "" {
 		cmdName = "vi"
 	}
-	cmd := exec.Command(cmdName, userRulesPath)
+	cmd := exec.Command(cmdName, editPath)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -520,10 +530,21 @@ func runIgnoreEdit(userRulesPath, megaignorePath string, currentRules ignore.Use
 		return 1
 	}
 
-	// Validate and regenerate .megaignore after edit.
-	updatedRules, err := ignore.LoadUserRules(userRulesPath)
+	// Validate edited rules.
+	editedData, err := os.ReadFile(editPath)
 	if err != nil {
+		fmt.Fprintln(stderr, "error reading edited file: "+err.Error())
+		return 1
+	}
+	var updatedRules ignore.UserRules
+	if err := json.Unmarshal(editedData, &updatedRules); err != nil {
 		fmt.Fprintln(stderr, "validation error: "+err.Error())
+		return 1
+	}
+
+	// Save back to manifest.
+	if err := manifest.SaveIgnoreRules(manifestPath, updatedRules); err != nil {
+		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
 
@@ -537,9 +558,9 @@ func runIgnoreEdit(userRulesPath, megaignorePath string, currentRules ignore.Use
 
 	if globals.json {
 		return writeJSON(stdout, stderr, "ignore.edit", map[string]any{
-			"path":   userRulesPath,
-			"editor": cmdName,
-			"stats":  stats,
+			"manifest": manifestPath,
+			"editor":   cmdName,
+			"stats":    stats,
 		})
 	}
 	out := textOut(globals, stdout)

@@ -11,22 +11,24 @@ import (
 )
 
 // helper: bootstrap a minimal workspace so reset has something to tear down.
-func setupWorkspace(t *testing.T) string {
+func setupWorkspace(t *testing.T) (string, string) {
 	t.Helper()
-	root := filepath.Join(t.TempDir(), "Workspace")
+	tmp := t.TempDir()
+	root := filepath.Join(tmp, "Workspace")
+	cfgPath := filepath.Join(tmp, "config", "ws-tool", "config.json")
 
-	res, err := Init(InitOptions{WorkspacePath: root})
+	res, err := Init(InitOptions{WorkspacePath: root, ConfigPath: cfgPath})
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
 	if len(res.Created) == 0 {
 		t.Fatal("init created nothing")
 	}
-	return root
+	return root, cfgPath
 }
 
 func TestResetRemovesWS(t *testing.T) {
-	root := setupWorkspace(t)
+	root, _ := setupWorkspace(t)
 
 	res, err := Reset(ResetOptions{WorkspacePath: root})
 	if err != nil {
@@ -47,13 +49,13 @@ func TestResetRemovesWS(t *testing.T) {
 }
 
 func TestResetUndoesTrashProvisions(t *testing.T) {
-	root := setupWorkspace(t)
+	root, _ := setupWorkspace(t)
 
 	// Record a trash-related file provision.
 	ext := filepath.Join(t.TempDir(), "ws-trash-rm")
 	os.WriteFile(ext, []byte("#!/bin/bash"), 0o755)
-	provPath := provision.LedgerPath(root)
-	if err := provision.Record(provPath, provision.Entry{
+	manifestPath := filepath.Join(root, "ws", "manifest.json")
+	if err := manifest.RecordProvision(manifestPath, provision.Entry{
 		Type:    provision.TypeFile,
 		Path:    ext,
 		Command: "trash setup",
@@ -76,7 +78,7 @@ func TestResetUndoesTrashProvisions(t *testing.T) {
 }
 
 func TestResetDryRunPreservesEverything(t *testing.T) {
-	root := setupWorkspace(t)
+	root, cfgPath := setupWorkspace(t)
 
 	res, err := Reset(ResetOptions{WorkspacePath: root, DryRun: true})
 	if err != nil {
@@ -96,7 +98,7 @@ func TestResetDryRunPreservesEverything(t *testing.T) {
 	}
 
 	// config should still exist.
-	if !ConfigExists(filepath.Join(root, "ws", "config.json")) {
+	if !ConfigExists(cfgPath) {
 		t.Fatal("config should still exist after dry-run")
 	}
 }
@@ -136,14 +138,14 @@ func TestResetRequiresWorkspacePath(t *testing.T) {
 }
 
 func TestProvisions(t *testing.T) {
-	root := setupWorkspace(t)
+	root, cfgPath := setupWorkspace(t)
 
 	// workspace.Init doesn't record provisions (that's done by the cmd layer),
 	// so record one manually to test the Provisions() helper.
-	provPath := provision.LedgerPath(root)
-	if err := provision.Record(provPath, provision.Entry{
+	manifestPath := filepath.Join(root, "ws", "manifest.json")
+	if err := manifest.RecordProvision(manifestPath, provision.Entry{
 		Type:    provision.TypeFile,
-		Path:    filepath.Join(root, "ws", "config.json"),
+		Path:    cfgPath,
 		Command: "init",
 	}); err != nil {
 		t.Fatalf("record provision: %v", err)

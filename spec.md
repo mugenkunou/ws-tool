@@ -18,7 +18,7 @@ The spec is organized in five parts:
 - **Statically compiled.** Copy the binary to any machine and it works.
 - **Follow Linux standards** Can reuse existing linux commands like `ls` or `grep` if needed. Pipe compatiblity with other linux commands.
 - **Zero attack surface:** Avoid the use of 3rd party libraries completely. Reduce the attack surface to bare minimum.
-- **Workspace-source metadata.** `config.json` and `manifest.json` live inside `<workspace>/ws/` and are synced with the workspace.
+- **Workspace-source metadata.** `manifest.json` lives inside `<workspace>/ws/` and is synced with the workspace. `config.json` lives at `$XDG_CONFIG_HOME/ws-tool/config.json` (default `~/.config/ws-tool/config.json`) and is machine-local.
 - **Scratch by default.** The binary never writes runtime output to the workspace. Only structured metadata (indexes, command extracts), configs, and essentials state goes to sync.
 - **Soft-delete first.** `ws` uses `rm` for delete paths, and provides machine setup so common delete flows behave as soft delete.
 - **Read/write separation.** Read-only commands are non-interactive and pipe-safe. Write commands are always interactive and support `--dry-run`. There is no `--force` flag. Exemptions: `ws log start --quiet-start`, `ws log stop`.
@@ -72,7 +72,7 @@ RW commands modify state. They:
 
 | Command | Actions |
 |---|---|
-| `ws init` | Per-file: config.json, manifest.json, .megaignore, ws/ dir |
+| `ws init` | Per-file: config.json (XDG), manifest.json, .megaignore, ws/ dir |
 | `ws reset` | Per-subsystem: dotfiles, trash, ws/ dir removal |
 | `ws restore` | Per-step: trash-enable, dotfile-fix, ignore-generate |
 | `ws dotfile add` | Single action per file |
@@ -161,13 +161,13 @@ Exit codes from `planResult.ExitCode()`:
 
 ## Config Files: `config.json` and `manifest.json`
 
-Located inside the workspace:
+- `$XDG_CONFIG_HOME/ws-tool/config.json` (default `~/.config/ws-tool/config.json`) — machine-local.
+- `<workspace>/ws/manifest.json` — synced with workspace.
 
-- `<workspace>/ws/config.json`
-- `<workspace>/ws/manifest.json`
-
-- `config.json` is user-managed, stable configuration.
+- `config.json` is user-managed, stable configuration. It contains a `workspace` field that tells `ws` where to find the workspace.
 - `manifest.json` is ws-managed durable metadata required for portable restore (dotfile registry, allowlists, and similar metadata).
+
+**Migration:** If no config is found at the XDG path and `<workspace>/ws/config.json` exists, `ws` reads the old location as a fallback.
 
 **Path convention:** All relative paths in config values are resolved against `<workspace>`. Absolute paths and `~`-prefixed paths are expanded at runtime (`~` → `$HOME`). `<workspace>`, `scratch.root_dir`, `repo.roots`, and `trash.root_dir` are user-provided (via config/env/flag). Derived paths: logs use `<workspace>/ws/ws-log`.
 
@@ -208,7 +208,8 @@ Located inside the workspace:
     }
   },
   "log": {
-    "cap_mb": 500
+    "cap_mb": 500,
+    "max_session_mb": 100
   },
   "search": {
     "default_context": 2,
@@ -249,7 +250,7 @@ Located inside the workspace:
 
 ```json
 {
-  "manifest_schema": 1,
+  "manifest_schema": 2,
   "dotfiles": [
     {
       "system": "~/.ssh",
@@ -297,11 +298,37 @@ Located inside the workspace:
         "remote": "origin"
       }
     ]
+  },
+  "scratch_tags": ["debug", "docker", "k8s"],
+  "provisions": [
+    {
+      "type": "dir",
+      "path": "ws",
+      "command": "init"
+    },
+    {
+      "type": "file",
+      "path": "~/.config/ws-tool/config.json",
+      "command": "init"
+    },
+    {
+      "type": "symlink",
+      "path": "~/.bashrc",
+      "command": "dotfile add"
+    }
+  ],
+  "ignore": {
+    "excludes": [
+      "projects/legacy-app/vendor"
+    ],
+    "safe_harbors": []
   }
 }
 ```
 
 `config_schema` and `manifest_schema` are top-level integers for forward-compatible migrations. The binary refuses files with unsupported higher schema versions and prints an upgrade prompt.
+
+**Migration:** On first command after upgrade, `ws` automatically migrates schema 1 manifests to schema 2 by absorbing standalone `provisions.json` and `ignore.json` (if present) into `manifest.json`, then deleting the old files.
 
 `trash.root_dir` is a machine-local preference used by setup workflows. It defaults to `~/.Trash` and should generally stay outside `<workspace>`.
 
@@ -316,9 +343,7 @@ Directory layout:
 ```text
 <workspace>/
 └── ws/
-  ├── config.json         # user-managed configuration
-  ├── manifest.json       # ws-managed durable metadata (dotfiles, allowlists)
-  ├── provisions.json     # ws-managed provisioning ledger (external side-effects)
+  ├── manifest.json       # ws-managed durable metadata (dotfiles, allowlists, scratch tags, provisions, ignore rules)
   ├── megaignore.state    # ws-managed canonical ignore state
   ├── repo.state          # ws-managed repo cache/index (workspace-only repos)
   ├── health.json         # ws-managed daemon scan results (runtime-only, excluded from sync)
@@ -340,9 +365,8 @@ Directory layout:
 
 Ownership and edit policy:
 
-- `config.json`: edit by hand (or override via flags/env).
-- `manifest.json`: do not hand-edit; managed by `ws dotfile *`, `ws secret fix`, and `ws repo` reconciliation.
-- `provisions.json`: do not hand-edit; managed by all RW commands that create external side-effects. Read by `ws reset` to reverse provisions.
+- `config.json` (`~/.config/ws-tool/config.json`): edit by hand (or override via flags/env). Machine-local, not synced.
+- `manifest.json`: do not hand-edit; managed by `ws dotfile *`, `ws secret fix`, `ws repo` reconciliation, `ws scratch tag` (scratch tag vocabulary), and all RW commands that create external side-effects (provisions). Read by `ws reset` to reverse provisions.
 - `repo.state`: generated/updated by `ws repo` commands. Safe to delete (recreated by reconcile scan).
 - `dotfiles/`: managed by `ws dotfile add|rm`. When git versioning is enabled via `ws dotfile git setup`, this directory also serves as the git repo. Files here are the synced originals — system paths are symlinks pointing back. Safe to edit the contents (they *are* your dotfiles), but don't move or rename files manually; use `ws dotfile rm` instead.
 - `megaignore.state`: generated/updated by `ws ignore` commands (canonical parsed/normalized ignore state).
@@ -356,7 +380,7 @@ Ownership and edit policy:
 Design intent:
 
 - Keep all portable tool state colocated and synced with the workspace.
-- Avoid hidden state outside the workspace for restore/reproducibility.
+- Config is machine-local at the XDG standard path, avoiding the bootstrap problem of config living inside the directory it configures.
 - Keep scratch output in `scratch.root_dir` (outside the workspace, never synced), while `ws log` remains in `ws/` by design.
 
 ---
@@ -364,11 +388,11 @@ Design intent:
 ## Resolution Order
 
 ```text
-Flag  →  Environment variable  →  ws/config.json  →  Built-in default
- ↑ highest                                                ↑ lowest
+Flag  →  Environment variable  →  config.json  →  Built-in default
+ ↑ highest                                            ↑ lowest
 ```
 
-The config file path resolves first (flag → env → `<workspace>/ws/config.json`). Then remaining values fill in left-to-right: flag wins over env, env wins over config, config wins over default. Durable operational metadata (dotfile registry, secret allowlists, tracked repos) is loaded from `<workspace>/ws/manifest.json`; repo cache/index data is loaded from `<workspace>/ws/repo.state`.
+The config file path resolves first (flag `--config` → `$WS_CONFIG` env → `$XDG_CONFIG_HOME/ws-tool/config.json` → `~/.config/ws-tool/config.json`). The workspace path resolves: flag `--workspace` → `$WS_WORKSPACE` env → `config.workspace` field → `~/Workspace` fallback. Then remaining values fill in left-to-right: flag wins over env, env wins over config, config wins over default. Durable operational metadata (dotfile registry, secret allowlists, tracked repos) is loaded from `<workspace>/ws/manifest.json`; repo cache/index data is loaded from `<workspace>/ws/repo.state`.
 
 ---
 
@@ -479,6 +503,8 @@ When color is disabled, Unicode icons fall back to ASCII text equivalents (`✔`
 | Overhead | Moderate (PTY layer) |
 | Exit | `exit`, Ctrl-D, or `ws log stop` |
 
+**Per-session size limit:** During recording, `ws log` monitors the session's log file size every 5 seconds. If a session exceeds `log.max_session_mb` (default 100 MB), the recording process receives SIGTERM and the session ends. This prevents runaway sessions (e.g., verbose build output left recording overnight) from consuming unbounded disk space.
+
 **Why PTY mode is the default:** It provides complete auditability for interactive work, including SSH sessions, full-screen editors, and pasted terminal input.
 
 ### Prompt Indicator `● ws:log`
@@ -538,7 +564,7 @@ Local repository model:
 
 Credential policy (never plain text in config):
 
-1. `ws` never stores git passwords/tokens in `ws/config.json`, `ws/manifest.json`, or any ws state file.
+1. `ws` never stores git passwords/tokens in config.json, `ws/manifest.json`, or any ws state file.
 2. `ws` first uses native Git credential helpers when available.
 3. If helper-based auth is unavailable, `ws` silently checks for Unix Password Store (`pass`) and uses `pass_entry` (or an auto-derived default entry).
 4. If no helper/pass credential is available, `ws` prompts the user and keeps the secret in memory for that operation only.
@@ -672,7 +698,7 @@ The command is optimized for capture speed (Philosophy Factor II): type a name, 
 
 **Editor launch:** After `mkdir -p`, `ws` runs the configured `scratch.editor_cmd` (default `code`) to open the new directory. If the command is not found, `ws` prints the path, skips the open, and exits 0 with a warning. Pass `--no-open` to skip the editor launch.
 
-**Scratch metadata:** Each scratch directory gets a `.ws-meta.json` file seeded on creation (with `created` timestamp and empty `tags` array). Tags are added later via `ws scratch tag`, which presents a multi-value ghost input showing popular tags from the workspace tag collection (`<workspace>/ws/tags.json`). Enter commits a tag and loops; empty Enter finishes. Tab completes to the first matching suggestion. New tags are automatically added to the workspace collection for future suggestions.
+**Scratch metadata:** Each scratch directory gets a `.ws-meta.json` file seeded on creation (with `created` timestamp and empty `tags` array). Tags are added later via `ws scratch tag`, which presents a multi-value ghost input showing popular tags from the workspace tag collection (the `scratch_tags` field in `<workspace>/ws/manifest.json`). Enter commits a tag and loops; empty Enter finishes. Tab completes to the first matching suggestion. New tags are automatically added to the workspace collection for future suggestions.
 
 **Auto-tagging:** `ws scratch tag --auto` scans files in the scratch directory and proposes tags based on heuristics: file extensions (`.sh` → `bash`, `.py` → `python`), known file names (`Dockerfile` → `docker`, `Makefile` → `make`), shebangs, and content patterns (`kubectl` → `k8s`, `systemctl` → `systemd`, `cgroup` → `cgroups`). Each suggestion is presented as an action in the standard plan/confirm flow.
 
@@ -935,7 +961,7 @@ Not installed via `apt`. Separate downloads or managed through other channels.
 ws [command] [flags]
 
 --workspace, -w   Path to sync root        (default: <workspace>)
---config,    -c   Path to config file      (default: <workspace>/ws/config.json)
+--config,    -c   Path to config file      (default: $XDG_CONFIG_HOME/ws-tool/config.json)
 --manifest       Path to manifest file      (default: <workspace>/ws/manifest.json)
 --quiet,     -q   Errors only — suppress progress, summaries, and informational output
 --verbose         Show internal decisions (path resolution, config loading, symlink checks)
@@ -990,7 +1016,7 @@ Every command returns a structured exit code. Scripts can branch on these withou
 ws version                           Print binary version, config/manifest schema, and platform
 
 ws config view                       Dump resolved config from memory
-ws config defaults                   Print default config as a valid ws/config.json file
+ws config defaults                   Print default config as a valid config.json file
 
 ws init                              Scaffold a directory as a ws-compatible workspace
 ws reset                             Reverse ws init — undo all provisions, remove ws/
@@ -1088,8 +1114,8 @@ ws version
 
 ws 0.1.0
   Config schema:   1
-  Config path:     ~/Workspace/ws/config.json
-  Manifest schema: 1
+  Config path:     ~/.config/ws-tool/config.json
+  Manifest schema: 2
   Manifest path:   ~/Workspace/ws/manifest.json
   Platform:        linux/amd64
   Built:           2026-03-15T10:22:00Z
@@ -1113,8 +1139,8 @@ ws version --short
   "data": {
     "version": "0.1.0",
     "config_schema": 1,
-    "config_path": "~/Workspace/ws/config.json",
-    "manifest_schema": 1,
+    "config_path": "~/.config/ws-tool/config.json",
+    "manifest_schema": 2,
     "manifest_path": "~/Workspace/ws/manifest.json",
     "platform": "linux/amd64",
     "built": "2026-03-15T10:22:00Z"
@@ -1126,11 +1152,11 @@ ws version --short
 
 ### `ws init`
 
-Scaffold a directory as a `ws`-compatible workspace. Creates the `ws/` metadata directory and populates it with default `config.json`, empty `manifest.json`, and a `.megaignore` file at the workspace root. Interactively guides the user through initial configuration.
+Scaffold a directory as a `ws`-compatible workspace. Creates the `ws/` metadata directory and populates it with empty `manifest.json` and a `.megaignore` file at the workspace root. Writes `config.json` to the XDG config path (`~/.config/ws-tool/config.json`). Interactively guides the user through initial configuration.
 
 `ws init` is primarily a scaffolding command — it does not apply dotfile symlinks. It creates workspace metadata (`ws/`, `.megaignore`) and optionally performs machine-level trash setup when enabled. After initialization, it points the user to subsystem-specific scan and fix commands for workspace hygiene.
 
-**Init guard:** Every other `ws` command checks for the presence of `<workspace>/ws/config.json` before running. If the file does not exist, the command prints an error and exits:
+**Init guard:** Every other `ws` command checks for the presence of a config file (XDG path or legacy workspace path) before running. If no config is found, the command prints an error and exits:
 
 ```text
 Error: workspace not initialized.
@@ -1152,7 +1178,7 @@ ws init [flags]
 | --- | --- | --- |
 | 1. Workspace path | Confirm or set the workspace root directory | Prompt with default |
 | 2. `ws/` directory | Create `<workspace>/ws/` | No |
-| 3. `config.json` | Write default config (or skip if exists) | No |
+| 3. `config.json` | Write default config to XDG path (or skip if exists) | No |
 | 4. `manifest.json` | Write empty manifest (or skip if exists) | No |
 | 5. `.megaignore` | Generate from built-in template (or skip if exists) | Prompt: replace/merge/skip |
 | 6. Trash setup | Configure machine soft-delete integrations | Prompt: yes/no + per integration |
@@ -1171,7 +1197,7 @@ Workspace path: ~/Workspace  [Y/n]: ↵
 ── [1/3] Scaffolding ──────────────────────────────
 
 ✔ Created  ~/Workspace/ws/
-✔ Created  ~/Workspace/ws/config.json       (default config)
+✔ Created  ~/.config/ws-tool/config.json  (default config)
 ✔ Created  ~/Workspace/ws/manifest.json     (empty registry)
 
 ── [2/3] Ignore rules ─────────────────────────────
@@ -1195,7 +1221,7 @@ Configure soft-delete on this machine? [Y/n]: ↵
 ══════════════════════════════════════════════════════
 
 Files created:
-  ws/config.json       Edit config: ws config view
+  ~/.config/ws-tool/config.json  Edit config: ws config view
   ws/manifest.json     Managed by ws — do not hand-edit
   .megaignore           Edit rules:  ws ignore edit
 
@@ -1207,7 +1233,7 @@ Next steps:
 
 **Output — MEGA-restored directory (`ws/` already exists with data):**
 
-When `ws/config.json` and `ws/manifest.json` already exist (e.g. synced from another machine), `ws init` skips scaffolding and only fills in missing pieces. It never modifies existing config or manifest files.
+When `ws/manifest.json` already exists (e.g. synced from another machine), `ws init` skips scaffolding and only fills in missing pieces. It never modifies existing manifest files. Config is always written to the XDG path if it doesn't already exist there.
 
 ```text
 ws init
@@ -1219,7 +1245,7 @@ Workspace path: ~/Workspace  [Y/n]: ↵
 
 ── [1/3] Scaffolding ──────────────────────────────
 
-✔ ws/config.json       already exists — skipped
+✔ config.json              already exists — skipped
 ✔ ws/manifest.json     already exists — skipped (5 dotfiles registered)
 
 ── [2/3] Ignore rules ─────────────────────────────
@@ -1279,7 +1305,7 @@ ws init --dry-run
 
 Would create:
   ~/Workspace/ws/
-  ~/Workspace/ws/config.json       (default config)
+  ~/.config/ws-tool/config.json       (default config)
   ~/Workspace/ws/manifest.json     (empty registry)
   ~/Workspace/.megaignore           (builtin template, 50 rules)
 
@@ -1295,7 +1321,7 @@ No changes made.
   "command": "init",
   "data": {
     "workspace": "~/Workspace",
-    "config": { "action": "created", "path": "~/Workspace/ws/config.json" },
+    "config": { "action": "created", "path": "~/.config/ws-tool/config.json" },
     "manifest": { "action": "created", "path": "~/Workspace/ws/manifest.json" },
     "ignore": { "action": "created", "rules": 20, "path": "~/Workspace/.megaignore" },
     "trash_setup": {
@@ -1314,7 +1340,7 @@ Reverse `ws init` — undo all external side-effects recorded in the provisionin
 
 **Prerequisite:** The `ws/` directory must exist. If not, `ws reset` exits with an error.
 
-**Provisioning ledger:** Every RW command that creates or modifies files outside `<workspace>/ws/` records an entry in `<workspace>/ws/provisions.json`. `ws reset` reads this ledger and undoes entries in reverse chronological order (LIFO).
+**Provisioning ledger:** Every RW command that creates or modifies files outside `<workspace>/ws/` records an entry in the `provisions` array of `<workspace>/ws/manifest.json`. `ws reset` reads this ledger and undoes entries in reverse chronological order (LIFO).
 
 ```text
 ws reset [flags]
@@ -1809,7 +1835,7 @@ Detected ws-managed local git repository:
   auto_commit: enabled
   auto_push:   enabled
 
-Saved to ws/config.json under dotfile.git.
+Saved to config.json under dotfile.git.
 ```
 
 **Output — rejected (public repo):**
@@ -2158,7 +2184,7 @@ Deletion goes through `rm` (soft-delete if `ws trash setup` was run — Philosop
 
 #### `ws scratch tag`
 
-Add tags to a scratch directory. When no name is given, shows a ghost panel to pick a scratch dir (Tab-completable). Then enters a multi-tag ghost input: type a tag, Enter commits it and loops, empty Enter finishes. Ghost panel suggests popular tags from `<workspace>/ws/tags.json`, filtered as you type. New tags are automatically added to the workspace tag collection.
+Add tags to a scratch directory. When no name is given, shows a ghost panel to pick a scratch dir (Tab-completable). Then enters a multi-tag ghost input: type a tag, Enter commits it and loops, empty Enter finishes. Ghost panel suggests popular tags from the `scratch_tags` field in `<workspace>/ws/manifest.json`, filtered as you type. New tags are automatically added to the workspace tag collection.
 
 ```text
 ws scratch tag [name] [flags]
@@ -3601,7 +3627,7 @@ No-op. Git calls this after failed authentication. Credential removal from the p
 
 ### `ws config`
 
-View the active configuration. `ws` reads user settings from `ws/config.json` and writes durable operational metadata to `ws/manifest.json` and `ws/repo.state`. These files are stored inside the workspace for portable restore. To change config values, edit `<workspace>/ws/config.json` directly (or use command flags/env overrides). `<workspace>`, `scratch.root_dir`, `repo.roots`, and `trash.root_dir` are user-provided; log data is always stored in `<workspace>/ws/ws-log`. The dotfile registry is managed through `ws dotfile add` and `ws dotfile rm`; optional dotfile git backup settings are managed via `ws dotfile git connect`; repo state is managed through `ws repo` commands.
+View the active configuration. `ws` reads user settings from `config.json` (at `~/.config/ws-tool/config.json`) and writes durable operational metadata to `ws/manifest.json` and `ws/repo.state`. Metadata files are stored inside the workspace for portable restore; config is machine-local. To change config values, edit `~/.config/ws-tool/config.json` directly (or use command flags/env overrides). `<workspace>`, `scratch.root_dir`, `repo.roots`, and `trash.root_dir` are user-provided; log data is always stored in `<workspace>/ws/ws-log`. The dotfile registry is managed through `ws dotfile add` and `ws dotfile rm`; optional dotfile git backup settings are managed via `ws dotfile git connect`; repo state is managed through `ws repo` commands.
 
 ```text
 ws config [subcommand]
@@ -3620,7 +3646,7 @@ ws config view
 ```json
 {
   "config_schema": 1,
-  "source": "~/Workspace/ws/config.json",
+  "source": "~/.config/ws-tool/config.json",
   "workspace": { "value": "/home/user/Workspace", "source": "config.json" },
   "ignore": {
     "warn_size_mb": { "value": 1, "source": "default" },
@@ -3638,6 +3664,7 @@ ws config view
   "log": {
     "state_dir": { "value": "/home/user/Workspace/ws/ws-log", "source": "derived(<workspace>)" },
     "cap_mb": { "value": 500, "source": "config.json" },
+    "max_session_mb": { "value": 100, "source": "default" },
     "index_file": { "value": "/home/user/Workspace/ws/ws-log-index.md", "source": "derived(<workspace>)" }
   },
   "scratch": {
@@ -3687,7 +3714,7 @@ ws config view
   },
   "manifest": {
     "path": "~/Workspace/ws/manifest.json",
-    "manifest_schema": 1,
+    "manifest_schema": 2,
     "dotfiles_count": 5,
     "repo_tracked_count": 3
   }
@@ -3701,7 +3728,7 @@ All paths are shown fully expanded (tildes resolved, relative paths resolved aga
 ```json
 {
   "config_schema": 1,
-  "source": "~/Workspace/ws/config.json",
+  "source": "~/.config/ws-tool/config.json",
   "workspace": { "value": "/home/user/Workspace", "source": "config.json" }
 }
 ```
@@ -3715,7 +3742,7 @@ All paths are shown fully expanded (tildes resolved, relative paths resolved aga
   "command": "config.view",
   "data": {
     "config_schema": 1,
-    "source": "~/Workspace/ws/config.json",
+    "source": "~/.config/ws-tool/config.json",
     "workspace": { "value": "/home/user/Workspace", "source": "config.json" },
     "ignore": {
       "warn_size_mb": { "value": 1, "source": "default" },
@@ -3733,6 +3760,7 @@ All paths are shown fully expanded (tildes resolved, relative paths resolved aga
     "log": {
       "state_dir": { "value": "/home/user/Workspace/ws/ws-log", "source": "derived(<workspace>)" },
       "cap_mb": { "value": 500, "source": "config.json" },
+      "max_session_mb": { "value": 100, "source": "default" },
       "index_file": { "value": "/home/user/Workspace/ws/ws-log-index.md", "source": "derived(<workspace>)" }
     },
     "scratch": {
@@ -3782,7 +3810,7 @@ All paths are shown fully expanded (tildes resolved, relative paths resolved aga
     },
     "manifest": {
       "path": "~/Workspace/ws/manifest.json",
-      "manifest_schema": 1,
+      "manifest_schema": 2,
       "dotfiles_count": 5,
       "repo_tracked_count": 3
     }
@@ -3833,7 +3861,8 @@ ws config defaults
     }
   },
   "log": {
-    "cap_mb": 500
+    "cap_mb": 500,
+    "max_session_mb": 100
   },
   "search": {
     "default_context": 2,
@@ -3867,7 +3896,7 @@ ws config defaults
 Output is always uncolored, valid JSON, and can be piped directly into a file:
 
 ```bash
-ws config defaults > <workspace>/ws/config.json
+ws config defaults > ~/.config/ws-tool/config.json
 ```
 
 The `dotfiles` registry is omitted — dotfiles are managed in `manifest.json` via `ws dotfile add` and `ws dotfile rm`, not by hand-editing defaults output.
@@ -3878,7 +3907,7 @@ The `dotfiles` registry is omitted — dotfiles are managed in `manifest.json` v
 
 Guided full-machine restore wizard. Chains the post-sync setup steps into a single interactive flow. Designed for the day you lose everything: sync the workspace to a fresh machine, run `ws restore`, walk through the prompts, and the machine is configured.
 
-**Prerequisite:** The workspace must already be initialized (`ws/config.json` must exist). `ws restore` is for synced workspaces on new machines — not for first-time setup. If the workspace is not initialized, `ws restore` exits with an error and directs the user to run `ws init` first.
+**Prerequisite:** The workspace must already be initialized (config.json must exist at the XDG path or legacy workspace path). `ws restore` is for synced workspaces on new machines — not for first-time setup. If the workspace is not initialized, `ws restore` exits with an error and directs the user to run `ws init` first.
 
 ```text
 ws restore [flags]
@@ -3890,7 +3919,7 @@ ws restore [flags]
 
 ```text
 ws restore
-✖ Workspace is not initialized: ~/Workspace/ws/config.json
+✖ Workspace is not initialized: config.json not found
 
   ws restore only works on an already-initialized workspace.
   Run 'ws init' first to set up the workspace, then run 'ws restore'.
@@ -4250,7 +4279,7 @@ All runtime files live under `~/.local/share/ws/` and are **not** synced to MEGA
 
 #### Provisioning
 
-Each installed job records a `cron_job` entry in `ws/provisions.json`:
+Each installed job records a `cron_job` entry in the `provisions` array of `ws/manifest.json`:
 
 ```json
 { "type": "cron_job", "path": "~/.local/share/ws/cron-jobs/mega-sync.sh", "line": "mega-sync", "command": "cron add" }

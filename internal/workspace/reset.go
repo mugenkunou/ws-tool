@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/mugenkunou/ws-tool/internal/dotfile"
+	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/provision"
 	"github.com/mugenkunou/ws-tool/internal/trash"
 )
@@ -83,6 +84,7 @@ func Reset(opts ResetOptions) (ResetResult, error) {
 	// --- Phase 2: trash reset ---
 	trashResult, err := trash.Reset(trash.ResetOptions{
 		WorkspacePath: opts.WorkspacePath,
+		ManifestPath:  manifestPath,
 		DryRun:        opts.DryRun,
 	})
 	sub = SubResetResult{Subsystem: "trash", Messages: trashResult.Messages}
@@ -122,12 +124,15 @@ func Reset(opts ResetOptions) (ResetResult, error) {
 // the CLI layer to render a pre-reset summary without duplicating the
 // ledger-loading logic.
 func Provisions(workspacePath string) ([]provision.Entry, error) {
-	provPath := provision.LedgerPath(workspacePath)
-	ledger, err := provision.Load(provPath)
+	manifestPath := filepath.Join(workspacePath, "ws", "manifest.json")
+	m, err := manifest.Load(manifestPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return []provision.Entry{}, nil
+		}
 		return nil, err
 	}
-	return ledger.Entries, nil
+	return m.Provisions, nil
 }
 
 // UndoActionLabel returns a human-readable description of what undoing

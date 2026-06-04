@@ -9,6 +9,7 @@ import (
 )
 
 func TestDotfileCommandAddAndScan(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 
 	var out bytes.Buffer
@@ -43,6 +44,7 @@ func TestDotfileCommandAddAndScan(t *testing.T) {
 }
 
 func TestScanExitCodeOnViolation(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out bytes.Buffer
 	var errOut bytes.Buffer

@@ -10,6 +10,7 @@ import (
 )
 
 func TestSecretScanSkipDirConfig(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out, errOut bytes.Buffer
 
@@ -35,7 +36,7 @@ func TestSecretScanSkipDirConfig(t *testing.T) {
 	}
 
 	// Add vendor to skip_dirs in config.
-	configPath := filepath.Join(workspace, "ws", "config.json")
+	configPath := xdgConfigPath(t)
 	configBytes, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatal(err)
@@ -62,6 +63,7 @@ func TestSecretScanSkipDirConfig(t *testing.T) {
 }
 
 func TestSecretScanSkipDirFlag(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out, errOut bytes.Buffer
 
@@ -96,6 +98,7 @@ func TestSecretScanSkipDirFlag(t *testing.T) {
 }
 
 func TestSecretScanSkipDirJSON(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out, errOut bytes.Buffer
 
@@ -122,6 +125,7 @@ func TestSecretScanSkipDirJSON(t *testing.T) {
 }
 
 func TestSecretScanSkipDirMergesConfigAndFlag(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out, errOut bytes.Buffer
 
@@ -130,7 +134,7 @@ func TestSecretScanSkipDirMergesConfigAndFlag(t *testing.T) {
 	}
 
 	// Set skip_dirs in config.
-	configPath := filepath.Join(workspace, "ws", "config.json")
+	configPath := xdgConfigPath(t)
 	configBytes, _ := os.ReadFile(configPath)
 	var cfg map[string]any
 	json.Unmarshal(configBytes, &cfg)

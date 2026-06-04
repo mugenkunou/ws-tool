@@ -8,6 +8,7 @@ import (
 )
 
 func TestIgnoreExtraCommands(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
@@ -39,6 +40,7 @@ func TestIgnoreExtraCommands(t *testing.T) {
 }
 
 func TestDotfileGitSetupAndStatus(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
@@ -67,6 +69,7 @@ func TestDotfileGitSetupAndStatus(t *testing.T) {
 }
 
 func TestRestoreCommand(t *testing.T) {
+	testSetXDG(t)
 	t.Run("fails on uninitialized workspace", func(t *testing.T) {
 		workspace := filepath.Join(t.TempDir(), "Workspace")
 		var out bytes.Buffer

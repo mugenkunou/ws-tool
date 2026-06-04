@@ -5,12 +5,14 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/provision"
 )
 
 // ResetOptions configures a trash reset operation.
 type ResetOptions struct {
 	WorkspacePath string
+	ManifestPath  string // optional; defaults to <workspace>/ws/manifest.json
 	DryRun        bool
 }
 
@@ -38,15 +40,18 @@ func Reset(opts ResetOptions) (ResetResult, error) {
 		DryRun:   opts.DryRun,
 	}
 
-	provPath := provision.LedgerPath(opts.WorkspacePath)
-	ledger, err := provision.Load(provPath)
+	manifestPath := opts.ManifestPath
+	if manifestPath == "" {
+		manifestPath = filepath.Join(opts.WorkspacePath, "ws", "manifest.json")
+	}
+	m, err := manifest.Load(manifestPath)
 	if err != nil {
-		return result, fmt.Errorf("loading provisions: %w", err)
+		return result, fmt.Errorf("loading manifest: %w", err)
 	}
 
 	// Collect all trash-related provisions.
 	var trashEntries []provision.Entry
-	for _, e := range ledger.Entries {
+	for _, e := range m.Provisions {
 		if e.Command == "trash enable" || e.Command == "trash setup" {
 			trashEntries = append(trashEntries, e)
 		}
@@ -75,7 +80,7 @@ func Reset(opts ResetOptions) (ResetResult, error) {
 		}
 
 		ur := provision.Undo(e)
-		_ = provision.Remove(provPath, e.Type, e.Path)
+		_ = manifest.RemoveProvision(manifestPath, e.Type, e.Path)
 
 		switch ur.Action {
 		case "removed":

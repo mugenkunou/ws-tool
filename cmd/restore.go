@@ -10,6 +10,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/dotfile"
 	"github.com/mugenkunou/ws-tool/internal/ignore"
+	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/provision"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/trash"
@@ -54,8 +55,24 @@ func runRestore(args []string, globals globalFlags, stdin io.Reader, stdout, std
 
 	configPath := globals.config
 	if configPath == "" {
-		configPath = filepath.Join(resolvedWorkspace, "ws", "config.json")
+		p, err := config.DefaultPath()
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		configPath = p
 	}
+
+	// Migration: fall back to old workspace-embedded config.
+	if globals.config == "" {
+		if _, err := os.Stat(configPath); err != nil {
+			oldPath := filepath.Join(resolvedWorkspace, "ws", "config.json")
+			if _, err := os.Stat(oldPath); err == nil {
+				configPath = oldPath
+			}
+		}
+	}
+
 	manifestPath := globals.manifest
 	if manifestPath == "" {
 		manifestPath = filepath.Join(resolvedWorkspace, "ws", "manifest.json")
@@ -122,12 +139,11 @@ func runRestore(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			result.TrashConfigured = true
 			home, _ := os.UserHomeDir()
 			if home != "" {
-				provPath := provision.LedgerPath(resolvedWorkspace)
 				scriptPath := filepath.Join(home, ".local", "bin", "ws-trash-rm")
-				_ = provision.Record(provPath, provision.Entry{Type: provision.TypeFile, Path: scriptPath, Command: "trash enable"})
+				_ = manifest.RecordProvision(manifestPath, provision.Entry{Type: provision.TypeFile, Path: scriptPath, Command: "trash enable"})
 				aliasLine := "alias rm='ws-trash-rm'"
 				for _, rc := range []string{filepath.Join(home, ".bashrc"), filepath.Join(home, ".zshrc")} {
-					_ = provision.Record(provPath, provision.Entry{Type: provision.TypeConfigLine, Path: rc, Line: aliasLine, Command: "trash enable"})
+					_ = manifest.RecordProvision(manifestPath, provision.Entry{Type: provision.TypeConfigLine, Path: rc, Line: aliasLine, Command: "trash enable"})
 				}
 			}
 			return nil
@@ -162,15 +178,14 @@ func runRestore(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		Description: "[3/3] Ignore rules",
 		Execute: func() error {
 			if _, err := os.Stat(ignorePath); err != nil {
-				userRulesPath := ignore.UserRulesPath(resolvedWorkspace)
-				userRules, loadErr := ignore.LoadUserRules(userRulesPath)
+				userRules, loadErr := manifest.LoadIgnoreRules(manifestPath)
 				if loadErr != nil {
 					userRules = ignore.DefaultUserRules()
 				}
 				if err := ignore.WriteMegaignore(ignorePath, userRules); err != nil {
 					return err
 				}
-				_ = provision.Record(provision.LedgerPath(resolvedWorkspace), provision.Entry{
+				_ = manifest.RecordProvision(manifestPath, provision.Entry{
 					Type:    provision.TypeFile,
 					Path:    ignorePath,
 					Command: "restore",

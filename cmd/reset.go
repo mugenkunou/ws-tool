@@ -38,7 +38,27 @@ func runReset(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		globals.dryRun = true
 	}
 
+	// Resolve config path.
+	configPath := globals.config
+	if configPath == "" {
+		p, err := config.DefaultPath()
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		configPath = p
+	}
+
+	// Resolve workspace: flag → env → config → default.
 	workspacePath := globals.workspace
+	if workspacePath == "" {
+		workspacePath = os.Getenv("WS_WORKSPACE")
+	}
+	if workspacePath == "" {
+		if cfg, err := config.Load(configPath); err == nil && cfg.Workspace != "" {
+			workspacePath = cfg.Workspace
+		}
+	}
 	if workspacePath == "" {
 		workspacePath = "~/Workspace"
 	}
@@ -46,6 +66,16 @@ func runReset(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
+	}
+
+	// Migration: fall back to old workspace-embedded config.
+	if globals.config == "" {
+		if _, err := os.Stat(configPath); err != nil {
+			oldPath := filepath.Join(resolvedWorkspace, "ws", "config.json")
+			if _, err := os.Stat(oldPath); err == nil {
+				configPath = oldPath
+			}
+		}
 	}
 
 	wsDir := filepath.Join(resolvedWorkspace, "ws")
@@ -125,6 +155,7 @@ func runReset(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		Execute: func() error {
 			_, err := trash.Reset(trash.ResetOptions{
 				WorkspacePath: resolvedWorkspace,
+				ManifestPath:  manifestPath,
 				DryRun:        false,
 			})
 			return err
@@ -136,6 +167,17 @@ func runReset(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		Description: fmt.Sprintf("Remove %s", wsDir),
 		Execute: func() error {
 			return os.RemoveAll(wsDir)
+		},
+	})
+
+	plan.Actions = append(plan.Actions, Action{
+		ID:          "remove-config",
+		Description: fmt.Sprintf("Remove %s", configPath),
+		Execute: func() error {
+			if err := os.Remove(configPath); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			return nil
 		},
 	})
 

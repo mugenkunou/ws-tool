@@ -51,7 +51,7 @@ func Reset(opts ResetOptions) (ResetResult, error) {
 		return result, nil
 	}
 
-	provPath := provision.LedgerPath(opts.WorkspacePath)
+	manifestPath := opts.ManifestPath
 
 	for _, record := range m.Dotfiles {
 		entry := ResetEntry{Record: record}
@@ -119,7 +119,7 @@ func Reset(opts ResetOptions) (ResetResult, error) {
 		}
 
 		// Remove symlink provision.
-		_ = provision.Remove(provPath, provision.TypeSymlink, record.System)
+		_ = manifest.RemoveProvision(manifestPath, provision.TypeSymlink, record.System)
 
 		entry.Action = "restored"
 		entry.Message = fmt.Sprintf("restored %s", record.System)

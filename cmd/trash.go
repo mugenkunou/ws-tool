@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/mugenkunou/ws-tool/internal/config"
+	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/provision"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/trash"
@@ -35,7 +36,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		return printCmdHelp(stdout, trashHelp)
 	}
 
-	workspacePath, configPath, _, err := requireWorkspaceInitialized(globals, stderr)
+	workspacePath, configPath, manifestPath, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -95,9 +96,8 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 					if home == "" {
 						return nil
 					}
-					provPath := provision.LedgerPath(workspacePath)
 					scriptPath := filepath.Join(home, ".local", "bin", "ws-trash-rm")
-					_ = provision.Record(provPath, provision.Entry{
+					_ = manifest.RecordProvision(manifestPath, provision.Entry{
 						Type:    provision.TypeFile,
 						Path:    scriptPath,
 						Command: "trash enable",
@@ -107,7 +107,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 						filepath.Join(home, ".bashrc"),
 						filepath.Join(home, ".zshrc"),
 					} {
-						_ = provision.Record(provPath, provision.Entry{
+						_ = manifest.RecordProvision(manifestPath, provision.Entry{
 							Type:    provision.TypeConfigLine,
 							Path:    rc,
 							Line:    aliasLine,
@@ -129,8 +129,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 						return nil
 					}
 					symlinkPath := filepath.Join(home, ".local", "share", "Trash")
-					provPath := provision.LedgerPath(workspacePath)
-					_ = provision.Record(provPath, provision.Entry{
+					_ = manifest.RecordProvision(manifestPath, provision.Entry{
 						Type:    provision.TypeSymlink,
 						Path:    symlinkPath,
 						Target:  *rootDir,

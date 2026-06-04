@@ -128,7 +128,12 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 
 	configPath := globals.config
 	if configPath == "" {
-		configPath = resolvedWorkspace + "/ws/config.json"
+		p, err := config.DefaultPath()
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		configPath = p
 	}
 
 	manifestPath := globals.manifest
@@ -137,7 +142,13 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 	}
 
 	// Guard: if workspace is already initialized, warn and suggest reset.
-	if workspace.ConfigExists(configPath) {
+	alreadyInitialized := workspace.ConfigExists(configPath)
+	if !alreadyInitialized && globals.config == "" {
+		// Migration: also check old workspace-embedded location.
+		oldPath := resolvedWorkspace + "/ws/config.json"
+		alreadyInitialized = workspace.ConfigExists(oldPath)
+	}
+	if alreadyInitialized {
 		if globals.json {
 			return writeJSON(stdout, stderr, "init", map[string]any{
 				"already_initialized": true,
@@ -170,12 +181,14 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 	if _, err := os.Stat(configPath); err != nil {
 		plan.Actions = append(plan.Actions, Action{
 			ID:          "create-config",
-			Description: "Create ws/config.json",
+			Description: fmt.Sprintf("Create config at %s", configPath),
 			Execute: func() error {
 				if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 					return err
 				}
-				return config.Save(configPath, config.Default())
+				cfg := config.Default()
+				cfg.Workspace = workspacePath
+				return config.Save(configPath, cfg)
 			},
 		})
 	}
@@ -198,10 +211,9 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			ID:          "create-megaignore",
 			Description: "Create .megaignore",
 			Execute: func() error {
-				userRulesPath := ignore.UserRulesPath(resolvedWorkspace)
-				userRules, loadErr := ignore.LoadUserRules(userRulesPath)
+				userRules, loadErr := manifest.LoadIgnoreRules(manifestPath)
 				if loadErr != nil {
-					userRules = ignore.DefaultUserRules()
+					userRules = manifest.Default().Ignore
 				}
 				return ignore.WriteMegaignore(megaignorePath, userRules)
 			},
@@ -229,7 +241,6 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			"create-manifest":   {Type: provision.TypeFile, Path: manifestPath, Command: "init"},
 			"create-megaignore": {Type: provision.TypeFile, Path: megaignorePath, Command: "init"},
 		}
-		provPath := provision.LedgerPath(resolvedWorkspace)
 		var entries []provision.Entry
 		for _, id := range planResult.ExecutedIDs() {
 			if e, ok := provMap[id]; ok {
@@ -237,7 +248,7 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			}
 		}
 		if len(entries) > 0 {
-			_ = provision.RecordAll(provPath, entries)
+			_ = manifest.RecordAllProvisions(manifestPath, entries)
 		}
 	}
 

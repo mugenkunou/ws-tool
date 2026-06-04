@@ -10,6 +10,7 @@ import (
 
 // TestCronLsHelp ensures ws cron --help exits 0.
 func TestCronLsHelp(t *testing.T) {
+	testSetXDG(t)
 	workspace := newTestWorkspace(t)
 	var out, errOut bytes.Buffer
 	code := Execute([]string{"--workspace", workspace, "cron", "--help"},
@@ -24,6 +25,7 @@ func TestCronLsHelp(t *testing.T) {
 
 // TestCronLs verifies ws cron ls lists all jobs.
 func TestCronLs(t *testing.T) {
+	testSetXDG(t)
 	workspace := newTestWorkspace(t)
 	var out, errOut bytes.Buffer
 	code := Execute([]string{"--workspace", workspace, "cron", "ls"},
@@ -48,6 +50,7 @@ func TestCronLs(t *testing.T) {
 
 // TestCronLsJSON verifies the JSON output of ws cron ls.
 func TestCronLsJSON(t *testing.T) {
+	testSetXDG(t)
 	workspace := newTestWorkspace(t)
 	var out, errOut bytes.Buffer
 	code := Execute([]string{"--workspace", workspace, "--json", "cron", "ls"},
@@ -65,6 +68,7 @@ func TestCronLsJSON(t *testing.T) {
 
 // TestCronAddUnknownJob verifies a clear error for an unknown job name.
 func TestCronAddUnknownJob(t *testing.T) {
+	testSetXDG(t)
 	workspace := newTestWorkspace(t)
 	var out, errOut bytes.Buffer
 	code := Execute([]string{"--workspace", workspace, "cron", "add", "nonexistent-job"},
@@ -79,6 +83,7 @@ func TestCronAddUnknownJob(t *testing.T) {
 
 // TestCronAddDryRun verifies --dry-run does not modify the crontab.
 func TestCronAddDryRun(t *testing.T) {
+	testSetXDG(t)
 	workspace := newTestWorkspace(t)
 	var out, errOut bytes.Buffer
 
@@ -98,6 +103,7 @@ func TestCronAddDryRun(t *testing.T) {
 
 // TestCronStatusNoJobs prints a helpful message when no jobs are installed.
 func TestCronStatusNoJobs(t *testing.T) {
+	testSetXDG(t)
 	workspace := newTestWorkspace(t)
 	var out, errOut bytes.Buffer
 	code := Execute([]string{"--workspace", workspace, "cron", "status"},
@@ -112,6 +118,7 @@ func TestCronStatusNoJobs(t *testing.T) {
 
 // TestCronStatusUnknownJob verifies error for unknown job name.
 func TestCronStatusUnknownJob(t *testing.T) {
+	testSetXDG(t)
 	workspace := newTestWorkspace(t)
 	var out, errOut bytes.Buffer
 	code := Execute([]string{"--workspace", workspace, "cron", "status", "no-such-job"},
@@ -123,6 +130,7 @@ func TestCronStatusUnknownJob(t *testing.T) {
 
 // TestCronLogEmpty returns 0 and a helpful message when the log is absent.
 func TestCronLogEmpty(t *testing.T) {
+	testSetXDG(t)
 	workspace := newTestWorkspace(t)
 
 	// Point HOME to a temp dir so the log path resolves to an absent file.
@@ -142,6 +150,7 @@ func TestCronLogEmpty(t *testing.T) {
 
 // TestCronLogJobFilter shows only entries matching the named job.
 func TestCronLogJobFilter(t *testing.T) {
+	testSetXDG(t)
 	workspace := newTestWorkspace(t)
 
 	// Pre-create a log file in the expected location.
@@ -175,6 +184,7 @@ func TestCronLogJobFilter(t *testing.T) {
 
 // TestCronRmMissingArg verifies error when no job name is given to rm.
 func TestCronRmMissingArg(t *testing.T) {
+	testSetXDG(t)
 	workspace := newTestWorkspace(t)
 	var out, errOut bytes.Buffer
 	code := Execute([]string{"--workspace", workspace, "cron", "rm"},
@@ -186,6 +196,7 @@ func TestCronRmMissingArg(t *testing.T) {
 
 // TestCronUnknownSubcommand verifies the error for an unknown subcommand.
 func TestCronUnknownSubcommand(t *testing.T) {
+	testSetXDG(t)
 	workspace := newTestWorkspace(t)
 	var out, errOut bytes.Buffer
 	code := Execute([]string{"--workspace", workspace, "cron", "bogus"},

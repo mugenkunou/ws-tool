@@ -9,6 +9,7 @@ import (
 )
 
 func TestTrashStatusAndSetupFromCLI(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -46,6 +47,7 @@ func TestTrashStatusAndSetupFromCLI(t *testing.T) {
 }
 
 func TestTrashEmptyFromCLI(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -84,6 +86,7 @@ func TestTrashEmptyFromCLI(t *testing.T) {
 }
 
 func TestTrashEmptyDryRunFromCLI(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 

@@ -9,6 +9,7 @@ import (
 )
 
 func TestCaptureRequiresInit(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -22,6 +23,7 @@ func TestCaptureRequiresInit(t *testing.T) {
 }
 
 func TestCaptureLsDefaultOnly(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -47,6 +49,7 @@ func TestCaptureLsDefaultOnly(t *testing.T) {
 }
 
 func TestCaptureLsJson(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -69,6 +72,7 @@ func TestCaptureLsJson(t *testing.T) {
 }
 
 func TestCaptureLsWithLocations(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -80,7 +84,7 @@ func TestCaptureLsWithLocations(t *testing.T) {
 	}
 
 	personalDir := filepath.Join(t.TempDir(), "Personal")
-	configPath := filepath.Join(workspace, "ws", "config.json")
+	configPath := xdgConfigPath(t)
 	configContent := `{
   "config_schema": 1,
   "capture": {
@@ -110,6 +114,7 @@ func TestCaptureLsWithLocations(t *testing.T) {
 }
 
 func TestCaptureEditOpensEditor(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -129,6 +134,7 @@ func TestCaptureEditOpensEditor(t *testing.T) {
 }
 
 func TestCaptureEditWithLocation(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -140,7 +146,7 @@ func TestCaptureEditWithLocation(t *testing.T) {
 	}
 
 	personalDir := filepath.Join(t.TempDir(), "Personal")
-	configPath := filepath.Join(workspace, "ws", "config.json")
+	configPath := xdgConfigPath(t)
 	configContent := `{
   "config_schema": 1,
   "capture": {
@@ -168,6 +174,7 @@ func TestCaptureEditWithLocation(t *testing.T) {
 }
 
 func TestCapturePipeStdin(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -200,6 +207,7 @@ func TestCapturePipeStdin(t *testing.T) {
 }
 
 func TestCapturePipeWithLocation(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -211,7 +219,7 @@ func TestCapturePipeWithLocation(t *testing.T) {
 	}
 
 	personalDir := filepath.Join(t.TempDir(), "Personal")
-	configPath := filepath.Join(workspace, "ws", "config.json")
+	configPath := xdgConfigPath(t)
 	configContent := `{
   "config_schema": 1,
   "capture": {
@@ -244,6 +252,7 @@ func TestCapturePipeWithLocation(t *testing.T) {
 }
 
 func TestCaptureMultiplePipedEntries(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -285,6 +294,7 @@ func TestCaptureMultiplePipedEntries(t *testing.T) {
 }
 
 func TestCaptureDryRun(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -313,6 +323,7 @@ func TestCaptureDryRun(t *testing.T) {
 }
 
 func TestCaptureDefaultLocationReserved(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -323,7 +334,7 @@ func TestCaptureDefaultLocationReserved(t *testing.T) {
 		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
 	}
 
-	configPath := filepath.Join(workspace, "ws", "config.json")
+	configPath := xdgConfigPath(t)
 	configContent := `{
   "config_schema": 1,
   "capture": {
@@ -348,6 +359,7 @@ func TestCaptureDefaultLocationReserved(t *testing.T) {
 }
 
 func TestCaptureHelpOutput(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -377,6 +389,7 @@ func TestCaptureHelpOutput(t *testing.T) {
 }
 
 func TestCaptureCreatesDirectoryOnFirstUse(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -410,6 +423,7 @@ func TestCaptureCreatesDirectoryOnFirstUse(t *testing.T) {
 }
 
 func TestCaptureAmendPipedText(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -452,6 +466,7 @@ func TestCaptureAmendPipedText(t *testing.T) {
 }
 
 func TestCaptureAmendShortFlag(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -488,6 +503,7 @@ func TestCaptureAmendShortFlag(t *testing.T) {
 }
 
 func TestCaptureAmendNoExistingEntry(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -507,6 +523,7 @@ func TestCaptureAmendNoExistingEntry(t *testing.T) {
 }
 
 func TestCaptureAmendDryRun(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -539,6 +556,7 @@ func TestCaptureAmendDryRun(t *testing.T) {
 }
 
 func TestCaptureAmendWithLocation(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -550,7 +568,7 @@ func TestCaptureAmendWithLocation(t *testing.T) {
 	}
 
 	workDir := filepath.Join(t.TempDir(), "Work")
-	configPath := filepath.Join(workspace, "ws", "config.json")
+	configPath := xdgConfigPath(t)
 	configContent := `{
   "config_schema": 1,
   "capture": {
@@ -596,6 +614,7 @@ func TestCaptureAmendWithLocation(t *testing.T) {
 }
 
 func TestCapturePositionalLocationDefault(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -621,6 +640,7 @@ func TestCapturePositionalLocationDefault(t *testing.T) {
 }
 
 func TestCaptureUnknownLocationErrors(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")

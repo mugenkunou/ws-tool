@@ -23,7 +23,7 @@ func runLog(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 		return printCmdHelp(stdout, logHelp)
 	}
 
-	_, configPath, _, err := requireWorkspaceInitialized(globals, stderr)
+	resolvedWorkspace, configPath, _, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -34,14 +34,8 @@ func runLog(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 		return 1
 	}
 
-	// Log sessions live under <scratch_root>/.ws-log/ (dot-prefix avoids
-	// collision with user scratch directories).
-	scratchRoot, err := config.ResolvePath("", cfg.Scratch.RootDir)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error resolving scratch root: %s\n", err)
-		return 1
-	}
-	logDir := filepath.Join(scratchRoot, ".ws-log")
+	// Log sessions live under <workspace>/ws/ws-log/.
+	logDir := filepath.Join(resolvedWorkspace, "ws", "ws-log")
 
 	if len(args) == 0 {
 		return printUsageError(stderr, logHelp)
@@ -148,8 +142,33 @@ func runLog(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 		// Record PID so ws log stop can signal the process.
 		wslog.SetActivePID(logDir, scriptCmd.Process.Pid)
 
+		// Monitor session size and terminate if over limit.
+		maxSessionMB := cfg.Log.MaxSessionMB
+		if maxSessionMB <= 0 {
+			maxSessionMB = 100
+		}
+		sizeDone := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			maxBytes := int64(maxSessionMB) * 1024 * 1024
+			for {
+				select {
+				case <-sizeDone:
+					return
+				case <-ticker.C:
+					totalSize := logFileSize(res.StdinPath) + logFileSize(res.StdoutPath)
+					if totalSize >= maxBytes {
+						_ = scriptCmd.Process.Signal(syscall.SIGTERM)
+						return
+					}
+				}
+			}
+		}()
+
 		// Block until the recording session ends (exit, Ctrl-D, or SIGTERM).
 		scriptCmd.Wait()
+		close(sizeDone)
 
 		// Finalize the session (idempotent — skips if ws log stop already finalized).
 		stopRes, _ := wslog.Stop(wslog.StopOptions{LogDir: logDir})

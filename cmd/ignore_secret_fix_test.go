@@ -10,6 +10,7 @@ import (
 )
 
 func TestSecretFixAllowlistBatch(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out, errOut bytes.Buffer
 
@@ -59,6 +60,7 @@ func TestSecretFixAllowlistBatch(t *testing.T) {
 }
 
 func TestSecretFixExcludeBatch(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out, errOut bytes.Buffer
 
@@ -93,6 +95,7 @@ func TestSecretFixExcludeBatch(t *testing.T) {
 }
 
 func TestSecretFixDryRun(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out, errOut bytes.Buffer
 
@@ -120,6 +123,7 @@ func TestSecretFixDryRun(t *testing.T) {
 }
 
 func TestSecretFixNoViolations(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out, errOut bytes.Buffer
 
@@ -143,6 +147,7 @@ func TestSecretFixNoViolations(t *testing.T) {
 }
 
 func TestSecretFixJSON(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out, errOut bytes.Buffer
 
@@ -175,6 +180,7 @@ func TestSecretFixJSON(t *testing.T) {
 }
 
 func TestSecretFixInteractiveAllowlist(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out, errOut bytes.Buffer
 
@@ -203,6 +209,7 @@ func TestSecretFixInteractiveAllowlist(t *testing.T) {
 }
 
 func TestSecretFixInteractiveExclude(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out, errOut bytes.Buffer
 
@@ -231,6 +238,7 @@ func TestSecretFixInteractiveExclude(t *testing.T) {
 }
 
 func TestSecretFixInteractiveViewThenSkip(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out, errOut bytes.Buffer
 
@@ -263,6 +271,7 @@ func TestSecretFixInteractiveViewThenSkip(t *testing.T) {
 }
 
 func TestSecretFixInteractiveQuit(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out, errOut bytes.Buffer
 
@@ -292,6 +301,7 @@ func TestSecretFixInteractiveQuit(t *testing.T) {
 }
 
 func TestSecretSetupAlreadySetUp(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out, errOut bytes.Buffer
 
@@ -312,6 +322,7 @@ func TestSecretSetupAlreadySetUp(t *testing.T) {
 }
 
 func TestSecretFixInvalidMode(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out, errOut bytes.Buffer
 

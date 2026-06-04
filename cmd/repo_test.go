@@ -10,6 +10,7 @@ import (
 )
 
 func TestRepoLsAndScan(t *testing.T) {
+	testSetXDG(t)
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -81,6 +82,7 @@ func runGitLocal(t *testing.T, dir string, args ...string) {
 }
 
 func TestRepoSync(t *testing.T) {
+	testSetXDG(t)
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -139,6 +141,7 @@ func TestRepoSync(t *testing.T) {
 }
 
 func TestRepoExcludesWsDir(t *testing.T) {
+	testSetXDG(t)
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -188,6 +191,7 @@ func TestRepoExcludesWsDir(t *testing.T) {
 }
 
 func TestRepoScanNoFetch(t *testing.T) {
+	testSetXDG(t)
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}

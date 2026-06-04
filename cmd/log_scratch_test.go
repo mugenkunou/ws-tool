@@ -10,6 +10,7 @@ import (
 )
 
 func TestLogCommandsFlow(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -46,6 +47,7 @@ func TestLogCommandsFlow(t *testing.T) {
 }
 
 func TestScratchCommandsFlow(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -95,6 +97,7 @@ func TestScratchCommandsFlow(t *testing.T) {
 }
 
 func TestScratchDeleteAndAgeFormatting(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -137,6 +140,7 @@ func TestScratchDeleteAndAgeFormatting(t *testing.T) {
 }
 
 func TestScratchOpenJSON(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -166,6 +170,7 @@ func TestScratchOpenJSON(t *testing.T) {
 }
 
 func TestScratchOpenNotFound(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -188,6 +193,7 @@ func TestScratchOpenNotFound(t *testing.T) {
 }
 
 func TestScratchOpenSubstringMatch(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
@@ -216,6 +222,7 @@ func TestScratchOpenSubstringMatch(t *testing.T) {
 }
 
 func TestScratchOpenPrintPath(t *testing.T) {
+	testSetXDG(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(t.TempDir(), "Workspace")

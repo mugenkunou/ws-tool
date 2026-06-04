@@ -1,51 +1,55 @@
 package scratch
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/mugenkunou/ws-tool/internal/manifest"
 )
 
-// TagCollection is the workspace-level tag vocabulary stored in ws/tags.json.
+// TagCollection is the workspace-level tag vocabulary stored in manifest.json.
 type TagCollection struct {
 	Tags []string `json:"tags"`
 }
 
-// LoadTags reads the tag collection from wsDir/tags.json.
-// Returns an empty collection (no error) if the file does not exist.
+// LoadTags reads the tag collection from the manifest at wsDir/manifest.json.
+// Returns an empty collection (no error) if the manifest does not exist.
 func LoadTags(wsDir string) (TagCollection, error) {
-	p := filepath.Join(wsDir, "tags.json")
-	data, err := os.ReadFile(p)
+	p := filepath.Join(wsDir, "manifest.json")
+	m, err := manifest.Load(p)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return TagCollection{Tags: []string{}}, nil
 		}
 		return TagCollection{}, err
 	}
-	var tc TagCollection
-	if err := json.Unmarshal(data, &tc); err != nil {
-		return TagCollection{}, err
+	tags := m.ScratchTags
+	if tags == nil {
+		tags = []string{}
 	}
-	if tc.Tags == nil {
-		tc.Tags = []string{}
-	}
-	return tc, nil
+	return TagCollection{Tags: tags}, nil
 }
 
-// SaveTags writes the tag collection to wsDir/tags.json.
+// SaveTags writes the tag collection into the manifest at wsDir/manifest.json.
 func SaveTags(wsDir string, tc TagCollection) error {
 	if tc.Tags == nil {
 		tc.Tags = []string{}
 	}
 	sort.Strings(tc.Tags)
-	data, err := json.MarshalIndent(tc, "", "  ")
+
+	p := filepath.Join(wsDir, "manifest.json")
+	m, err := manifest.Load(p)
 	if err != nil {
-		return err
+		if os.IsNotExist(err) {
+			m = manifest.Default()
+		} else {
+			return err
+		}
 	}
-	data = append(data, '\n')
-	return os.WriteFile(filepath.Join(wsDir, "tags.json"), data, 0o644)
+	m.ScratchTags = tc.Tags
+	return manifest.Save(p, m)
 }
 
 // MergeTags adds new tags to the collection, deduplicating and sorting.

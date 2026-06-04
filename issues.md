@@ -1,2 +1,3 @@
 - keyboard shortcuts can be synced to dotfile as well. maybe in a generic way.
 - ws repo should warn if any git repos doesn't have basic details configured like user.name or user.email
+- fix the annoying tests and github logouts

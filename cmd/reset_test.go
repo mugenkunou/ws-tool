@@ -7,10 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/provision"
 )
 
 func TestUninitFailsWithoutWorkspace(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
@@ -25,6 +27,7 @@ func TestUninitFailsWithoutWorkspace(t *testing.T) {
 }
 
 func TestInitAlreadyInitializedWarns(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
@@ -51,6 +54,7 @@ func TestInitAlreadyInitializedWarns(t *testing.T) {
 }
 
 func TestInitAlreadyInitializedJSON(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
@@ -74,6 +78,7 @@ func TestInitAlreadyInitializedJSON(t *testing.T) {
 }
 
 func TestInitRecordsProvisions(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
@@ -82,19 +87,19 @@ func TestInitRecordsProvisions(t *testing.T) {
 		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
 	}
 
-	provPath := provision.LedgerPath(workspace)
-	ledger, err := provision.Load(provPath)
+	manifestPath := filepath.Join(workspace, "ws", "manifest.json")
+	m, err := manifest.Load(manifestPath)
 	if err != nil {
-		t.Fatalf("load provisions: %v", err)
+		t.Fatalf("load manifest: %v", err)
 	}
 
-	if len(ledger.Entries) == 0 {
+	if len(m.Provisions) == 0 {
 		t.Fatal("expected provisions to be recorded after init")
 	}
 
 	// Should have recorded ws/ dir, config.json, manifest.json, .megaignore.
 	types := map[provision.Type]int{}
-	for _, e := range ledger.Entries {
+	for _, e := range m.Provisions {
 		types[e.Type]++
 		if e.Command != "init" {
 			t.Fatalf("expected command 'init', got %q", e.Command)
@@ -109,6 +114,7 @@ func TestInitRecordsProvisions(t *testing.T) {
 }
 
 func TestUninitRemovesWSDirectory(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
@@ -143,6 +149,7 @@ func TestUninitRemovesWSDirectory(t *testing.T) {
 }
 
 func TestUninitDryRunPreservesFiles(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
@@ -172,6 +179,7 @@ func TestUninitDryRunPreservesFiles(t *testing.T) {
 }
 
 func TestUninitUndoesProvisions(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
@@ -184,8 +192,8 @@ func TestUninitUndoesProvisions(t *testing.T) {
 	// Manually record a provision to test undo (a file outside ws/).
 	externalFile := filepath.Join(t.TempDir(), "ws-trash-rm")
 	os.WriteFile(externalFile, []byte("#!/bin/bash"), 0o755)
-	provPath := provision.LedgerPath(workspace)
-	provision.Record(provPath, provision.Entry{
+	manifestPath := filepath.Join(workspace, "ws", "manifest.json")
+	manifest.RecordProvision(manifestPath, provision.Entry{
 		Type:    provision.TypeFile,
 		Path:    externalFile,
 		Command: "trash enable",
@@ -216,6 +224,7 @@ func TestUninitUndoesProvisions(t *testing.T) {
 }
 
 func TestUninitJSON(t *testing.T) {
+	testSetXDG(t)
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out bytes.Buffer
 	var errOut bytes.Buffer
