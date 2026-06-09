@@ -198,9 +198,10 @@ func TestReadState_parsesRecords(t *testing.T) {
 	dir := t.TempDir()
 	stateFile := filepath.Join(dir, "cron.state")
 
-	content := "mega-sync 2026-05-08T10:00:00Z 0\n" +
-		"log-prune 2026-05-08T02:00:00Z 1\n" +
-		"mega-sync 2026-05-08T10:30:00Z 0\n"
+	content := `{"job":"mega-sync","ts":"2026-05-08T10:00:00Z","exit":0}
+{"job":"log-prune","ts":"2026-05-08T02:00:00Z","exit":1}
+{"job":"mega-sync","ts":"2026-05-08T10:30:00Z","exit":0}
+`
 	if err := os.WriteFile(stateFile, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -224,8 +225,9 @@ func TestLastRun_returnsLatest(t *testing.T) {
 	dir := t.TempDir()
 	stateFile := filepath.Join(dir, "cron.state")
 
-	content := "mega-sync 2026-05-08T10:00:00Z 0\n" +
-		"mega-sync 2026-05-08T10:30:00Z 0\n"
+	content := `{"job":"mega-sync","ts":"2026-05-08T10:00:00Z","exit":0}
+{"job":"mega-sync","ts":"2026-05-08T10:30:00Z","exit":0}
+`
 	if err := os.WriteFile(stateFile, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}

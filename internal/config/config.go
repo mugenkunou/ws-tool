@@ -28,6 +28,34 @@ func DefaultPath() (string, error) {
 	return filepath.Join(dir, "ws-tool", "config.json"), nil
 }
 
+// StateDir returns the XDG-compliant state directory for ws-tool.
+// Resolution: $XDG_STATE_HOME/ws-tool → ~/.local/state/ws-tool
+func StateDir() (string, error) {
+	dir := os.Getenv("XDG_STATE_HOME")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		dir = filepath.Join(home, ".local", "state")
+	}
+	return filepath.Join(dir, "ws-tool"), nil
+}
+
+// DataDir returns the XDG-compliant data directory for ws-tool.
+// Resolution: $XDG_DATA_HOME/ws-tool → ~/.local/share/ws-tool
+func DataDir() (string, error) {
+	dir := os.Getenv("XDG_DATA_HOME")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		dir = filepath.Join(home, ".local", "share")
+	}
+	return filepath.Join(dir, "ws-tool"), nil
+}
+
 type Config struct {
 	ConfigSchema int     `json:"config_schema"`
 	Workspace    string  `json:"workspace,omitempty"`
@@ -81,12 +109,8 @@ type Dotfile struct {
 
 type DotfileGit struct {
 	Enabled      bool   `json:"enabled"`
-	RemoteURL    string `json:"remote_url"`
-	AuthUsername string `json:"auth_username"`
-	PassEntry    string `json:"pass_entry"`
-	Branch       string `json:"branch"`
-	AutoCommit   bool   `json:"auto_commit"`
-	AutoPush     bool   `json:"auto_push"`
+	AuthUsername string `json:"auth_username,omitempty"`
+	PassEntry    string `json:"pass_entry,omitempty"`
 }
 
 type Ignore struct {
@@ -145,11 +169,7 @@ func Default() Config {
 			MaxResults:     0,
 		},
 		Dotfile: Dotfile{Git: DotfileGit{
-			Enabled:    false,
-			RemoteURL:  "",
-			Branch:     "main",
-			AutoCommit: true,
-			AutoPush:   true,
+			Enabled: false,
 		}},
 		Repo: Repo{
 			Roots:           []string{"."},

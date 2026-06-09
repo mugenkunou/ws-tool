@@ -43,9 +43,12 @@ func TestMain(m *testing.M) {
 
 // testSetXDG sets XDG_CONFIG_HOME to a test-scoped temp dir for isolation.
 // Must be called at the start of any test that calls ws init.
+// It also sets PASSWORD_STORE_DIR to an isolated temp dir so that the real
+// ~/.password-store is never included in repo operations during tests.
 func testSetXDG(t *testing.T) {
 	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("PASSWORD_STORE_DIR", t.TempDir())
 }
 
 // testConfigPath returns a per-test config path inside a test-scoped temp dir.

@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/mugenkunou/ws-tool/internal/config"
 )
 
 type SetupOptions struct {
@@ -222,6 +224,10 @@ func Scan(opts ScanOptions) (ScanResult, error) {
 		if d.IsDir() {
 			return nil
 		}
+		// Skip .meta sidecars — they are implementation bookkeeping, not user content.
+		if strings.HasSuffix(d.Name(), ".meta") {
+			return nil
+		}
 		fi, err := d.Info()
 		if err != nil {
 			return nil
@@ -295,14 +301,11 @@ func Empty(opts EmptyOptions) (EmptyResult, error) {
 }
 
 func stateFilePath() (string, error) {
-	home, err := os.UserHomeDir()
+	dir, err := config.StateDir()
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(home) == "" {
-		return "", errors.New("cannot resolve user home directory")
-	}
-	return filepath.Join(home, ".config", "ws-tool", "trash-setup.json"), nil
+	return filepath.Join(dir, "trash-setup.json"), nil
 }
 
 func expandPath(path string) (string, error) {
@@ -366,7 +369,11 @@ for arg in "$@"; do
   base="$(basename -- "$arg")"
   ts="$(date +%%Y%%m%%d-%%H%%M%%S)"
   dest="$trash_root/${base}.${ts}.$$"
+  orig="$(realpath -m -- "$arg" 2>/dev/null || echo "$arg")"
   mv -- "$arg" "$dest"
+  printf '{"original_path":%%s,"trashed_at":"%%s"}\n' \
+    "$(printf '%%s' "$orig" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+    "$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)" > "${dest}.meta"
 done
 `, trashRoot)
 

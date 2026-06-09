@@ -2,6 +2,7 @@ package cron
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -16,8 +17,17 @@ type RunRecord struct {
 	ExitCode int
 }
 
+// jsonRecord is the on-disk JSONL representation of a RunRecord.
+type jsonRecord struct {
+	Job  string `json:"job"`
+	TS   string `json:"ts"`
+	Exit int    `json:"exit"`
+}
+
 // ReadState reads all run records from the state file.
-// Returns nil slice (not error) if the file does not exist.
+// Supports both the current JSONL format and the legacy space-delimited format
+// for backward compatibility. Returns nil slice (not error) if the file does
+// not exist.
 func ReadState(statePath string) ([]RunRecord, error) {
 	f, err := os.Open(statePath)
 	if err != nil {
@@ -35,21 +45,44 @@ func ReadState(statePath string) ([]RunRecord, error) {
 		if line == "" {
 			continue
 		}
-		parts := strings.Fields(line)
-		if len(parts) != 3 {
+		if r, ok := parseJSONLine(line); ok {
+			records = append(records, r)
 			continue
 		}
-		t, err := time.Parse(time.RFC3339, parts[1])
-		if err != nil {
-			continue
+		// Fall back to legacy format: "<job> <ts> <exit>".
+		if r, ok := parseLegacyLine(line); ok {
+			records = append(records, r)
 		}
-		code, err := strconv.Atoi(parts[2])
-		if err != nil {
-			continue
-		}
-		records = append(records, RunRecord{Job: parts[0], Time: t, ExitCode: code})
 	}
 	return records, sc.Err()
+}
+
+func parseJSONLine(line string) (RunRecord, bool) {
+	var jr jsonRecord
+	if err := json.Unmarshal([]byte(line), &jr); err != nil {
+		return RunRecord{}, false
+	}
+	t, err := time.Parse(time.RFC3339, jr.TS)
+	if err != nil {
+		return RunRecord{}, false
+	}
+	return RunRecord{Job: jr.Job, Time: t, ExitCode: jr.Exit}, true
+}
+
+func parseLegacyLine(line string) (RunRecord, bool) {
+	parts := strings.Fields(line)
+	if len(parts) != 3 {
+		return RunRecord{}, false
+	}
+	t, err := time.Parse(time.RFC3339, parts[1])
+	if err != nil {
+		return RunRecord{}, false
+	}
+	code, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return RunRecord{}, false
+	}
+	return RunRecord{Job: parts[0], Time: t, ExitCode: code}, true
 }
 
 // LastRun returns the most recent run record for the named job.

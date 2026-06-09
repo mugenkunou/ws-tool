@@ -122,7 +122,25 @@ func runCredentialSetup(args []string, globals globalFlags, stdin io.Reader, std
 	if binErr != nil {
 		wsBin = "ws"
 	}
-	helperValue := fmt.Sprintf("!%s git-credential-helper", wsBin)
+	_ = wsBin // the wrapper script resolves ws from PATH at runtime
+
+	wrapperPath, wrapErr := credentialWrapperPath()
+	if wrapErr != nil {
+		fmt.Fprintln(stderr, style.ResultError(nc, "cannot resolve wrapper path: %v", wrapErr))
+		return 1
+	}
+	helperValue := "!" + wrapperPath + " git-credential-helper"
+
+	// Install the wrapper script if missing or stale.
+	if needsWrapperInstall(wrapperPath) {
+		plan.Actions = append(plan.Actions, Action{
+			ID:          "install-wrapper",
+			Description: fmt.Sprintf("Install credential helper wrapper at %s", wrapperPath),
+			Execute: func() error {
+				return installCredentialWrapper(wrapperPath)
+			},
+		})
+	}
 
 	// Connect or reconcile global credential helper.
 	currentHelper := gitConfigGet("credential.helper")
@@ -711,7 +729,7 @@ func helperPathStatus(helperValue string, nc bool) (string, string, bool) {
 		return style.Badge("disconnected", nc), style.Mutedf(nc, "(not a ws helper)"), false
 	}
 
-	// Extract binary path from "!<path> git-credential-helper"
+	// Extract binary/script path from "!<path> git-credential-helper"
 	binPath := helperValue
 	if strings.HasPrefix(binPath, "!") {
 		binPath = binPath[1:]
@@ -722,18 +740,6 @@ func helperPathStatus(helperValue string, nc bool) (string, string, bool) {
 
 	if _, err := os.Stat(binPath); err != nil {
 		return style.Badge("stale", nc), fmt.Sprintf("binary not found: %s", binPath), false
-	}
-
-	// Check if the configured path matches the currently running binary.
-	currentBin, err := os.Executable()
-	if err == nil {
-		// Resolve both to handle symlinks.
-		resolvedConfigured, e1 := filepath.EvalSymlinks(binPath)
-		resolvedCurrent, e2 := filepath.EvalSymlinks(currentBin)
-		if e1 == nil && e2 == nil && resolvedConfigured != resolvedCurrent {
-			return style.Badge("connected", nc),
-				fmt.Sprintf("path mismatch (configured: %s, running: %s)", binPath, currentBin), true
-		}
 	}
 
 	return style.Badge("connected", nc), "", true
@@ -747,6 +753,38 @@ func runPassInsertInteractive(entry string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// credentialWrapperPath returns the stable path for the ws credential helper
+// wrapper script (~/.local/bin/ws-credential-helper). This path is written
+// into gitconfig so that moving the ws binary only requires updating PATH,
+// not reconfiguring git.
+func credentialWrapperPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".local", "bin", "ws-credential-helper"), nil
+}
+
+// needsWrapperInstall returns true when the wrapper script is absent or does
+// not contain the expected shebang (i.e., it was never installed or is stale).
+func needsWrapperInstall(wrapperPath string) bool {
+	content, err := os.ReadFile(wrapperPath)
+	if err != nil {
+		return true
+	}
+	return !strings.Contains(string(content), "ws git-credential-helper")
+}
+
+// installCredentialWrapper writes the stable wrapper script to wrapperPath.
+// The script execs `ws git-credential-helper "$@"`, resolving ws from PATH.
+func installCredentialWrapper(wrapperPath string) error {
+	if err := os.MkdirAll(filepath.Dir(wrapperPath), 0o755); err != nil {
+		return err
+	}
+	script := "#!/bin/sh\nexec ws git-credential-helper \"$@\"\n"
+	return os.WriteFile(wrapperPath, []byte(script), 0o755)
 }
 
 func boolIcon(ok bool, nc bool) string {

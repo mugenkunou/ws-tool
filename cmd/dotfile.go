@@ -135,7 +135,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		planResult := RunPlan(plan, stdin, stdout, globals)
 		if planResult.ExecutedCount() > 0 && !planResult.HasFailures() {
 			label := targetPath
-			dotfileGitAutoSync(workspacePath, configPath, "dotfile add: "+label, globals, stdout)
+			dotfileGitAutoSync(workspacePath, configPath, manifestPath, "dotfile add: "+label, globals, stdout)
 		}
 		if globals.json {
 			return writeJSONDryRun(stdout, stderr, "dotfile.add", globals.dryRun, map[string]any{
@@ -177,7 +177,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		})
 		planResult := RunPlan(plan, stdin, stdout, globals)
 		if planResult.ExecutedCount() > 0 && !planResult.HasFailures() {
-			dotfileGitAutoSync(workspacePath, configPath, "dotfile rm: "+targetPath, globals, stdout)
+			dotfileGitAutoSync(workspacePath, configPath, manifestPath, "dotfile rm: "+targetPath, globals, stdout)
 		}
 		if globals.json {
 			return writeJSONDryRun(stdout, stderr, "dotfile.rm", globals.dryRun, map[string]any{
@@ -328,6 +328,11 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
+		mani, err := manifest.Load(manifestPath)
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
 		repoPath := filepath.Join(workspacePath, "ws", "dotfiles")
 
 		switch subArgs[0] {
@@ -381,11 +386,14 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 					if err := dotfile.GitAddRemote(repoPath, remoteURL); err != nil {
 						return err
 					}
-					cfg.Dotfile.Git.RemoteURL = remoteURL
+					mani.DotfileGit.RemoteURL = remoteURL
 					if *passEntry != "" {
 						cfg.Dotfile.Git.PassEntry = *passEntry
+						if err := config.Save(configPath, cfg); err != nil {
+							return err
+						}
 					}
-					return config.Save(configPath, cfg)
+					return manifest.Save(manifestPath, mani)
 				},
 			})
 			planResult := RunPlan(plan, stdin, stdout, globals)
@@ -432,8 +440,8 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			result := dotfile.GitSync(dotfile.GitSyncOptions{
 				WorkspacePath: workspacePath,
 				RepoPath:      repoPath,
-				RemoteURL:     cfg.Dotfile.Git.RemoteURL,
-				Branch:        cfg.Dotfile.Git.Branch,
+				RemoteURL:     mani.DotfileGit.RemoteURL,
+				Branch:        mani.DotfileGit.Branch,
 				AutoCommit:    true,
 				AutoPush:      false, // we handle push with visibility check below
 				CommitMessage: commitMsg,
@@ -455,7 +463,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 				return 1
 			}
 
-			branch := cfg.Dotfile.Git.Branch
+			branch := mani.DotfileGit.Branch
 			if err := dotfile.GitPush(repoPath, branch); err != nil {
 				fmt.Fprintln(stderr, style.ResultError(nc, "push failed: %s", err))
 				return 1
@@ -538,8 +546,8 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 				"git_remote":      hasRemote,
 				"remote_url":      remoteURL,
 				"branch":          branch,
-				"auto_commit":     cfg.Dotfile.Git.AutoCommit,
-				"auto_push":       cfg.Dotfile.Git.AutoPush,
+				"auto_commit":     mani.DotfileGit.AutoCommit,
+				"auto_push":       mani.DotfileGit.AutoPush,
 				"working_tree":    dirty,
 				"last_commit":     lastCommit,
 				"ahead":           ahead,
@@ -566,8 +574,8 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 				style.KV(out, "Remote", style.ResultWarning(nc, "none"), nc)
 			}
 			style.KV(out, "Working tree", dirty, nc)
-			style.KV(out, "Auto-commit", fmt.Sprintf("%t", cfg.Dotfile.Git.AutoCommit), nc)
-			style.KV(out, "Auto-push", fmt.Sprintf("%t", cfg.Dotfile.Git.AutoPush), nc)
+			style.KV(out, "Auto-commit", fmt.Sprintf("%t", mani.DotfileGit.AutoCommit), nc)
+			style.KV(out, "Auto-push", fmt.Sprintf("%t", mani.DotfileGit.AutoPush), nc)
 			if lastCommit != "" {
 				style.KV(out, "Last commit", lastCommit, nc)
 			}
@@ -600,7 +608,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 
 			// Step 1: git init if needed.
 			gitInited := dotfile.GitIsInitialized(repoPath)
-			branch := cfg.Dotfile.Git.Branch
+			branch := mani.DotfileGit.Branch
 			if branch == "" {
 				branch = "main"
 			}
@@ -614,11 +622,14 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 							return err
 						}
 						cfg.Dotfile.Git.Enabled = true
-						cfg.Dotfile.Git.AutoCommit = true
-						if cfg.Dotfile.Git.Branch == "" {
-							cfg.Dotfile.Git.Branch = branch
+						if err := config.Save(configPath, cfg); err != nil {
+							return err
 						}
-						return config.Save(configPath, cfg)
+						mani.DotfileGit.AutoCommit = true
+						if mani.DotfileGit.Branch == "" {
+							mani.DotfileGit.Branch = branch
+						}
+						return manifest.Save(manifestPath, mani)
 					},
 				})
 			}
@@ -657,21 +668,21 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 							if err := dotfile.GitAddRemote(repoPath, capturedURL); err != nil {
 								return err
 							}
-							cfg.Dotfile.Git.RemoteURL = capturedURL
-							return config.Save(configPath, cfg)
+							mani.DotfileGit.RemoteURL = capturedURL
+							return manifest.Save(manifestPath, mani)
 						},
 					})
 				}
 			}
 
 			// Step 3: enable auto-push if remote is being set and not already enabled.
-			if (hasRemote || remoteURL != "") && !cfg.Dotfile.Git.AutoPush {
+			if (hasRemote || remoteURL != "") && !mani.DotfileGit.AutoPush {
 				plan.Actions = append(plan.Actions, Action{
 					ID:          "enable-auto-push",
 					Description: "Enable auto-push on dotfile changes",
 					Execute: func() error {
-						cfg.Dotfile.Git.AutoPush = true
-						return config.Save(configPath, cfg)
+						mani.DotfileGit.AutoPush = true
+						return manifest.Save(manifestPath, mani)
 					},
 				})
 			}
@@ -730,9 +741,12 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 				Description: "Disable dotfile git versioning",
 				Execute: func() error {
 					cfg.Dotfile.Git.Enabled = false
-					cfg.Dotfile.Git.AutoPush = false
-					cfg.Dotfile.Git.AutoCommit = false
-					return config.Save(configPath, cfg)
+					if err := config.Save(configPath, cfg); err != nil {
+						return err
+					}
+					mani.DotfileGit.AutoPush = false
+					mani.DotfileGit.AutoCommit = false
+					return manifest.Save(manifestPath, mani)
 				},
 			})
 
@@ -888,7 +902,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		}
 
 		if exitCode == 0 {
-			dotfileGitAutoSync(workspacePath, configPath, "dotfile migrate", globals, stdout)
+			dotfileGitAutoSync(workspacePath, configPath, manifestPath, "dotfile migrate", globals, stdout)
 		}
 		return exitCode
 
@@ -1080,19 +1094,23 @@ func writeDotfileResult(globals globalFlags, command string, data any, stdout, s
 
 // dotfileGitAutoSync runs auto-commit/push if dotfile git is enabled.
 // Errors are non-fatal — they are printed as warnings, never block the parent command.
-func dotfileGitAutoSync(workspacePath, configPath, commitMessage string, globals globalFlags, stdout io.Writer) {
+func dotfileGitAutoSync(workspacePath, configPath, manifestPath, commitMessage string, globals globalFlags, stdout io.Writer) {
 	cfg, err := config.Load(configPath)
 	if err != nil || !cfg.Dotfile.Git.Enabled {
+		return
+	}
+	mani, err := manifest.Load(manifestPath)
+	if err != nil {
 		return
 	}
 	repoPath := filepath.Join(workspacePath, "ws", "dotfiles")
 	result := dotfile.GitSync(dotfile.GitSyncOptions{
 		WorkspacePath: workspacePath,
 		RepoPath:      repoPath,
-		RemoteURL:     cfg.Dotfile.Git.RemoteURL,
-		Branch:        cfg.Dotfile.Git.Branch,
-		AutoCommit:    cfg.Dotfile.Git.AutoCommit,
-		AutoPush:      cfg.Dotfile.Git.AutoPush,
+		RemoteURL:     mani.DotfileGit.RemoteURL,
+		Branch:        mani.DotfileGit.Branch,
+		AutoCommit:    mani.DotfileGit.AutoCommit,
+		AutoPush:      mani.DotfileGit.AutoPush,
 		CommitMessage: commitMessage,
 	})
 	out := textOut(globals, stdout)

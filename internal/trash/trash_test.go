@@ -57,7 +57,7 @@ func TestSetupDryRunDoesNotWriteState(t *testing.T) {
 		t.Fatal("expected dry-run result")
 	}
 
-	statePath := filepath.Join(home, ".config", "ws-tool", "trash-setup.json")
+	statePath := filepath.Join(home, ".local", "state", "ws-tool", "trash-setup.json")
 	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
 		t.Fatalf("state file should not exist on dry-run, got err=%v", err)
 	}

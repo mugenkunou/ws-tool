@@ -12,16 +12,28 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/provision"
 )
 
-const CurrentSchema = 2
+const CurrentSchema = 3
 
 type Manifest struct {
 	ManifestSchema int               `json:"manifest_schema"`
 	Dotfiles       []DotfileRecord   `json:"dotfiles"`
+	DotfileGit     DotfileGitConfig  `json:"dotfile_git"`
 	Secret         ManifestSecret    `json:"secret"`
 	Repo           ManifestRepo      `json:"repo"`
 	ScratchTags    []string          `json:"scratch_tags,omitempty"`
 	Provisions     []provision.Entry `json:"provisions"`
 	Ignore         ignore.UserRules  `json:"ignore"`
+}
+
+// DotfileGitConfig holds workspace-scoped dotfile git settings that belong
+// in the manifest (synced with the workspace) rather than config.json
+// (machine-local). Machine-local settings (pass_entry, auth_username) remain
+// in config.Dotfile.
+type DotfileGitConfig struct {
+	RemoteURL  string `json:"remote_url,omitempty"`
+	Branch     string `json:"branch,omitempty"`
+	AutoCommit bool   `json:"auto_commit"`
+	AutoPush   bool   `json:"auto_push"`
 }
 
 type DotfileRecord struct {
@@ -50,6 +62,7 @@ func Default() Manifest {
 	return Manifest{
 		ManifestSchema: CurrentSchema,
 		Dotfiles:       []DotfileRecord{},
+		DotfileGit:     DotfileGitConfig{Branch: "main", AutoCommit: true, AutoPush: true},
 		Secret:         ManifestSecret{Allowlist: []string{}},
 		Repo:           ManifestRepo{Tracked: []RepoRecord{}},
 		Provisions:     []provision.Entry{},
@@ -81,7 +94,27 @@ func Load(path string) (Manifest, error) {
 		m.Provisions = []provision.Entry{}
 	}
 
+	// Run migration chain to bring the manifest up to CurrentSchema.
+	m = migrate(m)
+
 	return m, nil
+}
+
+// migrate applies all in-manifest schema upgrades in sequence.
+// Each step upgrades from version N to N+1, filling in defaults for new fields.
+func migrate(m Manifest) Manifest {
+	// v2 → v3: promote dotfile git workspace settings into the manifest.
+	// New fields default to safe values; nothing to copy from the old location
+	// (config.json) since that is a separate file the manifest cannot read.
+	// The DotfileGit field unmarshals to its zero value on a schema-2 document,
+	// so we apply sensible defaults here.
+	if m.ManifestSchema < 3 {
+		if m.DotfileGit.Branch == "" {
+			m.DotfileGit.Branch = "main"
+		}
+		m.ManifestSchema = 3
+	}
+	return m
 }
 
 func Save(path string, m Manifest) error {

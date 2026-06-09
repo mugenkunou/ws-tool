@@ -11,7 +11,7 @@ import "fmt"
 //     half the job's interval (used by the @reboot crontab entry so the job
 //     does not fire redundantly on a normal boot).
 //  4. Runs the job-specific body in a subshell, capturing exit code.
-//  5. Appends a state record "<name> <timestamp> <exit_code>" to the state file.
+//  5. Appends a JSONL state record to the state file.
 func GenerateScript(job *BuiltinJob, wsBin, display, workspace, statePath, logPath string) string {
 	body := job.scriptBody(wsBin, display, workspace)
 	return fmt.Sprintf(`#!/usr/bin/env bash
@@ -44,9 +44,9 @@ fi
 # When the machine resumes or reboots, the @reboot crontab entry fires this
 # script. We skip if the last successful run was within half the interval
 # (indicating the machine was not suspended long enough to miss a cycle).
-LAST_LINE=$(grep "^$WS_JOB " "$WS_STATE" 2>/dev/null | tail -1)
+LAST_LINE=$(grep '"job":"'"$WS_JOB"'"' "$WS_STATE" 2>/dev/null | tail -1)
 if [ -n "$LAST_LINE" ]; then
-    LAST_TS=$(echo "$LAST_LINE" | awk '{print $2}')
+    LAST_TS=$(echo "$LAST_LINE" | grep -o '"ts":"[^"]*"' | cut -d'"' -f4)
     NOW_EPOCH=$(date +%%s)
     LAST_EPOCH=$(date -d "$LAST_TS" +%%s 2>/dev/null || echo 0)
     ELAPSED=$(( NOW_EPOCH - LAST_EPOCH ))
@@ -65,10 +65,12 @@ EXIT_CODE=0
 %s
 ) || EXIT_CODE=$?
 
-# ── state update ──────────────────────────────────────────────────────────────
+# ── state update (JSONL) ──────────────────────────────────────────────────────
 NOW_TS=$(date -u +"%%Y-%%m-%%dT%%H:%%M:%%SZ")
 mkdir -p "$(dirname "$WS_STATE")"
-echo "$WS_JOB $NOW_TS $EXIT_CODE" >> "$WS_STATE"
+printf '{"job":%%s,"ts":"%%s","exit":%%d}\n' \
+    "$(printf '%%s' "$WS_JOB" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+    "$NOW_TS" "$EXIT_CODE" >> "$WS_STATE"
 
 if [ "$EXIT_CODE" -eq 0 ]; then
     _ws_log "Done (exit 0)"

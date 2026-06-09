@@ -18,9 +18,6 @@ func TestDefaultConfigSchema(t *testing.T) {
 	if cfg.Search.MaxResults != 0 {
 		t.Fatalf("expected search.max_results default 0, got %d", cfg.Search.MaxResults)
 	}
-	if !cfg.Dotfile.Git.AutoPush {
-		t.Fatal("expected dotfile.git.auto_push default true")
-	}
 	if cfg.Trash.WarnSizeMB != 1024 {
 		t.Fatalf("expected trash.warn_size_mb default 1024, got %d", cfg.Trash.WarnSizeMB)
 	}

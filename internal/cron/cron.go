@@ -1,7 +1,7 @@
 // Package cron manages ws-scheduled cron jobs for workspace maintenance.
 //
 // Each built-in job is a named, self-contained bash wrapper script installed
-// under ~/.local/share/ws/cron-jobs/. A crontab block with start/end
+// under ~/.local/share/ws-tool/cron-jobs/. A crontab block with start/end
 // markers is written for each job so ws can reliably remove it later.
 //
 // Three shortcomings of vanilla crontab are addressed:
@@ -9,7 +9,7 @@
 //     last run; if more than half the job's interval has passed, the job
 //     runs immediately (equivalent to systemd Persistent=true).
 //   - Structured logging: all output is directed to a shared log file
-//     (~/.local/share/ws/cron.log) with timestamps and job-name prefixes.
+//     (~/.local/share/ws-tool/cron.log) with timestamps and job-name prefixes.
 //     The log is size-capped (default 5 MB) to prevent unbounded growth.
 //   - Status inspection: ws cron status reads the state file and last log
 //     lines — equivalent to systemctl --user status.
@@ -17,9 +17,10 @@ package cron
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/mugenkunou/ws-tool/internal/config"
 )
 
 // BuiltinJob defines a ws-managed cron job.
@@ -90,13 +91,9 @@ func Resolve(name string) ([]*BuiltinJob, error) {
 	return []*BuiltinJob{j}, nil
 }
 
-// DataDir returns the ws cron data directory (~/.local/share/ws).
+// DataDir returns the ws cron data directory (~/.local/share/ws-tool).
 func DataDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".local", "share", "ws"), nil
+	return config.DataDir()
 }
 
 // JobsDir returns the directory where wrapper scripts are written.
