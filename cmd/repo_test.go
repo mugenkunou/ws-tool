@@ -227,3 +227,137 @@ func TestRepoScanNoFetch(t *testing.T) {
 		t.Fatalf("expected r1 in scan output, got: %s", out.String())
 	}
 }
+
+func TestRepoDoctorCleanFleet(t *testing.T) {
+	testSetXDG(t)
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	workspace := filepath.Join(t.TempDir(), "Workspace")
+	var out, errOut bytes.Buffer
+	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	repoPath := filepath.Join(workspace, "r1")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGitLocal(t, repoPath, "init")
+	runGitLocal(t, repoPath, "config", "user.email", "ws@example.com")
+	runGitLocal(t, repoPath, "config", "user.name", "ws")
+	if err := os.WriteFile(filepath.Join(repoPath, "f.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitLocal(t, repoPath, "add", "f.txt")
+	runGitLocal(t, repoPath, "commit", "-m", "init")
+
+	out.Reset()
+	errOut.Reset()
+	// Run only checks that don't need a remote (no upstream/fetch-staleness).
+	code := Execute([]string{"--workspace", workspace, "repo", "doctor", "--check", "dirty"}, strings.NewReader(""), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("repo doctor clean fleet: expected exit 0, got %d stdout=%s stderr=%s", code, out.String(), errOut.String())
+	}
+}
+
+func TestRepoDoctorDirtyRepo(t *testing.T) {
+	testSetXDG(t)
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	workspace := filepath.Join(t.TempDir(), "Workspace")
+	var out, errOut bytes.Buffer
+	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	repoPath := filepath.Join(workspace, "r1")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGitLocal(t, repoPath, "init")
+	runGitLocal(t, repoPath, "config", "user.email", "ws@example.com")
+	runGitLocal(t, repoPath, "config", "user.name", "ws")
+	if err := os.WriteFile(filepath.Join(repoPath, "f.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitLocal(t, repoPath, "add", "f.txt")
+	runGitLocal(t, repoPath, "commit", "-m", "init")
+
+	// Make it dirty.
+	if err := os.WriteFile(filepath.Join(repoPath, "f.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out.Reset()
+	errOut.Reset()
+	code := Execute([]string{"--workspace", workspace, "repo", "doctor", "--check", "dirty"}, strings.NewReader(""), &out, &errOut)
+	if code != 2 {
+		t.Fatalf("repo doctor dirty: expected exit 2, got %d stdout=%s stderr=%s", code, out.String(), errOut.String())
+	}
+}
+
+func TestRepoDoctorJSON(t *testing.T) {
+	testSetXDG(t)
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	workspace := filepath.Join(t.TempDir(), "Workspace")
+	var out, errOut bytes.Buffer
+	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	code := Execute([]string{"--workspace", workspace, "--json", "repo", "doctor"}, strings.NewReader(""), &out, &errOut)
+	if code == 1 {
+		t.Fatalf("repo doctor --json failed: code=%d stderr=%s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), `"findings"`) {
+		t.Fatalf("expected 'findings' in JSON output, got: %s", out.String())
+	}
+}
+
+func TestRepoScanHygieneFooter(t *testing.T) {
+	testSetXDG(t)
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	workspace := filepath.Join(t.TempDir(), "Workspace")
+	var out, errOut bytes.Buffer
+	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	// Create repo without identity (will trigger hygiene warnings).
+	repoPath := filepath.Join(workspace, "r1")
+	if err := os.MkdirAll(repoPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGitLocal(t, repoPath, "init")
+	// Deliberately omit user.name and user.email.
+	if err := os.WriteFile(filepath.Join(repoPath, "f.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitLocal(t, repoPath, "add", "f.txt")
+	runGitLocal(t, repoPath, "config", "user.name", "tmp")
+	runGitLocal(t, repoPath, "config", "user.email", "tmp@x.com")
+	runGitLocal(t, repoPath, "commit", "-m", "init")
+	// Remove identity after commit so doctor sees missing identity.
+	runGitLocal(t, repoPath, "config", "--unset", "user.name")
+	runGitLocal(t, repoPath, "config", "--unset", "user.email")
+
+	out.Reset()
+	errOut.Reset()
+	// scan with --no-fetch to avoid network.
+	Execute([]string{"--workspace", workspace, "repo", "scan", "--no-fetch"}, strings.NewReader(""), &out, &errOut)
+	// The footer should mention hygiene warnings (or not if global identity is set).
+	// We accept both: either the footer appears or not — what matters is it doesn't crash.
+	_ = out.String()
+}

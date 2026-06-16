@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -203,6 +204,42 @@ func TestCronUnknownSubcommand(t *testing.T) {
 		strings.NewReader(""), &out, &errOut)
 	if code == 0 {
 		t.Fatal("expected non-zero for unknown cron subcommand")
+	}
+}
+
+// TestCronAddPreflightAccessDenied verifies that ws cron add exits 1 with an
+// actionable error when crontab access is denied, without writing any files.
+func TestCronAddPreflightAccessDenied(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("crontab shim not supported on Windows")
+	}
+	testSetXDG(t)
+	workspace := newTestWorkspace(t)
+
+	// Install a shim crontab that simulates permission denial.
+	shimDir := t.TempDir()
+	script := "#!/bin/sh\necho '/etc/cron.allow: Permission denied'\nexit 1\n"
+	shimPath := filepath.Join(shimDir, "crontab")
+	if err := os.WriteFile(shimPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write shim: %v", err)
+	}
+	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var out, errOut bytes.Buffer
+	code := Execute([]string{"--workspace", workspace, "cron", "add", "log-prune"},
+		strings.NewReader(""), &out, &errOut)
+	if code == 0 {
+		t.Fatal("expected non-zero exit when crontab access is denied")
+	}
+	if !strings.Contains(errOut.String(), "crontab access denied") {
+		t.Errorf("expected 'crontab access denied' in stderr, got: %s", errOut.String())
+	}
+
+	// No wrapper script should have been written.
+	home := os.Getenv("HOME")
+	scriptGlob := filepath.Join(home, ".local", "share", "ws-tool", "cron-jobs", "log-prune.sh")
+	if _, err := os.Stat(scriptGlob); err == nil {
+		t.Error("wrapper script should NOT be written when preflight fails")
 	}
 }
 

@@ -15,9 +15,10 @@ import (
 )
 
 var trashHelp = cmdHelp{
-	Usage: "ws trash <enable|disable|empty|status>",
+	Usage: "ws trash <enable|setup|disable|empty|status>",
 	Subcommands: []string{
 		"  enable   Configure soft-delete integrations",
+		"  setup    Alias for enable",
 		"  disable  Remove soft-delete integrations",
 		"  empty    Remove all entries from trash root",
 		"  status   Show integration status and trash size",

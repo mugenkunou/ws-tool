@@ -321,6 +321,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 	case "git":
 		if len(subArgs) == 0 {
 			fmt.Fprintln(stderr, "usage: ws dotfile git <remote|push|log|status|setup|disconnect>")
+			fmt.Fprintln(stderr, "legacy aliases: enable, connect (deprecated)")
 			return 1
 		}
 		cfg, err := config.Load(configPath)
@@ -773,6 +774,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		default:
 			fmt.Fprintf(stderr, "unknown dotfile git subcommand: %s\n", subArgs[0])
 			fmt.Fprintln(stderr, "usage: ws dotfile git <remote|push|log|status|setup|disconnect>")
+			fmt.Fprintln(stderr, "legacy aliases: enable, connect (deprecated)")
 			return 1
 		}
 	case "migrate":

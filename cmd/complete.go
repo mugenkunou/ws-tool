@@ -54,7 +54,7 @@ type completer struct {
 
 // completers is the data-driven dispatch table for all commands.
 var completers = map[string]completer{
-	"capture":               {subcommands: []string{"ls"}, resolve: completeCapture},
+	"capture":               {subcommands: []string{"ls", "edit"}, resolve: completeCapture},
 	"completions":           {subcommands: []string{"bash", "zsh", "fish", "install", "uninstall"}},
 	"config":                {subcommands: []string{"view", "defaults"}},
 	"cron":                  {subcommands: []string{"add", "rm", "ls", "status", "log"}, resolve: completeCron},
@@ -62,7 +62,7 @@ var completers = map[string]completer{
 	"git-credential-helper": {subcommands: []string{"setup", "status", "disconnect"}},
 	"ignore":                {subcommands: []string{"check", "scan", "fix", "ls", "tree", "edit"}, resolve: completeIgnore},
 	"log":                   {subcommands: []string{"start", "stop", "ls", "prune", "rm"}, resolve: completeLog},
-	"repo":                  {subcommands: []string{"ls", "scan", "fetch", "pull", "sync", "run"}, resolve: completeRepo},
+	"repo":                  {subcommands: []string{"ls", "scan", "doctor", "fetch", "pull", "sync", "run"}, resolve: completeRepo},
 	"scratch":               {subcommands: []string{"new", "open", "ls", "tag", "search", "prune", "rm"}, resolve: completeScratch},
 	"secret":                {subcommands: []string{"scan", "fix", "setup", "status", "git"}, resolve: completeSecret},
 	"trash":                 {subcommands: []string{"enable", "disable", "empty", "status"}},
@@ -120,8 +120,34 @@ func runComplete(args []string, globals globalFlags, stdout, stderr io.Writer) i
 	return 0
 }
 
+// flagValueDirective returns (true, directive) when flag takes a value argument,
+// so the shell handles value completion rather than offering command completions.
+func flagValueDirective(flag string) (bool, int) {
+	name := strings.TrimLeft(flag, "-")
+	switch name {
+	case "workspace", "w":
+		return true, compDirectiveFilterDirs
+	case "config", "c", "manifest":
+		return true, compDirectiveDefault
+	}
+	if isStringFlag(flag) {
+		return true, compDirectiveDefault
+	}
+	return false, 0
+}
+
 // resolveCompletions is the pure-logic core, factored out for testability.
 func resolveCompletions(args []string, globals globalFlags) ([]string, int) {
+	// Detect when completing a flag value: prev word is a string flag.
+	if len(args) >= 2 {
+		prev := args[len(args)-2]
+		if strings.HasPrefix(prev, "-") && !strings.Contains(prev, "=") {
+			if ok, dir := flagValueDirective(prev); ok {
+				return nil, dir
+			}
+		}
+	}
+
 	// Strip consumed flags from the word list so positional resolution works.
 	cleaned, toComplete := splitArgsForCompletion(args)
 
@@ -225,7 +251,7 @@ func completeLog(sub string, args []string, toComplete string, ctx completionCtx
 
 func completeRepo(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
 	switch sub {
-	case "ls", "scan", "fetch", "pull", "sync":
+	case "ls", "scan", "doctor", "fetch", "pull", "sync":
 		// Complete repo paths as positional argument for targeting.
 		if len(args) == 0 {
 			return filterPrefix(ctx.repoPaths, toComplete), compDirectiveNoFileComp
@@ -276,6 +302,12 @@ func completeSecret(sub string, args []string, toComplete string, ctx completion
 func completeCapture(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
 	switch sub {
 	case "ls":
+		return nil, compDirectiveNoFileComp
+	case "edit":
+		// Complete configured location names as optional positional.
+		if len(args) == 0 {
+			return filterPrefix(ctx.captureLocations, toComplete), compDirectiveNoFileComp
+		}
 		return nil, compDirectiveNoFileComp
 	default:
 		// Pin mode — complete configured location names as first positional.
@@ -334,7 +366,7 @@ func commandFlags(command string, rest []string) []string {
 
 	switch command {
 	case "capture":
-		return []string{"-e", "--edit", "-a", "--amend", "--dry-run"}
+		return []string{"-a", "--amend", "--dry-run", "-e", "--edit"}
 	case "version":
 		return []string{"--short"}
 	case "cron":
@@ -446,6 +478,8 @@ func commandFlags(command string, rest []string) []string {
 			return filterFlags
 		case "scan":
 			return append([]string{"--no-fetch"}, filterFlags...)
+		case "doctor":
+			return append([]string{"--check"}, filterFlags...)
 		case "fetch":
 			return filterFlags
 		case "pull":

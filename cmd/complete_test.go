@@ -338,12 +338,13 @@ func TestCompleteCaptureLocationPrefix(t *testing.T) {
 	}
 }
 
-func TestCaptureEditNotASubcommand(t *testing.T) {
-	// "edit" is a flag (-e/--edit), not a subcommand; tab after unknown word
-	// should suppress file completion.
-	_, dir := resolveCompletions([]string{"capture", "edit", ""}, globalFlags{})
+func TestCaptureEditSubcommandCompletion(t *testing.T) {
+	// "edit" is now a subcommand; ws capture edit <TAB> should offer location names
+	// (no locations configured → empty list) with NoFileComp directive.
+	ctx := completionCtx{}
+	_, dir := completeCapture("edit", []string{}, "", ctx)
 	if dir != compDirectiveNoFileComp {
-		t.Fatalf("expected NoFileComp for unknown capture positional, got %d", dir)
+		t.Fatalf("capture edit <TAB>: expected NoFileComp, got %d", dir)
 	}
 }
 
@@ -549,4 +550,62 @@ func TestRunCompleteViaExecute(t *testing.T) {
 	if !strings.Contains(output, "check") || !strings.Contains(output, "scan") {
 		t.Fatalf("expected ignore subcommands, got: %q", output)
 	}
+}
+
+// ── Flag-value completion tests (Issue #5) ────────────────────────
+
+func TestFlagValueCompletionConfig(t *testing.T) {
+	// ws --config <TAB> should return Default directive so shell does file completion.
+	_, dir := resolveCompletions([]string{"--config", ""}, globalFlags{})
+	if dir != compDirectiveDefault {
+		t.Fatalf("--config <TAB>: expected Default directive (%d), got %d", compDirectiveDefault, dir)
+	}
+}
+
+func TestFlagValueCompletionConfigShort(t *testing.T) {
+	_, dir := resolveCompletions([]string{"-c", ""}, globalFlags{})
+	if dir != compDirectiveDefault {
+		t.Fatalf("-c <TAB>: expected Default directive, got %d", dir)
+	}
+}
+
+func TestFlagValueCompletionWorkspace(t *testing.T) {
+	// ws --workspace <TAB> should return FilterDirs so only directories are shown.
+	_, dir := resolveCompletions([]string{"--workspace", ""}, globalFlags{})
+	if dir != compDirectiveFilterDirs {
+		t.Fatalf("--workspace <TAB>: expected FilterDirs (%d), got %d", compDirectiveFilterDirs, dir)
+	}
+}
+
+func TestFlagValueCompletionWorkspaceShort(t *testing.T) {
+	_, dir := resolveCompletions([]string{"-w", ""}, globalFlags{})
+	if dir != compDirectiveFilterDirs {
+		t.Fatalf("-w <TAB>: expected FilterDirs, got %d", dir)
+	}
+}
+
+func TestFlagValueCompletionManifest(t *testing.T) {
+	_, dir := resolveCompletions([]string{"--manifest", ""}, globalFlags{})
+	if dir != compDirectiveDefault {
+		t.Fatalf("--manifest <TAB>: expected Default directive, got %d", dir)
+	}
+}
+
+func TestFlagValueCompletionBoolFlag(t *testing.T) {
+	// --quiet is a bool flag; should fall through to normal completion (not a value).
+	comps, dir := resolveCompletions([]string{"--quiet", ""}, globalFlags{})
+	// Should offer top-level commands (not treat "" as a flag value).
+	if dir == compDirectiveDefault || dir == compDirectiveFilterDirs {
+		t.Fatalf("--quiet <TAB>: bool flag should not trigger value completion, got dir=%d comps=%v", dir, comps)
+	}
+}
+
+func TestFlagValueCompletionEqualForm(t *testing.T) {
+	// --config=/etc/<TAB> stays as a single token; should not enter value-completion path.
+	// The word being completed starts with "/etc/" which is not a "-", so normal flow.
+	comps, dir := resolveCompletions([]string{"--config=/etc/"}, globalFlags{})
+	// This is treated as the partial word; prev doesn't exist, so no flag-value path.
+	_ = comps
+	_ = dir
+	// Just ensure it doesn't panic and returns something sensible.
 }

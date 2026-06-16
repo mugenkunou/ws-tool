@@ -14,7 +14,7 @@ import (
 )
 
 var repoHelp = cmdHelp{
-	Usage: "ws repo <ls|scan|fetch|pull|sync|run>",
+	Usage: "ws repo <ls|scan|doctor|fetch|pull|sync|run|add-root|ls-roots>",
 	Flags: []string{
 		"      --dry-run    Preview write operations (default: false)",
 		"      --rebase     Use rebase for diverged repos in sync (default: merge)",
@@ -241,7 +241,52 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		if filters.hasFilter() {
 			statuses = repo.Filter(statuses, filters.toFilterOptions())
 		}
-		return renderRepoScan(globals, workspacePath, statuses, fetchWarnings, stdout, stderr)
+
+		// Cheap hygiene count footer for scan output.
+		hygieneFindings := repo.Doctor(workspacePath, repos, repo.DoctorOptions{
+			Checks: []string{"identity", "upstream", "dirty"},
+		})
+		hygieneWarnCount := 0
+		for _, f := range hygieneFindings {
+			if f.Severity >= repo.SeverityWarn {
+				hygieneWarnCount++
+			}
+		}
+
+		return renderRepoScan(globals, workspacePath, statuses, fetchWarnings, hygieneWarnCount, stdout, stderr)
+	case "doctor":
+		fs := flag.NewFlagSet("repo-doctor", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		var filters repoFilterFlags
+		var checkFilter string
+		registerRepoFilterFlags(fs, &filters)
+		fs.StringVar(&checkFilter, "check", "", "run only this check")
+		registerGlobalFlags(fs, &globals)
+		if err := fs.Parse(subArgs); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		repos, err := repo.Discover(workspacePath, roots, excludeDirs)
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		repos = appendMissingRepos(repos, wsSpecialRepos(workspacePath))
+		repos = filterRepos(workspacePath, repos, filters)
+		if target := strings.Join(fs.Args(), ""); target != "" {
+			var errMsg string
+			repos, errMsg = targetRepo(repos, target)
+			if errMsg != "" {
+				fmt.Fprintln(stderr, errMsg)
+				return 1
+			}
+		}
+		var checks []string
+		if checkFilter != "" {
+			checks = []string{checkFilter}
+		}
+		findings := repo.Doctor(workspacePath, repos, repo.DoctorOptions{Checks: checks})
+		return renderRepoDoctor(globals, workspacePath, findings, stdout, stderr)
 	case "fetch":
 		fs := flag.NewFlagSet("repo-fetch", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -515,6 +560,119 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			return writeJSON(stdout, stderr, "repo.run", map[string]any{"actions": planResult.Actions})
 		}
 		return planResult.ExitCode()
+	case "add-root":
+		fs := flag.NewFlagSet("repo-add-root", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		registerGlobalFlags(fs, &globals)
+		if err := fs.Parse(subArgs); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+
+		posArgs := fs.Args()
+		if len(posArgs) == 0 {
+			fmt.Fprintln(stderr, "usage: ws repo add-root <path>")
+			return 1
+		}
+
+		targetPath := posArgs[0]
+
+		// Resolve and validate the path
+		resolvedPath, err := config.ExpandUserPath(targetPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "invalid path: %s\n", err.Error())
+			return 1
+		}
+
+		// Check if path exists and is accessible
+		if _, err := os.Stat(resolvedPath); err != nil {
+			fmt.Fprintf(stderr, "path does not exist or is not accessible: %s\n", targetPath)
+			return 1
+		}
+
+		// Load current config
+		cfg, err := config.Load(configPath)
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+
+		// Check if root already exists
+		for _, r := range cfg.Repo.Roots {
+			resolvedRoot, err := config.ExpandUserPath(r)
+			if err != nil {
+				continue
+			}
+			if filepath.Clean(resolvedRoot) == filepath.Clean(resolvedPath) {
+				fmt.Fprintf(stderr, "path already configured as repo root\n")
+				return 1
+			}
+		}
+
+		// Display the path for user confirmation
+		short, full := style.DisplayPath(workspacePath, targetPath)
+		displayStr := short
+		if short != full {
+			displayStr = fmt.Sprintf("%s (%s)", short, full)
+		}
+
+		if globals.dryRun {
+			if globals.json {
+				return writeJSONDryRun(stdout, stderr, "repo.add-root", true, map[string]any{"path": targetPath})
+			}
+			fmt.Fprintf(textOut(globals, stdout), "Would add repo root: %s\n", displayStr)
+			return 0
+		}
+
+		plan := Plan{Command: "repo.add-root"}
+		plan.Actions = append(plan.Actions, Action{
+			ID:          "add-root-" + filepath.ToSlash(filepath.Clean(targetPath)),
+			Description: fmt.Sprintf("Add repo root: %s", displayStr),
+			Execute: func() error {
+				// Reload config to ensure we have the latest version
+				cfg, err := config.Load(configPath)
+				if err != nil {
+					return err
+				}
+
+				// Use the original path for storage (handle ~, relative, absolute)
+				cfg.Repo.Roots = append(cfg.Repo.Roots, targetPath)
+
+				// Save the updated config
+				return config.Save(configPath, cfg)
+			},
+		})
+
+		planResult := RunPlan(plan, stdin, stdout, globals)
+		if globals.json {
+			return writeJSON(stdout, stderr, "repo.add-root", map[string]any{"actions": planResult.Actions})
+		}
+		return planResult.ExitCode()
+	case "ls-roots":
+		fs := flag.NewFlagSet("repo-ls-roots", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		registerGlobalFlags(fs, &globals)
+		if err := fs.Parse(subArgs); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+
+		if globals.json {
+			return writeJSON(stdout, stderr, "repo.ls-roots", map[string]any{"roots": cfg.Repo.Roots})
+		}
+
+		out := textOut(globals, stdout)
+		if len(cfg.Repo.Roots) == 0 {
+			fmt.Fprintln(out, "No repo roots configured.")
+			return 0
+		}
+
+		fmt.Fprintln(out, "Configured repo roots:")
+		for i, r := range cfg.Repo.Roots {
+			short, _ := style.DisplayPath(workspacePath, r)
+			fmt.Fprintf(out, "  %d. %s\n", i, short)
+		}
+		return 0
 	default:
 		fmt.Fprintf(stderr, "unknown repo subcommand: %s\n", sub)
 		return 1
@@ -572,11 +730,14 @@ func renderRepoList(globals globalFlags, workspacePath string, repos []repo.Repo
 	return 0
 }
 
-func renderRepoScan(globals globalFlags, workspacePath string, statuses []repo.RepoStatus, fetchWarnings []string, stdout, stderr io.Writer) int {
+func renderRepoScan(globals globalFlags, workspacePath string, statuses []repo.RepoStatus, fetchWarnings []string, hygieneWarnings int, stdout, stderr io.Writer) int {
 	if globals.json {
 		data := map[string]any{"statuses": statuses}
 		if len(fetchWarnings) > 0 {
 			data["fetch_warnings"] = fetchWarnings
+		}
+		if hygieneWarnings > 0 {
+			data["hygiene_warnings"] = hygieneWarnings
 		}
 		return writeJSON(stdout, stderr, "repo.scan", data)
 	}
@@ -631,8 +792,62 @@ func renderRepoScan(globals globalFlags, workspacePath string, statuses []repo.R
 		}
 	}
 
+	if hygieneWarnings > 0 {
+		fmt.Fprintf(out, "\nHygiene: %d warning(s) — run `ws repo doctor`\n", hygieneWarnings)
+	}
+
 	for _, s := range statuses {
 		if s.Error != "" || s.Dirty || s.Detached || s.Ahead > 0 || s.Behind > 0 {
+			return 2
+		}
+	}
+	return 0
+}
+
+func renderRepoDoctor(globals globalFlags, workspacePath string, findings []repo.Finding, stdout, stderr io.Writer) int {
+	if globals.json {
+		byRepo := make(map[string][]repo.Finding)
+		for _, f := range findings {
+			byRepo[f.Repo] = append(byRepo[f.Repo], f)
+		}
+		return writeJSON(stdout, stderr, "repo.doctor", map[string]any{
+			"findings": findings,
+			"by_repo":  byRepo,
+		})
+	}
+
+	out := textOut(globals, stdout)
+	nc := globals.noColor
+
+	if len(findings) == 0 {
+		fmt.Fprintln(out, style.ResultSuccess(nc, "All repositories passed hygiene checks."))
+		return 0
+	}
+
+	// Group by repo, preserving first-seen order.
+	var repoOrder []string
+	byRepo := map[string][]repo.Finding{}
+	for _, f := range findings {
+		if _, seen := byRepo[f.Repo]; !seen {
+			repoOrder = append(repoOrder, f.Repo)
+		}
+		byRepo[f.Repo] = append(byRepo[f.Repo], f)
+	}
+
+	for _, repoPath := range repoOrder {
+		short, _ := style.DisplayPath(workspacePath, repoPath)
+		fmt.Fprintf(out, "%s %s\n", style.IconGit(nc), style.Infof(nc, "%s", short))
+		for _, f := range byRepo[repoPath] {
+			icon := style.Mutedf(nc, "  ·")
+			if f.Severity >= repo.SeverityWarn {
+				icon = "  " + style.IconWarning(nc)
+			}
+			fmt.Fprintf(out, "%s [%s] %s\n", icon, f.Check, f.Detail)
+		}
+	}
+
+	for _, f := range findings {
+		if f.Severity >= repo.SeverityWarn {
 			return 2
 		}
 	}

@@ -435,3 +435,4 @@ tmp/
 .gomodcache/
 .gotmp/
 ws
+.claude/

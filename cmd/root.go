@@ -465,11 +465,13 @@ func printHelpStyled(stdout io.Writer, noColor bool) {
 	fmt.Fprintln(stdout, style.Boldf(noColor, "Commands:"))
 
 	cmds := []struct{ name, desc string }{
+		{"help", "Show command help"},
 		{"version", "Print version information"},
 		{"init", "Initialize a ws workspace"},
 		{"reset", "Reverse ws init — undo all provisions"},
 		{"restore", "Guided restore workflow"},
 		{"dotfile", "Manage workspace-backed dotfiles"},
+		{"cron", "Managed cron jobs"},
 		{"repo", "Repository fleet operations"},
 		{"trash", "Soft-delete setup and status"},
 		{"log", "Session recording commands"},
@@ -479,6 +481,7 @@ func printHelpStyled(stdout io.Writer, noColor bool) {
 		{"ignore", "Ignore rule scan/check"},
 		{"secret", "Secret scanning and pass store management"},
 		{"git-credential-helper", "Git credential helper (pass-backed)"},
+		{"credential", "Alias for git-credential-helper"},
 		{"config", "Configuration of ws"},
 	}
 	for _, c := range cmds {

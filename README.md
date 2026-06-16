@@ -132,10 +132,13 @@ Your `.bashrc` now lives in the workspace (synced). The system path is a symlink
 | --- | --- |
 | `ws repo ls` | Discover Git repos under workspace |
 | `ws repo scan` | Fleet status with fetch-first: dirty, ahead/behind, detached |
+| `ws repo doctor` | Hygiene audit: identity, upstream, default-branch, fetch-staleness, dirty |
 | `ws repo fetch` | `git fetch --all --prune` across the fleet |
 | `ws repo pull` | Interactive fleet pull (ff-only or rebase) |
 | `ws repo sync` | Interactive fleet sync (pull/push per repo state) |
 | `ws repo run -- <cmd>` | Run any command in each repo root |
+| `ws repo add-root <path>` | Add a repo discovery root to config (`repo.roots`) |
+| `ws repo ls-roots` | List configured repo discovery roots |
 
 </details>
 
@@ -199,7 +202,8 @@ Your `.bashrc` now lives in the workspace (synced). The system path is a symlink
 | `ws capture` | Pin clipboard content (text, HTML with images, screenshots) to captures file |
 | `ws capture <url>` | Fetch web page content + images, append to captures file |
 | `ws capture <file>` | Capture a file (image: embed, text: inline) |
-| `ws capture -e` | Open captures file in your editor |
+| `ws capture edit` | Open captures file in your editor |
+| `ws capture -e` | Open captures file in editor (deprecated: use `ws capture edit`) |
 | `ws capture ls` | List configured capture locations |
 
 </details>

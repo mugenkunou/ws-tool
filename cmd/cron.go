@@ -18,11 +18,13 @@ import (
 )
 
 var cronHelp = cmdHelp{
-	Usage: "ws cron <add|rm|ls|status|log>",
+	Usage: "ws cron <add|rm|remove|ls|list|status|log>",
 	Subcommands: []string{
 		"  add <job>      Install a managed cron job (or preset)",
 		"  rm <job>       Remove a managed cron job (or preset)",
+		"  remove <job>   Alias for rm",
 		"  ls             List available jobs and their install status",
+		"  list           Alias for ls",
 		"  status [job]   Show last run, exit code, and next scheduled run",
 		"  log [job]      Show recent log entries",
 	},
@@ -83,6 +85,13 @@ func runCronAdd(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		return 1
 	}
 	jobName := remaining[0]
+
+	if !globals.dryRun {
+		if err := cron.Preflight(); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+	}
 
 	workspacePath, _, manifestPath, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
@@ -213,6 +222,13 @@ func runCronRm(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 		return 1
 	}
 	jobName := remaining[0]
+
+	if !globals.dryRun {
+		if err := cron.Preflight(); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+	}
 
 	_, _, manifestPath, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {

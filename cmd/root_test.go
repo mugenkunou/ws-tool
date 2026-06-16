@@ -147,6 +147,37 @@ func TestConfigDefaultsFlag(t *testing.T) {
 	}
 }
 
+// allDispatchedCommands must be kept in sync with the switch in Execute.
+var allDispatchedCommands = []string{
+	"help", "version", "init", "reset", "restore", "config",
+	"dotfile", "ignore", "secret", "log", "scratch", "repo",
+	"trash", "capture", "cron", "credential", "git-credential-helper",
+	"completions",
+}
+
+// TestHelpListsAllDispatchedCommands asserts every command in allDispatchedCommands
+// appears in the ws --help output.
+func TestHelpListsAllDispatchedCommands(t *testing.T) {
+	testSetXDG(t)
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	if code := Execute([]string{"help"}, strings.NewReader(""), &out, &errOut); code != 0 {
+		t.Fatalf("help failed: code=%d stderr=%s", code, errOut.String())
+	}
+	helpText := out.String()
+
+	// credential and git-credential-helper share a row; check at least one key substring.
+	for _, cmd := range allDispatchedCommands {
+		if cmd == "git-credential-helper" {
+			continue // covered by "credential" row check
+		}
+		if !strings.Contains(helpText, cmd) {
+			t.Errorf("ws --help missing command %q", cmd)
+		}
+	}
+}
+
 func TestConfigDumpIsRejected(t *testing.T) {
 	testSetXDG(t)
 	tmp := t.TempDir()

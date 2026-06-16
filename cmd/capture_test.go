@@ -358,6 +358,135 @@ func TestCaptureDefaultLocationReserved(t *testing.T) {
 	}
 }
 
+func TestCaptureEditUnknownLocationErrors(t *testing.T) {
+	testSetXDG(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(t.TempDir(), "Workspace")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	code := Execute([]string{"--workspace", workspace, "capture", "edit", "nonexistent"}, strings.NewReader(""), &out, &errOut)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit for unknown location")
+	}
+	if !strings.Contains(errOut.String(), "unknown capture location") {
+		t.Fatalf("expected error about unknown location, got: %s", errOut.String())
+	}
+}
+
+func TestCaptureEditSubcommand(t *testing.T) {
+	testSetXDG(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(t.TempDir(), "Workspace")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	code := Execute([]string{"--workspace", workspace, "capture", "edit"}, strings.NewReader("\n"), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("capture edit failed: code=%d stderr=%s", code, errOut.String())
+	}
+}
+
+func TestCaptureEditSubcommandDryRun(t *testing.T) {
+	testSetXDG(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(t.TempDir(), "Workspace")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	code := Execute([]string{"--workspace", workspace, "--dry-run", "capture", "edit"}, strings.NewReader(""), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("capture edit --dry-run failed: code=%d stderr=%s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "captures.md") {
+		t.Fatalf("--dry-run should print the resolved path, got: %s", out.String())
+	}
+}
+
+func TestCaptureEditDeprecatedFlag(t *testing.T) {
+	testSetXDG(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(t.TempDir(), "Workspace")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	out.Reset()
+	errOut.Reset()
+	code := Execute([]string{"--workspace", workspace, "capture", "-e"}, strings.NewReader("\n"), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("capture -e (deprecated) failed: code=%d stderr=%s", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "deprecated") {
+		t.Fatalf("expected deprecation notice on stderr, got: %s", errOut.String())
+	}
+}
+
+func TestCaptureEditSubcommandWithLocation(t *testing.T) {
+	testSetXDG(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workspace := filepath.Join(t.TempDir(), "Workspace")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	workDir := filepath.Join(t.TempDir(), "Work")
+	configPath := xdgConfigPath(t)
+	configContent := `{
+  "config_schema": 1,
+  "capture": {
+    "max_attach_mb": 5,
+    "locations": {
+      "work": "` + workDir + `"
+    }
+  }
+}`
+	if err := os.WriteFile(configPath, []byte(configContent), 0o644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	out.Reset()
+	errOut.Reset()
+	code := Execute([]string{"--workspace", workspace, "capture", "edit", "work"}, strings.NewReader("\n"), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("capture edit work failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	workCapturesPath := filepath.Join(workDir, "captures", "captures.md")
+	if _, err := os.Stat(workCapturesPath); err != nil {
+		t.Fatalf("work captures.md should exist after edit: %v", err)
+	}
+}
+
 func TestCaptureHelpOutput(t *testing.T) {
 	testSetXDG(t)
 	home := t.TempDir()

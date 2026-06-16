@@ -17,15 +17,16 @@ import (
 )
 
 var captureHelp = cmdHelp{
-	Usage: "ws capture [location] [-a] [-e] [--dry-run]",
+	Usage: "ws capture [location] [-a] [--dry-run]",
 	Subcommands: []string{
-		"  (default)    Pin clipboard or stdin pipe to captures",
-		"  ls           List configured capture locations",
+		"  (default)         Pin clipboard or stdin pipe to captures",
+		"  ls                List configured capture locations",
+		"  edit [location]   Open captures file in editor",
 	},
 	Flags: []string{
 		"  -a, --amend  Append to the last entry instead of creating a new one",
-		"  -e, --edit   Open captures file in editor",
 		"  --dry-run    Preview without writing",
+		"  -e, --edit   (deprecated) Use `ws capture edit` instead",
 	},
 }
 
@@ -49,6 +50,26 @@ func runCapture(args []string, globals globalFlags, stdin io.Reader, stdout, std
 	// Check for "ls" subcommand before flag parsing
 	if len(args) > 0 && args[0] == "ls" {
 		return runCaptureLs(args[1:], globals, cfg, wsDir, stdout, stderr)
+	}
+
+	// Check for "edit" subcommand before flag parsing
+	if len(args) > 0 && args[0] == "edit" {
+		subArgs := args[1:]
+		locName, _, err := extractLocation(subArgs, cfg)
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		capturesFile, _, err := capture.ResolveLocation(wsDir, cfg.Capture.Locations, locName)
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		if globals.dryRun {
+			fmt.Fprintln(textOut(globals, stdout), capturesFile)
+			return 0
+		}
+		return runCaptureEdit(capturesFile, globals, cfg, stdin, stdout, stderr)
 	}
 
 	// Parse flags — location is positional, extracted before flag parsing
@@ -84,6 +105,7 @@ func runCapture(args []string, globals globalFlags, stdin io.Reader, stdout, std
 
 	// Edit mode: open captures file in editor
 	if isEdit {
+		fmt.Fprintln(stderr, "note: -e/--edit is deprecated; use `ws capture edit`")
 		return runCaptureEdit(capturesFile, globals, cfg, stdin, stdout, stderr)
 	}
 

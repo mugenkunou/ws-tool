@@ -51,7 +51,7 @@ RO commands never modify the workspace, config, manifest, or system state. They:
 | `ws git-credential-helper status` | Check credential helper config and pass entry coverage |
 | `ws dotfile ls`, `ws dotfile scan` | |
 | `ws dotfile git status` | |
-| `ws repo ls`, `ws repo scan`, `ws repo fetch` | |
+| `ws repo ls`, `ws repo ls-roots`, `ws repo scan`, `ws repo fetch` | |
 | `ws log ls` | |
 | `ws scratch ls` | |
 | `ws scratch search` | Search scratch directories by tag/name/content |
@@ -90,6 +90,7 @@ RW commands modify state. They:
 | `ws repo pull` | Per-repo actions |
 | `ws repo sync` | Per-repo actions |
 | `ws repo run` | Per-repo actions |
+| `ws repo add-root` | Single action (append one root to `repo.roots` in config) |
 | `ws log start` | Single action |
 | `ws log stop` | Single action |
 | `ws log prune` | Per-session actions |
@@ -1031,11 +1032,13 @@ ws trash disable                     Remove soft-delete integrations
 ws trash status                      Check integration status and trash size
 
 ws repo ls                           Discover git repos under workspace
+ws repo ls-roots                     List configured repo discovery roots
 ws repo scan                         Reconciled fleet status (branch, ahead/behind, dirty, stash)
 ws repo fetch                        Fetch remotes across repos
 ws repo pull                         Interactive fleet pull
 ws repo sync                         Interactive fleet sync (pull/push per state)
 ws repo run -- <cmd>                 Run command in each selected repo
+ws repo add-root <path>              Add one repo discovery root to config
 
 ws dotfile add <system-path>          Capture a system file into ws/dotfiles/ + symlink back
 ws dotfile rm <path>                 Restore file to system path, unregister
@@ -2497,6 +2500,22 @@ Stateful commands: `ws repo scan`, `ws repo fetch`, `ws repo pull`, `ws repo syn
 These commands always attempt reconcile-first behavior unless explicitly disabled by config.
 If state is missing or unreadable, commands fall back to live discovery for the current scope.
 
+#### `ws repo ls-roots`
+
+List currently configured repo discovery roots from config.
+
+```text
+ws repo ls-roots
+```
+
+#### `ws repo add-root`
+
+Add one repo discovery root to config (`repo.roots`).
+
+```text
+ws repo add-root <path>
+```
+
 #### `ws repo ls`
 
 Discover and list Git repos under the workspace.
@@ -2702,6 +2721,84 @@ Run now? [Y/n]: ↵
 
 Succeeded: 3   Failed: 0
 ```
+
+#### `ws repo doctor`
+
+Hygiene audit across the repo fleet. Checks each repository for common configuration problems and reports findings with severity levels.
+
+```text
+ws repo doctor [flags]
+
+--check <id>   Run only the named check (repeatable). Default: all checks.
+               Available: identity, upstream, default-branch, fetch-staleness, dirty
+```
+
+Checks:
+
+| Check | Severity | Condition |
+|---|---|---|
+| `identity` | warn | `user.name` or `user.email` not set in local or global git config |
+| `identity` | info | identity not set locally but a global value exists |
+| `upstream` | warn | current branch has no tracking upstream |
+| `default-branch` | info | `init.defaultBranch` not set and `origin/HEAD` not resolved |
+| `fetch-staleness` | info | `FETCH_HEAD` missing or older than threshold (default: 14 days) |
+| `dirty` | warn | uncommitted changes present |
+
+**Output — clean fleet:**
+
+```text
+ws repo doctor
+
+experiments/blog          ✔  clean
+notes/second-brain        ✔  clean
+data/bruno                ✔  clean
+
+3 repos checked · 0 findings
+```
+
+**Output — findings:**
+
+```text
+ws repo doctor
+
+experiments/blog          ✔  clean
+notes/second-brain        ⚠  identity: user.email not set locally (using global: user@example.com)
+                          ⚠  upstream: current branch has no tracking upstream
+data/bruno                ⚠  dirty: uncommitted changes
+
+3 repos checked · 3 findings (3 warn, 0 error)
+```
+
+**Output — JSON:**
+
+```json
+{
+  "ws_version": "0.1.0",
+  "schema": 1,
+  "command": "repo.doctor",
+  "findings": [
+    { "repo": "notes/second-brain", "check": "identity", "severity": "info", "detail": "user.email not set locally (using global: user@example.com)" },
+    { "repo": "notes/second-brain", "check": "upstream", "severity": "warn", "detail": "current branch has no tracking upstream" },
+    { "repo": "data/bruno",         "check": "dirty",    "severity": "warn", "detail": "uncommitted changes" }
+  ]
+}
+```
+
+**Exit codes:**
+
+| Code | Meaning |
+|---|---|
+| `0` | No warn/error findings |
+| `2` | One or more warn or error findings |
+| `1` | Internal error |
+
+**Scan footer:** When `ws repo scan` finds hygiene warnings, it appends a one-line footer:
+
+```text
+Hygiene: 2 warning(s) — run `ws repo doctor`
+```
+
+This footer is omitted when there are no hygiene findings.
 
 ---
 
@@ -4047,6 +4144,15 @@ ws completions fish
 
 The completion script covers all commands, subcommands, flags, and flag values. It is regenerated from the command tree at build time — no manual maintenance.
 
+**Flag-value completion:** When completing a value after a flag that takes a path argument, the completion engine emits the appropriate directive:
+
+| Flag | Completion behavior |
+|---|---|
+| `--workspace`, `-w` | Directory names only (no files) |
+| `--config`, `-c`, `--manifest` | Any file |
+| Other string flags | Any file (default) |
+| Boolean flags | No file completion |
+
 Each script also includes a `wsopen` shell function that opens a scratch directory in VS Code **and** `cd`s the terminal into it:
 
 ```bash
@@ -4067,11 +4173,12 @@ Pin clipboard content or piped input to a persistent knowledge capture file. Opt
 
 ```text
 ws capture [location] [flags]
+ws capture edit [location] [flags]
 ws capture ls [flags]
 
 Flags:
   -a, --amend              Append to the last entry instead of creating a new one
-  -e, --edit               Open captures file in editor
+  -e, --edit               Open captures file in editor (deprecated: use `ws capture edit`)
   --dry-run                Show entry that would be appended without writing
   --quiet                  No prompts, no interactive output
   --json                   Machine-readable output
@@ -4230,6 +4337,23 @@ ws capture ls
 }
 ```
 
+#### `ws capture edit`
+
+Open the captures file in an editor. Replaces the deprecated `-e`/`--edit` flag.
+
+```text
+ws capture edit [location] [flags]
+```
+
+Editor resolution: `scratch.editor_cmd` → `$EDITOR` → `$VISUAL` → `vi`.
+
+**With `--dry-run`:** Prints the resolved captures file path without opening an editor.
+
+**Deprecation note:** `-e`/`--edit` flag still works but prints:
+```
+note: -e/--edit is deprecated; use `ws capture edit`
+```
+
 ---
 
 ### `ws cron`
@@ -4298,6 +4422,15 @@ ws cron add <job|preset> [flags]
 
 --display string   X11 DISPLAY for mega-sync (default: $DISPLAY, then :1)
 --dry-run          Preview actions without writing
+```
+
+**Preflight check:** Before writing any files, `ws cron add` (and `ws cron rm`) run a crontab permission probe: it invokes `crontab -l` and checks whether the output indicates access denial (patterns: "not allowed", "permission denied", "operation not permitted", "you are not authorized"). If the probe fails, the command exits immediately with a clear error and remediation hint rather than silently installing a script that cron will never execute.
+
+```text
+Error: crontab access denied for user siva
+  The system crontab is restricted (e.g. /etc/cron.deny or PAM policy).
+  Remediation: ask your sysadmin to add your username to /etc/cron.allow,
+  or use a user-level scheduler like systemd --user timers.
 ```
 
 **Output:**
