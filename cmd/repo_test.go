@@ -361,3 +361,18 @@ func TestRepoScanHygieneFooter(t *testing.T) {
 	// We accept both: either the footer appears or not — what matters is it doesn't crash.
 	_ = out.String()
 }
+
+func TestRepoNoArgsShowsHelp(t *testing.T) {
+	testSetXDG(t)
+	var out, errOut bytes.Buffer
+	code := Execute([]string{"repo"}, strings.NewReader(""), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("ws repo (no args): expected exit 0, got %d stderr=%s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "ls") {
+		t.Fatalf("expected help with 'ls' subcommand, got: %s", out.String())
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("expected empty stderr, got: %s", errOut.String())
+	}
+}

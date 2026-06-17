@@ -31,7 +31,7 @@ var scratchHelp = cmdHelp{
 }
 
 func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	if hasHelpArg(args) {
+	if hasHelpArg(args) || len(args) == 0 {
 		return printCmdHelp(stdout, scratchHelp)
 	}
 
@@ -50,10 +50,6 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
-	}
-
-	if len(args) == 0 {
-		return printUsageError(stderr, scratchHelp)
 	}
 
 	sub := args[0]

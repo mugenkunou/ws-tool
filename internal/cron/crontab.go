@@ -2,6 +2,7 @@ package cron
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -18,7 +19,21 @@ func CronMarkerEnd(name string) string {
 
 // ReadCrontab reads the current user crontab. Returns empty string if no
 // crontab exists (crontab -l exits non-zero in that case).
+//
+// If the WS_CRONTAB_FILE environment variable is set, the named file is read
+// instead of invoking crontab(1). This is used by tests to isolate from the
+// real system crontab.
 func ReadCrontab() (string, error) {
+	if f := os.Getenv("WS_CRONTAB_FILE"); f != "" {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return "", nil
+			}
+			return "", err
+		}
+		return string(data), nil
+	}
 	out, err := exec.Command("crontab", "-l").Output()
 	if err != nil {
 		// crontab -l exits non-zero when no crontab is set — not a real error.
@@ -28,7 +43,13 @@ func ReadCrontab() (string, error) {
 }
 
 // WriteCrontab installs content as the user's crontab via crontab stdin.
+//
+// If WS_CRONTAB_FILE is set, the content is written to that file instead of
+// invoking crontab(1).
 func WriteCrontab(content string) error {
+	if f := os.Getenv("WS_CRONTAB_FILE"); f != "" {
+		return os.WriteFile(f, []byte(content), 0o600)
+	}
 	cmd := exec.Command("crontab", "-")
 	cmd.Stdin = strings.NewReader(content)
 	out, err := cmd.CombinedOutput()

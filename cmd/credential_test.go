@@ -58,11 +58,13 @@ func TestCredentialUnknownOpSilent(t *testing.T) {
 }
 
 func TestCredentialNoArgs(t *testing.T) {
-	// No args → silent exit 0 per git credential helper spec.
 	var out, errOut bytes.Buffer
 	code := Execute([]string{"git-credential-helper"}, strings.NewReader(""), &out, &errOut)
 	if code != 0 {
-		t.Fatalf("expected exit 0 for no args (silent), got %d", code)
+		t.Fatalf("expected exit 0 for no args (shows help), got %d", code)
+	}
+	if !strings.Contains(out.String(), "ws git-credential-helper") {
+		t.Fatalf("expected usage in stdout, got: %s", out.String())
 	}
 }
 
@@ -81,6 +83,36 @@ func TestCredentialLegacyAlias(t *testing.T) {
 	code := Execute([]string{"credential", "get"}, strings.NewReader("\n"), &out, &errOut)
 	if code != 0 {
 		t.Fatalf("expected exit 0 for legacy alias, got %d", code)
+	}
+}
+
+func TestCredentialNoArgsExitsNonZero(t *testing.T) {
+	var out, errOut bytes.Buffer
+	code := Execute([]string{"git-credential-helper"}, strings.NewReader(""), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected exit 0 (shows help), got %d", code)
+	}
+	if !strings.Contains(out.String(), "ws git-credential-helper") {
+		t.Fatalf("expected usage in stdout, got: %s", out.String())
+	}
+}
+
+func TestCredentialNoArgsStdoutEmpty(t *testing.T) {
+	var out, errOut bytes.Buffer
+	Execute([]string{"git-credential-helper"}, strings.NewReader(""), &out, &errOut)
+	if out.Len() == 0 {
+		t.Fatalf("expected help in stdout, got empty output")
+	}
+}
+
+func TestCredentialAliasNoArgs(t *testing.T) {
+	var out, errOut bytes.Buffer
+	code := Execute([]string{"credential"}, strings.NewReader(""), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("expected exit 0 for alias with no args (shows help), got %d", code)
+	}
+	if !strings.Contains(out.String(), "ws git-credential-helper") {
+		t.Fatalf("expected usage in stdout, got: %s", out.String())
 	}
 }
 

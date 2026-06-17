@@ -76,3 +76,18 @@ func TestScanExitCodeOnViolation(t *testing.T) {
 		t.Fatalf("expected scan exit 2, got %d (stdout=%s stderr=%s)", code, out.String(), errOut.String())
 	}
 }
+
+func TestDotfileNoArgsShowsHelp(t *testing.T) {
+	testSetXDG(t)
+	var out, errOut bytes.Buffer
+	code := Execute([]string{"dotfile"}, strings.NewReader(""), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("ws dotfile (no args): expected exit 0, got %d stderr=%s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "add") {
+		t.Fatalf("expected help with 'add' subcommand, got: %s", out.String())
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("expected empty stderr, got: %s", errOut.String())
+	}
+}

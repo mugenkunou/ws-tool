@@ -30,6 +30,9 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 	if hasHelpArg(args) {
 		return printCmdHelp(stdout, ignoreHelp)
 	}
+	if len(args) == 0 {
+		return printCmdHelp(stdout, ignoreHelp)
+	}
 
 	workspacePath, configPath, manifestPath, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
@@ -50,10 +53,6 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 		return 1
 	}
 	engine := ignore.BuildEngine(userRules)
-
-	if len(args) == 0 {
-		return printUsageError(stderr, ignoreHelp)
-	}
 
 	sub := args[0]
 	subArgs := args[1:]

@@ -117,3 +117,18 @@ func TestTrashEmptyDryRunFromCLI(t *testing.T) {
 		t.Fatalf("expected file to remain after dry-run: %v", err)
 	}
 }
+
+func TestTrashNoArgsShowsHelp(t *testing.T) {
+	testSetXDG(t)
+	var out, errOut bytes.Buffer
+	code := Execute([]string{"trash"}, strings.NewReader(""), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("ws trash (no args): expected exit 0, got %d stderr=%s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "enable") {
+		t.Fatalf("expected help with 'enable' subcommand, got: %s", out.String())
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("expected empty stderr, got: %s", errOut.String())
+	}
+}

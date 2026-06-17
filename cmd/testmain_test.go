@@ -45,10 +45,18 @@ func TestMain(m *testing.M) {
 // Must be called at the start of any test that calls ws init.
 // It also sets PASSWORD_STORE_DIR to an isolated temp dir so that the real
 // ~/.password-store is never included in repo operations during tests.
+// WS_CRONTAB_FILE is set to an empty temp file so cron commands never read
+// or write the real system crontab.
 func testSetXDG(t *testing.T) {
 	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("PASSWORD_STORE_DIR", t.TempDir())
+
+	cronFile := filepath.Join(t.TempDir(), "crontab")
+	if err := os.WriteFile(cronFile, []byte{}, 0o600); err != nil {
+		t.Fatalf("testSetXDG: create crontab file: %v", err)
+	}
+	t.Setenv("WS_CRONTAB_FILE", cronFile)
 }
 
 // testConfigPath returns a per-test config path inside a test-scoped temp dir.

@@ -386,7 +386,7 @@ func runConfig(args []string, globals globalFlags, stdout, stderr io.Writer) int
 	}
 
 	if len(args) == 0 {
-		return printUsageError(stderr, configHelp)
+		return printCmdHelp(stdout, configHelp)
 	}
 
 	subcommand := strings.TrimSpace(args[0])

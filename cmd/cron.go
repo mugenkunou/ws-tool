@@ -40,7 +40,7 @@ func runCron(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		return printCmdHelp(stdout, cronHelp)
 	}
 	if len(args) == 0 {
-		return printUsageError(stderr, cronHelp)
+		return printCmdHelp(stdout, cronHelp)
 	}
 
 	sub := args[0]

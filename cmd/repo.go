@@ -136,15 +136,14 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 	if hasHelpArg(args) {
 		return printCmdHelp(stdout, repoHelp)
 	}
+	if len(args) == 0 {
+		return printCmdHelp(stdout, repoHelp)
+	}
 
 	workspacePath, configPath, _, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
-	}
-
-	if len(args) == 0 {
-		return printUsageError(stderr, repoHelp)
 	}
 
 	cfg, err := config.Load(configPath)

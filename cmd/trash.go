@@ -36,6 +36,9 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 	if hasHelpArg(args) {
 		return printCmdHelp(stdout, trashHelp)
 	}
+	if len(args) == 0 {
+		return printCmdHelp(stdout, trashHelp)
+	}
 
 	workspacePath, configPath, manifestPath, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
@@ -46,10 +49,6 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
-	}
-
-	if len(args) == 0 {
-		return printUsageError(stderr, trashHelp)
 	}
 
 	sub := args[0]

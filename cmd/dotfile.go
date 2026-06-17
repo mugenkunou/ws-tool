@@ -23,15 +23,14 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 	if hasHelpArg(args) {
 		return printCmdHelp(stdout, dotfileHelp)
 	}
+	if len(args) == 0 {
+		return printCmdHelp(stdout, dotfileHelp)
+	}
 
 	workspacePath, configPath, manifestPath, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
-	}
-
-	if len(args) == 0 {
-		return printUsageError(stderr, dotfileHelp)
 	}
 
 	subcommand := args[0]

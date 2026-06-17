@@ -19,7 +19,7 @@ import (
 var logHelp = cmdHelp{Usage: "ws log <start|stop|ls|prune|rm>"}
 
 func runLog(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	if hasHelpArg(args) {
+	if hasHelpArg(args) || len(args) == 0 {
 		return printCmdHelp(stdout, logHelp)
 	}
 
@@ -36,10 +36,6 @@ func runLog(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 
 	// Log sessions live under <workspace>/ws/ws-log/.
 	logDir := filepath.Join(resolvedWorkspace, "ws", "ws-log")
-
-	if len(args) == 0 {
-		return printUsageError(stderr, logHelp)
-	}
 
 	sub := args[0]
 	subArgs := args[1:]

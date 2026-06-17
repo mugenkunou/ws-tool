@@ -51,15 +51,14 @@ func runSecret(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 	if hasHelpArg(args) {
 		return printCmdHelp(stdout, secretHelp)
 	}
+	if len(args) == 0 {
+		return printCmdHelp(stdout, secretHelp)
+	}
 
 	workspacePath, configPath, manifestPath, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
-	}
-
-	if len(args) == 0 {
-		return printUsageError(stderr, secretHelp)
 	}
 
 	sub := args[0]
@@ -864,10 +863,19 @@ func runSecretSetup(args []string, globals globalFlags, stdin io.Reader, stdout,
 
 // ── ws secret git ──
 
+var secretGitHelp = cmdHelp{
+	Usage: "ws secret git <push|log|remote|status>",
+	Subcommands: []string{
+		"  push           Push pass store to git remote",
+		"  log            Show pass store git log",
+		"  remote <url>   Set the git remote for pass store",
+		"  status         Show git status of pass store",
+	},
+}
+
 func runSecretGit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: ws secret git <push|log|remote|status>")
-		return 1
+	if hasHelpArg(args) || len(args) == 0 {
+		return printCmdHelp(stdout, secretGitHelp)
 	}
 
 	nc := globals.noColor
@@ -1003,8 +1011,7 @@ func runSecretGit(args []string, globals globalFlags, stdin io.Reader, stdout, s
 
 	default:
 		fmt.Fprintf(stderr, "unknown secret git subcommand: %s\n", args[0])
-		fmt.Fprintln(stderr, "usage: ws secret git <push|log|remote|status>")
-		return 1
+		return printUsageError(stderr, secretGitHelp)
 	}
 }
 

@@ -199,3 +199,18 @@ func TestConfigDumpIsRejected(t *testing.T) {
 		t.Fatalf("unexpected dump error output: %s", errOut.String())
 	}
 }
+
+func TestConfigNoArgsShowsHelp(t *testing.T) {
+	testSetXDG(t)
+	var out, errOut bytes.Buffer
+	code := Execute([]string{"config"}, strings.NewReader(""), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("ws config (no args): expected exit 0, got %d stderr=%s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "view") {
+		t.Fatalf("expected help with 'view' subcommand, got: %s", out.String())
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("expected empty stderr, got: %s", errOut.String())
+	}
+}

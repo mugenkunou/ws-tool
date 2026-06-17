@@ -43,8 +43,7 @@ func runGitCredentialHelper(args []string, globals globalFlags, stdin io.Reader,
 	}
 
 	if len(args) == 0 {
-		// git credential helper spec: no operation → silent exit.
-		return 0
+		return printCmdHelp(stdout, credentialHelp)
 	}
 
 	switch args[0] {
@@ -65,7 +64,9 @@ func runGitCredentialHelper(args []string, globals globalFlags, stdin io.Reader,
 		return runCredentialDisconnect(args[1:], globals, stdin, stdout, stderr)
 
 	default:
-		// Unknown operation — silently ignore per git credential helper spec.
+		if isTerminalWriter(stderr) {
+			return printUsageError(stderr, credentialHelp)
+		}
 		return 0
 	}
 }
