@@ -86,6 +86,14 @@ func runCronAdd(args []string, globals globalFlags, stdin io.Reader, stdout, std
 	}
 	jobName := remaining[0]
 
+	// Validate the job name before any system checks so the user gets a clear
+	// "unknown job" error rather than a misleading "install cron" message.
+	jobs, err := cron.Resolve(jobName)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+
 	if !globals.dryRun {
 		if err := cron.Preflight(); err != nil {
 			fmt.Fprintln(stderr, err.Error())
@@ -94,12 +102,6 @@ func runCronAdd(args []string, globals globalFlags, stdin io.Reader, stdout, std
 	}
 
 	workspacePath, _, manifestPath, err := requireWorkspaceInitialized(globals, stderr)
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-
-	jobs, err := cron.Resolve(jobName)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1

@@ -138,19 +138,40 @@ ws version
 
 ## 6) Test suite
 
-### Standard test run
+### Default: Docker-isolated test run
 
 ```bash
 make test
 ```
 
-### Verbose / targeted test run
+Tests run inside a Docker container with the source tree bind-mounted read-only.
+This provides full isolation from the host machine — live crontabs, credential
+helpers, XDG config, and password stores are completely invisible to the tests.
+
+On first run, `make test` builds the test image (`ws-tool-test:local`) from
+`Dockerfile.test`. The image is cached; subsequent runs skip the build step
+unless `Dockerfile.test` changes.
+
+**Prerequisites:** Docker must be installed and running.
+
+### Host machine (LOCAL=1)
+
+For CI pipelines, or when Docker is not available, or for quick targeted runs:
+
+```bash
+make test LOCAL=1
+```
+
+This is also what CI should set — CI runners are already isolated environments,
+so Docker-in-Docker is unnecessary overhead.
+
+### Targeted / verbose runs (host)
 
 ```bash
 TMPDIR=$PWD/tmp GOCACHE=$PWD/.gocache GOTMPDIR=$PWD/.gotmp go test -v -run TestFoo ./cmd/...
 ```
 
-### Coverage run
+### Coverage run (host)
 
 ```bash
 TMPDIR=$PWD/tmp GOCACHE=$PWD/.gocache GOTMPDIR=$PWD/.gotmp go test -cover ./...
@@ -161,22 +182,46 @@ TMPDIR=$PWD/tmp GOCACHE=$PWD/.gocache GOTMPDIR=$PWD/.gotmp go test -cover ./...
 > `TMPDIR`, `GOCACHE`, and `GOTMPDIR` to repo-local directories automatically.
 > When running `go test` directly (for extra flags), you **must** set these
 > yourself. The directories (`tmp/`, `.gocache/`, `.gotmp/`) are gitignored.
+> Inside Docker these dirs are writable bind-mounts, so the Go cache is warm
+> across container runs.
+
+### Docker image management
+
+```bash
+make test-image        # build (or rebuild) the test image explicitly
+make test-image-clean  # remove the image and stamp, forcing a full rebuild
+```
 
 ### Test isolation guarantees
 
-The test suite (`cmd/testmain_test.go` → `TestMain`) automatically isolates:
+There are **two independent layers** of isolation. Both are always active.
+
+**Layer 1 — Docker (process-level):** host crontab, credential helpers, XDG
+config, password store, and git config are unreachable from inside the
+container. Applies to the entire test binary.
+
+**Layer 2 — `testSetXDG` (test-level):** redirects `XDG_CONFIG_HOME`,
+`PASSWORD_STORE_DIR`, and `WS_CRONTAB_FILE` to per-test temp dirs, and
+`TestMain` isolates `GIT_CONFIG_GLOBAL` and the editor `code` binary.
 
 | Scope | Mechanism | Protects |
 |---|---|---|
-| XDG config | `XDG_CONFIG_HOME` → temp dir | Real `~/.config` |
-| Git global config | `GIT_CONFIG_GLOBAL` → temp file | Real `~/.gitconfig` (credential helper, user settings) |
-| Editor shims | Fake `code` binary in `PATH` | Tests that invoke editor don't open VS Code |
+| XDG config | `XDG_CONFIG_HOME` → temp dir (per test) | Real `~/.config` |
+| Git global config | `GIT_CONFIG_GLOBAL` → temp file (TestMain) | Real `~/.gitconfig` (credential helper) |
+| System crontab | `WS_CRONTAB_FILE` → temp file (per test) | Live cron jobs on the host |
+| Password store | `PASSWORD_STORE_DIR` → temp dir (per test) | Real `~/.password-store` |
+| Editor binary | Fake `code` shim in `PATH` (TestMain) | VS Code not invoked during tests |
+
+> **Convention:** Any test that invokes `ws init`, `ws cron`, `ws secret`, or
+> any other RW command **must** call `testSetXDG(t)` at the top. Docker gives
+> process isolation; `testSetXDG` gives test-level isolation. Both are needed.
 
 This means:
 - **No test can clobber your `ws git-credential-helper setup`.** Git global
   config writes go to an isolated temp file, not your real `~/.gitconfig`.
-- **No test needs network access or real credentials.** Tests that hit pass/GPG
-  boundaries will degrade gracefully.
+- **No test touches your live crontab.** `WS_CRONTAB_FILE` redirects all
+  crontab reads/writes to an isolated temp file.
+- **No test needs network access or real credentials.**
 - **You never need to re-run `ws git-credential-helper setup` after tests.**
 
 ### NEVER run bare `go test` / `go build`

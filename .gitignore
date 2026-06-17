@@ -436,3 +436,4 @@ tmp/
 .gotmp/
 ws
 .claude/
+.docker-image-stamp
