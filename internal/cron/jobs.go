@@ -29,8 +29,8 @@ pkill megasync || true`,
 
 var dotfileSyncJob = &BuiltinJob{
 	Name:         "dotfile-sync",
-	Schedule:     "0 * * * *",
-	IntervalSecs: 60 * 60,
+	Schedule:     "*/30 * * * *",
+	IntervalSecs: 30 * 60,
 	Description:  "Commit and push dotfiles to remote git (requires dotfile.git.enabled=true)",
 	scriptBody: func(wsBin, display, workspace string) string {
 		return fmt.Sprintf("%s --workspace %s dotfile git push --quiet", wsBin, workspace)

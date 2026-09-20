@@ -34,13 +34,14 @@ Every command in `ws` is classified as **read-only (RO)** or **read-write (RW)**
 #### RO Commands (non-interactive, pipe-safe)
 
 RO commands never modify the workspace, config, manifest, or system state. They:
+
 - Produce deterministic output to stdout.
 - Never prompt for user input.
 - Work correctly when piped (`ws repo ls | wc -l`, `ws ignore scan --json | jq`).
 - Support `--json` for machine-readable output.
 
 | Command | Notes |
-|---|---|
+| --- | --- |
 | `ws version` | |
 | `ws config view`, `ws config --defaults`, `ws config dump` | |
 | `ws ignore scan`, `ws ignore check`, `ws ignore ls`, `ws ignore tree` | |
@@ -62,6 +63,7 @@ RO commands never modify the workspace, config, manifest, or system state. They:
 #### RW Commands (interactive, confirm-before-write)
 
 RW commands modify state. They:
+
 - **Build a `Plan` of discrete `Action`s** before executing anything.
 - **Prompt per-action** with `y/n/a/q` keys (like `git add -p`): `y` = yes (default/Enter), `n` = skip this action, `a` = accept all remaining, `q` = quit (skip all remaining).
 - Support `--dry-run` to preview the full plan without writing.
@@ -71,7 +73,7 @@ RW commands modify state. They:
 - Multi-action commands (e.g., `ws repo pull` across N repos) present **one prompt per action**, not a single gate.
 
 | Command | Actions |
-|---|---|
+| --- | --- |
 | `ws init` | Per-file: config.json (XDG), manifest.json, .megaignore, ws/ dir |
 | `ws reset` | Per-subsystem: dotfiles, trash, ws/ dir removal |
 | `ws restore` | Per-step: trash-enable, dotfile-fix, ignore-generate |
@@ -148,12 +150,14 @@ return planResult.ExitCode()
 ```
 
 Prompt vocabulary (interactive mode):
+
 - `y` (default, Enter) — execute this action
 - `n` — skip this action, continue to next
 - `a` — accept all remaining actions without prompting
 - `q` — quit, skip all remaining actions
 
 Exit codes from `planResult.ExitCode()`:
+
 - `0` — all succeeded or all skipped by user choice
 - `1` — all failed or infrastructure error
 - `3` — partial success (some executed, some failed)
@@ -738,7 +742,7 @@ Read commands (`ws repo ls`, `ws repo scan`) are non-interactive and pipe-safe. 
 **Source detection:** `ws capture` has exactly two input sources — clipboard and stdin pipe. No file arguments, no URL fetching. The clipboard is the primary interface; stdin pipe is the secondary for programmatic use.
 
 | Invocation | Source | Behavior |
-|---|---|---|
+| --- | --- | --- |
 | `ws capture` | Clipboard | Reads richest clipboard format (`text/html` > `text/plain` > `image/png`) |
 | `ws capture work` | Clipboard | Same, but targets the `work` location |
 | `ws capture -a` | Clipboard | Amends (appends to) the last entry |
@@ -756,7 +760,7 @@ Clipboard access uses `xclip` (X11) or `wl-paste` (Wayland) — same class of de
 
 **Active window title:** On capture, `ws` reads the active window title via `xdotool getactivewindow getwindowname` (X11) or equivalent. This provides free metadata (`"#general - Slack"`, `"Architecture - Confluence - Firefox"`, `"user@host:~"`) without touching the content. Stored in the entry metadata line. Falls back gracefully if unavailable.
 
-**Topic:** The entry topic is the `## ` section heading. When the user runs `ws capture` interactively (TTY, not `--quiet`/`--json`), the tool prompts `Topic:` before pinning. The user types a short label — or presses Enter to auto-derive from content. For auto-derived: HTML uses extracted structure, text uses the first meaningful line, images use `[pinned image]`. The user can always edit the topic later — it's a text file.
+**Topic:** The entry topic is the `##` section heading. When the user runs `ws capture` interactively (TTY, not `--quiet`/`--json`), the tool prompts `Topic:` before pinning. The user types a short label — or presses Enter to auto-derive from content. For auto-derived: HTML uses extracted structure, text uses the first meaningful line, images use `[pinned image]`. The user can always edit the topic later — it's a text file.
 
 **Entry format:**
 
@@ -789,7 +793,7 @@ Content body — markdown, code blocks, embedded images.
 **Dependencies:**
 
 | Tool | Package | Purpose | Required |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `xclip` | xclip | Clipboard access (X11) | One of xclip or wl-paste |
 | `wl-paste` | wl-clipboard | Clipboard access (Wayland) | One of xclip or wl-paste |
 | `xdotool` | xdotool | Active window title (X11) | Optional (graceful fallback) |
@@ -1362,6 +1366,7 @@ ws reset [flags]
 | `git_exclude` | Remove the line from `.git/info/exclude` |
 
 **Safety:**
+
 - Symlinks that have been overwritten by a real file are skipped (not deleted).
 - Missing files/dirs are silently skipped.
 - Each undo operation is idempotent.
@@ -1744,11 +1749,11 @@ Storage:  ~/Workspace/ws/dotfiles/
 ```text
 ws dotfile ls --porcelain
 
-~/.ssh	ssh	false	SSH keys and proxy jump config
-~/.bashrc	bashrc	false	
-/etc/docker/daemon.json	daemon.json	true	
-~/.kube/config	kubeconfig	false	
-~/.config/Code/User/settings.json	vscode-settings.json	false	
+~/.ssh ssh false SSH keys and proxy jump config
+~/.bashrc bashrc false 
+/etc/docker/daemon.json daemon.json true 
+~/.kube/config kubeconfig false 
+~/.config/Code/User/settings.json vscode-settings.json false 
 ```
 
 Columns: `system_path`, `dotfile_name`, `sudo`, `note` (tab-separated).
@@ -2228,6 +2233,7 @@ Tagged pid-limit-debug.2026-04: [bash, k8s, cgroups]
 ```
 
 Auto-tag heuristics:
+
 - File extensions: `.sh` → `bash`, `.py` → `python`, `.go` → `go`, `.tf` → `terraform`
 - Named files: `Dockerfile` → `docker`, `Makefile` → `make`
 - Shebangs: `#!/bin/bash` → `bash`, `#!/usr/bin/env python` → `python`
@@ -2736,7 +2742,7 @@ ws repo doctor [flags]
 Checks:
 
 | Check | Severity | Condition |
-|---|---|---|
+| --- | --- | --- |
 | `identity` | warn | `user.name` or `user.email` not set in local or global git config |
 | `identity` | info | identity not set locally but a global value exists |
 | `upstream` | warn | current branch has no tracking upstream |
@@ -2787,7 +2793,7 @@ data/bruno                ⚠  dirty: uncommitted changes
 **Exit codes:**
 
 | Code | Meaning |
-|---|---|
+| --- | --- |
 | `0` | No warn/error findings |
 | `2` | One or more warn or error findings |
 | `1` | Internal error |
@@ -2929,6 +2935,7 @@ ws ignore ls --json | jq ...      # machine-readable
 Browse the workspace as a directory tree with a sync/ignored status icon on every entry.
 
 Status icons:
+
 - ✔ — fully synced (no excluded children)
 - ✗ — excluded (the item itself matches an exclude rule)
 - ◐ — partially excluded (at least one descendant is excluded, item itself is synced)
@@ -4147,7 +4154,7 @@ The completion script covers all commands, subcommands, flags, and flag values. 
 **Flag-value completion:** When completing a value after a flag that takes a path argument, the completion engine emits the appropriate directive:
 
 | Flag | Completion behavior |
-|---|---|
+| --- | --- |
 | `--workspace`, `-w` | Directory names only (no files) |
 | `--config`, `-c`, `--manifest` | Any file |
 | Other string flags | Any file (default) |
@@ -4188,7 +4195,7 @@ Flags:
 **Source detection:**
 
 | Invocation | Source | Behavior |
-|---|---|---|
+| --- | --- | --- |
 | `ws capture` | Clipboard | Reads richest clipboard format available |
 | `ws capture work` | Clipboard | Same, targets the `work` location |
 | `ws capture -a` | Clipboard | Amends last entry in default location |
@@ -4201,7 +4208,7 @@ Flags:
 **Interactive prompts (when stdin is TTY):**
 
 | Condition | Prompts shown |
-|---|---|
+| --- | --- |
 | Normal capture | Topic only |
 | `--amend` | None |
 | `--quiet` or `--json` | None |
@@ -4286,7 +4293,7 @@ Please ensure you inform us and deactivate your ID card...
 **Exit codes:**
 
 | Code | Meaning |
-|---|---|
+| --- | --- |
 | `0` | Entry appended successfully |
 | `1` | Error — clipboard empty, tool missing, write failed |
 
@@ -4350,6 +4357,7 @@ Editor resolution: `scratch.editor_cmd` → `$EDITOR` → `$VISUAL` → `vi`.
 **With `--dry-run`:** Prints the resolved captures file path without opening an editor.
 
 **Deprecation note:** `-e`/`--edit` flag still works but prints:
+
 ```
 note: -e/--edit is deprecated; use `ws capture edit`
 ```
@@ -4377,7 +4385,7 @@ ws cron <add|rm|ls|status|log>
 | Job | Schedule | Description |
 | --- | --- | --- |
 | `mega-sync` | `*/30 * * * *` | Kill/restart megasync for a 5-minute sync window every 30 min |
-| `dotfile-sync` | `0 * * * *` | Commit and push dotfiles to remote git (requires `dotfile.git.enabled=true`) |
+| `dotfile-sync` | `*/30 * * * *` | Commit and push dotfiles to remote git (requires `dotfile.git.enabled=true`) |
 | `repo-sync` | `*/30 * * * *` | Sync workspace git fleet (pull behind, push ahead) |
 | `secret-scan` | `0 * * * *` | Scan for exposed secrets; emit notification if violations found |
 | `ignore-scan` | `0 */6 * * *` | Scan workspace sync hygiene (bloat, depth, project-meta) every 6 hours |
@@ -4458,7 +4466,7 @@ ws cron add sync
   ✔ Installed
   Write wrapper script ~/.local/share/ws/cron-jobs/dotfile-sync.sh
   ✔ Written
-  Install crontab entries for dotfile-sync (0 * * * * + @reboot)
+  Install crontab entries for dotfile-sync (*/30 * * * * + @reboot)
   ✔ Installed
   Write wrapper script ~/.local/share/ws/cron-jobs/repo-sync.sh
   ✔ Written
@@ -4516,7 +4524,7 @@ ws cron ls
 ```text
 Available cron jobs:
   NAME            SCHEDULE        DESCRIPTION                                                          STATUS
-  dotfile-sync    0 * * * *       Commit and push dotfiles to remote git                               installed
+  dotfile-sync    */30 * * * *    Commit and push dotfiles to remote git                               installed
   ignore-scan     0 */6 * * *     Scan workspace sync hygiene every 6 hours                            not installed
   log-prune       0 2 * * *       Evict old log sessions exceeding log.cap_mb (nightly at 02:00)       installed
   maintenance     (preset)        installs: ignore-scan, log-prune, scratch-prune                      not installed
@@ -4560,9 +4568,9 @@ mega-sync
 
 dotfile-sync
 ──────────────────────────────────────────────────────
-  Status      installed  (0 * * * * + @reboot)
-  Last run    2026-05-08 10:00:00  (34m 12s ago)  exit 0
-  Next run    ~2026-05-08 11:00
+  Status      installed  (*/30 * * * * + @reboot)
+  Last run    2026-05-08 10:00:00  (14m 12s ago)  exit 0
+  Next run    ~2026-05-08 10:30
   Recent log:
     2026-05-08T10:00:00Z [dotfile-sync] Starting
     2026-05-08T10:00:01Z [dotfile-sync] Done (exit 0)
