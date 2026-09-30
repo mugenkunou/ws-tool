@@ -1,10 +1,16 @@
-.PHONY: build test test-local test-docker test-image test-image-clean fmt clean hooks release-check
+.PHONY: build test test-local test-docker test-image test-image-clean fmt clean hooks release-check install uninstall
 
 VERSION  ?= dev
 TMPDIR   ?= $(CURDIR)/tmp
 GOCACHE  ?= $(CURDIR)/.gocache
 GOTMPDIR ?= $(CURDIR)/.gotmp
 LDFLAGS  := -s -w -X github.com/mugenkunou/ws-tool/cmd.appVersion=$(VERSION)
+
+# ── install paths ─────────────────────────────────────────────────────────────
+# Default to ~/.local/bin (no sudo needed, on PATH for modern Linux/macOS).
+# Override: make install PREFIX=/usr/local
+PREFIX   ?= $(HOME)/.local
+BINDIR   := $(PREFIX)/bin
 
 # Docker image name used for test runs.
 TEST_IMAGE := ws-tool-test:local
@@ -79,6 +85,38 @@ test-image: $(DOCKER_STAMP)
 test-image-clean:
 	rm -f $(DOCKER_STAMP)
 	docker rmi $(TEST_IMAGE) 2>/dev/null || true
+
+# ── install / uninstall ───────────────────────────────────────────────────────
+# Installs the locally compiled binary to $(BINDIR)/ws.
+# The binary is tagged with a marker comment in the file itself (via a wrapper
+# approach is not possible for a binary), so we write a tiny sidecar file
+# $(BINDIR)/.ws-source=make next to it.  That lets uninstall know it owns the
+# binary and avoids clobbering a release binary the user dropped in manually.
+#
+# If a binary already exists without the sidecar (i.e. installed from a GitHub
+# release), install aborts with a clear message so the two paths never collide.
+
+install: build
+	@mkdir -p "$(BINDIR)"
+	@if [ -f "$(BINDIR)/ws" ] && [ ! -f "$(BINDIR)/.ws-source" ]; then \
+		echo "ERROR: $(BINDIR)/ws exists but was not installed by 'make install'."; \
+		echo "       It was likely placed there from a GitHub release."; \
+		echo "       Remove it first, or set a different PREFIX:"; \
+		echo "         rm $(BINDIR)/ws && make install"; \
+		echo "         make install PREFIX=~/.local"; \
+		exit 1; \
+	fi
+	install -m 755 ws "$(BINDIR)/ws"
+	@echo "make" > "$(BINDIR)/.ws-source"
+	@echo "installed: $(BINDIR)/ws ($(VERSION))"
+
+uninstall:
+	@if [ ! -f "$(BINDIR)/.ws-source" ]; then \
+		echo "ERROR: $(BINDIR)/ws was not installed by 'make install' — not removing."; \
+		exit 1; \
+	fi
+	rm -f "$(BINDIR)/ws" "$(BINDIR)/.ws-source"
+	@echo "removed: $(BINDIR)/ws"
 
 # ── other targets ─────────────────────────────────────────────────────────────
 
