@@ -37,7 +37,7 @@ func TestIgnoreCheckSynced(t *testing.T) {
 	}
 
 	var out, errOut bytes.Buffer
-	code := Execute([]string{"--workspace", workspace, "ignore", "check", "notes.txt"}, strings.NewReader(""), &out, &errOut)
+	code := Execute([]string{"--workspace", workspace, "ignore", "check", filepath.Join(workspace, "notes.txt")}, strings.NewReader(""), &out, &errOut)
 	if code != 0 {
 		t.Fatalf("expected exit 0 for synced file, got %d (stderr=%s)", code, errOut.String())
 	}
@@ -67,7 +67,7 @@ func TestIgnoreCheckIgnored(t *testing.T) {
 	}
 
 	var out, errOut bytes.Buffer
-	code := Execute([]string{"--workspace", workspace, "ignore", "check", "node_modules/lodash.js"}, strings.NewReader(""), &out, &errOut)
+	code := Execute([]string{"--workspace", workspace, "ignore", "check", filepath.Join(workspace, "node_modules/lodash.js")}, strings.NewReader(""), &out, &errOut)
 	// exit 2 = ignored
 	if code != 2 {
 		t.Fatalf("expected exit 2 for ignored file, got %d (stdout=%s stderr=%s)", code, out.String(), errOut.String())
@@ -89,7 +89,7 @@ func TestIgnoreCheckJSON(t *testing.T) {
 	}
 
 	var out, errOut bytes.Buffer
-	code := Execute([]string{"--workspace", workspace, "--json", "ignore", "check", "readme.md"}, strings.NewReader(""), &out, &errOut)
+	code := Execute([]string{"--workspace", workspace, "--json", "ignore", "check", filepath.Join(workspace, "readme.md")}, strings.NewReader(""), &out, &errOut)
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d (stderr=%s)", code, errOut.String())
 	}
@@ -123,7 +123,7 @@ func TestIgnoreCheckExitCodeIgnored(t *testing.T) {
 	}
 
 	var out, errOut bytes.Buffer
-	code := Execute([]string{"--workspace", workspace, "ignore", "check", ".env"}, strings.NewReader(""), &out, &errOut)
+	code := Execute([]string{"--workspace", workspace, "ignore", "check", filepath.Join(workspace, ".env")}, strings.NewReader(""), &out, &errOut)
 	// .env may or may not be in the default rules; just verify the exit code
 	// is 0 (synced) or 2 (ignored) — never 1 (error).
 	if code != 0 && code != 2 {
@@ -135,7 +135,7 @@ func TestIgnoreCheckMissingPath(t *testing.T) {
 	workspace := initIgnoreWorkspace(t)
 
 	var out, errOut bytes.Buffer
-	code := Execute([]string{"--workspace", workspace, "ignore", "check", "does-not-exist.txt"}, strings.NewReader(""), &out, &errOut)
+	code := Execute([]string{"--workspace", workspace, "ignore", "check", filepath.Join(workspace, "does-not-exist.txt")}, strings.NewReader(""), &out, &errOut)
 	if code != 1 {
 		t.Fatalf("expected exit 1 for missing path, got %d", code)
 	}
@@ -270,7 +270,7 @@ func TestIgnoreTreeDepth(t *testing.T) {
 	// Positional level arg: ws ignore tree . 2 — should see b/ but NOT deep.txt.
 	out.Reset()
 	errOut.Reset()
-	code = Execute([]string{"--workspace", workspace, "ignore", "tree", ".", "2"}, strings.NewReader(""), &out, &errOut)
+	code = Execute([]string{"--workspace", workspace, "ignore", "tree", workspace, "2"}, strings.NewReader(""), &out, &errOut)
 	if code != 0 {
 		t.Fatalf("unexpected error at positional level=2: %d (stderr=%s)", code, errOut.String())
 	}
@@ -308,7 +308,7 @@ func TestIgnoreTreePath(t *testing.T) {
 	}
 
 	var out, errOut bytes.Buffer
-	code := Execute([]string{"--workspace", workspace, "ignore", "tree", "--path", "sub"}, strings.NewReader(""), &out, &errOut)
+	code := Execute([]string{"--workspace", workspace, "ignore", "tree", "--path", filepath.Join(workspace, "sub")}, strings.NewReader(""), &out, &errOut)
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d (stderr=%s)", code, errOut.String())
 	}
@@ -323,7 +323,7 @@ func TestIgnoreTreePath(t *testing.T) {
 	// Positional directory argument: ws ignore tree sub
 	out.Reset()
 	errOut.Reset()
-	code = Execute([]string{"--workspace", workspace, "ignore", "tree", "sub"}, strings.NewReader(""), &out, &errOut)
+	code = Execute([]string{"--workspace", workspace, "ignore", "tree", filepath.Join(workspace, "sub")}, strings.NewReader(""), &out, &errOut)
 	if code != 0 {
 		t.Fatalf("expected exit 0 with positional dir, got %d (stderr=%s)", code, errOut.String())
 	}

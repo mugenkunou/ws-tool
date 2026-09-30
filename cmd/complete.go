@@ -62,7 +62,7 @@ var completers = map[string]completer{
 	"git-credential-helper": {subcommands: []string{"setup", "status", "disconnect"}},
 	"ignore":                {subcommands: []string{"check", "scan", "fix", "ls", "tree", "edit"}, resolve: completeIgnore},
 	"log":                   {subcommands: []string{"start", "stop", "ls", "prune", "rm"}, resolve: completeLog},
-	"repo":                  {subcommands: []string{"ls", "scan", "doctor", "fetch", "pull", "sync", "run"}, resolve: completeRepo},
+	"repo":                  {subcommands: []string{"ls", "scan", "fetch", "pull", "sync", "run"}, resolve: completeRepo},
 	"scratch":               {subcommands: []string{"new", "open", "ls", "tag", "search", "prune", "rm"}, resolve: completeScratch},
 	"secret":                {subcommands: []string{"scan", "fix", "setup", "status", "git"}, resolve: completeSecret},
 	"trash":                 {subcommands: []string{"enable", "disable", "empty", "status"}},
@@ -251,7 +251,7 @@ func completeLog(sub string, args []string, toComplete string, ctx completionCtx
 
 func completeRepo(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
 	switch sub {
-	case "ls", "scan", "doctor", "fetch", "pull", "sync":
+	case "ls", "scan", "fetch", "pull", "sync":
 		// Complete repo paths as positional argument for targeting.
 		if len(args) == 0 {
 			return filterPrefix(ctx.repoPaths, toComplete), compDirectiveNoFileComp
@@ -477,9 +477,7 @@ func commandFlags(command string, rest []string) []string {
 		case "ls":
 			return filterFlags
 		case "scan":
-			return append([]string{"--no-fetch"}, filterFlags...)
-		case "doctor":
-			return append([]string{"--check"}, filterFlags...)
+			return append([]string{"--no-fetch", "--check"}, filterFlags...)
 		case "fetch":
 			return filterFlags
 		case "pull":
@@ -500,35 +498,16 @@ func commandFlags(command string, rest []string) []string {
 func loadCompletionCtx(globals globalFlags) completionCtx {
 	var ctx completionCtx
 
-	workspace := globals.workspace
-	if workspace == "" {
-		workspace = "~/Workspace"
-	}
-	resolved, err := config.ExpandUserPath(workspace)
+	// Same (side-effect-free) resolution as every command, so completions
+	// match what the command will see.
+	resolved, resolvedConfig, resolvedManifest, err := resolveWorkspacePaths(globals)
 	if err != nil {
 		return ctx
 	}
 	ctx.workspace = resolved
 
 	// Load config for scratch.root_dir, capture locations, and repo roots.
-	configPath := globals.config
-	if configPath == "" {
-		if p, err := config.DefaultPath(); err == nil {
-			configPath = p
-		} else {
-			configPath = filepath.Join(resolved, "ws", "config.json")
-		}
-	}
-	// Migration: fall back to old workspace-embedded config.
-	if globals.config == "" {
-		if _, err := os.Stat(configPath); err != nil {
-			oldPath := filepath.Join(resolved, "ws", "config.json")
-			if _, err := os.Stat(oldPath); err == nil {
-				configPath = oldPath
-			}
-		}
-	}
-	cfg, cfgErr := config.Load(configPath)
+	cfg, cfgErr := config.Load(resolvedConfig)
 	if cfgErr == nil {
 		if dir, err := config.ResolvePath(resolved, cfg.Scratch.RootDir); err == nil {
 			ctx.scratchDir = dir
@@ -544,13 +523,10 @@ func loadCompletionCtx(globals globalFlags) completionCtx {
 	}
 
 	// Load manifest for dotfile names.
-	manifestPath := globals.manifest
-	if manifestPath == "" {
-		manifestPath = filepath.Join(resolved, "ws", "manifest.json")
-	}
-	if m, err := manifest.Load(manifestPath); err == nil {
+	if m, err := manifest.Load(resolvedManifest); err == nil {
+		// `ws dotfile rm` takes the system path (absolute); names are not
+		// valid input there.
 		for _, d := range m.Dotfiles {
-			ctx.dotfiles = append(ctx.dotfiles, d.Name)
 			ctx.dotfiles = append(ctx.dotfiles, d.System)
 		}
 	}
@@ -567,12 +543,13 @@ func loadCompletionCtx(globals globalFlags) completionCtx {
 		roots := make([]string, 0, len(cfg.Repo.Roots))
 		for _, r := range cfg.Repo.Roots {
 			if res, err := config.ResolvePath(resolved, r); err == nil {
-				if rel, err := filepath.Rel(resolved, res); err == nil {
-					roots = append(roots, filepath.ToSlash(rel))
-				}
+				roots = append(roots, res)
 			}
 		}
+		// Absolute paths, including ws-managed repos, exactly as the repo
+		// commands list them (spec "Path Rules").
 		if repos, err := repo.Discover(resolved, roots, cfg.Repo.ExcludeDirs); err == nil {
+			repos = appendMissingRepos(repos, wsSpecialRepos(resolved))
 			for _, r := range repos {
 				ctx.repoPaths = append(ctx.repoPaths, r.Path)
 			}

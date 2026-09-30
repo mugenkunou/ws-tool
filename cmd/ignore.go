@@ -126,13 +126,13 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 			return 1
 		}
 		if globals.json {
-			return writeJSON(stdout, stderr, "ignore.scan", violations)
+			return writeJSON(stdout, stderr, "ignore.scan", absIgnoreViolations(workspacePath, violations))
 		}
 		out := textOut(globals, stdout)
 		if len(violations) == 0 {
 			fmt.Fprintln(out, style.ResultSuccess(globals.noColor, "Ignore scan: %s", style.Badge("ok", globals.noColor)))
 		} else {
-			printIgnoreViolationsSplit(out, violations, globals.noColor, *expandHarbors)
+			printIgnoreViolationsSplit(out, absIgnoreViolations(workspacePath, violations), globals.noColor, *expandHarbors)
 		}
 		// Only actionable (non-safe-harbor) violations trigger exit 2.
 		for _, v := range violations {
@@ -201,6 +201,7 @@ func runIgnoreFixInteractive(violations []ignore.Violation, manifestPath, megaig
 	scratchRoot, _ := config.ResolvePath(workspacePath, cfg.Scratch.RootDir)
 
 	for _, v := range violations {
+		absPath := style.AbsPath(workspacePath, v.Path)
 		sizePart := ""
 		if v.SizeBytes > 0 {
 			sizePart = fmt.Sprintf("  %s", style.HumanBytes(v.SizeBytes))
@@ -214,26 +215,28 @@ func runIgnoreFixInteractive(violations []ignore.Violation, manifestPath, megaig
 			style.Badge(v.Severity, nc),
 			style.Boldf(nc, "%s", v.Type),
 			sizePart, depthPart,
-			style.Infof(nc, "%s", v.Path))
+			style.Infof(nc, "%s", absPath))
 
 		if globals.dryRun {
-			fmt.Fprintf(out, "  %s would add exclude rule: %s\n", style.Mutedf(nc, "[dry-run]"), v.Path)
+			fmt.Fprintf(out, "  %s would add exclude rule for %s\n", style.Mutedf(nc, "[dry-run]"), absPath)
 			added++
 			continue
 		}
 
-		// Derive the parent directory for the safe harbor option.
-		harborDir := filepath.Dir(v.Path)
+		// Derive the parent directory for the safe harbor option. harborDir is
+		// the workspace-relative form used in the rule; harborAbs is shown.
+		harborDir := filepath.ToSlash(filepath.Dir(v.Path))
 		if harborDir == "." {
 			harborDir = ""
 		}
+		harborAbs := style.AbsPath(workspacePath, harborDir)
 
 		var choice string
 		switch v.Type {
 		case "bloat":
 			if harborDir != "" {
 				choice = promptChoice(stdin, stdout, globals,
-					"  Action?", "[a]dd exclude rule  [h]arbor "+harborDir+"/  [m]ove to scratch  [d]elete  [s]kip  [q]uit", "ahmdsq", "s")
+					"  Action?", "[a]dd exclude rule  [h]arbor "+harborAbs+"  [m]ove to scratch  [d]elete  [s]kip  [q]uit", "ahmdsq", "s")
 			} else {
 				choice = promptChoice(stdin, stdout, globals,
 					"  Action?", "[a]dd exclude rule  [m]ove to scratch  [d]elete  [s]kip  [q]uit", "amdsq", "s")
@@ -241,7 +244,7 @@ func runIgnoreFixInteractive(violations []ignore.Violation, manifestPath, megaig
 		default:
 			if harborDir != "" {
 				choice = promptChoice(stdin, stdout, globals,
-					"  Action?", "[a]dd exclude rule  [h]arbor "+harborDir+"/  [d]elete  [s]kip  [q]uit", "ahdsq", "s")
+					"  Action?", "[a]dd exclude rule  [h]arbor "+harborAbs+"  [d]elete  [s]kip  [q]uit", "ahdsq", "s")
 			} else {
 				choice = promptChoice(stdin, stdout, globals,
 					"  Action?", "[a]dd exclude rule  [d]elete  [s]kip  [q]uit", "adsq", "s")
@@ -254,7 +257,7 @@ func runIgnoreFixInteractive(violations []ignore.Violation, manifestPath, megaig
 			if err != nil {
 				fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
 			} else if ok {
-				fmt.Fprintf(out, "  %s Added exclude: %s %s manifest.json\n", style.IconCheck(nc), style.Infof(nc, "%s", v.Path), style.IconArrow(nc))
+				fmt.Fprintf(out, "  %s Added exclude rule for %s %s %s\n", style.IconCheck(nc), style.Infof(nc, "%s", absPath), style.IconArrow(nc), manifestPath)
 				added++
 				needsRegen = true
 			} else {
@@ -271,7 +274,7 @@ func runIgnoreFixInteractive(violations []ignore.Violation, manifestPath, megaig
 			if err != nil {
 				fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
 			} else if ok {
-				fmt.Fprintf(out, "  %s Added safe harbor: %s %s manifest.json\n", style.IconCheck(nc), style.Infof(nc, "%s", harborPattern), style.IconArrow(nc))
+				fmt.Fprintf(out, "  %s Added safe harbor for %s %s %s\n", style.IconCheck(nc), style.Infof(nc, "%s", harborAbs), style.IconArrow(nc), manifestPath)
 				harbored++
 				needsRegen = true
 			} else {
@@ -284,7 +287,6 @@ func runIgnoreFixInteractive(violations []ignore.Violation, manifestPath, megaig
 				skipped++
 				continue
 			}
-			absPath := filepath.Join(workspacePath, v.Path)
 			dest := filepath.Join(scratchRoot, filepath.Base(v.Path))
 			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 				fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
@@ -299,12 +301,11 @@ func runIgnoreFixInteractive(violations []ignore.Violation, manifestPath, megaig
 			fmt.Fprintf(out, "  %s Moved %s %s\n", style.IconCheck(nc), style.IconArrow(nc), style.Infof(nc, "%s", dest))
 			moved++
 		case "d":
-			absPath := filepath.Join(workspacePath, v.Path)
 			if err := os.RemoveAll(absPath); err != nil {
 				fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
 				skipped++
 			} else {
-				fmt.Fprintf(out, "  %s Deleted %s\n", style.IconCheck(nc), v.Path)
+				fmt.Fprintf(out, "  %s Deleted %s\n", style.IconCheck(nc), absPath)
 				deleted++
 			}
 		case "q":
@@ -324,11 +325,11 @@ done:
 			fmt.Fprintf(stderr, "warning: could not reload user rules: %s\n", err)
 		} else {
 			if err := ignore.WriteMegaignore(megaignorePath, userRules); err != nil {
-				fmt.Fprintf(stderr, "warning: could not regenerate .megaignore: %s\n", err)
+				fmt.Fprintf(stderr, "warning: could not regenerate %s: %s\n", megaignorePath, err)
 			} else {
 				stats := ignore.GetRuleStats(userRules)
-				fmt.Fprintf(out, "\n%s .megaignore regenerated (%d rules: %d default + %d user)\n",
-					style.IconCheck(nc), stats.Total, stats.DefaultExclude+stats.DefaultHarbors, stats.UserExclude+stats.UserHarbors)
+				fmt.Fprintf(out, "\n%s %s regenerated (%d rules: %d default + %d user)\n",
+					style.IconCheck(nc), megaignorePath, stats.Total, stats.DefaultExclude+stats.DefaultHarbors, stats.UserExclude+stats.UserHarbors)
 			}
 		}
 	}

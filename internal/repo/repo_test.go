@@ -35,7 +35,7 @@ func TestDiscoverAndScan(t *testing.T) {
 	if len(repos) != 1 {
 		t.Fatalf("expected one repo, got %d", len(repos))
 	}
-	if repos[0].Path != "Experiments/demo" {
+	if repos[0].Path != repoPath {
 		t.Fatalf("unexpected repo path: %s", repos[0].Path)
 	}
 
@@ -150,8 +150,17 @@ func TestDiscoverExcludeDirs(t *testing.T) {
 	if len(filtered) != 1 {
 		t.Fatalf("expected 1 repo with ws excluded, got %d", len(filtered))
 	}
-	if filtered[0].Path != "Experiments/blog" {
-		t.Fatalf("expected Experiments/blog, got %s", filtered[0].Path)
+	if filtered[0].Path != userRepo {
+		t.Fatalf("expected %s, got %s", userRepo, filtered[0].Path)
+	}
+
+	// Absolute exclude values (config convention allows them) match too.
+	absFiltered, err := Discover(ws, []string{"."}, []string{filepath.Join(ws, "ws")})
+	if err != nil {
+		t.Fatalf("discover (absolute exclude) failed: %v", err)
+	}
+	if len(absFiltered) != 1 || absFiltered[0].Path != userRepo {
+		t.Fatalf("expected only %s with absolute exclude, got %+v", userRepo, absFiltered)
 	}
 }
 
@@ -182,8 +191,8 @@ func TestReconcile(t *testing.T) {
 	if len(repos) != 1 {
 		t.Fatalf("expected 1 repo, got %d", len(repos))
 	}
-	if repos[0].Path != "notes/brain" {
-		t.Fatalf("expected notes/brain, got %s", repos[0].Path)
+	if repos[0].Path != repoPath {
+		t.Fatalf("expected %s, got %s", repoPath, repos[0].Path)
 	}
 }
 
@@ -293,5 +302,20 @@ func TestFilter(t *testing.T) {
 	noFilter := Filter(statuses, FilterOptions{})
 	if len(noFilter) != 4 {
 		t.Fatalf("no filter: expected 4, got %d", len(noFilter))
+	}
+}
+
+func TestFilterPathMatchesWholeComponents(t *testing.T) {
+	statuses := []RepoStatus{
+		{Path: "/w/Data/bruno"},
+		{Path: "/w/Dat/x"},
+		{Path: "/w/Data"},
+	}
+	got := Filter(statuses, FilterOptions{Path: "/w/Data"})
+	if len(got) != 2 || got[0].Path != "/w/Data/bruno" || got[1].Path != "/w/Data" {
+		t.Fatalf("expected /w/Data and /w/Data/bruno, got %+v", got)
+	}
+	if got := Filter(statuses, FilterOptions{Path: "/w/Da"}); len(got) != 0 {
+		t.Fatalf("partial component must not match, got %+v", got)
 	}
 }

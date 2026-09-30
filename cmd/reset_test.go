@@ -21,8 +21,8 @@ func TestUninitFailsWithoutWorkspace(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
-	if !strings.Contains(errOut.String(), "No ws/ directory") {
-		t.Fatalf("expected 'No ws/ directory' error, got stderr=%s", errOut.String())
+	if !strings.Contains(errOut.String(), "No ws directory found: "+filepath.Join(workspace, "ws")) {
+		t.Fatalf("expected 'No ws directory found: <abs>' error, got stderr=%s", errOut.String())
 	}
 }
 

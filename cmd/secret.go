@@ -11,6 +11,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/manifest"
+	"github.com/mugenkunou/ws-tool/internal/repo"
 	"github.com/mugenkunou/ws-tool/internal/secret"
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
@@ -100,7 +101,12 @@ func runSecretScan(args []string, globals globalFlags, workspacePath, configPath
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	skipDirs := mergeSkipDirs(cfg.Secret.SkipDirs, skipDirFlags)
+	flagSkipDirs, err := skipDirFlagsToRel(workspacePath, skipDirFlags)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	skipDirs := mergeSkipDirs(workspacePath, cfg.Secret.SkipDirs, flagSkipDirs)
 
 	userRules, err := manifest.LoadIgnoreRules(manifestPath)
 	if err != nil {
@@ -161,8 +167,8 @@ func runSecretScan(args []string, globals globalFlags, workspacePath, configPath
 
 	if globals.json {
 		return writeJSON(stdout, stderr, "secret.scan", secretScanResult{
-			Violations:       violations,
-			SkippedDirs:      skipDirs,
+			Violations:       absSecretViolations(workspacePath, violations),
+			SkippedDirs:      absPaths(workspacePath, skipDirs),
 			Pass:             passHealth,
 			PassAudit:        auditResult,
 			GitCredHelper:    credConnected,
@@ -174,13 +180,13 @@ func runSecretScan(args []string, globals globalFlags, workspacePath, configPath
 	nc := globals.noColor
 
 	if globals.verbose && len(skipDirs) > 0 {
-		fmt.Fprintf(out, "%s secret: skipping directories: %s\n", style.Mutedf(nc, "[verbose]"), strings.Join(skipDirs, ", "))
+		fmt.Fprintf(out, "%s secret: skipping directories: %s\n", style.Mutedf(nc, "[verbose]"), strings.Join(absPaths(workspacePath, skipDirs), ", "))
 	}
 
 	if len(violations) == 0 {
 		fmt.Fprintln(out, style.ResultSuccess(nc, "Secret scan: %s", style.Badge("ok", nc)))
 	} else {
-		printSecretViolations(out, violations, nc, false)
+		printSecretViolations(out, absSecretViolations(workspacePath, violations), nc, false)
 	}
 	fmt.Fprintln(out)
 
@@ -366,7 +372,12 @@ func runSecretFix(args []string, globals globalFlags, workspacePath, configPath,
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	skipDirs := mergeSkipDirs(cfg.Secret.SkipDirs, skipDirFlags)
+	flagSkipDirs, err := skipDirFlagsToRel(workspacePath, skipDirFlags)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	skipDirs := mergeSkipDirs(workspacePath, cfg.Secret.SkipDirs, flagSkipDirs)
 
 	userRules, err := manifest.LoadIgnoreRules(manifestPath)
 	if err != nil {
@@ -417,7 +428,7 @@ func runSecretFix(args []string, globals globalFlags, workspacePath, configPath,
 		nc := globals.noColor
 		fmt.Fprintln(out, style.Mutedf(nc, "[dry-run] %d secret violations found. Run without --dry-run to fix interactively.", len(violations)))
 		for _, v := range violations {
-			fmt.Fprintf(out, "  %s  %s:%d\n", style.Mutedf(nc, "[dry-run]"), v.Path, v.Line)
+			fmt.Fprintf(out, "  %s  %s:%d\n", style.Mutedf(nc, "[dry-run]"), style.AbsPath(workspacePath, v.Path), v.Line)
 		}
 		if globals.json {
 			return writeJSON(stdout, stderr, "secret.fix", secret.FixResult{
@@ -446,13 +457,15 @@ func runSecretFixBatch(violations []secret.Violation, mode string, workspacePath
 
 	for _, v := range violations {
 		v := v
-		anchor := fmt.Sprintf("%s:%d", v.Path, v.Line)
+		anchor := fmt.Sprintf("%s:%d", v.Path, v.Line) // stored form (workspace-relative)
+		absFile := style.AbsPath(workspacePath, v.Path)
+		absAnchor := fmt.Sprintf("%s:%d", absFile, v.Line)
 
 		switch mode {
 		case "allowlist":
 			plan.Actions = append(plan.Actions, Action{
-				ID:          "allowlist-" + anchor,
-				Description: fmt.Sprintf("Allowlist %s", anchor),
+				ID:          "allowlist-" + absAnchor,
+				Description: fmt.Sprintf("Allowlist %s", absAnchor),
 				Execute: func() error {
 					return addToAllowlist(manifestPath, anchor)
 				},
@@ -463,8 +476,8 @@ func runSecretFixBatch(violations []secret.Violation, mode string, workspacePath
 			}
 			excludeSeen[v.Path] = true
 			plan.Actions = append(plan.Actions, Action{
-				ID:          "exclude-" + v.Path,
-				Description: fmt.Sprintf("Add exclude rule for %s", v.Path),
+				ID:          "exclude-" + absFile,
+				Description: fmt.Sprintf("Add exclude rule for %s", absFile),
 				Execute: func() error {
 					_, err := manifest.AddIgnoreExclude(manifestPath, v.Path, "secret: excluded by ws secret fix")
 					if err != nil {
@@ -481,11 +494,11 @@ func runSecretFixBatch(violations []secret.Violation, mode string, workspacePath
 			entryName := secret.SuggestPassEntry(v.Path, v.Snippet)
 			value := secret.ExtractSecretValue(v.Snippet)
 			plan.Actions = append(plan.Actions, Action{
-				ID:          "pass-" + anchor,
-				Description: fmt.Sprintf("Store in pass as %s", entryName),
+				ID:          "pass-" + absAnchor,
+				Description: fmt.Sprintf("Store in pass as %s (from %s)", entryName, absAnchor),
 				Execute: func() error {
 					if value == "" {
-						return fmt.Errorf("could not extract secret value from %s", anchor)
+						return fmt.Errorf("could not extract secret value from %s", absAnchor)
 					}
 					return secret.InsertEntry(entryName, value)
 				},
@@ -531,17 +544,18 @@ func runSecretFixInteractive(violations []secret.Violation, workspacePath, confi
 		// Skip violations in files already excluded.
 		if excludedFiles[v.Path] {
 			result.Excluded++
-			result.Added = append(result.Added, "excluded:"+v.Path+" (file already excluded)")
+			result.Added = append(result.Added, "excluded:"+style.AbsPath(workspacePath, v.Path)+" (file already excluded)")
 			continue
 		}
 
-		anchor := fmt.Sprintf("%s:%d", v.Path, v.Line)
-		absPath := filepath.Join(workspacePath, v.Path)
+		anchor := fmt.Sprintf("%s:%d", v.Path, v.Line) // stored form (workspace-relative)
+		absPath := style.AbsPath(workspacePath, v.Path)
+		absAnchor := fmt.Sprintf("%s:%d", absPath, v.Line)
 
 		// Show violation header.
 		fmt.Fprintf(out, "\n%s  %s:%d: %s\n",
 			severityLabel(v.Severity, nc),
-			style.Infof(nc, "%s", v.Path), v.Line,
+			style.Infof(nc, "%s", absPath), v.Line,
 			style.Mutedf(nc, "%s", strings.TrimSpace(v.Snippet)))
 
 		for {
@@ -610,12 +624,12 @@ func runSecretFixInteractive(violations []secret.Violation, workspacePath, confi
 						_ = ignore.WriteMegaignore(megaignorePath, ur)
 					}
 					excludedFiles[v.Path] = true
-					fmt.Fprintf(out, "  %s Added exclude rule for %s\n", style.IconCheck(nc), v.Path)
+					fmt.Fprintf(out, "  %s Added exclude rule for %s\n", style.IconCheck(nc), absPath)
 					fmt.Fprintf(out, "  %s Rotate any real credentials in this file\n", style.IconWarning(nc))
 					result.Excluded++
-					result.Added = append(result.Added, "exclude:"+v.Path)
+					result.Added = append(result.Added, "exclude:"+absPath)
 				} else {
-					fmt.Fprintf(out, "  %s Rule already exists for %s\n", style.Mutedf(nc, ""), v.Path)
+					fmt.Fprintf(out, "  %s Rule already exists for %s\n", style.Mutedf(nc, ""), absPath)
 					result.Skipped++
 				}
 
@@ -625,29 +639,36 @@ func runSecretFixInteractive(violations []secret.Violation, workspacePath, confi
 					fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
 					result.Skipped++
 				} else {
-					fmt.Fprintf(out, "  %s Allowlisted %s\n", style.IconCheck(nc), anchor)
+					fmt.Fprintf(out, "  %s Allowlisted %s\n", style.IconCheck(nc), absAnchor)
 					result.Allowlisted++
-					result.Added = append(result.Added, "allowlist:"+anchor)
+					result.Added = append(result.Added, "allowlist:"+absAnchor)
 				}
 
 			case "d":
-				dir := filepath.ToSlash(filepath.Dir(v.Path))
-				suggested := dir
-				dirName := promptLine(stdin, stdout, globals, "  Skip directory", suggested)
-				dirName = filepath.ToSlash(strings.TrimRight(strings.TrimSpace(dirName), "/"))
-				if dirName == "" {
+				// Prompt shows an absolute default; the answer resolves like any
+				// path input (absolute, ~, or cwd-relative) and is stored in
+				// config workspace-relative.
+				suggested := filepath.Dir(absPath)
+				answer := strings.TrimSpace(promptLine(stdin, stdout, globals, "  Skip directory", suggested))
+				if answer == "" {
+					result.Skipped++
+					break
+				}
+				rel, err := workspaceRelDir(workspacePath, answer)
+				if err != nil {
+					fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
+					result.Skipped++
+					break
+				}
+				absDir := style.AbsPath(workspacePath, rel)
+				if err := addSkipDirToConfig(configPath, rel); err != nil {
+					fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
 					result.Skipped++
 				} else {
-					err := addSkipDirToConfig(configPath, dirName)
-					if err != nil {
-						fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
-						result.Skipped++
-					} else {
-						skippedDirs[dirName] = true
-						fmt.Fprintf(out, "  %s Added \"%s\" to secret.skip_dirs in config\n", style.IconCheck(nc), dirName)
-						result.DirSkipped++
-						result.Added = append(result.Added, "skip-dir:"+dirName)
-					}
+					skippedDirs[rel] = true
+					fmt.Fprintf(out, "  %s Added %s to secret.skip_dirs in %s\n", style.IconCheck(nc), absDir, configPath)
+					result.DirSkipped++
+					result.Added = append(result.Added, "skip-dir:"+absDir)
 				}
 
 			case "s":
@@ -1072,16 +1093,54 @@ func promptLine(stdin io.Reader, stdout io.Writer, globals globalFlags, prompt, 
 	return strings.TrimSpace(line)
 }
 
-// mergeSkipDirs combines config and flag skip dirs, deduplicating and
-// normalizing to forward-slash relative paths.
-func mergeSkipDirs(configDirs, flagDirs []string) []string {
-	seen := make(map[string]bool)
-	var result []string
-	for _, d := range append(configDirs, flagDirs...) {
-		d = filepath.ToSlash(strings.TrimRight(strings.TrimSpace(d), "/"))
-		if d == "" || seen[d] {
+// workspaceRelDir resolves a user-supplied directory (absolute, ~, or relative
+// to cwd) and returns it workspace-relative, forward-slashed, for skip_dirs
+// matching and storage. It fails for directories outside the workspace.
+func workspaceRelDir(workspacePath, input string) (string, error) {
+	abs, err := config.ExpandUserPath(input)
+	if err != nil {
+		return "", fmt.Errorf("invalid directory %q: %w", input, err)
+	}
+	if !repo.IsWithin(abs, workspacePath) || abs == filepath.Clean(workspacePath) {
+		return "", fmt.Errorf("directory must be inside the workspace %s: %s", workspacePath, abs)
+	}
+	rel, err := filepath.Rel(workspacePath, abs)
+	if err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(rel), nil
+}
+
+// skipDirFlagsToRel resolves --skip-dir values per spec "Path Rules" and
+// converts them to the workspace-relative form used for matching.
+func skipDirFlagsToRel(workspacePath string, flags []string) ([]string, error) {
+	out := make([]string, 0, len(flags))
+	for _, f := range flags {
+		if strings.TrimSpace(f) == "" {
 			continue
 		}
+		rel, err := workspaceRelDir(workspacePath, f)
+		if err != nil {
+			return nil, fmt.Errorf("--skip-dir: %w", err)
+		}
+		out = append(out, rel)
+	}
+	return out, nil
+}
+
+// mergeSkipDirs combines config and flag skip dirs, deduplicating and
+// normalizing to forward-slash workspace-relative paths. Config values follow
+// the config path convention (relative, absolute, or ~); flag values have
+// already been resolved by skipDirFlagsToRel.
+func mergeSkipDirs(workspacePath string, configDirs, flagDirs []string) []string {
+	seen := make(map[string]bool)
+	var result []string
+	for _, d := range append(append([]string{}, configDirs...), flagDirs...) {
+		rel, ok := config.WorkspaceRel(workspacePath, strings.TrimSpace(d))
+		if !ok || rel == "." || seen[rel] {
+			continue
+		}
+		d = rel
 		seen[d] = true
 		result = append(result, d)
 	}

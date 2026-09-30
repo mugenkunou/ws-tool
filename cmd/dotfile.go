@@ -155,7 +155,12 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			return 1
 		}
 
-		targetPath := fs.Args()[0]
+		// Resolve like every path input: absolute, ~, or relative to cwd.
+		targetPath, err := config.ExpandUserPath(fs.Args()[0])
+		if err != nil {
+			fmt.Fprintf(stderr, "invalid path %q: %s\n", fs.Args()[0], err.Error())
+			return 1
+		}
 		plan := Plan{Command: "dotfile.rm"}
 		plan.Actions = append(plan.Actions, Action{
 			ID:          "dotfile-rm",
@@ -197,20 +202,37 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
+		type lsRecord struct {
+			System        string `json:"system"`
+			Name          string `json:"name"`
+			WorkspacePath string `json:"workspace_path"` // absolute stored file under ws/dotfiles/
+			Sudo          bool   `json:"sudo"`
+			Note          string `json:"note,omitempty"`
+		}
+		lsRecords := make([]lsRecord, 0, len(records))
+		for _, r := range records {
+			lsRecords = append(lsRecords, lsRecord{
+				System:        r.System,
+				Name:          r.Name,
+				WorkspacePath: style.AbsPath(workspacePath, dotfile.DotfilePath(r.Name)),
+				Sudo:          r.Sudo,
+				Note:          r.Note,
+			})
+		}
 		if globals.json {
-			return writeJSON(stdout, stderr, "dotfile.ls", records)
+			return writeJSON(stdout, stderr, "dotfile.ls", lsRecords)
 		}
 		if len(records) == 0 {
 			fmt.Fprintln(textOut(globals, stdout), "No managed dotfiles.")
 			return 0
 		}
 		out := textOut(globals, stdout)
-		for _, r := range records {
+		for _, r := range lsRecords {
 			sudoTag := ""
 			if r.Sudo {
 				sudoTag = "  " + style.Warningf(globals.noColor, "[sudo]")
 			}
-			fmt.Fprintf(out, "%s %s %s%s\n", style.Infof(globals.noColor, "%s", r.System), style.IconArrow(globals.noColor), style.Mutedf(globals.noColor, "%s", r.Name), sudoTag)
+			fmt.Fprintf(out, "%s %s %s%s\n", style.Infof(globals.noColor, "%s", r.System), style.IconArrow(globals.noColor), style.Mutedf(globals.noColor, "%s", r.WorkspacePath), sudoTag)
 		}
 		return 0
 	case "scan":
@@ -803,7 +825,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 
 		for _, record := range dirRecords {
 			wsDir := filepath.Join(workspacePath, filepath.FromSlash(dotfile.DotfilePath(record.Name)))
-			fmt.Fprintf(out, "%s %s\n", style.Infof(nc, "%s", record.System), style.Mutedf(nc, "(→ %s)", record.Name))
+			fmt.Fprintf(out, "%s %s\n", style.Infof(nc, "%s", record.System), style.Mutedf(nc, "(→ %s)", wsDir))
 
 			entries, expanded, expandErr := dotfile.ExpandDir(wsDir)
 			if expandErr != nil {
@@ -953,7 +975,7 @@ func promptDirSelection(stdin io.Reader, stdout io.Writer, globals globalFlags, 
 
 		fmt.Fprintf(out, "  %2d  %-40s %8s  %s%s\n",
 			num,
-			e.Name,
+			e.AbsPath,
 			sizeStr,
 			classStr,
 			countStr,

@@ -11,8 +11,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/manifest"
+	"github.com/mugenkunou/ws-tool/internal/repo"
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
 
@@ -29,6 +31,18 @@ func runIgnoreList(engine *ignore.Engine, workspacePath string, args []string, g
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
+	}
+
+	// --path resolves like every path input (absolute, ~, or cwd-relative).
+	absFilter := ""
+	if strings.TrimSpace(*pathFilter) != "" {
+		p, err := config.ExpandUserPath(*pathFilter)
+		if err != nil {
+			fmt.Fprintf(stderr, "invalid --path: %s\n", err.Error())
+			return 1
+		}
+		absFilter = p
+		*pathFilter = p
 	}
 
 	// Positional argument: single-path check mode.
@@ -63,11 +77,8 @@ func runIgnoreList(engine *ignore.Engine, workspacePath string, args []string, g
 		if strings.HasPrefix(rel, "../") {
 			return nil
 		}
-		if strings.TrimSpace(*pathFilter) != "" {
-			p := filepath.ToSlash(strings.TrimSpace(*pathFilter))
-			if rel != p && !strings.HasPrefix(rel, p+"/") {
-				return nil
-			}
+		if absFilter != "" && !repo.IsWithin(path, absFilter) {
+			return nil
 		}
 		res := engine.Evaluate(rel, false)
 		if res.Included {
@@ -81,7 +92,7 @@ func runIgnoreList(engine *ignore.Engine, workspacePath string, args []string, g
 		if st != nil {
 			size = st.Size()
 		}
-		rows = append(rows, row{Path: rel, Rule: res.Rule, Size: size})
+		rows = append(rows, row{Path: filepath.Clean(path), Rule: res.Rule, Size: size})
 		return nil
 	})
 
@@ -109,36 +120,26 @@ func runIgnoreList(engine *ignore.Engine, workspacePath string, args []string, g
 // It reports whether a path would be synced or ignored, with a reason line
 // and (for files) a file-size line.
 func runIgnoreCheckPath(engine *ignore.Engine, workspacePath, target string, globals globalFlags, stdout, stderr io.Writer) int {
-	absPath := target
-	if !filepath.IsAbs(absPath) {
-		// Resolve relative to cwd first (mirrors how a user types a path at their
-		// shell prompt), then fall back to workspace-relative for callers that
-		// supply workspace-anchored paths directly (e.g. tests, scripting).
-		cwd, err := os.Getwd()
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		cwdAbs := filepath.Join(cwd, absPath)
-		if _, statErr := os.Stat(cwdAbs); statErr == nil {
-			absPath = cwdAbs
-		} else {
-			absPath = filepath.Join(workspacePath, absPath)
-		}
+	// Resolve like every path input: absolute, ~, or relative to cwd. There is
+	// no workspace-relative fallback (spec "Path Rules").
+	absPath, err := config.ExpandUserPath(target)
+	if err != nil {
+		fmt.Fprintf(stderr, "invalid path %q: %s\n", target, err.Error())
+		return 1
 	}
 	st, err := os.Stat(absPath)
 	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
+		fmt.Fprintf(stderr, "path does not exist: %s\n", absPath)
 		return 1
 	}
-	res, rel, err := ignore.Check(engine, workspacePath, absPath, st.IsDir())
+	res, _, err := ignore.Check(engine, workspacePath, absPath, st.IsDir())
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
 
 	data := map[string]any{
-		"path":        rel,
+		"path":        absPath,
 		"included":    res.Included,
 		"rule":        res.Rule,
 		"safe_harbor": res.SafeHarbor,
@@ -161,7 +162,7 @@ func runIgnoreCheckPath(engine *ignore.Engine, workspacePath, target string, glo
 	}
 	_ = statusBadge
 
-	fmt.Fprintf(out, "%s %s  %s\n", statusIcon, style.Badge(map[bool]string{true: "SYNCED", false: "IGNORED"}[res.Included], nc), style.Infof(nc, "%s", rel))
+	fmt.Fprintf(out, "%s %s  %s\n", statusIcon, style.Badge(map[bool]string{true: "SYNCED", false: "IGNORED"}[res.Included], nc), style.Infof(nc, "%s", absPath))
 
 	// Reason line
 	if res.Included {
@@ -210,12 +211,22 @@ type treeEntry struct {
 // The tree is rendered up to maxDepth, with proper ├──/└── connectors, ✔/✗/◐
 // status icons, and a summary line.
 func runIgnoreTreeView(engine *ignore.Engine, workspacePath, pathFilter string, maxDepth int, globals globalFlags, stdout, stderr io.Writer) int {
-	start := workspacePath
+	start := filepath.Clean(workspacePath)
 	if strings.TrimSpace(pathFilter) != "" {
-		start = filepath.Join(workspacePath, strings.TrimSpace(pathFilter))
+		// Resolve like every path input: absolute, ~, or relative to cwd.
+		p, err := config.ExpandUserPath(pathFilter)
+		if err != nil {
+			fmt.Fprintf(stderr, "invalid path %q: %s\n", pathFilter, err.Error())
+			return 1
+		}
+		start = p
 	}
 	if _, err := os.Stat(start); err != nil {
-		fmt.Fprintln(stderr, err.Error())
+		fmt.Fprintf(stderr, "path does not exist: %s\n", start)
+		return 1
+	}
+	if !repo.IsWithin(start, workspacePath) {
+		fmt.Fprintf(stderr, "path is outside the workspace %s: %s\n", workspacePath, start)
 		return 1
 	}
 
@@ -343,7 +354,7 @@ func runIgnoreTreeView(engine *ignore.Engine, workspacePath, pathFilter string, 
 				continue
 			}
 			out = append(out, jsonEntry{
-				Path:      e.rel,
+				Path:      style.AbsPath(workspacePath, e.rel),
 				Status:    e.status,
 				Rule:      e.rule,
 				IsDir:     e.isDir,
@@ -374,14 +385,9 @@ func runIgnoreTreeView(engine *ignore.Engine, workspacePath, pathFilter string, 
 	w := textOut(globals, stdout)
 	nc := globals.noColor
 
-	// Header: display the start path.
-	displayRoot := start
-	if home, err := os.UserHomeDir(); err == nil {
-		if rel, err := filepath.Rel(home, start); err == nil && !strings.HasPrefix(rel, "..") {
-			displayRoot = "~/" + filepath.ToSlash(rel)
-		}
-	}
-	fmt.Fprintf(w, "%s\n", style.Boldf(nc, "%s/", displayRoot))
+	// Header: the absolute start path. Rows below are tree nodes under it
+	// (spec "Path Rules": tree views).
+	fmt.Fprintf(w, "%s\n", style.Boldf(nc, "%s", start))
 
 	var totalExcludedFiles int
 	var totalExcludedSize int64
@@ -564,7 +570,7 @@ func runIgnoreEdit(manifestPath, megaignorePath string, currentRules ignore.User
 		})
 	}
 	out := textOut(globals, stdout)
-	fmt.Fprintf(out, "%s .megaignore regenerated (%d rules: %d default + %d user)\n",
-		style.IconCheck(nc), stats.Total, stats.DefaultExclude+stats.DefaultHarbors, stats.UserExclude+stats.UserHarbors)
+	fmt.Fprintf(out, "%s %s regenerated (%d rules: %d default + %d user)\n",
+		style.IconCheck(nc), megaignorePath, stats.Total, stats.DefaultExclude+stats.DefaultHarbors, stats.UserExclude+stats.UserHarbors)
 	return 0
 }

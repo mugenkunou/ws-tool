@@ -2,6 +2,8 @@ package style
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -175,5 +177,28 @@ func TestHumanBytes(t *testing.T) {
 				t.Fatalf("HumanBytes(%d) = %q, want %q", tt.in, got, tt.out)
 			}
 		})
+	}
+}
+
+func TestAbsPath(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home dir")
+	}
+	ws := "/w/Workspace"
+	cases := []struct{ in, want string }{
+		{"", ""},
+		{"Data/bruno", "/w/Workspace/Data/bruno"},
+		{"./Data//bruno/", "/w/Workspace/Data/bruno"},
+		{".", "/w/Workspace"},
+		{"/w/Workspace/Data/bruno", "/w/Workspace/Data/bruno"},
+		{"/etc/../etc/hosts", "/etc/hosts"},
+		{"~", home},
+		{"~/.password-store", filepath.Join(home, ".password-store")},
+	}
+	for _, c := range cases {
+		if got := AbsPath(ws, c.in); got != c.want {
+			t.Errorf("AbsPath(%q, %q) = %q, want %q", ws, c.in, got, c.want)
+		}
 	}
 }

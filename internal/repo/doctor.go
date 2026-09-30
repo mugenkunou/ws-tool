@@ -44,6 +44,10 @@ type Finding struct {
 	Detail   string   `json:"detail"`
 }
 
+// HygieneChecks lists every check ID Doctor knows, in run order.
+// Dirty state is not a hygiene check: scan already reports it as a status badge.
+var HygieneChecks = []string{"identity", "upstream", "default-branch", "fetch-staleness"}
+
 // DoctorOptions controls which checks Doctor runs.
 type DoctorOptions struct {
 	// Checks lists which check IDs to run. nil or empty means all checks.
@@ -57,7 +61,7 @@ type DoctorOptions struct {
 func Doctor(workspacePath string, repos []Repository, opts DoctorOptions) []Finding {
 	checks := opts.Checks
 	if len(checks) == 0 {
-		checks = []string{"identity", "upstream", "default-branch", "fetch-staleness", "dirty"}
+		checks = HygieneChecks
 	}
 	staleDays := opts.FetchStalenessDays
 	if staleDays == 0 {
@@ -86,9 +90,6 @@ func Doctor(workspacePath string, repos []Repository, opts DoctorOptions) []Find
 		}
 		if checkSet["fetch-staleness"] {
 			findings = append(findings, checkFetchStaleness(r.Path, absPath, staleDays)...)
-		}
-		if checkSet["dirty"] {
-			findings = append(findings, checkDirty(r.Path, absPath)...)
 		}
 	}
 	return findings
@@ -192,24 +193,6 @@ func checkFetchStaleness(repoRelPath, repoPath string, maxDays int) []Finding {
 			Check:    "fetch-staleness",
 			Severity: SeverityInfo,
 			Detail:   fmt.Sprintf("last fetch was %.0f days ago (threshold: %d)", age.Hours()/24, maxDays),
-		}}
-	}
-	return nil
-}
-
-// checkDirty checks for uncommitted changes.
-func checkDirty(repoRelPath, repoPath string) []Finding {
-	cmd := exec.Command("git", "-C", repoPath, "status", "--porcelain")
-	out, err := cmd.Output()
-	if err != nil {
-		return nil
-	}
-	if len(strings.TrimSpace(string(out))) > 0 {
-		return []Finding{{
-			Repo:     repoRelPath,
-			Check:    "dirty",
-			Severity: SeverityWarn,
-			Detail:   "uncommitted changes",
 		}}
 	}
 	return nil

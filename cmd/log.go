@@ -295,7 +295,7 @@ func runLog(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 			tag := s.Tag
 			plan.Actions = append(plan.Actions, Action{
 				ID:          "prune-" + tag,
-				Description: fmt.Sprintf("Remove session %s (%s)", tag, style.HumanBytes(s.SizeBytes)),
+				Description: fmt.Sprintf("Remove session %s (%s)", filepath.Join(logDir, tag), style.HumanBytes(s.SizeBytes)),
 				Execute: func() error {
 					_, err := wslog.Remove(wslog.RemoveOptions{LogDir: logDir, Tag: tag, DryRun: false})
 					return err
@@ -327,11 +327,16 @@ func runLog(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 			return 1
 		}
 		tag := fs.Args()[0]
+		sessionDir := filepath.Join(logDir, tag)
+		if strings.ContainsRune(tag, filepath.Separator) || filepath.Dir(sessionDir) != filepath.Clean(logDir) {
+			fmt.Fprintf(stderr, "invalid session tag %q: must be a name inside %s\n", tag, logDir)
+			return 1
+		}
 
 		plan := Plan{Command: "log.rm"}
 		plan.Actions = append(plan.Actions, Action{
 			ID:          "log-rm-" + tag,
-			Description: fmt.Sprintf("Remove log session %q", tag),
+			Description: fmt.Sprintf("Remove log session %s", sessionDir),
 			Execute: func() error {
 				_, err := wslog.Remove(wslog.RemoveOptions{LogDir: logDir, Tag: tag, DryRun: false})
 				return err

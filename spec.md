@@ -174,7 +174,7 @@ Exit codes from `planResult.ExitCode()`:
 
 **Migration:** If no config is found at the XDG path and `<workspace>/ws/config.json` exists, `ws` reads the old location as a fallback.
 
-**Path convention:** All relative paths in config values are resolved against `<workspace>`. Absolute paths and `~`-prefixed paths are expanded at runtime (`~` → `$HOME`). `<workspace>`, `scratch.root_dir`, `repo.roots`, and `trash.root_dir` are user-provided (via config/env/flag). Derived paths: logs use `<workspace>/ws/ws-log`.
+**Path convention:** All relative paths in config values are resolved against `<workspace>` (config values only — CLI input resolves against the current directory, and all output is absolute; see [Path Rules](#path-rules)). Absolute paths and `~`-prefixed paths are expanded at runtime (`~` → `$HOME`). `<workspace>`, `scratch.root_dir`, `repo.roots`, and `trash.root_dir` are user-provided (via config/env/flag). Derived paths: logs use `<workspace>/ws/ws-log`.
 
 **Soft-delete integration model:** `ws` delete actions execute via `rm`. Machine-level setup (`ws trash setup`) configures shell/IDE/file-explorer delete flows to soft-delete, usually to `trash.root_dir` (default `~/.Trash`). `ws` does not maintain its own workspace trash store.
 
@@ -644,9 +644,9 @@ The built-in template defines two safe harbors:
 
 ```text
 Violations (3)
-  CRITICAL  bloat          Experiments/dataset.bin  (420.0 MB exceeds critical threshold 10.0 MB)
-  WARNING   depth          Projects/vendor/deep/pkg  (depth 14 exceeds max 6)
-  WARNING   project-meta   Projects/app/node_modules  (Node project build artifact directory should be excluded)
+  CRITICAL  bloat          /home/user/Workspace/Experiments/dataset.bin  (420.0 MB exceeds critical threshold 10.0 MB)
+  WARNING   depth          /home/user/Workspace/Projects/vendor/deep/pkg  (depth 14 exceeds max 6)
+  WARNING   project-meta   /home/user/Workspace/Projects/app/node_modules  (Node project build artifact directory should be excluded)
 
 Safe harbors (47 items, 2.3 GB)
   Use --expand-harbors to see details.
@@ -992,13 +992,63 @@ ws [command] [flags]
 ```json
 {
   "ws_version": "0.1.0",
-  "schema": 1,
+  "schema": 2,
   "command": "scan",
   "data": { ... }
 }
 ```
 
 `ws_version` is the binary version. `schema` is an integer that increments on breaking changes to `data` structure. Downstream scripts should check `schema` and fail gracefully if it's higher than expected.
+
+**Schema history:** `1` — initial. `2` — every path field in `data` is absolute (see [Path Rules](#path-rules)); previously some fields were workspace-relative.
+
+---
+
+## Path Rules
+
+These rules apply to every command. They take precedence over any example elsewhere in this document.
+
+### Output: every path ws prints is absolute
+
+Every filesystem path `ws` writes is a **literal, cleaned, absolute path**. That covers stdout text, `--json` payloads, plan and `--dry-run` lines, action IDs, interactive prompts, and stderr error messages.
+
+```text
+/home/user/Workspace/Data/bruno          ✔ absolute
+/home/user/.password-store               ✔ absolute
+Data/bruno                               ✗ workspace-relative
+~/Workspace/Data/bruno                   ✗ tilde-shortened
+./Data/bruno, ../x                       ✗ relative
+bruno                                    ✗ basename standing in for a path
+```
+
+1. **One form, no exceptions by origin.** Workspace items, external items (pass store, dotfile system paths, scratch, trash), and config-derived paths all print the same way. Output never mixes forms.
+2. **One line per item.** Absolute paths are already `cd`-ready, so there is no secondary "full path" line.
+3. **Locations stay absolute.** A file plus line is `/abs/path/file:42`.
+4. **Cleaned, not resolved.** Paths go through `filepath.Clean` (no `.`/`..`/duplicate `/`, no trailing `/`), but symlinks are not resolved. The path shown is the path `ws` operated on.
+5. **One helper.** Rendering goes through a single helper (`style.AbsPath(workspace, p)`). Call sites never format paths ad hoc. Internal data may keep workspace-relative paths for rule matching; they are converted when rendered.
+
+**Not paths** (printed verbatim): ignore and `.megaignore` rule patterns (`node_modules/`, `dir/**`), config keys, git refs and remote URLs, and names that identify ws-managed items (scratch names, log tags, capture location names, cron job names). When a command acts on a file identified by such a name, the file's absolute path is printed too.
+
+**Config documents:** `ws config defaults` prints the built-in defaults as a `config.json` document, in stored form (`~/Scratch`, `.`), so it can be redirected into a config file. Those are config values, not displayed file paths. `ws config view` prints the same values resolved to absolute paths.
+
+**Tree views:** `ws ignore tree` prints its absolute root once as the header. Rows below it are tree nodes (entry names drawn with tree connectors), not standalone paths. This is the only place a path is shown relative to something, and the anchor is always the absolute header directly above.
+
+### Input: every path argument resolves the same way
+
+Every positional argument, flag value, environment variable, or interactive prompt answer that names a filesystem path is resolved like this:
+
+1. absolute (`/…`) → used as is
+2. `~` or `~/…` → expanded against `$HOME`
+3. anything else → relative to the **current working directory**
+
+The result is then cleaned. This applies to `--workspace`, `--config`, `--manifest`, `WS_WORKSPACE`, `WS_CONFIG`, `PASSWORD_STORE_DIR`, `--path`, `--root-dir`, `--skip-dir`, and the positional arguments of `ws repo <sub> [<repo>]`, `ws repo add-root`, `ws dotfile add|rm`, `ws ignore check|ls|tree`, among others.
+
+- **No invisible workspace-relative fallback.** CLI input is never re-interpreted against the workspace root. `ws repo sync Data/bruno` works from `~/Workspace` because that is where `Data/bruno` is relative to; from another directory, pass a path that is valid from there (`ws repo sync ~/Workspace/Data/bruno`). A path that resolves to nothing fails with an error showing the absolute path it resolved to.
+- **Matching happens on absolute paths.** Exact targets compare absolute to absolute. Prefix filters (`--path`) match whole path components, so `--path ~/Workspace/Da` does not match `~/Workspace/Data`.
+- **Round-trip guarantee.** Any path copied from `ws` output is valid input to any `ws` command, from any directory.
+- **Tab completion** offers absolute paths for arguments that name ws-known paths (repos, dotfiles), and native shell file completion (cwd-relative) for arbitrary files.
+
+**Config values are the exception.** `config.json` has no cwd, so relative paths inside it keep resolving against `<workspace>` (see [Config Files](#config-files-configjson-and-manifestjson)). When `ws` writes a path from CLI input into config (`ws repo add-root`, the skip-dir choice in `ws secret fix`, `ws init`), it resolves that input with the rules above first. It then stores the path workspace-relative if it is inside the workspace, and absolute otherwise. `ws init` always stores `workspace` as an absolute path. Every path-valued config field accepts all three forms (relative, `~`, absolute). That includes the prefix-matched lists `repo.exclude_dirs` and `secret.skip_dirs`, so `ws config view` output is itself a valid config.
 
 ---
 
@@ -1037,7 +1087,7 @@ ws trash status                      Check integration status and trash size
 
 ws repo ls                           Discover git repos under workspace
 ws repo ls-roots                     List configured repo discovery roots
-ws repo scan                         Reconciled fleet status (branch, ahead/behind, dirty, stash)
+ws repo scan                         Fleet status + hygiene audit (branch, ahead/behind, dirty, identity, upstream)
 ws repo fetch                        Fetch remotes across repos
 ws repo pull                         Interactive fleet pull
 ws repo sync                         Interactive fleet sync (pull/push per state)
@@ -1121,9 +1171,9 @@ ws version
 
 ws 0.1.0
   Config schema:   1
-  Config path:     ~/.config/ws-tool/config.json
+  Config path:     /home/user/.config/ws-tool/config.json
   Manifest schema: 2
-  Manifest path:   ~/Workspace/ws/manifest.json
+  Manifest path:   /home/user/Workspace/ws/manifest.json
   Platform:        linux/amd64
   Built:           2026-03-15T10:22:00Z
   Go version:      go1.23.1
@@ -1141,14 +1191,14 @@ ws version --short
 ```json
 {
   "ws_version": "0.1.0",
-  "schema": 1,
+  "schema": 2,
   "command": "version",
   "data": {
     "version": "0.1.0",
     "config_schema": 1,
-    "config_path": "~/.config/ws-tool/config.json",
+    "config_path": "/home/user/.config/ws-tool/config.json",
     "manifest_schema": 2,
-    "manifest_path": "~/Workspace/ws/manifest.json",
+    "manifest_path": "/home/user/Workspace/ws/manifest.json",
     "platform": "linux/amd64",
     "built": "2026-03-15T10:22:00Z"
   }
@@ -1199,17 +1249,17 @@ ws init
  WORKSPACE INIT
 ══════════════════════════════════════════════════════
 
-Workspace path: ~/Workspace  [Y/n]: ↵
+Workspace path: /home/user/Workspace  [Y/n]: ↵
 
 ── [1/3] Scaffolding ──────────────────────────────
 
-✔ Created  ~/Workspace/ws/
-✔ Created  ~/.config/ws-tool/config.json  (default config)
-✔ Created  ~/Workspace/ws/manifest.json     (empty registry)
+✔ Created  /home/user/Workspace/ws
+✔ Created  /home/user/.config/ws-tool/config.json  (default config)
+✔ Created  /home/user/Workspace/ws/manifest.json     (empty registry)
 
 ── [2/3] Ignore rules ─────────────────────────────
 
-✔ Generated ~/Workspace/.megaignore          (builtin template, 50 rules)
+✔ Generated /home/user/Workspace/.megaignore          (builtin template, 50 rules)
 
 ── [3/4] Trash setup ──────────────────────────────
 
@@ -1219,18 +1269,18 @@ Configure soft-delete on this machine? [Y/n]: ↵
   VS Code delete-to-trash:    enable  [Y/n]: ↵
   File explorer soft-delete:  enable  [Y/n]: ↵
 
-✔ Trash setup completed (root: ~/.Trash)
+✔ Trash setup completed (root: /home/user/.Trash)
 
 ── [4/4] Done ─────────────────────────────────────
 
 ══════════════════════════════════════════════════════
- ~/Workspace is now a ws workspace
+ /home/user/Workspace is now a ws workspace
 ══════════════════════════════════════════════════════
 
 Files created:
-  ~/.config/ws-tool/config.json  Edit config: ws config view
-  ws/manifest.json     Managed by ws — do not hand-edit
-  .megaignore           Edit rules:  ws ignore edit
+  /home/user/.config/ws-tool/config.json  Edit config: ws config view
+  /home/user/Workspace/ws/manifest.json   Managed by ws — do not hand-edit
+  /home/user/Workspace/.megaignore        Edit rules:  ws ignore edit
 
 Next steps:
   ws trash status        Verify soft-delete setup on this machine
@@ -1248,16 +1298,16 @@ ws init
  WORKSPACE INIT
 ══════════════════════════════════════════════════════
 
-Workspace path: ~/Workspace  [Y/n]: ↵
+Workspace path: /home/user/Workspace  [Y/n]: ↵
 
 ── [1/3] Scaffolding ──────────────────────────────
 
-✔ config.json              already exists — skipped
-✔ ws/manifest.json     already exists — skipped (5 dotfiles registered)
+✔ /home/user/.config/ws-tool/config.json  already exists — skipped
+✔ /home/user/Workspace/ws/manifest.json   already exists — skipped (5 dotfiles registered)
 
 ── [2/3] Ignore rules ─────────────────────────────
 
-✔ .megaignore           already exists — skipped (22 rules)
+✔ /home/user/Workspace/.megaignore  already exists — skipped (22 rules)
 
 ── [3/4] Trash setup ──────────────────────────────
 
@@ -1268,10 +1318,10 @@ Run `ws trash setup` now? [Y/n]: ↵
 ── [4/4] Done ─────────────────────────────────────
 
 ══════════════════════════════════════════════════════
- ~/Workspace is now a ws workspace
+ /home/user/Workspace is now a ws workspace
 ══════════════════════════════════════════════════════
 
-Detected 5 registered dotfiles in manifest.json.
+Detected 5 registered dotfiles in /home/user/Workspace/ws/manifest.json.
 
 Next steps:
   ws trash status        Verify soft-delete setup on this machine
@@ -1283,7 +1333,7 @@ Next steps:
 ```text
 ws init
 
-Workspace ~/Workspace is already initialized. Nothing to do.
+Workspace /home/user/Workspace is already initialized. Nothing to do.
 
   ws trash status  Verify soft-delete setup on this machine
 ```
@@ -1293,7 +1343,7 @@ Workspace ~/Workspace is already initialized. Nothing to do.
 ```text
 ── [2/3] Ignore rules ─────────────────────────────
 
-~/Workspace/.megaignore already exists (22 rules).
+/home/user/Workspace/.megaignore already exists (22 rules).
 The built-in template has 50 rules.
 
 [r] Replace with template (your custom rules will be lost)
@@ -1302,7 +1352,7 @@ The built-in template has 50 rules.
 
 : s
 
-✔ .megaignore           kept as-is (22 rules)
+✔ /home/user/Workspace/.megaignore  kept as-is (22 rules)
 ```
 
 **Output — dry-run:**
@@ -1311,10 +1361,10 @@ The built-in template has 50 rules.
 ws init --dry-run
 
 Would create:
-  ~/Workspace/ws/
-  ~/.config/ws-tool/config.json       (default config)
-  ~/Workspace/ws/manifest.json     (empty registry)
-  ~/Workspace/.megaignore           (builtin template, 50 rules)
+  /home/user/Workspace/ws
+  /home/user/.config/ws-tool/config.json       (default config)
+  /home/user/Workspace/ws/manifest.json     (empty registry)
+  /home/user/Workspace/.megaignore           (builtin template, 50 rules)
 
 No changes made.
 ```
@@ -1324,15 +1374,15 @@ No changes made.
 ```json
 {
   "ws_version": "0.1.0",
-  "schema": 1,
+  "schema": 2,
   "command": "init",
   "data": {
-    "workspace": "~/Workspace",
-    "config": { "action": "created", "path": "~/.config/ws-tool/config.json" },
-    "manifest": { "action": "created", "path": "~/Workspace/ws/manifest.json" },
-    "ignore": { "action": "created", "rules": 20, "path": "~/Workspace/.megaignore" },
+    "workspace": "/home/user/Workspace",
+    "config": { "action": "created", "path": "/home/user/.config/ws-tool/config.json" },
+    "manifest": { "action": "created", "path": "/home/user/Workspace/ws/manifest.json" },
+    "ignore": { "action": "created", "rules": 20, "path": "/home/user/Workspace/.megaignore" },
     "trash_setup": {
-      "root_dir": "~/.Trash",
+      "root_dir": "/home/user/.Trash",
       "shell_rm": "configured",
       "vscode_delete": "configured",
       "file_explorer_delete": "configured"
@@ -1382,24 +1432,24 @@ ws reset
 
 Provisions to undo: 5
 
-  symlink    ~/.bashrc                  (remove symlink)
-  symlink    ~/.ssh                     (remove symlink)
-  config_line ~/.bashrc                 (remove line from .bashrc)
-  config_line ~/.zshrc                  (remove line from .zshrc)
-  file       ~/.local/bin/ws-trash-rm   (delete file)
+  symlink    /home/user/.bashrc                  (remove symlink)
+  symlink    /home/user/.ssh                     (remove symlink)
+  config_line /home/user/.bashrc                 (remove ws line)
+  config_line /home/user/.zshrc                  (remove ws line)
+  file       /home/user/.local/bin/ws-trash-rm   (delete file)
 
 This will also delete:
-  ~/Workspace/ws/
+  /home/user/Workspace/ws
 
-reset workspace at ~/Workspace? [Y/n]: ↵
+reset workspace at /home/user/Workspace? [Y/n]: ↵
 
-  ✔ ~/.local/bin/ws-trash-rm  (deleted)
-  ✔ ~/.zshrc                  (line removed)
-  ✔ ~/.bashrc                 (line removed)
-  ✔ ~/.ssh                    (symlink removed)
-  ✔ ~/.bashrc                 (symlink removed)
+  ✔ /home/user/.local/bin/ws-trash-rm  (deleted)
+  ✔ /home/user/.zshrc                  (line removed)
+  ✔ /home/user/.bashrc                 (line removed)
+  ✔ /home/user/.ssh                    (symlink removed)
+  ✔ /home/user/.bashrc                 (symlink removed)
 
-  ✔ ~/Workspace/ws/           (deleted)
+  ✔ /home/user/Workspace/ws           (deleted)
 
 ──────────────────────────────────────────────────────
 ✔ Workspace reset.
@@ -1434,7 +1484,7 @@ ws trash status
 ```text
 ws trash setup
 
-Trash root: ~/.Trash
+Trash root: /home/user/.Trash
 
 Shell rm integration:      ✔ configured
 VS Code delete-to-trash:   ✔ configured
@@ -1448,7 +1498,7 @@ Done. Soft-delete setup is active on this machine.
 ```text
 ws trash status
 
-Trash root: ~/.Trash
+Trash root: /home/user/.Trash
 
 WARNING  shell-rm       not configured
 WARNING  vscode-delete  not configured
@@ -1462,7 +1512,7 @@ Run `ws trash setup` to configure soft-delete behavior.
 ```text
 ws trash status
 
-Trash root: ~/.Trash
+Trash root: /home/user/.Trash
 
   OK  shell-rm
   OK  vscode-delete
@@ -1478,7 +1528,7 @@ Trash root: ~/.Trash
 ```text
 ws trash status
 
-Trash root: ~/.Trash
+Trash root: /home/user/.Trash
 
   OK  shell-rm
   OK  vscode-delete
@@ -1582,22 +1632,22 @@ When dotfile Git versioning is enabled, successful `add` operations auto-commit 
 ```text
 ws dotfile add ~/.bashrc
 ──────────────────────────────────────────────────────
-Capturing ~/.bashrc into workspace dotfile management.
+Capturing /home/user/.bashrc into workspace dotfile management.
 
 Storage name: bashrc
-System path:  ~/.bashrc  →  ~/Workspace/ws/dotfiles/bashrc
+System path:  /home/user/.bashrc  →  /home/user/Workspace/ws/dotfiles/bashrc
 
 Plan:
-  Move     ~/.bashrc  →  ~/Workspace/ws/dotfiles/bashrc
-  Symlink  ~/.bashrc  →  ~/Workspace/ws/dotfiles/bashrc
-  Register in manifest.json
+  Move     /home/user/.bashrc  →  /home/user/Workspace/ws/dotfiles/bashrc
+  Symlink  /home/user/.bashrc  →  /home/user/Workspace/ws/dotfiles/bashrc
+  Register in /home/user/Workspace/ws/manifest.json
 
 Apply? [Y/n]: ↵
 
-✔ Moved     ~/.bashrc  →  ~/Workspace/ws/dotfiles/bashrc
-✔ Linked    ~/.bashrc  →  ~/Workspace/ws/dotfiles/bashrc
-✔ Verified  readlink -f ~/.bashrc == ~/Workspace/ws/dotfiles/bashrc
-✔ Registered in manifest.json
+✔ Moved     /home/user/.bashrc  →  /home/user/Workspace/ws/dotfiles/bashrc
+✔ Linked    /home/user/.bashrc  →  /home/user/Workspace/ws/dotfiles/bashrc
+✔ Verified  readlink -f /home/user/.bashrc == /home/user/Workspace/ws/dotfiles/bashrc
+✔ Registered in /home/user/Workspace/ws/manifest.json
 ```
 
 **Flow — directory (e.g. SSH):**
@@ -1605,22 +1655,22 @@ Apply? [Y/n]: ↵
 ```text
 ws dotfile add ~/.ssh
 ──────────────────────────────────────────────────────
-Capturing ~/.ssh/ into workspace dotfile management.
+Capturing /home/user/.ssh into workspace dotfile management.
 
 Storage name: ssh/
-System path:  ~/.ssh  →  ~/Workspace/ws/dotfiles/ssh/
+System path:  /home/user/.ssh  →  /home/user/Workspace/ws/dotfiles/ssh
 
 Plan:
-  Move     ~/.ssh/  →  ~/Workspace/ws/dotfiles/ssh/
-  Symlink  ~/.ssh   →  ~/Workspace/ws/dotfiles/ssh/
-  Register in manifest.json
+  Move     /home/user/.ssh  →  /home/user/Workspace/ws/dotfiles/ssh
+  Symlink  /home/user/.ssh   →  /home/user/Workspace/ws/dotfiles/ssh
+  Register in /home/user/Workspace/ws/manifest.json
 
 Apply? [Y/n]: ↵
 
-✔ Moved     ~/.ssh/  →  ~/Workspace/ws/dotfiles/ssh/
-✔ Linked    ~/.ssh   →  ~/Workspace/ws/dotfiles/ssh/
+✔ Moved     /home/user/.ssh  →  /home/user/Workspace/ws/dotfiles/ssh
+✔ Linked    /home/user/.ssh   →  /home/user/Workspace/ws/dotfiles/ssh
 ✔ Verified  link resolves correctly
-✔ Registered in manifest.json
+✔ Registered in /home/user/Workspace/ws/manifest.json
 ```
 
 **Flow — system path requiring sudo:**
@@ -1631,19 +1681,19 @@ ws dotfile add /etc/docker/daemon.json --sudo
 Capturing /etc/docker/daemon.json into workspace dotfile management.
 
 Storage name: daemon.json
-System path:  /etc/docker/daemon.json  →  ~/Workspace/ws/dotfiles/daemon.json
+System path:  /etc/docker/daemon.json  →  /home/user/Workspace/ws/dotfiles/daemon.json
 
 Plan:
-  Move     /etc/docker/daemon.json  →  ~/Workspace/ws/dotfiles/daemon.json  (sudo)
-  Symlink  /etc/docker/daemon.json  →  ~/Workspace/ws/dotfiles/daemon.json  (sudo)
-  Register in manifest.json
+  Move     /etc/docker/daemon.json  →  /home/user/Workspace/ws/dotfiles/daemon.json  (sudo)
+  Symlink  /etc/docker/daemon.json  →  /home/user/Workspace/ws/dotfiles/daemon.json  (sudo)
+  Register in /home/user/Workspace/ws/manifest.json
 
 Apply? [Y/n]: ↵
 
-✔ Moved     /etc/docker/daemon.json  →  ~/Workspace/ws/dotfiles/daemon.json  (sudo)
-✔ Linked    /etc/docker/daemon.json  →  ~/Workspace/ws/dotfiles/daemon.json  (sudo)
+✔ Moved     /etc/docker/daemon.json  →  /home/user/Workspace/ws/dotfiles/daemon.json  (sudo)
+✔ Linked    /etc/docker/daemon.json  →  /home/user/Workspace/ws/dotfiles/daemon.json  (sudo)
 ✔ Verified  link resolves correctly
-✔ Registered in manifest.json
+✔ Registered in /home/user/Workspace/ws/manifest.json
 ```
 
 **Flow — conflict (system file diverged from synced copy):**
@@ -1655,18 +1705,18 @@ ws dotfile add /etc/docker/daemon.json --sudo
 ──────────────────────────────────────────────────────
 CONFLICT  A file exists at both locations with different contents:
 
-  System file:    /etc/docker/daemon.json       (modified 2026-03-14  2.1 KB)
-  Workspace copy: ws/dotfiles/daemon.json       (modified 2026-01-12  1.8 KB)
+  System file:    /etc/docker/daemon.json                           (modified 2026-03-14  2.1 KB)
+  Workspace copy: /home/user/Workspace/ws/dotfiles/daemon.json      (modified 2026-01-12  1.8 KB)
 
 [d] Diff both files
 [o] Keep system    — overwrite workspace copy, then symlink
 [w] Keep workspace — overwrite system file, then symlink
-[b] Keep both      — backup system file to ws/dotfiles/daemon.json.bak, keep workspace, then symlink
+[b] Keep both      — backup system file to /home/user/Workspace/ws/dotfiles/daemon.json.bak, keep workspace, then symlink
 [s] Skip
 
 : d
 
---- ws/dotfiles/daemon.json     2026-01-12
+--- /home/user/Workspace/ws/dotfiles/daemon.json     2026-01-12
 +++ /etc/docker/daemon.json     2026-03-14
 @@ -3,3 +3,5 @@
    "default-runtime": "nvidia",
@@ -1676,10 +1726,10 @@ CONFLICT  A file exists at both locations with different contents:
 
 [d] Diff  [o] Keep system  [w] Keep workspace  [b] Keep both  [s] Skip : o
 
-✔ Copied    /etc/docker/daemon.json  →  ~/Workspace/ws/dotfiles/daemon.json
-✔ Linked    /etc/docker/daemon.json  →  ~/Workspace/ws/dotfiles/daemon.json  (sudo)
+✔ Copied    /etc/docker/daemon.json  →  /home/user/Workspace/ws/dotfiles/daemon.json
+✔ Linked    /etc/docker/daemon.json  →  /home/user/Workspace/ws/dotfiles/daemon.json  (sudo)
 ✔ Verified  link resolves correctly
-✔ Registered in manifest.json
+✔ Registered in /home/user/Workspace/ws/manifest.json
 ```
 
 #### `ws dotfile scan`
@@ -1698,8 +1748,8 @@ ws dotfile scan
 ws dotfile scan — Dotfile Registry
 Summary
 ──────────────────────────────────────────────────────
-Registry     ~/Workspace/ws/manifest.json               5 dotfiles registered
-Storage      ~/Workspace/ws/dotfiles/
+Registry     /home/user/Workspace/ws/manifest.json               5 dotfiles registered
+Storage      /home/user/Workspace/ws/dotfiles
 Scanned      2026-03-29 09:14:22
 
 BROKEN       1 critical                target missing
@@ -1709,8 +1759,8 @@ OK           3                         no action needed
 
 Violations
 ──────────────────────────────────────────────────────
-CRITICAL  BROKEN      ~/.config/Code/User/settings.json  →  ws/dotfiles/vscode-settings.json  [target missing]
-WARNING   OVERWRITTEN /etc/docker/daemon.json                                                  [real file, not a symlink]
+CRITICAL  BROKEN      /home/user/.config/Code/User/settings.json  →  /home/user/Workspace/ws/dotfiles/vscode-settings.json  [target missing]
+WARNING   OVERWRITTEN /etc/docker/daemon.json                     [real file, not a symlink]
 ──────────────────────────────────────────────────────
 
 Run `ws dotfile fix` to repair.
@@ -1730,15 +1780,15 @@ ws dotfile ls [flags]
 
 ```text
 ws dotfile ls — Registered Dotfiles
-Registry: ~/Workspace/ws/manifest.json  (5 dotfiles)
-Storage:  ~/Workspace/ws/dotfiles/
+Registry: /home/user/Workspace/ws/manifest.json  (5 dotfiles)
+Storage:  /home/user/Workspace/ws/dotfiles
 ──────────────────────────────────────────────────────
 
-  ~/.ssh                              →  ssh/                  SSH keys and proxy jump config
-  ~/.bashrc                           →  bashrc
-  /etc/docker/daemon.json             →  daemon.json           (sudo)
-  ~/.kube/config                      →  kubeconfig
-  ~/.config/Code/User/settings.json   →  vscode-settings.json
+  /home/user/.ssh                             →  /home/user/Workspace/ws/dotfiles/ssh                   SSH keys and proxy jump config
+  /home/user/.bashrc                          →  /home/user/Workspace/ws/dotfiles/bashrc
+  /etc/docker/daemon.json                     →  /home/user/Workspace/ws/dotfiles/daemon.json           (sudo)
+  /home/user/.kube/config                     →  /home/user/Workspace/ws/dotfiles/kubeconfig
+  /home/user/.config/Code/User/settings.json  →  /home/user/Workspace/ws/dotfiles/vscode-settings.json
 
 ──────────────────────────────────────────────────────
 5 dotfiles  (1 sudo)
@@ -1749,14 +1799,14 @@ Storage:  ~/Workspace/ws/dotfiles/
 ```text
 ws dotfile ls --porcelain
 
-~/.ssh ssh false SSH keys and proxy jump config
-~/.bashrc bashrc false 
+/home/user/.ssh ssh false SSH keys and proxy jump config
+/home/user/.bashrc bashrc false 
 /etc/docker/daemon.json daemon.json true 
-~/.kube/config kubeconfig false 
-~/.config/Code/User/settings.json vscode-settings.json false 
+/home/user/.kube/config kubeconfig false 
+/home/user/.config/Code/User/settings.json vscode-settings.json false 
 ```
 
-Columns: `system_path`, `dotfile_name`, `sudo`, `note` (tab-separated).
+Columns: `system_path`, `dotfile_name`, `sudo`, `note` (tab-separated). `dotfile_name` is the storage-name identifier (the value accepted by `--name`), not a path; the stored file is `<workspace>/ws/dotfiles/<dotfile_name>`, shown absolute in the non-porcelain view.
 
 #### `ws dotfile fix`
 
@@ -1775,22 +1825,22 @@ When dotfile Git versioning is enabled, successful `fix` operations commit any c
 
 ```text
 ws dotfile fix — Dotfile Reconciliation
-Registry: manifest.json  (5 dotfiles)
-Storage:  ws/dotfiles/
+Registry: /home/user/Workspace/ws/manifest.json  (5 dotfiles)
+Storage:  /home/user/Workspace/ws/dotfiles
 ──────────────────────────────────────────────────
 
 Scanning...
   4 dotfiles to link
-  1 dotfile to skip   (~/.config/Code/User/settings.json target missing in ws/dotfiles/)
+  1 dotfile to skip   (/home/user/Workspace/ws/dotfiles/vscode-settings.json missing for /home/user/.config/Code/User/settings.json)
   1 dotfile requires sudo
 
 Apply? [Y/n]: ↵
 
-[1/5]  ~/.ssh                →  ws/dotfiles/ssh/              ✔ created
-[2/5]  ~/.bashrc             →  ws/dotfiles/bashrc             ✔ created
-[3/5]  /etc/docker/...       →  ws/dotfiles/daemon.json        ✔ created  (sudo)
-[4/5]  ~/.kube/config        →  ws/dotfiles/kubeconfig         ✔ created
-[5/5]  ~/.config/Code/User/… →  ws/dotfiles/vscode-settings…   ⚠ skipped  [target missing]
+[1/5]  /home/user/.ssh                             →  /home/user/Workspace/ws/dotfiles/ssh                   ✔ created
+[2/5]  /home/user/.bashrc                          →  /home/user/Workspace/ws/dotfiles/bashrc                ✔ created
+[3/5]  /etc/docker/daemon.json                     →  /home/user/Workspace/ws/dotfiles/daemon.json           ✔ created  (sudo)
+[4/5]  /home/user/.kube/config                     →  /home/user/Workspace/ws/dotfiles/kubeconfig            ✔ created
+[5/5]  /home/user/.config/Code/User/settings.json  →  /home/user/Workspace/ws/dotfiles/vscode-settings.json  ⚠ skipped  [target missing]
 
 ──────────────────────────────────────────────────
 Created: 4   Skipped: 1   Failed: 0
@@ -1835,7 +1885,7 @@ Checking repository visibility…
 ✔ Repository is private
 
 Detected ws-managed local git repository:
-  Local:   ~/Workspace/ws/dotfiles-git
+  Local:   /home/user/Workspace/ws/dotfiles-git
   Branch:  main
   Remote:  https://git.example.com/user/dotfiles-private.git
 
@@ -1843,7 +1893,7 @@ Detected ws-managed local git repository:
   auto_commit: enabled
   auto_push:   enabled
 
-Saved to config.json under dotfile.git.
+Saved to /home/user/.config/ws-tool/config.json under dotfile.git.
 ```
 
 **Output — rejected (public repo):**
@@ -1895,7 +1945,7 @@ Checking repository visibility…
 ✔ Repository is private
 
 No local dotfile git repo found.
-✔ Initialized ws-managed local repository at ~/Workspace/ws/dotfiles-git
+✔ Initialized ws-managed local repository at /home/user/Workspace/ws/dotfiles-git
 ✔ Dotfile git remote configured
 ```
 
@@ -1913,7 +1963,7 @@ ws dotfile git status
 ws dotfile git status
 
 Git versioning: enabled
-Local repo:     ~/Workspace/ws/dotfiles-git
+Local repo:     /home/user/Workspace/ws/dotfiles-git
 Remote URL:     https://git.example.com/user/dotfiles-private.git
 Username:       user
 Branch:         main
@@ -1922,7 +1972,7 @@ Auto-push:      enabled
 
 Working tree:   clean
 Ahead/behind:   ↑2 ↓0
-Last commit:    2026-04-03 11:20  ws(dotfile): capture ~/.bashrc
+Last commit:    2026-04-03 11:20  ws(dotfile): capture /home/user/.bashrc
 Pending sync:   0 commits queued (network: reachable)
 ```
 
@@ -1930,7 +1980,7 @@ Pending sync:   0 commits queued (network: reachable)
 
 Unregister a dotfile. Copies the file from `ws/dotfiles/` back to the system path (replacing the symlink with a real file), then unregisters it. The file is removed from `ws/dotfiles/`.
 
-Accepts either the system path or the dotfile name.
+Takes the system path — absolute, `~`, or relative to the current directory (see [Path Rules](#path-rules)). It is matched against registered system paths as an absolute path.
 
 ```text
 ws dotfile rm <path> [flags]
@@ -1946,19 +1996,19 @@ When dotfile Git versioning is enabled, successful `rm` operations auto-commit r
 ws dotfile rm ~/.bashrc
 
 Registered dotfile:
-  system    ~/.bashrc
-  stored    ~/Workspace/ws/dotfiles/bashrc
+  system    /home/user/.bashrc
+  stored    /home/user/Workspace/ws/dotfiles/bashrc
 
 Plan:
-  Copy       ~/Workspace/ws/dotfiles/bashrc  →  ~/.bashrc
-  Delete     ~/Workspace/ws/dotfiles/bashrc
-  Unregister from manifest.json
+  Copy       /home/user/Workspace/ws/dotfiles/bashrc  →  /home/user/.bashrc
+  Delete     /home/user/Workspace/ws/dotfiles/bashrc
+  Unregister from /home/user/Workspace/ws/manifest.json
 
 Apply? [Y/n]: ↵
 
-✔ Copied    ~/Workspace/ws/dotfiles/bashrc  →  ~/.bashrc  (real file, not a symlink)
-✔ Deleted   ~/Workspace/ws/dotfiles/bashrc
-✔ Unregistered from manifest.json
+✔ Copied    /home/user/Workspace/ws/dotfiles/bashrc  →  /home/user/.bashrc  (real file, not a symlink)
+✔ Deleted   /home/user/Workspace/ws/dotfiles/bashrc
+✔ Unregistered from /home/user/Workspace/ws/manifest.json
 ```
 
 ---
@@ -2012,9 +2062,8 @@ Name: CA-debug█
   ▒CA-remove-CPU-limits.2026-04▒
   ▒CA-registry-migration.2026-04▒
 
-✔ Created   ~/Scratch/CA-debug.2026-04/
-  ~/Scratch/CA-debug.2026-04/
-✔ Opening   VS Code → ~/Scratch/CA-debug.2026-04/
+✔ Created   /home/user/Scratch/CA-debug.2026-04
+✔ Opening   VS Code → /home/user/Scratch/CA-debug.2026-04
 ```
 
 The ghost panel is display-only for `new` — Tab does not complete (you are picking a name distinct from those listed). Matching strips date suffixes: typing `CA` matches `CA-remove-CPU-limits.2026-04`. Bottom-of-terminal: `ws` reserves panel space before entering raw mode (emits blank lines to scroll the terminal up if needed), so the panel always fits regardless of cursor position.
@@ -2024,9 +2073,8 @@ The ghost panel is display-only for `new` — Tab does not complete (you are pic
 ```text
 ws scratch new proxy-auth-header
 
-✔ Created   ~/Scratch/proxy-auth-header.2026-04/
-  ~/Scratch/proxy-auth-header.2026-04/
-✔ Opening   VS Code → ~/Scratch/proxy-auth-header.2026-04/
+✔ Created   /home/user/Scratch/proxy-auth-header.2026-04
+✔ Opening   VS Code → /home/user/Scratch/proxy-auth-header.2026-04
 ```
 
 **Edge cases:**
@@ -2057,14 +2105,10 @@ ws scratch ls [flags]
 ```text
 ws scratch ls
 
-proxy-auth-header.2026-04              age=2h    size=—        items=0
-  ~/Scratch/proxy-auth-header.2026-04/
-proxy-timeout.2026-03                  age=8d    size=312 MB   items=14
-  ~/Scratch/proxy-timeout.2026-03/
-dns-resolution.2026-03                 age=12d   size=48 MB    items=6
-  ~/Scratch/dns-resolution.2026-03/
-gpu-driver-debug.2026-02               age=34d   size=1.2 GB   items=23
-  ~/Scratch/gpu-driver-debug.2026-02/
+/home/user/Scratch/proxy-auth-header.2026-04    age=2h    size=—        items=0
+/home/user/Scratch/proxy-timeout.2026-03        age=8d    size=312 MB   items=14
+/home/user/Scratch/dns-resolution.2026-03       age=12d   size=48 MB    items=6
+/home/user/Scratch/gpu-driver-debug.2026-02     age=34d   size=1.2 GB   items=23
 ```
 
 #### `ws scratch open`
@@ -2096,7 +2140,7 @@ Open: CA-█     ← Tab → completes to first match
 
 Open: CA-remove-CPU-limits.2026-04█
 
-✔ Opening   code → ~/Scratch/CA-remove-CPU-limits.2026-04/
+✔ Opening   code → /home/user/Scratch/CA-remove-CPU-limits.2026-04
 ```
 
 **Output (inline name — skip prompt):**
@@ -2104,7 +2148,7 @@ Open: CA-remove-CPU-limits.2026-04█
 ```text
 ws scratch open proxy-auth-header
 
-✔ Opening   code → ~/Scratch/proxy-auth-header.2026-04/
+✔ Opening   code → /home/user/Scratch/proxy-auth-header.2026-04
 ```
 
 **Edge cases:**
@@ -2159,8 +2203,8 @@ Delete: CA-█     ← Tab → completes to first match
 
 Delete: CA-remove-CPU-limits.2026-04█
 
-Delete scratch "CA-remove-CPU-limits.2026-04"? [Y/n/a/q]
-✔ Deleted  ~/Scratch/CA-remove-CPU-limits.2026-04/
+Delete scratch /home/user/Scratch/CA-remove-CPU-limits.2026-04? [Y/n/a/q]
+✔ Deleted  /home/user/Scratch/CA-remove-CPU-limits.2026-04
 ```
 
 #### `ws scratch prune`
@@ -2182,10 +2226,10 @@ ws scratch prune [flags]
 ws scratch prune --older-than 90d
 
 Will remove:
-  cert-rotation.2026-01          94d   180 MB   8 files
+  /home/user/Scratch/cert-rotation.2026-01    94d   180 MB   8 files
 
 Confirm? [y/N]: y
-✔ Removed 180 MB from ~/Scratch/
+✔ Removed 180 MB from /home/user/Scratch
 ```
 
 Deletion goes through `rm` (soft-delete if `ws trash setup` was run — Philosophy Factor IX).
@@ -2215,8 +2259,7 @@ Tag: [k8s] cgroups█
 
 Tag: [k8s, cgroups] █   ← empty Enter finishes
 
-Tagged pid-limit-debug.2026-04: [k8s, cgroups]
-  ~/Scratch/pid-limit-debug.2026-04/
+Tagged /home/user/Scratch/pid-limit-debug.2026-04: [k8s, cgroups]
 ```
 
 **Output (auto-tag):**
@@ -2228,8 +2271,7 @@ Add tag "bash" to pid-limit-debug.2026-04? [y/n/a/q] y
 Add tag "k8s" to pid-limit-debug.2026-04? [y/n/a/q] y
 Add tag "cgroups" to pid-limit-debug.2026-04? [y/n/a/q] y
 
-Tagged pid-limit-debug.2026-04: [bash, k8s, cgroups]
-  ~/Scratch/pid-limit-debug.2026-04/
+Tagged /home/user/Scratch/pid-limit-debug.2026-04: [bash, k8s, cgroups]
 ```
 
 Auto-tag heuristics:
@@ -2255,8 +2297,7 @@ ws scratch search [query] [flags]
 ```text
 ws scratch search "k8s pid"
 
-pid-limit-debug.2026-04            match=tag     [k8s, pid-limit, cgroups]
-  ~/Scratch/pid-limit-debug.2026-04/
+/home/user/Scratch/pid-limit-debug.2026-04    match=tag     [k8s, pid-limit, cgroups]
 ```
 
 **Output (interactive — no query):**
@@ -2306,8 +2347,8 @@ Tag [2026-03-29-1422]: ↵
 
 ✔ Recording (PTY mode)
   Session: 2026-03-29-1422
-  Stdin:   ~/Workspace/ws/ws-log/2026-03-29-1422/stdin.log
-  Stdout:  ~/Workspace/ws/ws-log/2026-03-29-1422/stdout.log
+  Stdin:   /home/user/Workspace/ws/ws-log/2026-03-29-1422/stdin.log
+  Stdout:  /home/user/Workspace/ws/ws-log/2026-03-29-1422/stdout.log
   Exit:    type 'exit' or Ctrl-D to end
 
 ● ws:log user@laptop ~/Workspace $
@@ -2318,8 +2359,8 @@ Tag [2026-03-29-1422]: ↵
 ✔ Session ended
   Tag:      2026-03-29-1422
   Duration: 14m 22s
-  Stdin:    ~/Workspace/ws/ws-log/2026-03-29-1422/stdin.log  (4 KB)
-  Stdout:   ~/Workspace/ws/ws-log/2026-03-29-1422/stdout.log (19 KB)
+  Stdin:    /home/user/Workspace/ws/ws-log/2026-03-29-1422/stdin.log  (4 KB)
+  Stdout:   /home/user/Workspace/ws/ws-log/2026-03-29-1422/stdout.log (19 KB)
 ```
 
 **Output — quiet start:**
@@ -2337,8 +2378,8 @@ No banner, no prompts. The `● ws:log` prefix is the only visual change.
 ws log — Session ended
 Tag:      prod-migration
 Duration: 9m 14s
-Stdin:    ~/Workspace/ws/ws-log/prod-migration/stdin.log   (18 KB  | 47 commands)
-Index:    updated at ~/Workspace/ws/ws-log-index.md
+Stdin:    /home/user/Workspace/ws/ws-log/prod-migration/stdin.log   (18 KB  | 47 commands)
+Index:    updated at /home/user/Workspace/ws/ws-log-index.md
 ```
 
 The `● ws:log` prompt disappears automatically on session end. See **Technical Design Decisions → Prompt Indicator** for cleanup mechanics.
@@ -2359,9 +2400,9 @@ ws log stop
 ✔ Session ended
   Tag:      2026-03-29-1422
   Duration: 14m 22s
-  Stdin:    ~/Workspace/ws/ws-log/2026-03-29-1422/stdin.log   (4 KB)
-  Stdout:   ~/Workspace/ws/ws-log/2026-03-29-1422/stdout.log  (19 KB)
-  Index:    updated at ~/Workspace/ws/ws-log-index.md
+  Stdin:    /home/user/Workspace/ws/ws-log/2026-03-29-1422/stdin.log   (4 KB)
+  Stdout:   /home/user/Workspace/ws/ws-log/2026-03-29-1422/stdout.log  (19 KB)
+  Index:    updated at /home/user/Workspace/ws/ws-log-index.md
 
 user@laptop ~/Workspace $
 ```
@@ -2391,7 +2432,7 @@ ws log ls [flags]
 ws log ls
 
 Sessions: 48   Storage: 312 MB / 500 MB cap   Oldest: 2026-01-04
-Location: ~/Workspace/ws/ws-log/
+Location: /home/user/Workspace/ws/ws-log
 ──────────────────────────────────────────────────────────────────
 
 ● 2026-03-29-1422                   47 cmds   9m       18 KB
@@ -2404,7 +2445,7 @@ Location: ~/Workspace/ws/ws-log/
 
 ──────────────────────────────────────────────────────────────────
 48 sessions  |  312 MB total
-Synced index: ~/Workspace/ws/ws-log-index.md  (12 KB)
+Synced index: /home/user/Workspace/ws/ws-log-index.md  (12 KB)
 ```
 
 The `●` marker indicates the currently active session.
@@ -2423,12 +2464,12 @@ ws log prune [--older-than <duration>] [--all]
 ws log prune --older-than 30d
 
 Will remove 8 sessions (2026-01-04 to 2026-02-27):
-  89 MB  2026-01-04-0900/
-  44 MB  2026-01-15-1133/
+  89 MB  /home/user/Workspace/ws/ws-log/2026-01-04-0900
+  44 MB  /home/user/Workspace/ws/ws-log/2026-01-15-1133
   ...
 
 Confirm? [y/N]: y
-Removed: 133 MB from ~/Workspace/ws/ws-log/
+Removed: 133 MB from /home/user/Workspace/ws/ws-log
 ```
 
 ---
@@ -2443,7 +2484,7 @@ Textual and contextual search across the entire workspace. Covers text files via
 ws search <query> [flags]
 
 --type     Filter by file type: note, script, config, pdf, image, all  (default: all)
---path     Restrict search to a subpath
+--path     Restrict search to this directory (absolute, ~, or relative to cwd)
 --context  Show N lines of context around matches  (default: 2)
 ```
 
@@ -2452,16 +2493,16 @@ ws search <query> [flags]
 ```text
 ws search "rsync"
 ──────────────────────────────────────────────────────
-[script]   experiments/mega-cron.sh:4
+[script]   /home/user/Workspace/experiments/mega-cron.sh:4
            # rsync is not used here but see debug-proxy.sh
 
-[script]   experiments/debug-proxy.sh:22
+[script]   /home/user/Workspace/experiments/debug-proxy.sh:22
            rsync -avz --delete --progress ~/Workspace/ remote-backup:/data/
 
-[note]     notes/second-brain/2026-02-infra.md:34
+[note]     /home/user/Workspace/notes/second-brain/2026-02-infra.md:34
            mega-sync is preferred over rsync for MEGA. rsync used for remote backup.
 
-[log]      ws/ws-log/prod-migration/stdin.log:3
+[log]      /home/user/Workspace/ws/ws-log/prod-migration/stdin.log:3
            rsync -avz --delete --exclude='.git' ~/Workspace/ remote:/backup/
 ──────────────────────────────────────────────────────
 4 results across 4 files
@@ -2480,7 +2521,7 @@ ws repo [subcommand]
 Common selection flags:
 
 ```text
---path          Restrict discovery to a workspace subpath
+--path          Only repos under this directory (absolute, ~, or relative to cwd; whole-component prefix match)
 --dirty         Only repos with uncommitted changes
 --ahead         Only repos ahead of upstream
 --behind        Only repos behind upstream
@@ -2522,6 +2563,8 @@ Add one repo discovery root to config (`repo.roots`).
 ws repo add-root <path>
 ```
 
+`<path>` is resolved per [Path Rules](#path-rules) (absolute, `~`, or relative to the current directory). It is stored in `repo.roots` workspace-relative when inside the workspace, absolute otherwise. `ws repo ls-roots` prints each root as an absolute path.
+
 #### `ws repo ls`
 
 Discover and list Git repos under the workspace.
@@ -2537,50 +2580,97 @@ ws repo ls [flags]
 ```text
 ws repo ls
 
-experiments/blog                    branch=main      dirty=no   ahead=0 behind=0
-notes/second-brain                 branch=main      dirty=yes  ahead=2 behind=0
-data/bruno                         branch=master    dirty=no   ahead=0 behind=1
+/home/user/Workspace/experiments/blog      branch=main      dirty=no   ahead=0 behind=0
+/home/user/Workspace/notes/second-brain    branch=main      dirty=yes  ahead=2 behind=0
+/home/user/Workspace/data/bruno            branch=master    dirty=no   ahead=0 behind=1
 
 3 repos discovered
 ```
 
 #### `ws repo scan`
 
-Fleet status view for discovered repos.
+Fleet status and hygiene audit for discovered repos, in one pass.
 
-Before calculating status, `ws` fetches each repo (`git fetch --all --prune`) to ensure ahead/behind counts are current, then reconciles repo state from the current directory scope whenever possible. Use `--no-fetch` to skip the fetch phase for offline or faster scans. Fetch failures for individual repos are reported as warnings, not errors.
+Before calculating status, `ws` fetches each repo (`git fetch --all --prune`) to ensure ahead/behind counts are current, then reconciles repo state from the current directory scope whenever possible. Use `--no-fetch` to skip the fetch phase for offline or faster scans. Fetch failures for individual repos are reported as warnings, not errors. External repos addressed by absolute path (e.g. the pass store) are not auto-fetched.
+
+The optional `<repo>` argument targets one repo. It is resolved per [Path Rules](#path-rules) and matched against discovered repos as an absolute path; the same applies to `ws repo ls|fetch|pull|sync [<repo>]`.
+
+After status, scan runs hygiene checks on the same repo set (after filters and the optional positional repo target are applied) and prints each finding indented under its repo. This replaces the former `ws repo doctor` command; invoking `ws repo doctor` now exits `1` with a pointer to `ws repo scan`.
 
 ```text
-ws repo scan [flags]
+ws repo scan [<repo>] [flags]
 
---no-fetch   Skip the automatic fetch before scanning (default: fetch enabled)
+--no-fetch     Skip the automatic fetch before scanning (default: fetch enabled)
+--check <id>   Run only the named hygiene check (repeatable). Default: all checks.
+               Available: identity, upstream, default-branch, fetch-staleness
+--verbose      Also show info-level hygiene findings (hidden by default)
+--path, --dirty, --ahead, --behind, --detached   Standard repo filters
 ```
+
+Hygiene checks:
+
+| Check | Severity | Condition |
+| --- | --- | --- |
+| `identity` | warn | `user.name` or `user.email` not set in local or global git config |
+| `identity` | info | identity not set locally but a global value exists |
+| `upstream` | warn | current branch has no tracking upstream |
+| `default-branch` | info | `init.defaultBranch` not set and `origin/HEAD` not resolved |
+| `fetch-staleness` | info | `FETCH_HEAD` missing or older than threshold (default: 14 days) |
+
+Dirty working trees are reported by the `CLEAN`/`DIRTY` status badge, not as a separate hygiene check.
+
+Checks run after the fetch phase, so `fetch-staleness` reflects the fetch that just happened. In practice it only fires under `--no-fetch`, on a failed fetch, or for external repos that are not auto-fetched.
 
 **Output:**
 
 ```text
 ws repo scan
-Summary
-──────────────────────────────────────────────────────
-Repos        3 discovered
-Dirty        1
-Ahead        1
-Behind       1
-Detached     0
-──────────────────────────────────────────────────────
+⎇  /home/user/Workspace/Data/bruno  main CLEAN
+⎇  /home/user/Workspace/Experiments/blog  main CLEAN
+   ▲ [identity] user.name not set (local or global)
+   ▲ [identity] user.email not set (local or global)
+⎇  /home/user/Workspace/notes/second-brain  main DIRTY ↑2 ↓0
+⎇  /home/user/.password-store  master CLEAN ↑2 ↓0
 
-Details
-──────────────────────────────────────────────────────
-notes/second-brain   main    dirty   ↑2 ↓0   stash=1   last=2h
-data/bruno           master  clean   ↑0 ↓1   stash=0   last=3d
-experiments/blog     main    clean   ↑0 ↓0   stash=0   last=5h
-──────────────────────────────────────────────────────
+Hygiene: 2 warning(s) · 7 info hidden (--verbose to show)
 ```
+
+With `--verbose`, info findings are shown muted with a `·` marker:
+
+```text
+⎇  /home/user/.password-store  master CLEAN ↑2 ↓0
+   · [default-branch] init.defaultBranch not set and origin/HEAD not resolved
+   · [fetch-staleness] last fetch was 107 days ago (threshold: 14)
+```
+
+The `Hygiene:` footer is omitted when there are no findings (shown or hidden).
+
+**Output — JSON:**
+
+```json
+{
+  "ws_version": "0.1.0",
+  "schema": 2,
+  "command": "repo.scan",
+  "data": {
+    "statuses": [
+      { "path": "/home/user/Workspace/Experiments/blog", "branch": "main", "detached": false, "dirty": false, "ahead": 0, "behind": 0, "has_upstream": true }
+    ],
+    "findings": [
+      { "repo": "/home/user/Workspace/Experiments/blog", "check": "identity", "severity": "warn", "detail": "user.name not set (local or global)" }
+    ],
+    "fetch_warnings": ["/home/user/Workspace/Data/bruno: ..."]
+  }
+}
+```
+
+JSON always includes every finding (info included); `findings` is `[]` when there are none. `fetch_warnings` is omitted when empty.
 
 Exit behavior:
 
-- `0` clean fleet
-- `2` one or more repos need attention (`dirty`, `ahead`, `behind`, or `detached`)
+- `0` clean fleet: no repo needs attention and no warn-level findings (info findings do not affect the exit code)
+- `2` one or more repos need attention (`dirty`, `ahead`, `behind`, `detached`, or scan error) or one or more warn-level hygiene findings
+- `1` internal error or unknown `--check` id
 
 #### `ws repo fetch`
 
@@ -2597,9 +2687,9 @@ ws repo fetch [flags]
 ```text
 ws repo fetch
 
-[1/3] notes/second-brain    ✔ fetched
-[2/3] data/bruno            ✔ fetched
-[3/3] experiments/blog      ✔ fetched
+[1/3] /home/user/Workspace/notes/second-brain    ✔ fetched
+[2/3] /home/user/Workspace/data/bruno            ✔ fetched
+[3/3] /home/user/Workspace/experiments/blog      ✔ fetched
 
 Fetched: 3   Failed: 0
 ```
@@ -2623,11 +2713,11 @@ ws repo pull [flags]
 ws repo pull
 
 Behind repos:
-  data/bruno (master, behind 1)
+  /home/user/Workspace/data/bruno (master, behind 1)
 
 Apply `git pull --ff-only` to 1 repo? [Y/n]: ↵
 
-[1/1] data/bruno   ✔ updated (fast-forward)
+[1/1] /home/user/Workspace/data/bruno   ✔ updated (fast-forward)
 
 Updated: 1   Skipped: 0   Failed: 0
 ```
@@ -2668,16 +2758,16 @@ ws repo sync [flags]
 ```text
 ws repo sync
 
-  Pull       data/bruno                  (1 behind, ff)                [y/n/a/q] y
+  Pull       /home/user/Workspace/data/bruno            (1 behind, ff)                [y/n/a/q] y
   ✔ Pulled (fast-forward)
 
-  Push       notes/second-brain          (2 ahead)                     [y/n/a/q] y
+  Push       /home/user/Workspace/notes/second-brain    (2 ahead)                     [y/n/a/q] y
   ✔ Pushed
 
-  Pull+Push  experiments/blog            (1 ahead, 2 behind, merge)   [y/n/a/q] y
+  Pull+Push  /home/user/Workspace/experiments/blog      (1 ahead, 2 behind, merge)   [y/n/a/q] y
   ✔ Merged + pushed
 
-  ▲ Skipped: tmp-branch (detached HEAD)
+  ▲ Skipped: /home/user/Workspace/experiments/tmp-branch (detached HEAD)
 
   3 synced · 1 skipped
 ```
@@ -2704,107 +2794,12 @@ Targets: 3 repos
 
 Run now? [Y/n]: ↵
 
-[1/3] experiments/blog      ✔ exit 0
-[2/3] notes/second-brain   ✔ exit 0
-[3/3] data/bruno           ✔ exit 0
+[1/3] /home/user/Workspace/experiments/blog      ✔ exit 0
+[2/3] /home/user/Workspace/notes/second-brain    ✔ exit 0
+[3/3] /home/user/Workspace/data/bruno            ✔ exit 0
 
 Succeeded: 3   Failed: 0
 ```
-
-**Output:**
-
-```text
-ws repo run -- git gc --auto
-
-Command: git gc --auto
-Targets: 3 repos
-
-Run now? [Y/n]: ↵
-
-[1/3] experiments/blog      ✔ exit 0
-[2/3] notes/second-brain   ✔ exit 0
-[3/3] data/bruno           ✔ exit 0
-
-Succeeded: 3   Failed: 0
-```
-
-#### `ws repo doctor`
-
-Hygiene audit across the repo fleet. Checks each repository for common configuration problems and reports findings with severity levels.
-
-```text
-ws repo doctor [flags]
-
---check <id>   Run only the named check (repeatable). Default: all checks.
-               Available: identity, upstream, default-branch, fetch-staleness, dirty
-```
-
-Checks:
-
-| Check | Severity | Condition |
-| --- | --- | --- |
-| `identity` | warn | `user.name` or `user.email` not set in local or global git config |
-| `identity` | info | identity not set locally but a global value exists |
-| `upstream` | warn | current branch has no tracking upstream |
-| `default-branch` | info | `init.defaultBranch` not set and `origin/HEAD` not resolved |
-| `fetch-staleness` | info | `FETCH_HEAD` missing or older than threshold (default: 14 days) |
-| `dirty` | warn | uncommitted changes present |
-
-**Output — clean fleet:**
-
-```text
-ws repo doctor
-
-experiments/blog          ✔  clean
-notes/second-brain        ✔  clean
-data/bruno                ✔  clean
-
-3 repos checked · 0 findings
-```
-
-**Output — findings:**
-
-```text
-ws repo doctor
-
-experiments/blog          ✔  clean
-notes/second-brain        ⚠  identity: user.email not set locally (using global: user@example.com)
-                          ⚠  upstream: current branch has no tracking upstream
-data/bruno                ⚠  dirty: uncommitted changes
-
-3 repos checked · 3 findings (3 warn, 0 error)
-```
-
-**Output — JSON:**
-
-```json
-{
-  "ws_version": "0.1.0",
-  "schema": 1,
-  "command": "repo.doctor",
-  "findings": [
-    { "repo": "notes/second-brain", "check": "identity", "severity": "info", "detail": "user.email not set locally (using global: user@example.com)" },
-    { "repo": "notes/second-brain", "check": "upstream", "severity": "warn", "detail": "current branch has no tracking upstream" },
-    { "repo": "data/bruno",         "check": "dirty",    "severity": "warn", "detail": "uncommitted changes" }
-  ]
-}
-```
-
-**Exit codes:**
-
-| Code | Meaning |
-| --- | --- |
-| `0` | No warn/error findings |
-| `2` | One or more warn or error findings |
-| `1` | Internal error |
-
-**Scan footer:** When `ws repo scan` finds hygiene warnings, it appends a one-line footer:
-
-```text
-Hygiene: 2 warning(s) — run `ws repo doctor`
-```
-
-This footer is omitted when there are no hygiene findings.
 
 ---
 
@@ -2817,7 +2812,7 @@ Generate, validate, and audit the `.megaignore` file. Produces a battle-proof ig
 **Megaignore guard:** All `ws ignore` subcommands except `ws ignore generate` require `<workspace>/.megaignore` to exist. If missing, the command prints an error and exits:
 
 ```text
-Error: .megaignore not found at ~/Workspace/.megaignore
+Error: .megaignore not found at /home/user/Workspace/.megaignore
 Run `ws ignore generate` to create one from the built-in template.
 ```
 
@@ -2833,12 +2828,14 @@ Test whether a file path would be synced or ignored. Exits 0 if synced, 2 if ign
 ws ignore check <path>
 ```
 
+`<path>` is resolved per [Path Rules](#path-rules): absolute, `~`, or relative to the current directory. There is no fallback to workspace-relative lookup.
+
 **Output:**
 
 ```text
 ws ignore check experiments/debug-proxy.sh
 
-✔ SYNCED      experiments/debug-proxy.sh
+✔ SYNCED      /home/user/Workspace/experiments/debug-proxy.sh
   Reason: no matching exclude rule
   File size: 4 KB
 ```
@@ -2846,14 +2843,14 @@ ws ignore check experiments/debug-proxy.sh
 ```text
 ws ignore check artifacts/datasets/node-metrics.csv
 
-✗ IGNORED     artifacts/datasets/node-metrics.csv
+✗ IGNORED     /home/user/Workspace/artifacts/datasets/node-metrics.csv
   Reason: excluded by rule `-g:*.csv`
 ```
 
 ```text
 ws ignore check archive/incident-2026.tar.gz
 
-✔ SYNCED      archive/incident-2026.tar.gz
+✔ SYNCED      /home/user/Workspace/archive/incident-2026.tar.gz
   Reason: safe harbor — Archive/** overrides an exclude rule
   File size: 230 MB
 ```
@@ -2871,10 +2868,10 @@ ws ignore check archive/incident-2026.tar.gz
 ```json
 {
   "ws_version": "0.1.0",
-  "schema": 1,
+  "schema": 2,
   "command": "ignore.check",
   "data": {
-    "path": "artifacts/datasets/node-metrics.csv",
+    "path": "/home/user/Workspace/artifacts/datasets/node-metrics.csv",
     "included": false,
     "rule": "-g:*.csv",
     "safe_harbor": false,
@@ -2890,7 +2887,7 @@ List all files currently excluded by `.megaignore` rules. Flat, one-path-per-lin
 ```text
 ws ignore ls [flags]
 
---path     Restrict to a subpath
+--path     Restrict to files under this directory (absolute, ~, or relative to cwd)
 --rule     Filter to files matched by a specific rule (e.g. "-g:*.csv")
 ```
 
@@ -2899,14 +2896,14 @@ ws ignore ls [flags]
 ```text
 ws ignore ls
 
-IGNORED  114 MB   artifacts/datasets/node-metrics-2026.csv        -g:*.csv
-IGNORED   44 MB   artifacts/datasets/city_temperature.csv         -g:*.csv
-IGNORED    4 MB   artifacts/datasets/house_prices.csv             -g:*.csv
-IGNORED    8 MB   artifacts/datasets/car_prices.orc                        -g:*.orc
-IGNORED   10 MB   artifacts/datasets/weather.orc                           -g:*.orc
-IGNORED  230 MB   experiments/proxy-debug/capture.tar.gz               -g:*.tar.gz
-IGNORED   42 MB   notes/second-brain/.git/                             -:.*
-IGNORED  180 MB   experiments/pip-madness/.venv/                       -:.*
+IGNORED  114 MB   /home/user/Workspace/artifacts/datasets/node-metrics-2026.csv        -g:*.csv
+IGNORED   44 MB   /home/user/Workspace/artifacts/datasets/city_temperature.csv         -g:*.csv
+IGNORED    4 MB   /home/user/Workspace/artifacts/datasets/house_prices.csv             -g:*.csv
+IGNORED    8 MB   /home/user/Workspace/artifacts/datasets/car_prices.orc                        -g:*.orc
+IGNORED   10 MB   /home/user/Workspace/artifacts/datasets/weather.orc                           -g:*.orc
+IGNORED  230 MB   /home/user/Workspace/experiments/proxy-debug/capture.tar.gz               -g:*.tar.gz
+IGNORED   42 MB   /home/user/Workspace/notes/second-brain/.git                             -:.*
+IGNORED  180 MB   /home/user/Workspace/experiments/pip-madness/.venv                       -:.*
 
 38 files · 812 MB excluded
 ```
@@ -2916,9 +2913,9 @@ IGNORED  180 MB   experiments/pip-madness/.venv/                       -:.*
 ```text
 ws ignore ls --rule "-g:*.csv"
 
-IGNORED  114 MB   artifacts/datasets/node-metrics-2026.csv        -g:*.csv
-IGNORED   44 MB   artifacts/datasets/city_temperature.csv         -g:*.csv
-IGNORED    4 MB   artifacts/datasets/house_prices.csv             -g:*.csv
+IGNORED  114 MB   /home/user/Workspace/artifacts/datasets/node-metrics-2026.csv        -g:*.csv
+IGNORED   44 MB   /home/user/Workspace/artifacts/datasets/city_temperature.csv         -g:*.csv
+IGNORED    4 MB   /home/user/Workspace/artifacts/datasets/house_prices.csv             -g:*.csv
 
 3 files · 162 MB excluded
 ```
@@ -2945,7 +2942,7 @@ Two-pass algorithm: all entries are collected first; then ◐ status is propagat
 ```text
 ws ignore tree [flags]
 
---path     Start from a subpath instead of workspace root
+--path     Start from this directory instead of workspace root (absolute, ~, or relative to cwd)
 --depth    Limit tree depth (default: 1)
 ```
 
@@ -2956,7 +2953,7 @@ ws ignore tree [flags]
 ```text
 ws ignore tree
 
-~/Workspace/
+/home/user/Workspace
 ├── ✔ configs/                      18 KB
 ├── ✔ ws-tool/                       4 KB
 ├── ◐ artifacts/                   682 MB   (5 excluded)
@@ -2973,7 +2970,7 @@ ws ignore tree
 ```text
 ws ignore tree --depth 3
 
-~/Workspace/
+/home/user/Workspace
 ├── ✔ configs/
 │   ├── ✔ bashrc                       4 KB
 │   ├── ✔ daemon.json                  2 KB
@@ -2998,12 +2995,12 @@ ws ignore tree --depth 3
 38 files excluded · 812 MB not synced
 ```
 
-**Scoped to a subpath:**
+**Scoped to a directory:**
 
 ```text
-ws ignore tree --path artifacts/datasets
+ws ignore tree --path ~/Workspace/artifacts/datasets
 
-artifacts/datasets/
+/home/user/Workspace/artifacts/datasets
 ├── ✗ node-metrics-2026.csv    114 MB   -g:*.csv
 ├── ✗ city_temperature.csv      44 MB   -g:*.csv
 ├── ✗ house_prices.csv           4 MB   -g:*.csv
@@ -3045,12 +3042,12 @@ Scanned        2026-03-29 09:14:22     profile: ignore
 
 Violations (6)
 ──────────────────────────────────────────────────────
-CRITICAL  bloat           114 MB   artifacts/datasets/node-metrics-2026.csv
-CRITICAL  bloat            48 MB   experiments/proxy-debug/tcpdump-output.pcap
-WARNING   bloat            22 MB   artifacts/presentations/quarterly-review.pptx
-WARNING   depth             8 lvl  experiments/k8s/cluster/namespaces/logs/app/debug.txt
-WARNING   project-meta     24 KB   experiments/projects/java-demo/bin/  (marker: *.java)
-WARNING   project-meta      4 KB   experiments/blog/.bundle/                    (marker: Gemfile)
+CRITICAL  bloat           114 MB   /home/user/Workspace/artifacts/datasets/node-metrics-2026.csv
+CRITICAL  bloat            48 MB   /home/user/Workspace/experiments/proxy-debug/tcpdump-output.pcap
+WARNING   bloat            22 MB   /home/user/Workspace/artifacts/presentations/quarterly-review.pptx
+WARNING   depth             8 lvl  /home/user/Workspace/experiments/k8s/cluster/namespaces/logs/app/debug.txt
+WARNING   project-meta     24 KB   /home/user/Workspace/experiments/projects/java-demo/bin  (marker: *.java)
+WARNING   project-meta      4 KB   /home/user/Workspace/experiments/blog/.bundle                    (marker: Gemfile)
 ──────────────────────────────────────────────────────
 
 Safe harbors (47 items, 2.3 GB)
@@ -3063,9 +3060,9 @@ Run `ws ignore fix` to resolve interactively.
 
 ```text
 Safe harbors (47 items, 2.3 GB)
-  INFO      bloat           420 MB   ws/ws-log/session-2026-03/stdout.log
-  INFO      bloat           180 MB   Archive/vpn-client-v3.deb
-  INFO      depth            12 lvl  Archive/backups/2026/Q1/host/etc/nginx/conf.d/upstream.conf
+  INFO      bloat           420 MB   /home/user/Workspace/ws/ws-log/session-2026-03/stdout.log
+  INFO      bloat           180 MB   /home/user/Workspace/Archive/vpn-client-v3.deb
+  INFO      depth            12 lvl  /home/user/Workspace/Archive/backups/2026/Q1/host/etc/nginx/conf.d/upstream.conf
   ... (44 more)
 ```
 
@@ -3084,31 +3081,31 @@ ws ignore fix
 
 ── Violations (6 found) ───────────────────────────
 
-CRITICAL  bloat  114 MB  artifacts/datasets/node-metrics-2026.csv
+CRITICAL  bloat  114 MB  /home/user/Workspace/artifacts/datasets/node-metrics-2026.csv
 Action? [m]ove to scratch  [a]dd to .megaignore  [s]kip : m
 
-✔ Moved   → ~/Scratch/node-metrics-2026.csv
+✔ Moved   → /home/user/Scratch/node-metrics-2026.csv
 
-CRITICAL  bloat   48 MB  experiments/proxy-debug/tcpdump-output.pcap
+CRITICAL  bloat   48 MB  /home/user/Workspace/experiments/proxy-debug/tcpdump-output.pcap
 Action? [m]ove to scratch  [a]dd to .megaignore  [s]kip : a
 
-✔ Added rule to .megaignore: -g:*.pcap
+✔ Added rule to /home/user/Workspace/.megaignore: -g:*.pcap
 
-WARNING   bloat   22 MB  artifacts/presentations/quarterly-review.pptx
+WARNING   bloat   22 MB  /home/user/Workspace/artifacts/presentations/quarterly-review.pptx
 Action? [m]ove to scratch  [a]dd to .megaignore  [s]kip : s
 
-WARNING   depth    8 lvl  experiments/k8s/cluster/namespaces/logs/app/debug.txt
+WARNING   depth    8 lvl  /home/user/Workspace/experiments/k8s/cluster/namespaces/logs/app/debug.txt
 Action? [a]dd to .megaignore  [s]kip : a
 
-✔ Added path exclude to .megaignore
+✔ Added path exclude to /home/user/Workspace/.megaignore: -:experiments/k8s/cluster/namespaces/logs/app/debug.txt
 
-WARNING   project-meta  24 KB  experiments/projects/java-demo/bin/  (marker: *.java)
+WARNING   project-meta  24 KB  /home/user/Workspace/experiments/projects/java-demo/bin  (marker: *.java)
 Action? [a]dd to .megaignore  [d]elete  [s]kip : a
   Rule scope? [d]irectory (exclude this bin/)  [g]lobal (exclude all bin/ dirs)  : d
 
-✔ Added rule to .megaignore: -:experiments/projects/java-demo/bin
+✔ Added rule to /home/user/Workspace/.megaignore: -:experiments/projects/java-demo/bin
 
-WARNING   project-meta   4 KB  experiments/blog/.bundle/  (marker: Gemfile)
+WARNING   project-meta   4 KB  /home/user/Workspace/experiments/blog/.bundle  (marker: Gemfile)
 Action? [a]dd to .megaignore  [d]elete  [s]kip : s
 
 ──────────────────────────────────────────────────
@@ -3240,7 +3237,7 @@ The template is embedded in the binary and covers common exclusions for a Linux 
 ```text
 ws ignore generate
 
-✔ Generated ~/Workspace/.megaignore (builtin template, 50 rules)
+✔ Generated /home/user/Workspace/.megaignore (builtin template, 50 rules)
 
 Run `ws ignore check <path>` to verify the effect on specific files.
 Run `ws ignore scan` to find files that may still need exclusion.
@@ -3251,7 +3248,7 @@ Run `ws ignore scan` to find files that may still need exclusion.
 ```text
 ws ignore generate
 
-⚠ ~/Workspace/.megaignore already exists (22 rules)
+⚠ /home/user/Workspace/.megaignore already exists (22 rules)
 
 [r] Replace with built-in template (your custom rules will be lost)
 [m] Merge — keep your rules, add missing template rules
@@ -3260,7 +3257,7 @@ ws ignore generate
 
 : d
 
---- current .megaignore   (22 rules)
+--- /home/user/Workspace/.megaignore   (22 rules)
 +++ builtin template      (50 rules)
 @@ -12,0 +13,4 @@
 +# ── Build artifacts ──────────────────────────────────
@@ -3278,7 +3275,7 @@ ws ignore generate
   Added:    -:.venv, -:venv, -:.jekyll-cache, -:_site
   Kept:     -g:*.pcap, -g:*.bin (your custom rules)
   Total:    26 rules
-  Saved:    ~/Workspace/.megaignore
+  Saved:    /home/user/Workspace/.megaignore
 ```
 
 **Output — with --merge (explicit):**
@@ -3286,7 +3283,7 @@ ws ignore generate
 ```text
 ws ignore generate --merge
 
-Merging with existing .megaignore (22 rules)...
+Merging with existing /home/user/Workspace/.megaignore (22 rules)...
 
   Template rules already present:  46 of 50  (skipped — no duplicates)
   Template rules to add:           4
@@ -3299,7 +3296,7 @@ Merging with existing .megaignore (22 rules)...
 Apply? [Y/n]: ↵
 
 ✔ Merged — 26 rules total
-  Saved: ~/Workspace/.megaignore
+  Saved: /home/user/Workspace/.megaignore
 ```
 
 See **Technical Design Decisions → Ignore Merge Logic** for how rule normalization, deduplication, and custom rule preservation work.
@@ -3309,7 +3306,7 @@ See **Technical Design Decisions → Ignore Merge Logic** for how rule normaliza
 ```text
 ws ignore generate --merge --scan
 
-Scanning ~/Workspace for file types...
+Scanning /home/user/Workspace for file types...
   Found: 3 × .pcap, 12 × .bin, 847 × .py, 2 × .whl
 
 Suggested rules based on workspace scan:
@@ -3322,13 +3319,13 @@ Suggested rules based on workspace scan:
   -g:*.log                15 files (template rule exists)
 
 Project-meta artifacts detected:
-  experiments/projects/java-demo/bin/    (marker: *.java, 24 KB)
+  /home/user/Workspace/experiments/projects/java-demo/bin    (marker: *.java, 24 KB)
   → Run `ws ignore scan` for full project-meta analysis
 
 Add scan suggestions? [Y/n]: ↵
 
 ✔ Merged — 60 rules total (50 template + 2 scan suggestions + 8 existing custom)
-  Saved: ~/Workspace/.megaignore
+  Saved: /home/user/Workspace/.megaignore
 ```
 
 **Output — dry-run:**
@@ -3336,7 +3333,7 @@ Add scan suggestions? [Y/n]: ↵
 ```text
 ws ignore generate --dry-run
 
-Would generate ~/Workspace/.megaignore:
+Would generate /home/user/Workspace/.megaignore:
   Source: builtin template (50 rules)
   Action: create new file
 
@@ -3389,15 +3386,15 @@ The `.megaignore` file uses MEGA's ignore rule syntax. A quick reference is inje
 ```text
 ws ignore edit
 
-Opening ~/Workspace/.megaignore in vim...
+Opening /home/user/Workspace/.megaignore in vim...
 
 [editor session — user adds -g:*.bin, saves, exits]
 
-✔ Saved .megaignore (14 rules)
+✔ Saved /home/user/Workspace/.megaignore (14 rules)
   Added:   -g:*.bin
   Effect:  2 files would now be excluded:
-             experiments/ssl-trace/ssl_keylog.bin   (2 MB)
-             artifacts/debug/trace.bin              (400 KB)
+             /home/user/Workspace/experiments/ssl-trace/ssl_keylog.bin   (2 MB)
+             /home/user/Workspace/artifacts/debug/trace.bin              (400 KB)
 ```
 
 **On syntax error:**
@@ -3437,12 +3434,12 @@ ws secret scan [--skip-dir <dir>] [--pass]
 
 | Flag | Description |
 | --- | --- |
-| `--skip-dir <dir>` | Skip a directory from scanning. Repeatable. Additive with `secret.skip_dirs` in config. |
+| `--skip-dir <dir>` | Skip a directory from scanning. Repeatable. Additive with `secret.skip_dirs` in config. Resolved per [Path Rules](#path-rules) (absolute, `~`, or relative to the current directory); must be inside the workspace. |
 | `--pass` | Audit pass store health |
 
 **Config — `secret.skip_dirs`:**
 
-Directories listed in `config.json` under `secret.skip_dirs` are skipped during secret scanning. Paths are relative to workspace root, forward-slash separated, prefix-matched. No globs.
+Directories listed in `config.json` under `secret.skip_dirs` are skipped during secret scanning. Config values are relative to workspace root (the config-file convention), forward-slash separated, matched on whole path components. No globs. Skipped directories are printed as absolute paths (e.g. under `--verbose`).
 
 ```json
 "secret": {
@@ -3460,13 +3457,13 @@ Summary
 ──────────────────────────────────────────────────────
 Scanned      2026-03-29 09:14:22      profile: secret
 Matched      2 files                  2 patterns
-Allowlisted  0 entries                in manifest.json
+Allowlisted  0 entries                in /home/user/Workspace/ws/manifest.json
 ──────────────────────────────────────────────────────
 
 Violations
 ──────────────────────────────────────────────────────
-CRITICAL  secret     2.4 KB  configs/myapp/app.properties (line 14: password=)
-WARNING   secret     1.1 KB  experiments/debug-auth.sh   (line 3: API_KEY=)
+CRITICAL  secret     2.4 KB  /home/user/Workspace/configs/myapp/app.properties:14  (password=)
+WARNING   secret     1.1 KB  /home/user/Workspace/experiments/debug-auth.sh:3      (API_KEY=)
 ──────────────────────────────────────────────────────
 
 Run `ws secret fix` to resolve interactively.
@@ -3480,7 +3477,7 @@ Summary
 ──────────────────────────────────────────────────────
 Scanned      2026-03-29 09:14:22      profile: secret
 Matched      0 files                  0 patterns
-Allowlisted  2 entries                in manifest.json
+Allowlisted  2 entries                in /home/user/Workspace/ws/manifest.json
 ──────────────────────────────────────────────────────
 
 Violations
@@ -3507,7 +3504,7 @@ ws secret fix
  SECRET FIX
 ══════════════════════════════════════════════════════
 
-CRITICAL  2.4 KB  configs/myapp/app.properties (line 14: password=)
+CRITICAL  2.4 KB  /home/user/Workspace/configs/myapp/app.properties:14  (password=)
 Action? [v]iew context  [a]dd to .megaignore  [l]allowlist  [s]kip : v
 
   12 │ db.host=192.0.2.10
@@ -3518,14 +3515,14 @@ Action? [v]iew context  [a]dd to .megaignore  [l]allowlist  [s]kip : v
 
 Action? [a]dd to .megaignore  [l]allowlist  [s]kip : a
 
-✔ Added rule to .megaignore: -:app.properties
+✔ Added rule to /home/user/Workspace/.megaignore: -:app.properties
 ✔ File will be excluded from MEGA sync on next sync cycle
-⚠ The file still exists in ~/Workspace — consider rotating the credential.
+⚠ The file still exists in /home/user/Workspace — consider rotating the credential.
 
-WARNING   1.1 KB  experiments/debug-auth.sh (line 3: API_KEY=)
+WARNING   1.1 KB  /home/user/Workspace/experiments/debug-auth.sh:3  (API_KEY=)
 Action? [v]iew context  [a]dd to .megaignore  [l]allowlist  [s]kip : l
 
-✔ Added to secret allowlist: experiments/debug-auth.sh:3
+✔ Added to secret allowlist: /home/user/Workspace/experiments/debug-auth.sh:3
 
 ══════════════════════════════════════════════════════
 Fixed: 2   Skipped: 0
@@ -3536,7 +3533,7 @@ Fixed: 2   Skipped: 0
 | `[v]iew context` | Show 5 lines around the match (grep -C 2). Redisplays the action menu after viewing. |
 | `[a]dd to .megaignore` | Append an exclude rule for this file. Prints a warning reminding the user to rotate the exposed credential. |
 | `[l]allowlist` | Mark this file+pattern as a known false positive. Stored in `manifest.json` under `secret.allowlist`. Future scans skip this match. |
-| `[d]ir-skip` | Skip the parent directory from future secret scans. Writes the directory to `config.json` under `secret.skip_dirs`. Remaining violations in the same directory are skipped in the current session. |
+| `[d]ir-skip` | Skip the parent directory from future secret scans. The prompt offers the parent directory as an absolute default; the answer is resolved per [Path Rules](#path-rules) and written to `config.json` under `secret.skip_dirs` workspace-relative. Remaining violations in the same directory are skipped in the current session. |
 | `[s]kip` | Do nothing — move to the next violation. |
 
 The allowlist is stored in `manifest.json` under `secret.allowlist` as `file:line` entries. See **Technical Design Decisions → Secret Allowlist: Line-Anchored Entries** for the anchoring and expiry design.
@@ -3700,7 +3697,7 @@ Line 1 is the password. Lines 2+ are scanned for `username:`, `user:`, or `login
 **Example pass store layout:**
 
 ```text
-~/.password-store/git/
+/home/user/.password-store/git
   github.com.gpg                         ← default token for github.com
   github.com/
     work-org/private-repo.gpg            ← specific token for this repo
@@ -3750,7 +3747,7 @@ ws config view
 ```json
 {
   "config_schema": 1,
-  "source": "~/.config/ws-tool/config.json",
+  "source": "/home/user/.config/ws-tool/config.json",
   "workspace": { "value": "/home/user/Workspace", "source": "config.json" },
   "ignore": {
     "warn_size_mb": { "value": 1, "source": "default" },
@@ -3805,8 +3802,8 @@ ws config view
     }
   },
   "repo": {
-    "roots": { "value": ["."], "source": "config.json" },
-    "exclude_dirs": { "value": ["ws", "node_modules", ".venv"], "source": "config.json" },
+    "roots": { "value": ["/home/user/Workspace"], "source": "config.json" },
+    "exclude_dirs": { "value": ["/home/user/Workspace/ws", "/home/user/Workspace/node_modules", "/home/user/Workspace/.venv"], "source": "config.json" },
     "max_parallel": { "value": 8, "source": "default" },
     "reconcile_on_read": { "value": true, "source": "default" },
     "state_path": { "value": "/home/user/Workspace/ws/repo.state", "source": "derived(<workspace>)" }
@@ -3817,7 +3814,7 @@ ws config view
     "events": { "value": ["dotfile", "secret", "bloat", "storage"], "source": "default" }
   },
   "manifest": {
-    "path": "~/Workspace/ws/manifest.json",
+    "path": "/home/user/Workspace/ws/manifest.json",
     "manifest_schema": 2,
     "dotfiles_count": 5,
     "repo_tracked_count": 3
@@ -3825,14 +3822,14 @@ ws config view
 }
 ```
 
-All paths are shown fully expanded (tildes resolved, relative paths resolved against workspace root). Each value is annotated with its source: `config.json`, `env`, `flag`, or `default`. The `dotfiles` array in `manifest.json` is summarized as a count — use `ws dotfile ls` for the full registry.
+All paths are shown as absolute paths (tildes expanded, relative config values resolved against workspace root), including list values such as `repo.roots`, `repo.exclude_dirs`, and `secret.skip_dirs`. Each value is annotated with its source: `config.json`, `env`, `flag`, or `default`. The `dotfiles` array in `manifest.json` is summarized as a count — use `ws dotfile ls` for the full registry.
 
 **Output — with flag override:**
 
 ```json
 {
   "config_schema": 1,
-  "source": "~/.config/ws-tool/config.json",
+  "source": "/home/user/.config/ws-tool/config.json",
   "workspace": { "value": "/home/user/Workspace", "source": "config.json" }
 }
 ```
@@ -3842,11 +3839,11 @@ All paths are shown fully expanded (tildes resolved, relative paths resolved aga
 ```json
 {
   "ws_version": "0.1.0",
-  "schema": 1,
+  "schema": 2,
   "command": "config.view",
   "data": {
     "config_schema": 1,
-    "source": "~/.config/ws-tool/config.json",
+    "source": "/home/user/.config/ws-tool/config.json",
     "workspace": { "value": "/home/user/Workspace", "source": "config.json" },
     "ignore": {
       "warn_size_mb": { "value": 1, "source": "default" },
@@ -3901,8 +3898,8 @@ All paths are shown fully expanded (tildes resolved, relative paths resolved aga
       }
     },
     "repo": {
-      "roots": { "value": ["."], "source": "config.json" },
-      "exclude_dirs": { "value": ["ws", "node_modules", ".venv"], "source": "config.json" },
+      "roots": { "value": ["/home/user/Workspace"], "source": "config.json" },
+      "exclude_dirs": { "value": ["/home/user/Workspace/ws", "/home/user/Workspace/node_modules", "/home/user/Workspace/.venv"], "source": "config.json" },
       "max_parallel": { "value": 8, "source": "default" },
       "reconcile_on_read": { "value": true, "source": "default" },
       "state_path": { "value": "/home/user/Workspace/ws/repo.state", "source": "derived(<workspace>)" }
@@ -3913,7 +3910,7 @@ All paths are shown fully expanded (tildes resolved, relative paths resolved aga
       "events": { "value": ["dotfile", "secret", "bloat", "storage"], "source": "default" }
     },
     "manifest": {
-      "path": "~/Workspace/ws/manifest.json",
+      "path": "/home/user/Workspace/ws/manifest.json",
       "manifest_schema": 2,
       "dotfiles_count": 5,
       "repo_tracked_count": 3
@@ -3924,7 +3921,7 @@ All paths are shown fully expanded (tildes resolved, relative paths resolved aga
 
 #### `ws config defaults`
 
-Print the built-in default configuration as a valid `config.json` file. This is the config that `ws` would use if no `config.json` existed and no flags or env vars were set. Useful as a starting point when creating a new config from scratch, or for diffing against your current config to see what you've customized.
+Print the built-in default configuration as a valid `config.json` file. Because the output *is* config-file content, values are printed in their stored form (`~/Scratch`, `.`), not expanded — this is the one command whose stdout follows the config-file convention instead of the absolute-path output rule. Use `ws config view` to see expanded absolute values. This is the config that `ws` would use if no `config.json` existed and no flags or env vars were set. Useful as a starting point when creating a new config from scratch, or for diffing against your current config to see what you've customized.
 
 ```text
 ws config defaults
@@ -4023,7 +4020,7 @@ ws restore [flags]
 
 ```text
 ws restore
-✖ Workspace is not initialized: config.json not found
+✖ Workspace is not initialized: /home/user/.config/ws-tool/config.json not found
 
   ws restore only works on an already-initialized workspace.
   Run 'ws init' first to set up the workspace, then run 'ws restore'.
@@ -4048,8 +4045,8 @@ Steps: trash setup → dotfile fix → ignore generate → scan → fix
 ── [2/5] Dotfiles ─────────────────────────────────
 
 ws dotfile fix — Dotfile Reconciliation
-Registry: manifest.json  (5 dotfiles)
-Storage:  ws/dotfiles/
+Registry: /home/user/Workspace/ws/manifest.json  (5 dotfiles)
+Storage:  /home/user/Workspace/ws/dotfiles
 ──────────────────────────────────────────────────
 
 Scanning...
@@ -4058,17 +4055,17 @@ Scanning...
 
 Apply? [Y/n]: ↵
 
-[1/5]  ~/.ssh                → ws/dotfiles/ssh/               ✔ created
-[2/5]  ~/.bashrc             → ws/dotfiles/bashrc              ✔ created
-[3/5]  /etc/docker/...       → ws/dotfiles/daemon.json         ✔ created  (sudo)
-[4/5]  ~/.kube/config        → ws/dotfiles/kubeconfig          ✔ created
-[5/5]  ~/.config/Code/User/… → ws/dotfiles/vscode-settings…    ✔ created
+[1/5]  /home/user/.ssh                             →  /home/user/Workspace/ws/dotfiles/ssh                   ✔ created
+[2/5]  /home/user/.bashrc                          →  /home/user/Workspace/ws/dotfiles/bashrc                ✔ created
+[3/5]  /etc/docker/daemon.json                     →  /home/user/Workspace/ws/dotfiles/daemon.json           ✔ created  (sudo)
+[4/5]  /home/user/.kube/config                     →  /home/user/Workspace/ws/dotfiles/kubeconfig            ✔ created
+[5/5]  /home/user/.config/Code/User/settings.json  →  /home/user/Workspace/ws/dotfiles/vscode-settings.json  ✔ created
 
 Created: 5   Skipped: 0   Failed: 0
 
 ── [3/5] Ignore rules ─────────────────────────────
 
-✔ .megaignore is up to date (22 rules, matches template)
+✔ /home/user/Workspace/.megaignore is up to date (22 rules, matches template)
 
 ── [4/5] Scan ─────────────────────────────────────
 
@@ -4112,7 +4109,7 @@ ws completions bash
 
 # Shell completion script printed to stdout.
 # To install permanently:
-#   ws completions bash > ~/.local/share/bash-completion/completions/ws
+#   ws completions bash > /home/user/.local/share/bash-completion/completions/ws
 #
 # To use in current session:
 #   eval "$(ws completions bash)"
@@ -4133,8 +4130,8 @@ complete -F _ws_completions ws
 ws completions zsh
 
 # To install permanently:
-#   ws completions zsh > ~/.zfunc/_ws
-#   (ensure ~/.zfunc is in $fpath)
+#   ws completions zsh > /home/user/.zfunc/_ws
+#   (ensure /home/user/.zfunc is in $fpath)
 #
 # To use in current session:
 #   eval "$(ws completions zsh)"
@@ -4146,7 +4143,7 @@ ws completions zsh
 ws completions fish
 
 # To install permanently:
-#   ws completions fish > ~/.config/fish/completions/ws.fish
+#   ws completions fish > /home/user/.config/fish/completions/ws.fish
 ```
 
 The completion script covers all commands, subcommands, flags, and flag values. It is regenerated from the command tree at build time — no manual maintenance.
@@ -4157,6 +4154,9 @@ The completion script covers all commands, subcommands, flags, and flag values. 
 | --- | --- |
 | `--workspace`, `-w` | Directory names only (no files) |
 | `--config`, `-c`, `--manifest` | Any file |
+| `--path`, `--root-dir`, `--skip-dir` | Native shell file/directory completion (relative to cwd, matching how the value is resolved) |
+| `ws repo <sub> [<repo>]` positional | Absolute paths of discovered repos (including `ws/dotfiles` and the pass store) |
+| `ws dotfile rm <path>` positional | Absolute system paths of registered dotfiles |
 | Other string flags | Any file (default) |
 | Boolean flags | No file completion |
 
@@ -4219,25 +4219,25 @@ Flags:
 ```text
 ws capture
 
-✔ Pinned  (clipboard-html, 14 lines, 1 image)
+✔ Pinned → /home/user/Workspace/ws/captures/captures.md  (clipboard-html, 14 lines, 1 image)
 ```
 
 ```text
 ws capture
 
-✔ Pinned  (clipboard-text, 3 lines)
+✔ Pinned → /home/user/Workspace/ws/captures/captures.md  (clipboard-text, 3 lines)
 ```
 
 ```text
 ws capture
 
-✔ Pinned  (clipboard-image, saved to assets/2026-04-22-1430-1.png)
+✔ Pinned → /home/user/Workspace/ws/captures/captures.md  (clipboard-image, saved to /home/user/Workspace/ws/captures/assets/2026-04-22-1430-1.png)
 ```
 
 ```text
 echo "test" | ws capture
 
-✔ Pinned  (stdin-pipe, 1 line)
+✔ Pinned → /home/user/Workspace/ws/captures/captures.md  (stdin-pipe, 1 line)
 ```
 
 **Output — amend:**
@@ -4245,7 +4245,7 @@ echo "test" | ws capture
 ```text
 ws capture -a
 
-✔ Amended  (amend → captures.md)
+✔ Amended → /home/user/Workspace/ws/captures/captures.md
 ```
 
 **Output — with location:**
@@ -4253,7 +4253,7 @@ ws capture -a
 ```text
 ws capture work
 
-✔ Pinned  (clipboard-html, 14 lines, 1 image)
+✔ Pinned → /home/user/Work/captures/captures.md  (clipboard-html, 14 lines, 1 image)
 ```
 
 **Output — dry-run:**
@@ -4262,7 +4262,7 @@ ws capture work
 ws capture --dry-run
 
 --- DRY RUN ---
-Would append to: ~/Workspace/ws/captures/captures.md
+Would append to: /home/user/Workspace/ws/captures/captures.md
 
 ## ID card — deactivate if misplaced or lost
 _2026-04-22 14:30 · clipboard-html_
@@ -4276,7 +4276,7 @@ Please ensure you inform us and deactivate your ID card...
 ```json
 {
   "ws_version": "0.1.0",
-  "schema": 1,
+  "schema": 2,
   "command": "capture",
   "data": {
     "source": "clipboard-html",
@@ -4316,8 +4316,8 @@ Flags:
 ```text
 ws capture ls
 
-  default     ~/Workspace/ws/captures/captures.md
-  personal    ~/Personal/captures/captures.md
+  default     /home/user/Workspace/ws/captures/captures.md
+  personal    /home/user/Personal/captures/captures.md
 ```
 
 **Output — single location (no custom locations configured):**
@@ -4325,7 +4325,7 @@ ws capture ls
 ```text
 ws capture ls
 
-  default     ~/Workspace/ws/captures/captures.md
+  default     /home/user/Workspace/ws/captures/captures.md
 ```
 
 **Output — JSON:**
@@ -4333,7 +4333,7 @@ ws capture ls
 ```json
 {
   "ws_version": "0.1.0",
-  "schema": 1,
+  "schema": 2,
   "command": "capture.ls",
   "data": {
     "locations": [
@@ -4414,7 +4414,7 @@ All runtime files live under `~/.local/share/ws/` and are **not** synced to MEGA
 Each installed job records a `cron_job` entry in the `provisions` array of `ws/manifest.json`:
 
 ```json
-{ "type": "cron_job", "path": "~/.local/share/ws/cron-jobs/mega-sync.sh", "line": "mega-sync", "command": "cron add" }
+{ "type": "cron_job", "path": "/home/user/.local/share/ws/cron-jobs/mega-sync.sh", "line": "mega-sync", "command": "cron add" }
 ```
 
 `ws reset` undoes all `cron_job` provision entries (removes crontab blocks and script files) as part of full workspace reset.
@@ -4446,7 +4446,7 @@ Error: crontab access denied for user siva
 ```text
 ws cron add mega-sync
 
-  Write wrapper script ~/.local/share/ws/cron-jobs/mega-sync.sh         [y/n/a/q] y
+  Write wrapper script /home/user/.local/share/ws/cron-jobs/mega-sync.sh         [y/n/a/q] y
   ✔ Written
 
   Install crontab entries for mega-sync (*/30 * * * * + @reboot)         [y/n/a/q] y
@@ -4460,15 +4460,15 @@ ws cron add mega-sync
 ```text
 ws cron add sync
 
-  Write wrapper script ~/.local/share/ws/cron-jobs/mega-sync.sh         [y/n/a/q] a
+  Write wrapper script /home/user/.local/share/ws/cron-jobs/mega-sync.sh         [y/n/a/q] a
   ✔ Written
   Install crontab entries for mega-sync (*/30 * * * * + @reboot)
   ✔ Installed
-  Write wrapper script ~/.local/share/ws/cron-jobs/dotfile-sync.sh
+  Write wrapper script /home/user/.local/share/ws/cron-jobs/dotfile-sync.sh
   ✔ Written
   Install crontab entries for dotfile-sync (*/30 * * * * + @reboot)
   ✔ Installed
-  Write wrapper script ~/.local/share/ws/cron-jobs/repo-sync.sh
+  Write wrapper script /home/user/.local/share/ws/cron-jobs/repo-sync.sh
   ✔ Written
   Install crontab entries for repo-sync (*/30 * * * * + @reboot)
   ✔ Installed
@@ -4503,7 +4503,7 @@ ws cron rm <job|preset> [flags]
 ```text
 ws cron rm mega-sync
 
-  Remove crontab entries and wrapper script for mega-sync                 [y/n/a/q] y
+  Remove crontab entries and wrapper script /home/user/.local/share/ws/cron-jobs/mega-sync.sh   [y/n/a/q] y
   ✔ Removed
 
 ✔ Removed.

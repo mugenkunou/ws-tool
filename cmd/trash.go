@@ -50,6 +50,14 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
+	// Config value: relative → workspace. --root-dir input: relative → cwd.
+	cfgTrashRoot := config.WithAbsPaths(cfg, workspacePath).Trash.RootDir
+	if cfgTrashRoot == "" {
+		if cfgTrashRoot, err = config.ExpandUserPath("~/.Trash"); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+	}
 
 	sub := args[0]
 	subArgs := args[1:]
@@ -57,7 +65,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 	case "enable", "setup":
 		fs := flag.NewFlagSet("trash-enable", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
-		rootDir := fs.String("root-dir", cfg.Trash.RootDir, "trash root directory")
+		rootDir := fs.String("root-dir", cfgTrashRoot, "trash root directory")
 		noShell := fs.Bool("no-shell-rm", false, "skip shell rm configuration")
 		noVSCode := fs.Bool("no-vscode", false, "skip vscode delete configuration")
 		noExplorer := fs.Bool("no-file-explorer", false, "skip file explorer delete configuration")
@@ -66,6 +74,14 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		if err := fs.Parse(subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
+		}
+		if *rootDir != "" { // empty: trash package applies its default
+			resolvedRoot, err := config.ExpandUserPath(*rootDir)
+			if err != nil {
+				fmt.Fprintf(stderr, "invalid --root-dir: %s\n", err.Error())
+				return 1
+			}
+			*rootDir = resolvedRoot
 		}
 		if *dryRun {
 			globals.dryRun = true
@@ -210,12 +226,20 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 	case "empty":
 		fs := flag.NewFlagSet("trash-empty", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
-		rootDir := fs.String("root-dir", cfg.Trash.RootDir, "trash root directory")
+		rootDir := fs.String("root-dir", cfgTrashRoot, "trash root directory")
 		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 		registerGlobalFlags(fs, &globals)
 		if err := fs.Parse(subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
+		}
+		if *rootDir != "" { // empty: trash package applies its default
+			resolvedRoot, err := config.ExpandUserPath(*rootDir)
+			if err != nil {
+				fmt.Fprintf(stderr, "invalid --root-dir: %s\n", err.Error())
+				return 1
+			}
+			*rootDir = resolvedRoot
 		}
 		if *dryRun {
 			globals.dryRun = true
@@ -289,13 +313,13 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		status, err := trash.GetStatus(cfg.Trash.RootDir)
+		status, err := trash.GetStatus(cfgTrashRoot)
 		if err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
 		scanResult, err := trash.Scan(trash.ScanOptions{
-			RootDir:    cfg.Trash.RootDir,
+			RootDir:    cfgTrashRoot,
 			WarnSizeMB: cfg.Trash.WarnSizeMB,
 		})
 		if err != nil {

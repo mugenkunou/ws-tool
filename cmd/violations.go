@@ -9,34 +9,51 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/secret"
 	"github.com/mugenkunou/ws-tool/internal/style"
-	"github.com/mugenkunou/ws-tool/internal/trash"
 )
 
+// ── path conversion ──
+//
+// Ignore and secret violations carry workspace-relative paths internally
+// (rule matching needs them). Every renderer converts a copy to absolute paths
+// first, for both text and --json output (spec "Path Rules").
+
+func absIgnoreViolations(workspacePath string, vs []ignore.Violation) []ignore.Violation {
+	out := make([]ignore.Violation, len(vs))
+	for i, v := range vs {
+		v.Path = style.AbsPath(workspacePath, v.Path)
+		out[i] = v
+	}
+	return out
+}
+
+func absSecretViolations(workspacePath string, vs []secret.Violation) []secret.Violation {
+	out := make([]secret.Violation, len(vs))
+	for i, v := range vs {
+		v.Path = style.AbsPath(workspacePath, v.Path)
+		out[i] = v
+	}
+	return out
+}
+
+func absPaths(workspacePath string, ps []string) []string {
+	if ps == nil {
+		return nil
+	}
+	out := make([]string, len(ps))
+	for i, p := range ps {
+		out[i] = style.AbsPath(workspacePath, p)
+	}
+	return out
+}
+
 // ── violation printers ──
+//
+// Printers expect violations already converted with absIgnoreViolations /
+// absSecretViolations.
 //
 // Each printer accepts an "indent" flag:
 //   indent=true  → used by aggregate views (2-space indent, section header)
 //   indent=false → used by ws ignore scan / ws secret scan / etc. (no indent, no header)
-
-func printIgnoreViolations(w io.Writer, violations []ignore.Violation, nc bool, indent bool) {
-	if len(violations) == 0 {
-		return
-	}
-	pfx := ""
-	if indent {
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, style.Boldf(nc, "  [Ignore]"))
-		pfx = "  "
-	}
-	for _, v := range violations {
-		sev := severityLabel(v.Severity, nc)
-		detail := v.Path
-		if v.Message != "" {
-			detail = fmt.Sprintf("%s  %s", v.Path, style.Mutedf(nc, "(%s)", v.Message))
-		}
-		fmt.Fprintf(w, "%s%s  %-14s %s\n", pfx, sev, v.Type, detail)
-	}
-}
 
 // printIgnoreViolationsSplit prints violations in two sections:
 // actionable violations first, then a safe harbor summary. When expandHarbors
@@ -127,33 +144,6 @@ func printDotfileIssues(w io.Writer, issues []dotfile.Issue, nc bool, indent boo
 		}
 		label := severityLabel(sev, nc)
 		fmt.Fprintf(w, "%s%s  %-12s %s  →  %s  [%s]\n", pfx, label, d.Status, d.SystemPath, d.WorkspacePath, d.Message)
-	}
-}
-
-func printTrashWarnings(w io.Writer, status trash.Status, scanResult trash.ScanResult, nc bool, indent bool) {
-	hasSetupWarnings := status.WarningCount() > 0
-	hasSizeWarning := scanResult.OverLimit
-	if !hasSetupWarnings && !hasSizeWarning {
-		return
-	}
-	pfx := ""
-	if indent {
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, style.Boldf(nc, "  [Trash]"))
-		pfx = "  "
-	}
-	warn := severityLabel("WARNING", nc)
-	if !status.ShellRMConfigured {
-		fmt.Fprintf(w, "%s%s  machine-setup  shell-rm integration not configured\n", pfx, warn)
-	}
-	if !status.VSCodeConfigured {
-		fmt.Fprintf(w, "%s%s  machine-setup  vscode-delete integration not configured\n", pfx, warn)
-	}
-	if !status.FileExplorerConfigured {
-		fmt.Fprintf(w, "%s%s  machine-setup  file-explorer integration not configured\n", pfx, warn)
-	}
-	if hasSizeWarning {
-		fmt.Fprintf(w, "%s%s  trash-size     %s exceeds threshold %s (%d files)\n", pfx, warn, style.HumanBytes(scanResult.SizeBytes), style.HumanBytes(int64(scanResult.WarnSizeMB)*1024*1024), scanResult.FileCount)
 	}
 }
 

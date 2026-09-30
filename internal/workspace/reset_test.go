@@ -169,7 +169,7 @@ func TestUndoActionLabel(t *testing.T) {
 		{provision.Entry{Type: provision.TypeFile}, "delete file"},
 		{provision.Entry{Type: provision.TypeDir}, "delete directory"},
 		{provision.Entry{Type: provision.TypeSymlink}, "remove symlink"},
-		{provision.Entry{Type: provision.TypeConfigLine, Path: "/foo/.bashrc"}, "remove line from .bashrc"},
+		{provision.Entry{Type: provision.TypeConfigLine, Path: "/foo/.bashrc"}, "remove ws line"},
 		{provision.Entry{Type: provision.TypeGitExclude}, "remove exclude entry"},
 		{provision.Entry{Type: "other"}, "unknown"},
 	}

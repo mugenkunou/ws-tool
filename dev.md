@@ -601,38 +601,32 @@ The completion system (`cmd/complete.go`) is a **derived artifact** of the comma
 
 **Enforcement:** There is no automated check yet. The developer adding or renaming a command is responsible. When in doubt, run `ws completions install && exec bash` and test every subcommand + flag with Tab.
 
-### 12.2) Path display: one rule for all rendered paths
+### 12.2) Path display and input: absolute out, cwd-relative in
 
-Every path shown to the user must be **actionable** — the user should be able to copy it and use it in a `cd` or `ls` command without mental translation.
+The authoritative rule is **Path Rules** in `spec.md`. This section is the contributor checklist.
 
-**Reference implementation: `ws scratch ls`.** Scratch already does this correctly — it shows a bold short name on line 1 (the identifier the user thinks in), then the full absolute path in muted style on line 2 (the value the user copies for `cd`). This two-line pattern is the model for all commands that list items the user may want to navigate to.
+**Output — every path `ws` prints is a literal, cleaned, absolute path.** That covers stdout text, `--json` payloads, plan/dry-run lines, action IDs, prompts, and stderr errors. There are no workspace-relative paths, no `~`-shortening, and no basename standing in for a path.
 
 ```
-proxy-debug.2026-04          age=2d  size=1.2M  items=7  [k8s]
-  ~/Scratch/proxy-debug.2026-04
+⎇  /home/user/Workspace/Data/bruno  main DIRTY
+⎇  /home/user/Workspace/Experiments/ws-tool  master DIRTY
+⎇  /home/user/.password-store  master CLEAN ↑19 ↓0
 ```
 
 **Rules:**
 
-1. **Short name first, full path second.** The primary line shows the compact identifier (relative path for workspace items, tilde-shortened path for external items) plus metadata. The secondary line (indented, muted) shows the tilde-shortened absolute path — copy-pasteable for `cd`. This is the scratch pattern and applies to all list/scan output where users need to navigate to the item.
+1. **One helper.** Render every path through `style.AbsPath(workspace, p)`. It joins relative paths onto the workspace and runs `filepath.Clean`. It does not resolve symlinks and does not tilde-shorten. Call sites never format paths ad hoc.
+2. **One line per item.** Absolute paths are already `cd`-ready, so the old "short name + muted full path" two-line pattern is gone. Identifiers such as scratch names, log tags, capture locations and cron job names may still appear. When the command acts on the file behind that name, print the file's absolute path too.
+3. **JSON is output too.** Path fields in `--json` data are absolute (envelope `schema: 2`). Internal structs may keep workspace-relative paths where rule matching needs them (ignore/secret violations, repo discovery). Convert at render/marshal time, never by changing what the matcher sees.
+4. **Not paths:** `.megaignore` rule patterns, config keys, git refs/URLs, and pass entry names (`git/<host>`). Print these verbatim.
+5. **Tree views** (`ws ignore tree`) print one absolute header. The rows beneath it are tree nodes, not paths.
 
-2. **External paths use tilde-shortened absolute form as their short name.** Never display a raw absolute path like `/home/user/.password-store` when `~/.password-store` is equivalent. For external items, the short name and the full path are the same value, so the secondary line can be omitted.
+**Input — every path argument resolves the same way:** absolute as is, `~` expanded, anything else relative to the **current working directory**. Then clean it and compare absolute to absolute.
 
-3. **Never mix conventions in the same output.** If a command lists 6 repos and 5 are relative while 1 is absolute, the output is broken. A single `DisplayPath(workspacePath, rawPath)` helper in `internal/style/` must handle the normalization so call sites never make ad-hoc decisions.
-
-4. **Storage vs display are separate concerns.** Internal data structures and JSON output may store paths however is convenient (relative, absolute, whatever). The normalization happens at render time, not at storage time. This keeps the internal APIs simple and the display logic centralized.
-
-**Applied to `ws repo scan`** — the target output:
-
-```
-⎇  Data/bruno  main DIRTY
-   ~/Workspace/Data/bruno
-⎇  Experiments/ws-tool  master DIRTY
-   ~/Workspace/Experiments/ws-tool
-⎇  ~/.password-store  master CLEAN ↑19 ↓0
-```
-
-Workspace repos get the two-line treatment (relative name + absolute path). External repos like the pass store show tilde-shortened path as their name — no secondary line needed since the short name is already cd-ready.
+1. **No workspace-relative fallback for CLI input.** If a command today "tries cwd, then tries the workspace", delete the second branch.
+2. **Prefix filters match whole components.** `--path /ws/Da` must not match `/ws/Data`.
+3. **Round-trip test.** Any path copied from `ws` output must be accepted by any `ws` command, from any directory. Add a test when you touch a command that both prints and accepts paths.
+4. **Config values are different.** Relative paths in `config.json` resolve against `<workspace>`. When writing CLI input into config, resolve it with the input rule first. Then store it workspace-relative if it is inside the workspace, absolute otherwise.
 
 ### 12.3) Positional targeting: fleet commands should support single-item operation
 
@@ -640,13 +634,13 @@ Fleet commands (`ws repo sync`, `ws repo fetch`, `ws repo pull`) operate on all 
 
 **Rules:**
 
-1. **Fleet commands should accept an optional positional repo path** as a filter. `ws repo sync Data/bruno` should sync only that repo. The positional arg is the same relative path shown by `ws repo scan` / `ws repo ls`.
+1. **Fleet commands should accept an optional positional repo path** as a filter. It is resolved like any path argument (absolute, `~`, or relative to the cwd) and matched against discovered repos as an absolute path. Pasting the path from `ws repo scan` output always works. `ws repo sync Data/bruno` works only when run from the workspace root.
 
-2. **Positional targeting and `--path` filtering are complementary, not redundant.** `--path` is a prefix filter (all repos under a subpath). A positional arg is an exact match (one specific repo). Both can coexist.
+2. **Positional targeting and `--path` filtering are complementary, not redundant.** `--path` is a prefix filter (all repos under a directory, whole-component match). A positional arg is an exact match (one specific repo). Both can coexist.
 
-3. **Tab completion for positional repo args** must offer discovered repo paths. This is what makes the feature ergonomic — the user types `ws repo sync D<TAB>` and gets `Data/bruno`.
+3. **Tab completion for positional repo args** must offer the absolute paths of discovered repos, including `ws/dotfiles` and the pass store. This is what makes the feature ergonomic: the user types `ws repo sync /home/user/Workspace/D<TAB>` and gets `/home/user/Workspace/Data/bruno`.
 
-4. **This pattern may extend to other fleet-style commands** in the future (e.g. `ws dotfile fix <name>`). The same principle applies: if a command operates on a list and the user commonly wants to target one item, accept a positional filter.
+4. **This pattern may extend to other fleet-style commands** in the future (e.g. `ws dotfile fix <path>`). The same principle applies: if a command operates on a list and the user commonly wants to target one item, accept a positional filter.
 
 ### 12.4) Global flag registration: every subcommand must parse global flags
 

@@ -424,44 +424,25 @@ func ShouldDisableColor() bool {
 // Path display — consistent path formatting for CLI output
 // ──────────────────────────────────────────────────────────────────────────────
 
-// DisplayPath returns a display-friendly short name and a tilde-shortened
-// absolute path for a given raw path.
+// AbsPath returns p as a cleaned, literal absolute path for display. It is the
+// single rendering helper for filesystem paths (spec: "Path Rules"): every path
+// ws prints goes through it, and output never uses workspace-relative or
+// tilde-shortened forms.
 //
-// For workspace-internal paths (relative or absolute under workspacePath):
-//   - short = relative path from workspace root (e.g. "Data/bruno")
-//   - full  = tilde-shortened absolute path (e.g. "~/Workspace/Data/bruno")
-//
-// For external paths (absolute, outside workspace):
-//   - short = tilde-shortened path (e.g. "~/.password-store")
-//   - full  = "" (short is already cd-ready, no secondary line needed)
-func DisplayPath(workspacePath, rawPath string) (short, full string) {
-	if !filepath.IsAbs(rawPath) {
-		// Relative path — assumed relative to workspace.
-		abs := filepath.Join(workspacePath, filepath.FromSlash(rawPath))
-		return rawPath, tildeShorten(abs)
+// Relative inputs are taken as workspace-relative, which is how internal data
+// (repo paths, violations, config values) stores them. A leading "~" is
+// expanded against $HOME. Symlinks are not resolved.
+func AbsPath(workspacePath, p string) string {
+	if p == "" {
+		return ""
 	}
-
-	// Absolute path — check if inside workspace.
-	rel, err := filepath.Rel(workspacePath, rawPath)
-	if err == nil && !strings.HasPrefix(rel, "..") && rel != "." {
-		return filepath.ToSlash(rel), tildeShorten(rawPath)
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			p = filepath.Join(home, strings.TrimPrefix(p, "~"))
+		}
 	}
-
-	// External absolute path.
-	return tildeShorten(rawPath), ""
-}
-
-// tildeShorten replaces the user's home directory prefix with "~".
-func tildeShorten(path string) string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return path
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(workspacePath, filepath.FromSlash(p))
 	}
-	if path == home {
-		return "~"
-	}
-	if strings.HasPrefix(path, home+string(filepath.Separator)) {
-		return "~" + path[len(home):]
-	}
-	return path
+	return filepath.Clean(p)
 }

@@ -84,8 +84,8 @@ func TestVersionJSON(t *testing.T) {
 	if payload.WSVersion != appVersion {
 		t.Fatalf("expected ws_version %s, got %s", appVersion, payload.WSVersion)
 	}
-	if payload.Schema != 1 {
-		t.Fatalf("expected schema 1, got %d", payload.Schema)
+	if payload.Schema != jsonSchema {
+		t.Fatalf("expected schema %d, got %d", jsonSchema, payload.Schema)
 	}
 	if payload.Data.Platform != runtime.GOOS+"/"+runtime.GOARCH {
 		t.Fatalf("unexpected platform %s", payload.Data.Platform)

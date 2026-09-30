@@ -91,7 +91,7 @@ func TestSecretScanSkipDirFlag(t *testing.T) {
 	// With --skip-dir flag, scan skips.
 	out.Reset()
 	errOut.Reset()
-	code = Execute([]string{"--workspace", workspace, "secret", "scan", "--skip-dir", "testdata"}, nil, &out, &errOut)
+	code = Execute([]string{"--workspace", workspace, "secret", "scan", "--skip-dir", filepath.Join(workspace, "testdata")}, nil, &out, &errOut)
 	if code != 0 {
 		t.Fatalf("expected exit 0 with --skip-dir, got %d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
@@ -108,7 +108,7 @@ func TestSecretScanSkipDirJSON(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	code := Execute([]string{"--workspace", workspace, "--json", "secret", "scan", "--skip-dir", "vendor"}, nil, &out, &errOut)
+	code := Execute([]string{"--workspace", workspace, "--json", "secret", "scan", "--skip-dir", filepath.Join(workspace, "vendor")}, nil, &out, &errOut)
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d stderr=%s", code, errOut.String())
 	}
@@ -119,8 +119,8 @@ func TestSecretScanSkipDirJSON(t *testing.T) {
 	}
 	data := result["data"].(map[string]any)
 	dirs, ok := data["skipped_dirs"].([]any)
-	if !ok || len(dirs) != 1 || dirs[0] != "vendor" {
-		t.Fatalf("expected skipped_dirs=[vendor] in JSON, got: %v", data["skipped_dirs"])
+	if !ok || len(dirs) != 1 || dirs[0] != filepath.Join(workspace, "vendor") {
+		t.Fatalf("expected skipped_dirs=[<workspace>/vendor] in JSON, got: %v", data["skipped_dirs"])
 	}
 }
 
@@ -162,7 +162,7 @@ func TestSecretScanSkipDirMergesConfigAndFlag(t *testing.T) {
 	// With both config + flag, all should be skipped.
 	out.Reset()
 	errOut.Reset()
-	code = Execute([]string{"--workspace", workspace, "secret", "scan", "--skip-dir", "testdata"}, nil, &out, &errOut)
+	code = Execute([]string{"--workspace", workspace, "secret", "scan", "--skip-dir", filepath.Join(workspace, "testdata")}, nil, &out, &errOut)
 	if code != 0 {
 		t.Fatalf("expected exit 0 (both skipped), got %d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}

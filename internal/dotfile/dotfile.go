@@ -59,7 +59,7 @@ type FixResult struct {
 
 type Issue struct {
 	SystemPath    string `json:"system_path"`
-	WorkspacePath string `json:"workspace_path"`
+	WorkspacePath string `json:"workspace_path"` // absolute path of the file under ws/dotfiles/
 	Status        string `json:"status"`
 	Message       string `json:"message"`
 }
@@ -287,13 +287,13 @@ func Scan(opts ScanOptions) ([]Issue, error) {
 
 	issues := make([]Issue, 0)
 	for _, record := range m.Dotfiles {
-		expected := filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(record.Name)))
+		expected := filepath.Clean(filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(record.Name))))
 
 		entry, err := os.Lstat(record.System)
 		if err != nil {
 			issues = append(issues, Issue{
 				SystemPath:    record.System,
-				WorkspacePath: DotfilePath(record.Name),
+				WorkspacePath: expected,
 				Status:        StatusBroken,
 				Message:       "system path is missing",
 			})
@@ -303,7 +303,7 @@ func Scan(opts ScanOptions) ([]Issue, error) {
 		if entry.Mode()&os.ModeSymlink == 0 {
 			issues = append(issues, Issue{
 				SystemPath:    record.System,
-				WorkspacePath: DotfilePath(record.Name),
+				WorkspacePath: expected,
 				Status:        StatusOverwritten,
 				Message:       "system path is no longer a symlink",
 			})
@@ -314,7 +314,7 @@ func Scan(opts ScanOptions) ([]Issue, error) {
 		if err != nil {
 			issues = append(issues, Issue{
 				SystemPath:    record.System,
-				WorkspacePath: DotfilePath(record.Name),
+				WorkspacePath: expected,
 				Status:        StatusBroken,
 				Message:       "failed to read symlink target",
 			})
@@ -330,7 +330,7 @@ func Scan(opts ScanOptions) ([]Issue, error) {
 		if target != expected {
 			issues = append(issues, Issue{
 				SystemPath:    record.System,
-				WorkspacePath: DotfilePath(record.Name),
+				WorkspacePath: expected,
 				Status:        StatusOverwritten,
 				Message:       "symlink points to an unexpected target",
 			})
@@ -340,7 +340,7 @@ func Scan(opts ScanOptions) ([]Issue, error) {
 		if _, err := os.Stat(expected); err != nil {
 			issues = append(issues, Issue{
 				SystemPath:    record.System,
-				WorkspacePath: DotfilePath(record.Name),
+				WorkspacePath: expected,
 				Status:        StatusBroken,
 				Message:       "symlink target is missing",
 			})
@@ -365,10 +365,10 @@ func Fix(opts FixOptions) (FixResult, error) {
 	}
 
 	for _, record := range m.Dotfiles {
-		expectedTarget := filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(record.Name)))
+		expectedTarget := filepath.Clean(filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(record.Name))))
 		issue := Issue{
 			SystemPath:    record.System,
-			WorkspacePath: DotfilePath(record.Name),
+			WorkspacePath: expectedTarget,
 		}
 
 		// Check if workspace-side file exists.

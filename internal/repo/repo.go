@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/mugenkunou/ws-tool/internal/config"
 )
 
 type Repository struct {
@@ -52,6 +54,8 @@ type TrackedRepo struct {
 }
 
 type FilterOptions struct {
+	// Path is an absolute directory; only repos at or under it (whole path
+	// components) are kept.
 	Path     string
 	Dirty    bool
 	Ahead    bool
@@ -59,6 +63,9 @@ type FilterOptions struct {
 	Detached bool
 }
 
+// Discover walks roots (absolute, or relative to workspacePath) and returns every
+// git repository found inside the workspace. Repository.Path is always a cleaned
+// absolute path. excludeDirs follow the config path convention.
 func Discover(workspacePath string, roots []string, excludeDirs []string) ([]Repository, error) {
 	if _, err := exec.LookPath("git"); err != nil {
 		return nil, errors.New("git is required but was not found in PATH")
@@ -68,9 +75,13 @@ func Discover(workspacePath string, roots []string, excludeDirs []string) ([]Rep
 		roots = []string{"."}
 	}
 
+	// Config values may be workspace-relative, absolute, or ~-prefixed; match
+	// on the workspace-relative form.
 	excludeSet := make(map[string]struct{}, len(excludeDirs))
 	for _, d := range excludeDirs {
-		excludeSet[filepath.ToSlash(filepath.Clean(d))] = struct{}{}
+		if rel, ok := config.WorkspaceRel(workspacePath, d); ok && rel != "." {
+			excludeSet[rel] = struct{}{}
+		}
 	}
 
 	seen := make(map[string]struct{})
@@ -111,21 +122,16 @@ func Discover(workspacePath string, roots []string, excludeDirs []string) ([]Rep
 				return nil
 			}
 
-			repoPath := filepath.Dir(path)
+			repoPath := filepath.Clean(filepath.Dir(path))
 			rel, relErr = filepath.Rel(workspacePath, repoPath)
-			if relErr != nil {
-				rel = filepath.ToSlash(repoPath)
-			} else {
-				rel = filepath.ToSlash(rel)
-			}
-			if strings.HasPrefix(rel, "../") {
+			if relErr != nil || rel == ".." || strings.HasPrefix(filepath.ToSlash(rel), "../") {
 				return filepath.SkipDir
 			}
-			if _, ok := seen[rel]; ok {
+			if _, ok := seen[repoPath]; ok {
 				return filepath.SkipDir
 			}
-			seen[rel] = struct{}{}
-			repos = append(repos, Repository{Path: rel})
+			seen[repoPath] = struct{}{}
+			repos = append(repos, Repository{Path: repoPath})
 			return filepath.SkipDir
 		})
 		if err != nil {
@@ -135,6 +141,17 @@ func Discover(workspacePath string, roots []string, excludeDirs []string) ([]Rep
 
 	sort.Slice(repos, func(i, j int) bool { return repos[i].Path < repos[j].Path })
 	return repos, nil
+}
+
+// IsWithin reports whether path is dir itself or lies under it, comparing whole
+// path components (so "/ws/Data" is not within "/ws/Da"). Both must be absolute.
+func IsWithin(path, dir string) bool {
+	rel, err := filepath.Rel(filepath.Clean(dir), filepath.Clean(path))
+	if err != nil {
+		return false
+	}
+	rel = filepath.ToSlash(rel)
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, "../"))
 }
 
 // absRepoPath returns the absolute path for a repo. If path is already
@@ -395,15 +412,15 @@ func Reconcile(workspacePath string, roots []string, excludeDirs []string, track
 
 	// Merge tracked repos that weren't discovered (may have been removed or are outside roots).
 	for _, tr := range tracked {
-		if _, exists := seen[tr.Path]; exists {
+		absPath := filepath.Clean(absRepoPath(workspacePath, tr.Path))
+		if _, exists := seen[absPath]; exists {
 			continue
 		}
 		// Check if the tracked path actually exists on disk.
-		absPath := filepath.Join(workspacePath, filepath.FromSlash(tr.Path))
 		gitDir := filepath.Join(absPath, ".git")
 		if info, err := os.Stat(gitDir); err == nil && info.IsDir() {
-			discovered = append(discovered, Repository{Path: tr.Path})
-			seen[tr.Path] = struct{}{}
+			discovered = append(discovered, Repository{Path: absPath})
+			seen[absPath] = struct{}{}
 		}
 	}
 
@@ -430,11 +447,8 @@ func Filter(statuses []RepoStatus, opts FilterOptions) []RepoStatus {
 	}
 	filtered := make([]RepoStatus, 0)
 	for _, s := range statuses {
-		if opts.Path != "" {
-			rel := filepath.ToSlash(s.Path)
-			if !strings.HasPrefix(rel, opts.Path) && !strings.HasPrefix(rel, opts.Path+"/") && rel != opts.Path {
-				continue
-			}
+		if opts.Path != "" && !IsWithin(s.Path, opts.Path) {
+			continue
 		}
 		if opts.Dirty && !s.Dirty {
 			continue

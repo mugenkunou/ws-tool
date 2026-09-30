@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -274,14 +275,18 @@ func verboseLog(globals globalFlags, stderr io.Writer, format string, args ...an
 	}
 }
 
+// jsonSchema is the --json envelope schema version. 2: every path in data is
+// absolute (spec "Path Rules").
+const jsonSchema = 2
+
 // writeJSON writes a standard JSON envelope to stdout.
 // Every JSON output from ws goes through this to ensure a consistent schema:
 //
-//	{"ws_version": "...", "schema": 1, "command": "...", "data": ...}
+//	{"ws_version": "...", "schema": 2, "command": "...", "data": ...}
 func writeJSON(stdout, stderr io.Writer, command string, data any) int {
 	payload := map[string]any{
 		"ws_version": appVersion,
-		"schema":     1,
+		"schema":     jsonSchema,
 		"command":    command,
 		"data":       data,
 	}
@@ -298,7 +303,7 @@ func writeJSON(stdout, stderr io.Writer, command string, data any) int {
 func writeJSONDryRun(stdout, stderr io.Writer, command string, dryRun bool, data any) int {
 	payload := map[string]any{
 		"ws_version": appVersion,
-		"schema":     1,
+		"schema":     jsonSchema,
 		"command":    command,
 		"data":       data,
 	}
@@ -314,8 +319,38 @@ func writeJSONDryRun(stdout, stderr io.Writer, command string, dryRun bool, data
 	return 0
 }
 
-func requireWorkspaceInitialized(globals globalFlags, stderr ...io.Writer) (string, string, string, error) {
-	configPath := globals.config
+// resolveGlobalPaths resolves the path-valued global flags (--workspace,
+// --config, --manifest) in place, per spec "Path Rules": absolute as is, ~
+// expanded, anything else relative to the current directory. Empty values stay
+// empty so callers can still apply their defaults.
+func resolveGlobalPaths(globals *globalFlags) error {
+	for _, f := range []struct {
+		name string
+		v    *string
+	}{
+		{"workspace", &globals.workspace},
+		{"config", &globals.config},
+		{"manifest", &globals.manifest},
+	} {
+		if *f.v == "" {
+			continue
+		}
+		abs, err := config.ExpandUserPath(*f.v)
+		if err != nil {
+			return fmt.Errorf("invalid --%s: %w", f.name, err)
+		}
+		*f.v = abs
+	}
+	return nil
+}
+
+// resolveWorkspacePaths resolves the workspace, config, and manifest paths
+// without side effects: flag → env → config file → default, all absolute.
+func resolveWorkspacePaths(globals globalFlags) (workspacePath, configPath, manifestPath string, err error) {
+	if err := resolveGlobalPaths(&globals); err != nil {
+		return "", "", "", err
+	}
+	configPath = globals.config
 	if configPath == "" {
 		p, err := config.DefaultPath()
 		if err != nil {
@@ -325,36 +360,44 @@ func requireWorkspaceInitialized(globals globalFlags, stderr ...io.Writer) (stri
 	}
 
 	// Try to read workspace from config if not set via flag/env.
-	workspacePath := globals.workspace
-	if workspacePath == "" {
-		workspacePath = os.Getenv("WS_WORKSPACE")
+	workspaceArg := globals.workspace
+	if workspaceArg == "" {
+		workspaceArg = os.Getenv("WS_WORKSPACE")
 	}
-	if workspacePath == "" {
+	if workspaceArg == "" {
 		// Attempt to load config to get workspace path.
 		if cfg, err := config.Load(configPath); err == nil && cfg.Workspace != "" {
-			workspacePath = cfg.Workspace
+			workspaceArg = cfg.Workspace
 		}
 	}
-	if workspacePath == "" {
-		workspacePath = "~/Workspace"
+	if workspaceArg == "" {
+		workspaceArg = "~/Workspace"
 	}
 
-	resolvedWorkspace, err := config.ExpandUserPath(workspacePath)
+	workspacePath, err = config.ExpandUserPath(workspaceArg)
 	if err != nil {
 		return "", "", "", err
 	}
 
-	manifestPath := globals.manifest
+	manifestPath = globals.manifest
 	if manifestPath == "" {
-		manifestPath = resolvedWorkspace + "/ws/manifest.json"
+		manifestPath = filepath.Join(workspacePath, "ws", "manifest.json")
 	}
 
 	// Migration: if XDG config doesn't exist, fall back to old workspace-embedded config.
 	if globals.config == "" && !workspace.ConfigExists(configPath) {
-		oldPath := resolvedWorkspace + "/ws/config.json"
+		oldPath := filepath.Join(workspacePath, "ws", "config.json")
 		if workspace.ConfigExists(oldPath) {
 			configPath = oldPath
 		}
+	}
+	return workspacePath, configPath, manifestPath, nil
+}
+
+func requireWorkspaceInitialized(globals globalFlags, stderr ...io.Writer) (string, string, string, error) {
+	resolvedWorkspace, configPath, manifestPath, err := resolveWorkspacePaths(globals)
+	if err != nil {
+		return "", "", "", err
 	}
 
 	// Verbose: log resolved paths if stderr was provided.
@@ -399,6 +442,9 @@ func runConfig(args []string, globals globalFlags, stdout, stderr io.Writer) int
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
+		// Printed in stored (config-file) form so it can be redirected into
+		// config.json; the one documented exception to absolute output (spec
+		// "Path Rules"). `ws config view` shows resolved absolute values.
 		defaults := config.Default()
 		if globals.json {
 			return writeJSON(stdout, stderr, "config.defaults", defaults)
@@ -425,7 +471,7 @@ func runConfig(args []string, globals globalFlags, stdout, stderr io.Writer) int
 		return 1
 	}
 
-	_, configPath, _, err := requireWorkspaceInitialized(globals, stderr)
+	workspacePath, configPath, _, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -436,6 +482,9 @@ func runConfig(args []string, globals globalFlags, stdout, stderr io.Writer) int
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
+	// "Resolved config": every path value shown absolute (spec "Path Rules").
+	cfg = config.WithAbsPaths(cfg, workspacePath)
+	cfg.Workspace = workspacePath
 
 	if globals.json {
 		return writeJSON(stdout, stderr, "config.view", cfg)

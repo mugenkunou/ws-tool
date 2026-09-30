@@ -25,7 +25,7 @@ func TestIgnoreCheckAndSecretScan(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "ignore", "check", "secrets.txt"}, strings.NewReader(""), &out, &errOut); code != 0 {
+	if code := Execute([]string{"--workspace", workspace, "ignore", "check", filepath.Join(workspace, "secrets.txt")}, strings.NewReader(""), &out, &errOut); code != 0 {
 		t.Fatalf("ignore check synced file failed: code=%d stderr=%s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), "SYNCED") {

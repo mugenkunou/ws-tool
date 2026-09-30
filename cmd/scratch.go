@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -40,13 +41,13 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	wsDir := workspacePath + "/ws"
+	wsDir := filepath.Join(workspacePath, "ws")
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	rootDir, err := config.ResolvePath("", cfg.Scratch.RootDir)
+	rootDir, err := config.ResolvePath(workspacePath, cfg.Scratch.RootDir)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -209,7 +210,7 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			ePath := e.Path
 			plan.Actions = append(plan.Actions, Action{
 				ID:          "prune-" + eName,
-				Description: fmt.Sprintf("Remove %s (%s)", eName, style.HumanBytes(e.SizeBytes)),
+				Description: fmt.Sprintf("Remove %s (%s)", ePath, style.HumanBytes(e.SizeBytes)),
 				Execute: func() error {
 					return os.RemoveAll(ePath)
 				},
@@ -273,10 +274,21 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			fmt.Fprintln(stderr, "usage: ws scratch rm [name]")
 			return 1
 		}
+		// Resolve the name to the directories it will delete, so the plan
+		// shows absolute paths (spec "Path Rules").
+		preview, err := scratch.Delete(scratch.DeleteOptions{RootDir: rootDir, Name: deleteName, DryRun: true})
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		targets := make([]string, 0, len(preview.Removed))
+		for _, n := range preview.Removed {
+			targets = append(targets, filepath.Join(rootDir, n))
+		}
 		plan := Plan{Command: "scratch.rm"}
 		plan.Actions = append(plan.Actions, Action{
 			ID:          "scratch-rm",
-			Description: fmt.Sprintf("Delete scratch %q", deleteName),
+			Description: fmt.Sprintf("Delete %s", strings.Join(targets, ", ")),
 			Execute: func() error {
 				_, err := scratch.Delete(scratch.DeleteOptions{RootDir: rootDir, Name: deleteName, DryRun: false})
 				return err

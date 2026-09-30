@@ -190,7 +190,7 @@ func runCredentialSetup(args []string, globals globalFlags, stdin io.Reader, std
 			}
 			_, loDetail, _ := helperPathStatus(lo.Helper, false)
 			if loDetail != "" {
-				capturedPath := filepath.Join(workspacePath, filepath.FromSlash(lo.RepoPath))
+				capturedPath := lo.RepoPath
 				capturedDisplay := lo.RepoPath
 				plan.Actions = append(plan.Actions, Action{
 					ID:          "update-local-helper-" + lo.RepoPath,
@@ -457,7 +457,7 @@ func runCredentialDisconnect(args []string, globals globalFlags, stdin io.Reader
 	}
 
 	for _, lo := range wsLocalOverrides {
-		capturedPath := filepath.Join(workspacePath, filepath.FromSlash(lo.RepoPath))
+		capturedPath := lo.RepoPath
 		capturedDisplay := lo.RepoPath
 		plan.Actions = append(plan.Actions, Action{
 			ID:          "unset-local-helper-" + lo.RepoPath,
@@ -517,7 +517,7 @@ func discoverRemoteEntries(workspacePath string) []remoteEntry {
 	seen := make(map[string]bool) // dedup on host+path
 
 	for _, r := range repos {
-		absPath := filepath.Join(workspacePath, filepath.FromSlash(r.Path))
+		absPath := r.Path // repo.Discover returns absolute paths
 		remoteURLs := gitRemoteURLs(absPath)
 		for _, u := range remoteURLs {
 			host := extractHost(u)
@@ -705,7 +705,7 @@ func discoverLocalHelperOverrides(workspacePath string) []localHelperOverride {
 
 	var overrides []localHelperOverride
 	for _, r := range repos {
-		absPath := filepath.Join(workspacePath, filepath.FromSlash(r.Path))
+		absPath := r.Path // repo.Discover returns absolute paths
 		local := gitConfigGetLocal(absPath, "credential.helper")
 		if local == "" {
 			continue

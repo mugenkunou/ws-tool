@@ -47,7 +47,8 @@ func TestRepoLsAndScan(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "repo", "scan"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+	// Restrict hygiene to identity: the fixture repo has no upstream by design.
+	if code := Execute([]string{"--workspace", workspace, "repo", "scan", "--check", "identity"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
 		t.Fatalf("repo scan expected clean exit 0, got=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
 
@@ -57,7 +58,7 @@ func TestRepoLsAndScan(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "repo", "scan"}, strings.NewReader("y\n"), &out, &errOut); code != 2 {
+	if code := Execute([]string{"--workspace", workspace, "repo", "scan", "--check", "identity"}, strings.NewReader("y\n"), &out, &errOut); code != 2 {
 		t.Fatalf("repo scan expected violation exit 2, got=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
 
@@ -220,7 +221,7 @@ func TestRepoScanNoFetch(t *testing.T) {
 	// --no-fetch should work without network.
 	out.Reset()
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "repo", "scan", "--no-fetch"}, strings.NewReader(""), &out, &errOut); code != 0 {
+	if code := Execute([]string{"--workspace", workspace, "repo", "scan", "--no-fetch", "--check", "identity"}, strings.NewReader(""), &out, &errOut); code != 0 {
 		t.Fatalf("repo scan --no-fetch expected 0, got %d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
 	if !strings.Contains(out.String(), "r1") {
@@ -228,11 +229,16 @@ func TestRepoScanNoFetch(t *testing.T) {
 	}
 }
 
-func TestRepoDoctorCleanFleet(t *testing.T) {
+// initScanFixture creates a workspace with one committed repo "r1".
+// When identity is false, local user.name/user.email are removed after the commit.
+func initScanFixture(t *testing.T, identity bool) string {
+	t.Helper()
 	testSetXDG(t)
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
+	// Isolate from the developer's global git identity.
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "gitconfig"))
 
 	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out, errOut bytes.Buffer
@@ -252,114 +258,98 @@ func TestRepoDoctorCleanFleet(t *testing.T) {
 	}
 	runGitLocal(t, repoPath, "add", "f.txt")
 	runGitLocal(t, repoPath, "commit", "-m", "init")
+	if !identity {
+		runGitLocal(t, repoPath, "config", "--unset", "user.name")
+		runGitLocal(t, repoPath, "config", "--unset", "user.email")
+	}
+	return workspace
+}
 
-	out.Reset()
-	errOut.Reset()
-	// Run only checks that don't need a remote (no upstream/fetch-staleness).
-	code := Execute([]string{"--workspace", workspace, "repo", "doctor", "--check", "dirty"}, strings.NewReader(""), &out, &errOut)
+func TestRepoScanHygieneCleanIdentity(t *testing.T) {
+	workspace := initScanFixture(t, true)
+	var out, errOut bytes.Buffer
+	code := Execute([]string{"--workspace", workspace, "--no-color", "repo", "scan", "--no-fetch", "--check", "identity"}, strings.NewReader(""), &out, &errOut)
 	if code != 0 {
-		t.Fatalf("repo doctor clean fleet: expected exit 0, got %d stdout=%s stderr=%s", code, out.String(), errOut.String())
+		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, out.String(), errOut.String())
+	}
+	if strings.Contains(out.String(), "Hygiene:") {
+		t.Fatalf("expected no hygiene footer, got: %s", out.String())
 	}
 }
 
-func TestRepoDoctorDirtyRepo(t *testing.T) {
-	testSetXDG(t)
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	workspace := filepath.Join(t.TempDir(), "Workspace")
+func TestRepoScanHygieneInlineWarnings(t *testing.T) {
+	workspace := initScanFixture(t, false)
 	var out, errOut bytes.Buffer
-	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
-		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
-	}
-
-	repoPath := filepath.Join(workspace, "r1")
-	if err := os.MkdirAll(repoPath, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	runGitLocal(t, repoPath, "init")
-	runGitLocal(t, repoPath, "config", "user.email", "ws@example.com")
-	runGitLocal(t, repoPath, "config", "user.name", "ws")
-	if err := os.WriteFile(filepath.Join(repoPath, "f.txt"), []byte("x\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGitLocal(t, repoPath, "add", "f.txt")
-	runGitLocal(t, repoPath, "commit", "-m", "init")
-
-	// Make it dirty.
-	if err := os.WriteFile(filepath.Join(repoPath, "f.txt"), []byte("dirty\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	out.Reset()
-	errOut.Reset()
-	code := Execute([]string{"--workspace", workspace, "repo", "doctor", "--check", "dirty"}, strings.NewReader(""), &out, &errOut)
+	code := Execute([]string{"--workspace", workspace, "--no-color", "repo", "scan", "--no-fetch", "--check", "identity"}, strings.NewReader(""), &out, &errOut)
 	if code != 2 {
-		t.Fatalf("repo doctor dirty: expected exit 2, got %d stdout=%s stderr=%s", code, out.String(), errOut.String())
+		t.Fatalf("expected exit 2 for identity warnings, got %d stdout=%s stderr=%s", code, out.String(), errOut.String())
+	}
+	got := out.String()
+	if !strings.Contains(got, "[identity] user.name not set") || !strings.Contains(got, "[identity] user.email not set") {
+		t.Fatalf("expected inline identity findings, got: %s", got)
+	}
+	if !strings.Contains(got, "Hygiene: 2 warning(s)") {
+		t.Fatalf("expected hygiene footer with 2 warnings, got: %s", got)
+	}
+	if strings.Contains(got, "ws repo doctor") {
+		t.Fatalf("scan output must not point to removed doctor command, got: %s", got)
 	}
 }
 
-func TestRepoDoctorJSON(t *testing.T) {
-	testSetXDG(t)
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
+func TestRepoScanHygieneInfoHiddenUnlessVerbose(t *testing.T) {
+	workspace := initScanFixture(t, true)
+	args := []string{"--workspace", workspace, "--no-color", "repo", "scan", "--no-fetch", "--check", "default-branch"}
 
-	workspace := filepath.Join(t.TempDir(), "Workspace")
 	var out, errOut bytes.Buffer
-	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
-		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
+	if code := Execute(args, strings.NewReader(""), &out, &errOut); code != 0 {
+		t.Fatalf("info findings must not fail scan, got %d stdout=%s stderr=%s", code, out.String(), errOut.String())
+	}
+	if strings.Contains(out.String(), "[default-branch]") {
+		t.Fatalf("info finding should be hidden without --verbose, got: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "1 info hidden") {
+		t.Fatalf("expected hidden-info count in footer, got: %s", out.String())
 	}
 
 	out.Reset()
 	errOut.Reset()
-	code := Execute([]string{"--workspace", workspace, "--json", "repo", "doctor"}, strings.NewReader(""), &out, &errOut)
-	if code == 1 {
-		t.Fatalf("repo doctor --json failed: code=%d stderr=%s", code, errOut.String())
+	if code := Execute(append(args, "--verbose"), strings.NewReader(""), &out, &errOut); code != 0 {
+		t.Fatalf("expected exit 0 with --verbose, got %d stderr=%s", code, errOut.String())
 	}
-	if !strings.Contains(out.String(), `"findings"`) {
-		t.Fatalf("expected 'findings' in JSON output, got: %s", out.String())
+	if !strings.Contains(out.String(), "[default-branch]") {
+		t.Fatalf("expected info finding with --verbose, got: %s", out.String())
 	}
 }
 
-func TestRepoScanHygieneFooter(t *testing.T) {
-	testSetXDG(t)
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	workspace := filepath.Join(t.TempDir(), "Workspace")
+func TestRepoScanUnknownCheck(t *testing.T) {
+	workspace := initScanFixture(t, true)
 	var out, errOut bytes.Buffer
-	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
-		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
+	code := Execute([]string{"--workspace", workspace, "repo", "scan", "--no-fetch", "--check", "bogus"}, strings.NewReader(""), &out, &errOut)
+	if code != 1 || !strings.Contains(errOut.String(), `unknown check "bogus"`) {
+		t.Fatalf("expected exit 1 with unknown-check error, got %d stderr=%s", code, errOut.String())
 	}
+}
 
-	// Create repo without identity (will trigger hygiene warnings).
-	repoPath := filepath.Join(workspace, "r1")
-	if err := os.MkdirAll(repoPath, 0o755); err != nil {
-		t.Fatal(err)
+func TestRepoScanJSONIncludesFindings(t *testing.T) {
+	workspace := initScanFixture(t, false)
+	var out, errOut bytes.Buffer
+	code := Execute([]string{"--workspace", workspace, "--json", "repo", "scan", "--no-fetch", "--check", "identity"}, strings.NewReader(""), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("repo scan --json failed: code=%d stderr=%s", code, errOut.String())
 	}
-	runGitLocal(t, repoPath, "init")
-	// Deliberately omit user.name and user.email.
-	if err := os.WriteFile(filepath.Join(repoPath, "f.txt"), []byte("x\n"), 0o644); err != nil {
-		t.Fatal(err)
+	got := out.String()
+	if !strings.Contains(got, `"statuses"`) || !strings.Contains(got, `"findings"`) || !strings.Contains(got, `"check": "identity"`) {
+		t.Fatalf("expected statuses and identity findings in JSON, got: %s", got)
 	}
-	runGitLocal(t, repoPath, "add", "f.txt")
-	runGitLocal(t, repoPath, "config", "user.name", "tmp")
-	runGitLocal(t, repoPath, "config", "user.email", "tmp@x.com")
-	runGitLocal(t, repoPath, "commit", "-m", "init")
-	// Remove identity after commit so doctor sees missing identity.
-	runGitLocal(t, repoPath, "config", "--unset", "user.name")
-	runGitLocal(t, repoPath, "config", "--unset", "user.email")
+}
 
-	out.Reset()
-	errOut.Reset()
-	// scan with --no-fetch to avoid network.
-	Execute([]string{"--workspace", workspace, "repo", "scan", "--no-fetch"}, strings.NewReader(""), &out, &errOut)
-	// The footer should mention hygiene warnings (or not if global identity is set).
-	// We accept both: either the footer appears or not — what matters is it doesn't crash.
-	_ = out.String()
+func TestRepoDoctorRemoved(t *testing.T) {
+	workspace := initScanFixture(t, true)
+	var out, errOut bytes.Buffer
+	code := Execute([]string{"--workspace", workspace, "repo", "doctor"}, strings.NewReader(""), &out, &errOut)
+	if code != 1 || !strings.Contains(errOut.String(), "merged into `ws repo scan`") {
+		t.Fatalf("expected doctor to redirect to scan, got %d stderr=%s", code, errOut.String())
+	}
 }
 
 func TestRepoNoArgsShowsHelp(t *testing.T) {

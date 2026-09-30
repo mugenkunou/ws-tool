@@ -273,3 +273,70 @@ func ResolvePath(baseWorkspace, value string) (string, error) {
 
 	return filepath.Clean(filepath.Join(workspacePath, v)), nil
 }
+
+// WithAbsPaths returns a copy of cfg with every path-valued field resolved to a
+// cleaned absolute path: "~" is expanded and relative values are resolved
+// against workspacePath (the config path convention). It is used wherever
+// config values are displayed (spec "Path Rules") or consumed as filesystem
+// locations. cfg itself is not modified. Empty values stay empty.
+func WithAbsPaths(cfg Config, workspacePath string) Config {
+	abs := func(v string) string {
+		if strings.TrimSpace(v) == "" {
+			return v
+		}
+		p, err := ResolvePath(workspacePath, v)
+		if err != nil {
+			return v
+		}
+		return p
+	}
+	absAll := func(vs []string) []string {
+		if vs == nil {
+			return nil
+		}
+		out := make([]string, len(vs))
+		for i, v := range vs {
+			out[i] = abs(v)
+		}
+		return out
+	}
+
+	out := cfg
+	if cfg.Workspace != "" {
+		if p, err := ExpandUserPath(cfg.Workspace); err == nil {
+			out.Workspace = p
+		}
+	}
+	out.Scratch.RootDir = abs(cfg.Scratch.RootDir)
+	out.Trash.RootDir = abs(cfg.Trash.RootDir)
+	out.Repo.Roots = absAll(cfg.Repo.Roots)
+	out.Repo.ExcludeDirs = absAll(cfg.Repo.ExcludeDirs)
+	out.Secret.SkipDirs = absAll(cfg.Secret.SkipDirs)
+	if cfg.Capture.Locations != nil {
+		out.Capture.Locations = make(map[string]string, len(cfg.Capture.Locations))
+		for name, dir := range cfg.Capture.Locations {
+			out.Capture.Locations[name] = abs(dir)
+		}
+	}
+	return out
+}
+
+// WorkspaceRel converts a config path value (workspace-relative, absolute, or
+// ~-prefixed) to the cleaned, forward-slash, workspace-relative form used for
+// prefix matching (repo.exclude_dirs, secret.skip_dirs). ok is false when the
+// value is empty, invalid, or outside the workspace.
+func WorkspaceRel(workspacePath, value string) (rel string, ok bool) {
+	abs, err := ResolvePath(workspacePath, value)
+	if err != nil {
+		return "", false
+	}
+	r, err := filepath.Rel(filepath.Clean(workspacePath), abs)
+	if err != nil {
+		return "", false
+	}
+	r = filepath.ToSlash(r)
+	if r == ".." || strings.HasPrefix(r, "../") {
+		return "", false
+	}
+	return r, true
+}

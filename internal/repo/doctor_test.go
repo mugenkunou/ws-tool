@@ -51,7 +51,7 @@ func TestDoctorCleanRepo(t *testing.T) {
 
 	// Only run checks that don't require an upstream or external fetch.
 	findings := repo.Doctor(repoDir, []repo.Repository{{Path: "."}}, repo.DoctorOptions{
-		Checks: []string{"identity", "dirty"},
+		Checks: []string{"identity"},
 	})
 	for _, f := range findings {
 		if f.Severity >= repo.SeverityWarn {
@@ -141,35 +141,5 @@ func TestDoctorNoUpstream(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected SeverityWarn for branch with no upstream")
-	}
-}
-
-func TestDoctorDirtyTree(t *testing.T) {
-	gitAvailable(t)
-	repoDir := makeGitRepo(t)
-	run(t, repoDir, "git", "config", "user.name", "Test User")
-	run(t, repoDir, "git", "config", "user.email", "test@example.com")
-	if err := os.WriteFile(filepath.Join(repoDir, "f.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	run(t, repoDir, "git", "add", ".")
-	run(t, repoDir, "git", "commit", "-m", "init")
-
-	// Make a dirty change.
-	if err := os.WriteFile(filepath.Join(repoDir, "f.txt"), []byte("dirty"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	findings := repo.Doctor(repoDir, []repo.Repository{{Path: "."}}, repo.DoctorOptions{
-		Checks: []string{"dirty"},
-	})
-	found := false
-	for _, f := range findings {
-		if f.Check == "dirty" && f.Severity == repo.SeverityWarn {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("expected SeverityWarn for dirty tree")
 	}
 }

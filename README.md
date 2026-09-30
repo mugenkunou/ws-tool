@@ -65,8 +65,8 @@ This creates `ws/manifest.json` and `.megaignore` in your workspace root, and `c
 
 ```bash
 ws dotfile add ~/.bashrc
-# ✔ Moved    ~/.bashrc → ~/Workspace/ws/dotfiles/bashrc
-# ✔ Linked   ~/.bashrc → ~/Workspace/ws/dotfiles/bashrc
+# ✔ Moved    /home/user/.bashrc → /home/user/Workspace/ws/dotfiles/bashrc
+# ✔ Linked   /home/user/.bashrc → /home/user/Workspace/ws/dotfiles/bashrc
 ```
 
 Your `.bashrc` now lives in the workspace (synced). The system path is a symlink pointing back. Edit either one — they're the same file.
@@ -131,8 +131,7 @@ Your `.bashrc` now lives in the workspace (synced). The system path is a symlink
 | Command | What it does |
 | --- | --- |
 | `ws repo ls` | Discover Git repos under workspace |
-| `ws repo scan` | Fleet status with fetch-first: dirty, ahead/behind, detached |
-| `ws repo doctor` | Hygiene audit: identity, upstream, default-branch, fetch-staleness, dirty |
+| `ws repo scan` | Fleet status with fetch-first (dirty, ahead/behind, detached) plus inline hygiene findings (identity, upstream, default-branch, fetch-staleness) |
 | `ws repo fetch` | `git fetch --all --prune` across the fleet |
 | `ws repo pull` | Interactive fleet pull (ff-only or rebase) |
 | `ws repo sync` | Interactive fleet sync (pull/push per repo state) |

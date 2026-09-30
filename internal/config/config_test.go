@@ -98,3 +98,62 @@ func TestResolvePath(t *testing.T) {
 		t.Fatalf("expected absolute path unchanged, got %s", got)
 	}
 }
+
+func TestWithAbsPaths(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home dir")
+	}
+	ws := "/w/Workspace"
+	cfg := Default()
+	cfg.Workspace = ws
+	cfg.Secret.SkipDirs = []string{"vendor/"}
+	cfg.Capture.Locations = map[string]string{"notes": "Notes/brain", "abs": "/srv/x"}
+
+	got := WithAbsPaths(cfg, ws)
+
+	if got.Scratch.RootDir != filepath.Join(home, "Scratch") {
+		t.Errorf("scratch root = %q", got.Scratch.RootDir)
+	}
+	if got.Trash.RootDir != filepath.Join(home, ".Trash") {
+		t.Errorf("trash root = %q", got.Trash.RootDir)
+	}
+	if len(got.Repo.Roots) != 1 || got.Repo.Roots[0] != ws {
+		t.Errorf("repo roots = %v", got.Repo.Roots)
+	}
+	if got.Repo.ExcludeDirs[0] != "/w/Workspace/ws" {
+		t.Errorf("exclude dirs = %v", got.Repo.ExcludeDirs)
+	}
+	if got.Secret.SkipDirs[0] != "/w/Workspace/vendor" {
+		t.Errorf("skip dirs = %v", got.Secret.SkipDirs)
+	}
+	if got.Capture.Locations["notes"] != "/w/Workspace/Notes/brain" || got.Capture.Locations["abs"] != "/srv/x" {
+		t.Errorf("capture locations = %v", got.Capture.Locations)
+	}
+	// Original must be untouched.
+	if cfg.Repo.Roots[0] != "." || cfg.Capture.Locations["notes"] != "Notes/brain" {
+		t.Errorf("WithAbsPaths mutated its input: %+v", cfg)
+	}
+}
+
+func TestWorkspaceRel(t *testing.T) {
+	ws := "/w/Workspace"
+	cases := []struct {
+		in, want string
+		ok       bool
+	}{
+		{"node_modules", "node_modules", true},
+		{"./a//b/", "a/b", true},
+		{"/w/Workspace/a/b", "a/b", true},
+		{"/w/Workspace", ".", true},
+		{"/elsewhere/x", "", false},
+		{"../x", "", false},
+		{"", "", false},
+	}
+	for _, c := range cases {
+		got, ok := WorkspaceRel(ws, c.in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("WorkspaceRel(%q) = (%q, %v), want (%q, %v)", c.in, got, ok, c.want, c.ok)
+		}
+	}
+}

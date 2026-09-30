@@ -38,6 +38,10 @@ func runReset(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		globals.dryRun = true
 	}
 
+	if err := resolveGlobalPaths(&globals); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
 	// Resolve config path.
 	configPath := globals.config
 	if configPath == "" {
@@ -90,7 +94,7 @@ func runReset(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 				"hint":  "nothing to undo",
 			})
 		}
-		fmt.Fprintln(stderr, style.ResultError(nc, "No ws/ directory found at %s", resolvedWorkspace))
+		fmt.Fprintln(stderr, style.ResultError(nc, "No ws directory found: %s", wsDir))
 		fmt.Fprintln(stderr, style.Mutedf(nc, "  Nothing to undo."))
 		return 1
 	}
@@ -117,7 +121,7 @@ func runReset(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		fmt.Fprintln(out)
 
 		if len(entries) == 0 {
-			fmt.Fprintln(out, style.Mutedf(nc, "No provisions recorded. Only ws/ will be removed."))
+			fmt.Fprintln(out, style.Mutedf(nc, "No provisions recorded. Only %s will be removed.", wsDir))
 		} else {
 			fmt.Fprintln(out, style.Boldf(nc, "Provisions to undo: %d", len(entries)))
 			fmt.Fprintln(out)

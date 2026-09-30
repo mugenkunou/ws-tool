@@ -43,6 +43,10 @@ func runRestore(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		return 1
 	}
 
+	if err := resolveGlobalPaths(&globals); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
 	workspacePath := globals.workspace
 	if workspacePath == "" {
 		workspacePath = "~/Workspace"
@@ -132,7 +136,7 @@ func runRestore(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		ID:          "trash-enable",
 		Description: "[1/3] Trash enable",
 		Execute: func() error {
-			_, err := trash.Setup(trash.SetupOptions{RootDir: cfg.Trash.RootDir, ShellRM: true, VSCodeDelete: true, FileExplorer: true, DryRun: false})
+			_, err := trash.Setup(trash.SetupOptions{RootDir: config.WithAbsPaths(cfg, resolvedWorkspace).Trash.RootDir, ShellRM: true, VSCodeDelete: true, FileExplorer: true, DryRun: false})
 			if err != nil {
 				return err
 			}

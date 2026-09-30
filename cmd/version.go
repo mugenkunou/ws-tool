@@ -125,6 +125,10 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
+	if err := resolveGlobalPaths(&globals); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
 
 	configPath := globals.config
 	if configPath == "" {
@@ -138,14 +142,14 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 
 	manifestPath := globals.manifest
 	if manifestPath == "" {
-		manifestPath = resolvedWorkspace + "/ws/manifest.json"
+		manifestPath = filepath.Join(resolvedWorkspace, "ws", "manifest.json")
 	}
 
 	// Guard: if workspace is already initialized, warn and suggest reset.
 	alreadyInitialized := workspace.ConfigExists(configPath)
 	if !alreadyInitialized && globals.config == "" {
 		// Migration: also check old workspace-embedded location.
-		oldPath := resolvedWorkspace + "/ws/config.json"
+		oldPath := filepath.Join(resolvedWorkspace, "ws", "config.json")
 		alreadyInitialized = workspace.ConfigExists(oldPath)
 	}
 	if alreadyInitialized {
@@ -173,7 +177,7 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 	if _, err := os.Stat(wsDir); err != nil {
 		plan.Actions = append(plan.Actions, Action{
 			ID:          "create-ws-dir",
-			Description: fmt.Sprintf("Create %s", filepath.Join("ws")+"/"),
+			Description: fmt.Sprintf("Create %s", wsDir),
 			Execute:     func() error { return os.MkdirAll(wsDir, 0o755) },
 		})
 	}
@@ -187,7 +191,7 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 					return err
 				}
 				cfg := config.Default()
-				cfg.Workspace = workspacePath
+				cfg.Workspace = resolvedWorkspace
 				return config.Save(configPath, cfg)
 			},
 		})
@@ -196,7 +200,7 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 	if _, err := os.Stat(manifestPath); err != nil {
 		plan.Actions = append(plan.Actions, Action{
 			ID:          "create-manifest",
-			Description: "Create ws/manifest.json",
+			Description: fmt.Sprintf("Create %s", manifestPath),
 			Execute: func() error {
 				if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
 					return err
@@ -209,7 +213,7 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 	if _, err := os.Stat(megaignorePath); err != nil {
 		plan.Actions = append(plan.Actions, Action{
 			ID:          "create-megaignore",
-			Description: "Create .megaignore",
+			Description: fmt.Sprintf("Create %s", megaignorePath),
 			Execute: func() error {
 				userRules, loadErr := manifest.LoadIgnoreRules(manifestPath)
 				if loadErr != nil {

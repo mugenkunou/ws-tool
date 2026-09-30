@@ -40,12 +40,14 @@ func runCapture(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	wsDir := workspacePath + "/ws"
+	wsDir := filepath.Join(workspacePath, "ws")
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
+	// Capture location dirs are config values: relative → workspace.
+	cfg.Capture.Locations = config.WithAbsPaths(cfg, workspacePath).Capture.Locations
 
 	// Check for "ls" subcommand before flag parsing
 	if len(args) > 0 && args[0] == "ls" {
@@ -256,9 +258,9 @@ func printPinResult(res capture.PinResult, globals globalFlags, stdout, stderr i
 	nc := globals.noColor
 	var msg string
 	if res.Amended {
-		msg = fmt.Sprintf("Amended   %s → %s", res.Source, filepath.Base(res.File))
+		msg = fmt.Sprintf("Amended   %s → %s", res.Source, res.File)
 	} else {
-		msg = fmt.Sprintf("Pinned    %s → %s", res.Source, filepath.Base(res.File))
+		msg = fmt.Sprintf("Pinned    %s → %s", res.Source, res.File)
 	}
 	if globals.dryRun {
 		fmt.Fprintf(out, "%s\n", style.ResultWarning(nc, "[dry-run] %s", msg))

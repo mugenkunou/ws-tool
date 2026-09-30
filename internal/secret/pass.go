@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/mugenkunou/ws-tool/internal/config"
 )
 
 // PassHealth describes the state of the Unix Password Store (pass) on this machine.
@@ -47,6 +49,7 @@ func CheckPass() PassHealth {
 	}
 
 	// Resolve store path: PASSWORD_STORE_DIR or ~/.password-store
+	// Shown to the user, so always absolute (spec "Path Rules").
 	storePath := os.Getenv("PASSWORD_STORE_DIR")
 	if storePath == "" {
 		home, err := os.UserHomeDir()
@@ -54,6 +57,12 @@ func CheckPass() PassHealth {
 			return h
 		}
 		storePath = filepath.Join(home, ".password-store")
+	} else {
+		abs, err := config.ExpandUserPath(storePath)
+		if err != nil {
+			return h
+		}
+		storePath = abs
 	}
 	h.StorePath = storePath
 

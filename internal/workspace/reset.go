@@ -150,7 +150,7 @@ func undoActionLabel(e provision.Entry) string {
 	case provision.TypeSymlink:
 		return "remove symlink"
 	case provision.TypeConfigLine:
-		return "remove line from " + filepath.Base(e.Path)
+		return "remove ws line" // e.Path (absolute) is shown alongside
 	case provision.TypeGitExclude:
 		return "remove exclude entry"
 	default:
