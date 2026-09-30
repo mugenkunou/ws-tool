@@ -1,6 +1,8 @@
 package secret
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -161,5 +163,64 @@ func TestLookupCandidateOrder(t *testing.T) {
 	resp := LookupCredential(CredentialRequest{})
 	if resp.Password != "" || resp.Username != "" {
 		t.Errorf("expected empty response for empty host, got %+v", resp)
+	}
+}
+
+func TestCredentialCandidates(t *testing.T) {
+	tests := []struct {
+		host, path string
+		want       []string
+	}{
+		{"", "owner/repo", nil},
+		{"github.com", "", []string{"git/github.com"}},
+		{"github.com", "owner/repo", []string{"git/github.com/owner/repo", "git/github.com"}},
+		{"github.com", "owner/repo.git", []string{"git/github.com/owner/repo", "git/github.com"}},
+		{"github.com", "owner/repo/", []string{"git/github.com/owner/repo", "git/github.com"}},
+	}
+	for _, tt := range tests {
+		got := CredentialCandidates(tt.host, tt.path)
+		if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+			t.Errorf("CredentialCandidates(%q, %q) = %v, want %v", tt.host, tt.path, got, tt.want)
+		}
+	}
+}
+
+// fakePassStore creates an initialized pass store containing the given
+// entries (empty .gpg files — enough for existence checks).
+func fakePassStore(t *testing.T, entries ...string) {
+	t.Helper()
+	store := t.TempDir()
+	t.Setenv("PASSWORD_STORE_DIR", store)
+	if err := os.WriteFile(filepath.Join(store, ".gpg-id"), []byte("test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		p := filepath.Join(store, e+".gpg")
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestResolveCredentialEntry(t *testing.T) {
+	fakePassStore(t, "git/github.com", "git/github.com/me/scoped")
+
+	tests := []struct {
+		host, path, want string
+	}{
+		{"github.com", "me/scoped", "git/github.com/me/scoped"},
+		{"github.com", "me/scoped.git", "git/github.com/me/scoped"},
+		{"github.com", "me/other", "git/github.com"}, // falls back to host token
+		{"github.com", "", "git/github.com"},
+		{"gitlab.com", "me/scoped", ""},
+		{"", "", ""},
+	}
+	for _, tt := range tests {
+		if got := ResolveCredentialEntry(tt.host, tt.path); got != tt.want {
+			t.Errorf("ResolveCredentialEntry(%q, %q) = %q, want %q", tt.host, tt.path, got, tt.want)
+		}
 	}
 }

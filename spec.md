@@ -3582,8 +3582,8 @@ ws git-credential-helper setup [--dry-run]
 
 1. Set `credential.helper` in global git config to `!<ws-binary-path> git-credential-helper`
 2. Set `credential.useHttpPath = true` so git sends the full repo path
-3. Scan workspace repos for git remotes, check which `git/<host>` pass entries exist
-4. Offer to create missing entries via interactive `pass insert`
+3. Scan workspace repos for HTTP(S) git remotes and resolve each one the way the helper does (see [Credential Resolution](#credential-resolution)), assuming `credential.useHttpPath` is on after step 2
+4. For each host with remotes that resolve to nothing, offer to create one host-wide `git/<host>` entry via interactive `pass insert`. Remotes already covered by a host token or a repo token need no action, so `setup` never asks for a repo-scoped entry. To add one, run `pass insert git/<host>/<owner>/<repo>` yourself.
 
 **Output:**
 
@@ -3592,57 +3592,62 @@ ws git-credential-helper setup
   [1/2] Set credential.helper to '!/usr/local/bin/ws git-credential-helper'
   Apply? [y/n/a/q] y
   ✔ Set credential.helper
-  [2/2] Set credential.useHttpPath = true
-  Apply? [y/n/a/q] y
-  ✔ Set credential.useHttpPath
-
-  Workspace git remotes:
-    ✔ github.com → git/github.com (exists)
-    ✖ gitlab.work.com → git/gitlab.work.com (missing)
-
-  [1/1] Create pass entry git/gitlab.work.com
+  [2/2] Create pass entry git/gitlab.work.com (host token for 2 remote(s))
   Apply? [y/n/a/q] y
   Enter password for git/gitlab.work.com:
   ✔ Created git/gitlab.work.com
 
 ✔ git credential helper configured.
 
-  Convention: store git credentials under git/<host> in pass.
-  Entry format (standard pass):
-    <password or token>
-    username: your-username
+  Convention: git/<host> or git/<host>/<owner>/<repo> in pass.
+  Entry format: password/token on line 1, username: <user> on line 2.
 ```
+
+#### Credential Resolution
+
+For a request, the helper tries these pass entries in order and uses the first one that exists:
+
+1. `git/<host>/<owner>/<repo>`: a **repo token**. Only tried when git sends the repo path, which it does only with `credential.useHttpPath = true` (global or URL-scoped, e.g. `credential.https://github.com.useHttpPath`).
+2. `git/<host>`: a **host token**, shared by every repo on that host.
+
+Both are valid setups and can be mixed on one host: a shared token for most repos, plus repo-scoped tokens for a few. `status` and `setup` use this same lookup, so what they report is what git gets. SSH remotes never call a credential helper and are listed for information only.
 
 #### `ws git-credential-helper status`
 
-Check credential helper configuration, pass store health, and workspace remote pass entry coverage.
+Check credential helper configuration, pass store health, and which pass entry each workspace remote resolves to.
 
 ```text
 ws git-credential-helper status
 ```
+
+Each remote line shows the entry the helper actually uses ([Credential Resolution](#credential-resolution)) and whether it is a host token or a repo token. Neither is a warning. A remote is marked `✖` only when nothing resolves. A repo token that exists but that git never asks for, because `credential.useHttpPath` is off for its host, is flagged under the remote.
 
 **Output:**
 
 ```text
 ws git-credential-helper status
-Git Credential Helper
-──────────────────────────────────────────────────────
-Status              connected
-credential.helper   !/usr/local/bin/ws git-credential-helper
-
 Pass Store
 ──────────────────────────────────────────────────────
-  ✔  pass installed
   ✔  gpg available
-  ✔  store initialized  (42 entries)
+  ✔  pass installed
+  ✔  store initialized  (/home/user/.password-store, 42 entries)
+
+Git Credential Helper
+──────────────────────────────────────────────────────
+  Global config    CONNECTED
+                   !/usr/local/bin/ws git-credential-helper
 
 Workspace Remotes
 ──────────────────────────────────────────────────────
-  ✔  github.com → git/github.com (exists)
-  ✖  gitlab.work.com → git/gitlab.work.com (missing)
+  ✔  github.com/me/blog         git/github.com  (host token)
+  ✔  github.com/me/ws-tool      git/github.com/me/ws-tool  (repo token)
+  ✖  gitlab.work.com/team/app   no credential (needs git/gitlab.work.com or git/gitlab.work.com/team/app)
+  ●  github.com/me/dotfiles     ssh — credential helper not used
 
-▲ 1 remote(s) missing pass entries — run `ws git-credential-helper setup`
+▲ 1 remote(s) have no credential — run `ws git-credential-helper setup`
 ```
+
+With `--json`, each entry in `remotes` has `host`, `path`, `transport`, `helper_used`, `pass_entry` (the resolved entry, omitted when none), `scope` (`repo` or `host`), `exists`, and `ignored_entry` (a repo token skipped because `useHttpPath` is off).
 
 #### `ws git-credential-helper disconnect`
 

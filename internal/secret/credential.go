@@ -62,37 +62,50 @@ func FormatCredentialOutput(w io.Writer, resp CredentialResponse) {
 	}
 }
 
-// LookupCredential attempts to find credentials in the pass store for the
-// given request. It tries specific path-based entries first, then falls back
-// to host-only entries.
+// CredentialCandidates returns the pass entries the helper tries for a
+// request, most specific first:
 //
-// Lookup order:
 //  1. git/<host>/<path>  (if path is non-empty)
 //  2. git/<host>
 //
-// Returns empty response if nothing is found.
-func LookupCredential(req CredentialRequest) CredentialResponse {
-	if req.Host == "" {
-		return CredentialResponse{}
+// path is what git sends, which is empty unless credential.useHttpPath is on.
+// A trailing ".git" or "/" on path is ignored.
+func CredentialCandidates(host, path string) []string {
+	if host == "" {
+		return nil
 	}
-
-	// Clean the path: strip trailing .git suffix.
-	path := strings.TrimSuffix(req.Path, ".git")
+	path = strings.TrimSuffix(path, ".git")
 	path = strings.TrimSuffix(path, "/")
 
 	var candidates []string
 	if path != "" {
-		candidates = append(candidates, "git/"+req.Host+"/"+path)
+		candidates = append(candidates, "git/"+host+"/"+path)
 	}
-	candidates = append(candidates, "git/"+req.Host)
+	return append(candidates, "git/"+host)
+}
 
-	for _, entry := range candidates {
+// ResolveCredentialEntry returns the pass entry the helper would use for
+// host and path, checking the store without decrypting anything. Returns ""
+// when no candidate exists.
+func ResolveCredentialEntry(host, path string) string {
+	for _, entry := range CredentialCandidates(host, path) {
+		if PassEntryExists(entry) {
+			return entry
+		}
+	}
+	return ""
+}
+
+// LookupCredential attempts to find credentials in the pass store for the
+// given request, trying CredentialCandidates in order. Returns an empty
+// response if nothing is found.
+func LookupCredential(req CredentialRequest) CredentialResponse {
+	for _, entry := range CredentialCandidates(req.Host, req.Path) {
 		resp, ok := tryPassEntry(entry)
 		if ok {
 			return resp
 		}
 	}
-
 	return CredentialResponse{}
 }
 

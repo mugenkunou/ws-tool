@@ -285,3 +285,143 @@ func TestGitConfigGetLocalEmpty(t *testing.T) {
 		t.Fatalf("expected empty for non-repo, got: %q", got)
 	}
 }
+
+// credentialPassStore creates an initialized pass store containing the given
+// entries (empty .gpg files — enough for existence checks).
+func credentialPassStore(t *testing.T, entries ...string) {
+	t.Helper()
+	store := t.TempDir()
+	t.Setenv("PASSWORD_STORE_DIR", store)
+	if err := os.WriteFile(filepath.Join(store, ".gpg-id"), []byte("test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		p := filepath.Join(store, e+".gpg")
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func mustRemoteEntry(t *testing.T, rawURL string) remoteEntry {
+	t.Helper()
+	e, ok := newRemoteEntry(rawURL)
+	if !ok {
+		t.Fatalf("newRemoteEntry(%q): not ok", rawURL)
+	}
+	return e
+}
+
+func TestNewRemoteEntry(t *testing.T) {
+	tests := []struct {
+		url, label, transport string
+		helperUsed            bool
+	}{
+		{"https://github.com/me/repo.git", "github.com/me/repo", "https", true},
+		{"http://git.local/team/app", "git.local/team/app", "http", true},
+		{"git@github.com:me/repo.git", "github.com/me/repo", "ssh", false},
+		{"ssh://git@github.com/me/repo.git", "github.com/me/repo", "ssh", false},
+	}
+	for _, tt := range tests {
+		e := mustRemoteEntry(t, tt.url)
+		if e.Label() != tt.label || e.Transport != tt.transport || e.HelperUsed != tt.helperUsed {
+			t.Errorf("newRemoteEntry(%q) = {label %q, transport %q, helperUsed %v}, want {%q, %q, %v}",
+				tt.url, e.Label(), e.Transport, e.HelperUsed, tt.label, tt.transport, tt.helperUsed)
+		}
+	}
+	if _, ok := newRemoteEntry("/srv/git/local.git"); ok {
+		t.Error("expected local-path remote to be skipped")
+	}
+}
+
+func TestResolveRemoteEntry(t *testing.T) {
+	credentialPassStore(t, "git/github.com", "git/github.com/me/scoped")
+
+	tests := []struct {
+		name        string
+		url         string
+		useHTTPPath bool
+		wantEntry   string
+		wantScope   string
+		wantIgnored string
+	}{
+		{"repo token", "https://github.com/me/scoped.git", true, "git/github.com/me/scoped", "repo", ""},
+		{"host token fallback", "https://github.com/me/shared.git", true, "git/github.com", "host", ""},
+		{"no credential", "https://gitlab.com/me/app.git", true, "", "", ""},
+		{"repo token ignored without useHttpPath", "https://github.com/me/scoped.git", false, "git/github.com", "host", "git/github.com/me/scoped"},
+		{"ssh untouched", "git@github.com:me/scoped.git", true, "", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := resolveRemoteEntry(mustRemoteEntry(t, tt.url), tt.useHTTPPath)
+			if e.PassEntry != tt.wantEntry || e.Scope != tt.wantScope || e.IgnoredEntry != tt.wantIgnored {
+				t.Errorf("got {entry %q, scope %q, ignored %q}, want {%q, %q, %q}",
+					e.PassEntry, e.Scope, e.IgnoredEntry, tt.wantEntry, tt.wantScope, tt.wantIgnored)
+			}
+			if e.Exists != (tt.wantEntry != "") {
+				t.Errorf("Exists = %v, want %v", e.Exists, tt.wantEntry != "")
+			}
+		})
+	}
+}
+
+func TestPrintRemoteEntries(t *testing.T) {
+	credentialPassStore(t, "git/github.com", "git/github.com/me/scoped")
+	remotes := []remoteEntry{
+		resolveRemoteEntry(mustRemoteEntry(t, "https://github.com/me/shared.git"), true),
+		resolveRemoteEntry(mustRemoteEntry(t, "https://github.com/me/scoped.git"), true),
+		resolveRemoteEntry(mustRemoteEntry(t, "https://gitlab.com/me/app.git"), true),
+		resolveRemoteEntry(mustRemoteEntry(t, "git@github.com:me/ssh.git"), true),
+	}
+	var out bytes.Buffer
+	printRemoteEntries(&out, remotes, true)
+	got := out.String()
+
+	for _, want := range []string{
+		"github.com/me/shared  git/github.com  (host token)",
+		"github.com/me/scoped  git/github.com/me/scoped  (repo token)",
+		"gitlab.com/me/app     no credential (needs git/gitlab.com or git/gitlab.com/me/app)",
+		"github.com/me/ssh     ssh — credential helper not used",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "missing") {
+		t.Errorf("host-token remotes must not be reported missing:\n%s", got)
+	}
+}
+
+func TestPrintRemoteEntriesIgnoredRepoToken(t *testing.T) {
+	credentialPassStore(t, "git/github.com", "git/github.com/me/scoped")
+	remotes := []remoteEntry{resolveRemoteEntry(mustRemoteEntry(t, "https://github.com/me/scoped.git"), false)}
+	var out bytes.Buffer
+	printRemoteEntries(&out, remotes, true)
+	if want := "git/github.com/me/scoped ignored — credential.useHttpPath is off"; !strings.Contains(out.String(), want) {
+		t.Errorf("output missing %q:\n%s", want, out.String())
+	}
+}
+
+func TestUseHTTPPathFor(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "gitconfig")
+	t.Setenv("GIT_CONFIG_GLOBAL", cfg)
+
+	if useHTTPPathFor("github.com") {
+		t.Fatal("expected false with no config")
+	}
+	if err := os.WriteFile(cfg, []byte("[credential]\n\tuseHttpPath = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !useHTTPPathFor("github.com") {
+		t.Fatal("expected true with global credential.useHttpPath")
+	}
+	if err := os.WriteFile(cfg, []byte("[credential \"https://gitlab.com\"]\n\tuseHttpPath = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !useHTTPPathFor("gitlab.com") || useHTTPPathFor("github.com") {
+		t.Fatal("expected URL-scoped useHttpPath to apply only to gitlab.com")
+	}
+}

@@ -202,18 +202,30 @@ func runCredentialSetup(args []string, globals globalFlags, stdin io.Reader, std
 			}
 		}
 
-		entries := discoverRemoteEntries(workspacePath)
-		for _, e := range entries {
-			if !secret.PassEntryExists(e.PassEntry) {
-				capturedEntry := e.PassEntry
-				plan.Actions = append(plan.Actions, Action{
-					ID:          "create-pass-entry-" + capturedEntry,
-					Description: fmt.Sprintf("Create pass entry %s", capturedEntry),
-					Execute: func() error {
-						return runPassInsertInteractive(capturedEntry)
-					},
-				})
+		// Setup turns useHttpPath on (above), so resolve as git will after it.
+		// Remotes already covered by a host or repo token need nothing; for
+		// the rest, offer one host-wide entry per host.
+		var hosts []string
+		uncovered := make(map[string]int)
+		for _, e := range discoverRemoteEntries(workspacePath) {
+			e = resolveRemoteEntry(e, true)
+			if !e.HelperUsed || e.Exists {
+				continue
 			}
+			if uncovered[e.Host] == 0 {
+				hosts = append(hosts, e.Host)
+			}
+			uncovered[e.Host]++
+		}
+		for _, host := range hosts {
+			capturedEntry := "git/" + host
+			plan.Actions = append(plan.Actions, Action{
+				ID:          "create-pass-entry-" + capturedEntry,
+				Description: fmt.Sprintf("Create pass entry %s (host token for %d remote(s))", capturedEntry, uncovered[host]),
+				Execute: func() error {
+					return runPassInsertInteractive(capturedEntry)
+				},
+			})
 		}
 	}
 
@@ -272,10 +284,14 @@ func runCredentialStatus(args []string, globals globalFlags, stdout, stderr io.W
 
 	workspacePath, _, _, wsErr := requireWorkspaceInitialized(globals)
 	if wsErr == nil {
-		entries := discoverRemoteEntries(workspacePath)
-		for _, e := range entries {
-			e.Exists = secret.PassEntryExists(e.PassEntry)
-			remotes = append(remotes, e)
+		useHTTPPath := make(map[string]bool) // per host
+		for _, e := range discoverRemoteEntries(workspacePath) {
+			on, ok := useHTTPPath[e.Host]
+			if !ok {
+				on = useHTTPPathFor(e.Host)
+				useHTTPPath[e.Host] = on
+			}
+			remotes = append(remotes, resolveRemoteEntry(e, on))
 		}
 		localOverrides = discoverLocalHelperOverrides(workspacePath)
 	}
@@ -328,14 +344,7 @@ func runCredentialStatus(args []string, globals globalFlags, stdout, stderr io.W
 	if len(remotes) > 0 {
 		fmt.Fprintln(out)
 		style.Header(out, "Workspace Remotes", nc)
-		for _, r := range remotes {
-			icon := boolIcon(r.Exists, nc)
-			status := "exists"
-			if !r.Exists {
-				status = "missing"
-			}
-			fmt.Fprintf(out, "  %s  %s → %s (%s)\n", icon, r.Host, style.Infof(nc, "%s", r.PassEntry), status)
-		}
+		printRemoteEntries(out, remotes, nc)
 	}
 
 	if !connected {
@@ -343,16 +352,24 @@ func runCredentialStatus(args []string, globals globalFlags, stdout, stderr io.W
 		fmt.Fprintln(out, style.ResultWarning(nc, "credential helper not connected %s run `ws git-credential-helper setup`", style.Mutedf(nc, "—")))
 	}
 
-	missingCount := 0
+	missingCount, ignoredCount := 0, 0
 	for _, r := range remotes {
-		if !r.Exists {
+		if r.HelperUsed && !r.Exists {
 			missingCount++
+		}
+		if r.IgnoredEntry != "" {
+			ignoredCount++
 		}
 	}
 	if missingCount > 0 {
 		fmt.Fprintln(out)
-		fmt.Fprintf(out, "%s %d remote(s) missing pass entries %s run `ws git-credential-helper setup`\n",
+		fmt.Fprintf(out, "%s %d remote(s) have no credential %s run `ws git-credential-helper setup`\n",
 			style.IconWarning(nc), missingCount, style.Mutedf(nc, "—"))
+	}
+	if ignoredCount > 0 {
+		fmt.Fprintln(out)
+		fmt.Fprintf(out, "%s %d repo token(s) ignored because credential.useHttpPath is off %s run `ws git-credential-helper setup`\n",
+			style.IconWarning(nc), ignoredCount, style.Mutedf(nc, "—"))
 	}
 
 	fmt.Fprintln(out)
@@ -360,6 +377,36 @@ func runCredentialStatus(args []string, globals globalFlags, stdout, stderr io.W
 	fmt.Fprintln(out, style.Mutedf(nc, "  Entry format: password/token on line 1, username: <user> on line 2."))
 
 	return 0
+}
+
+// printRemoteEntries renders one line per remote: the pass entry the helper
+// resolves it to and whether that is a host-wide or repo-scoped token.
+// Only remotes with no credential at all are marked as failures.
+func printRemoteEntries(w io.Writer, remotes []remoteEntry, nc bool) {
+	width := 0
+	for _, r := range remotes {
+		if n := len(r.Label()); n > width {
+			width = n
+		}
+	}
+	for _, r := range remotes {
+		label := fmt.Sprintf("%-*s", width, r.Label())
+		switch {
+		case !r.HelperUsed:
+			fmt.Fprintf(w, "  %s  %s  %s\n", style.IconDot(nc), label,
+				style.Mutedf(nc, "%s %s credential helper not used", r.Transport, "—"))
+		case !r.Exists:
+			fmt.Fprintf(w, "  %s  %s  %s\n", style.IconCross(nc), label,
+				style.Errorf(nc, "no credential %s", style.Mutedf(nc, "(needs git/%s or git/%s)", r.Host, r.Label())))
+		default:
+			fmt.Fprintf(w, "  %s  %s  %s  %s\n", style.IconCheck(nc), label,
+				style.Infof(nc, "%s", r.PassEntry), style.Mutedf(nc, "(%s token)", r.Scope))
+		}
+		if r.IgnoredEntry != "" {
+			fmt.Fprintf(w, "     %*s  %s\n", width, "",
+				style.Warningf(nc, "%s ignored %s credential.useHttpPath is off", r.IgnoredEntry, "—"))
+		}
+	}
 }
 
 // printCredentialPassHealth renders pass store health in credential status output.
@@ -490,80 +537,125 @@ func runCredentialDisconnect(args []string, globals globalFlags, stdin io.Reader
 
 // ── Shared helpers ──
 
-// remoteEntry represents a discovered git remote and its corresponding pass entry.
+// remoteEntry is one unique workspace remote (host + owner/repo) and the pass
+// entry the credential helper resolves it to.
 type remoteEntry struct {
 	Host      string `json:"host"`
 	Path      string `json:"path,omitempty"`
-	PassEntry string `json:"pass_entry"`
-	Exists    bool   `json:"exists"`
+	Transport string `json:"transport"` // "https", "http", "ssh", ...
+	// HelperUsed is false for non-HTTP remotes: git never asks a credential
+	// helper for SSH auth, so these are informational only.
+	HelperUsed bool `json:"helper_used"`
+	// PassEntry is the entry the helper actually uses ("" when none resolves).
+	PassEntry string `json:"pass_entry,omitempty"`
+	// Scope is "repo" (git/<host>/<owner>/<repo>), "host" (git/<host>), or ""
+	// when nothing resolves.
+	Scope  string `json:"scope,omitempty"`
+	Exists bool   `json:"exists"`
+	// IgnoredEntry is a repo-scoped entry that exists but that git never
+	// asks for, because credential.useHttpPath is off for this host.
+	IgnoredEntry string `json:"ignored_entry,omitempty"`
 }
 
-// discoverRemoteEntries scans workspace repos and returns pass entries for
-// each unique remote. When multiple repos share the same host, per-repo
-// entries (git/<host>/<owner>/<repo>) are used. When only one repo uses a
-// host, a host-only entry (git/<host>) is used.
+// Label is the remote as shown to the user: host/owner/repo.
+func (e remoteEntry) Label() string {
+	if e.Path == "" {
+		return e.Host
+	}
+	return e.Host + "/" + e.Path
+}
+
+// discoverRemoteEntries scans workspace repos and returns one unresolved
+// entry per unique host + owner/repo. Call resolveRemoteEntry to fill in the
+// pass entry.
 func discoverRemoteEntries(workspacePath string) []remoteEntry {
 	repos, err := repo.Discover(workspacePath, nil, nil)
 	if err != nil {
 		return nil
 	}
 
-	type hostURL struct {
-		host string
-		path string // owner/repo, cleaned
-	}
-
-	var all []hostURL
 	seen := make(map[string]bool) // dedup on host+path
-
-	for _, r := range repos {
-		absPath := r.Path // repo.Discover returns absolute paths
-		remoteURLs := gitRemoteURLs(absPath)
-		for _, u := range remoteURLs {
-			host := extractHost(u)
-			rpath := extractRepoPath(u)
-			if host == "" {
-				continue
-			}
-			key := host + "/" + rpath
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			all = append(all, hostURL{host: host, path: rpath})
-		}
-	}
-
-	// Count repos per host to decide entry granularity.
-	hostCount := make(map[string]int)
-	for _, hu := range all {
-		hostCount[hu.host]++
-	}
-
-	dedupEntry := make(map[string]bool)
 	var entries []remoteEntry
-	for _, hu := range all {
-		var entry remoteEntry
-		if hostCount[hu.host] > 1 && hu.path != "" {
-			entry = remoteEntry{
-				Host:      hu.host,
-				Path:      hu.path,
-				PassEntry: "git/" + hu.host + "/" + hu.path,
+	for _, r := range repos {
+		for _, u := range gitRemoteURLs(r.Path) { // repo.Discover returns absolute paths
+			e, ok := newRemoteEntry(u)
+			if !ok || seen[e.Label()] {
+				continue
 			}
-		} else {
-			entry = remoteEntry{
-				Host:      hu.host,
-				PassEntry: "git/" + hu.host,
-			}
+			seen[e.Label()] = true
+			entries = append(entries, e)
 		}
-		if dedupEntry[entry.PassEntry] {
-			continue
-		}
-		dedupEntry[entry.PassEntry] = true
-		entries = append(entries, entry)
 	}
-
 	return entries
+}
+
+// newRemoteEntry parses a remote URL. ok is false when no host can be found
+// (e.g. a local-path remote).
+func newRemoteEntry(rawURL string) (remoteEntry, bool) {
+	host := extractHost(rawURL)
+	if host == "" {
+		return remoteEntry{}, false
+	}
+	transport := remoteTransport(rawURL)
+	return remoteEntry{
+		Host:       host,
+		Path:       extractRepoPath(rawURL),
+		Transport:  transport,
+		HelperUsed: transport == "https" || transport == "http",
+	}, true
+}
+
+// remoteTransport returns the URL scheme of a remote ("ssh" for scp-style
+// git@host:owner/repo and for ssh variants like git+ssh).
+func remoteTransport(rawURL string) string {
+	scheme, _, ok := strings.Cut(rawURL, "://")
+	if !ok {
+		return "ssh"
+	}
+	scheme = strings.ToLower(scheme)
+	if strings.Contains(scheme, "ssh") {
+		return "ssh"
+	}
+	return scheme
+}
+
+// resolveRemoteEntry fills in the pass entry the helper would use for e,
+// mirroring what git sends: the repo path is only part of the request when
+// useHTTPPath is true. Non-HTTP remotes are returned unchanged.
+func resolveRemoteEntry(e remoteEntry, useHTTPPath bool) remoteEntry {
+	if !e.HelperUsed {
+		return e
+	}
+	sentPath := ""
+	if useHTTPPath {
+		sentPath = e.Path
+	}
+	e.PassEntry = secret.ResolveCredentialEntry(e.Host, sentPath)
+	e.Exists = e.PassEntry != ""
+	switch {
+	case !e.Exists:
+		e.Scope = ""
+	case e.PassEntry == "git/"+e.Host:
+		e.Scope = "host"
+	default:
+		e.Scope = "repo"
+	}
+	if !useHTTPPath && e.Path != "" {
+		repoEntry := "git/" + e.Host + "/" + e.Path
+		if secret.PassEntryExists(repoEntry) {
+			e.IgnoredEntry = repoEntry
+		}
+	}
+	return e
+}
+
+// useHTTPPathFor reports whether git sends the repo path to credential
+// helpers for host, honouring URL-scoped config (credential.<url>.useHttpPath).
+func useHTTPPathFor(host string) bool {
+	cmd := exec.Command("git", "config", "--global", "--type=bool", "--get-urlmatch",
+		"credential.useHttpPath", "https://"+host+"/")
+	out, _ := cmd.Output()
+	return strings.TrimSpace(string(out)) == "true"
 }
 
 // extractRepoPath extracts the owner/repo portion from a git remote URL.
@@ -786,11 +878,4 @@ func installCredentialWrapper(wrapperPath string) error {
 	}
 	script := "#!/bin/sh\nexec ws git-credential-helper \"$@\"\n"
 	return os.WriteFile(wrapperPath, []byte(script), 0o755)
-}
-
-func boolIcon(ok bool, nc bool) string {
-	if ok {
-		return style.IconCheck(nc)
-	}
-	return style.IconCross(nc)
 }
