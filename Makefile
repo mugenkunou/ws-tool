@@ -1,9 +1,9 @@
 .PHONY: build test test-local test-docker test-image test-image-clean fmt clean hooks release-check install uninstall
 
 VERSION  ?= dev
-TMPDIR   ?= $(CURDIR)/tmp
-GOCACHE  ?= $(CURDIR)/.gocache
-GOTMPDIR ?= $(CURDIR)/.gotmp
+TMPDIR   ?= $(HOME)/tmp
+GOCACHE  ?= $(HOME)/.gocache
+GOTMPDIR ?= $(HOME)/gotmp
 LDFLAGS  := -s -w -X github.com/mugenkunou/ws-tool/cmd.appVersion=$(VERSION)
 
 # ── install paths ─────────────────────────────────────────────────────────────
@@ -35,23 +35,23 @@ else
 	@$(MAKE) test-docker
 endif
 
-# test-local: run tests directly on the host. Relies on repo-local TMPDIR /
-# GOCACHE / GOTMPDIR to work around noexec /tmp on this machine.
+# test-local: run tests directly on the host. Relies on a home-directory TMPDIR
+# plus repo-local GOCACHE to work around noexec /tmp on this machine.
 test-local:
 	@mkdir -p "$(TMPDIR)" "$(GOCACHE)" "$(GOTMPDIR)"
 	TMPDIR="$(TMPDIR)" GOCACHE="$(GOCACHE)" GOTMPDIR="$(GOTMPDIR)" go test ./...
 
 # test-docker: build the image if needed, then run tests inside a container.
-# The source tree is bind-mounted read-only; only the three cache/tmp dirs are
-# writable so container-written files are owned cleanly by the host user.
+# The source tree is bind-mounted read-only; only cache/tmp dirs are writable
+# so container-written files are owned cleanly by the host user.
 test-docker: $(DOCKER_STAMP)
 	@mkdir -p "$(TMPDIR)" "$(GOCACHE)" "$(GOTMPDIR)"
 	docker run --rm --init \
 		--user "$$(id -u):$$(id -g)" \
 		-v "$(CURDIR):/workspace:ro" \
-		-v "$(CURDIR)/tmp:/workspace/tmp:rw" \
+		-v "$(TMPDIR):/workspace/tmp:rw" \
 		-v "$(CURDIR)/.gocache:/workspace/.gocache:rw" \
-		-v "$(CURDIR)/.gotmp:/workspace/.gotmp:rw" \
+		-v "$(GOTMPDIR):/workspace/.gotmp:rw" \
 		-w /workspace \
 		-e HOME=/tmp \
 		-e GOFLAGS=-mod=readonly \
