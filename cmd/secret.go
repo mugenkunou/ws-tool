@@ -11,7 +11,6 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/manifest"
-	"github.com/mugenkunou/ws-tool/internal/repo"
 	"github.com/mugenkunou/ws-tool/internal/secret"
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
@@ -1039,39 +1038,15 @@ func runSecretGit(args []string, globals globalFlags, stdin io.Reader, stdout, s
 // ── Helpers (secret) ──
 
 func buildAllowlistMap(m manifest.Manifest) map[string]struct{} {
-	allow := make(map[string]struct{}, len(m.Secret.Allowlist))
-	for _, a := range m.Secret.Allowlist {
-		allow[a] = struct{}{}
-	}
-	return allow
+	return secret.AllowlistMap(m)
 }
 
 func addToAllowlist(manifestPath, anchor string) error {
-	m, err := manifest.Load(manifestPath)
-	if err != nil {
-		return err
-	}
-	for _, a := range m.Secret.Allowlist {
-		if a == anchor {
-			return nil
-		}
-	}
-	m.Secret.Allowlist = append(m.Secret.Allowlist, anchor)
-	return manifest.Save(manifestPath, m)
+	return secret.AddToAllowlist(manifestPath, anchor)
 }
 
 func trackPassEntry(manifestPath, anchor string) {
-	m, err := manifest.Load(manifestPath)
-	if err != nil {
-		return
-	}
-	for _, e := range m.Secret.PassEntries {
-		if e == anchor {
-			return
-		}
-	}
-	m.Secret.PassEntries = append(m.Secret.PassEntries, anchor)
-	manifest.Save(manifestPath, m)
+	_ = secret.TrackPassEntry(manifestPath, anchor)
 }
 
 // promptLine reads a full line of input with a default value.
@@ -1097,18 +1072,7 @@ func promptLine(stdin io.Reader, stdout io.Writer, globals globalFlags, prompt, 
 // to cwd) and returns it workspace-relative, forward-slashed, for skip_dirs
 // matching and storage. It fails for directories outside the workspace.
 func workspaceRelDir(workspacePath, input string) (string, error) {
-	abs, err := config.ExpandUserPath(input)
-	if err != nil {
-		return "", fmt.Errorf("invalid directory %q: %w", input, err)
-	}
-	if !repo.IsWithin(abs, workspacePath) || abs == filepath.Clean(workspacePath) {
-		return "", fmt.Errorf("directory must be inside the workspace %s: %s", workspacePath, abs)
-	}
-	rel, err := filepath.Rel(workspacePath, abs)
-	if err != nil {
-		return "", err
-	}
-	return filepath.ToSlash(rel), nil
+	return secret.WorkspaceRelDir(workspacePath, input)
 }
 
 // skipDirFlagsToRel resolves --skip-dir values per spec "Path Rules" and
@@ -1133,34 +1097,13 @@ func skipDirFlagsToRel(workspacePath string, flags []string) ([]string, error) {
 // the config path convention (relative, absolute, or ~); flag values have
 // already been resolved by skipDirFlagsToRel.
 func mergeSkipDirs(workspacePath string, configDirs, flagDirs []string) []string {
-	seen := make(map[string]bool)
-	var result []string
-	for _, d := range append(append([]string{}, configDirs...), flagDirs...) {
-		rel, ok := config.WorkspaceRel(workspacePath, strings.TrimSpace(d))
-		if !ok || rel == "." || seen[rel] {
-			continue
-		}
-		d = rel
-		seen[d] = true
-		result = append(result, d)
-	}
-	return result
+	return secret.MergeSkipDirs(workspacePath, configDirs, flagDirs)
 }
 
 // addSkipDirToConfig loads config, appends dir to secret.skip_dirs if not
 // already present, and saves.
 func addSkipDirToConfig(configPath, dir string) error {
-	cfg, err := config.Load(configPath)
-	if err != nil {
-		return err
-	}
-	for _, d := range cfg.Secret.SkipDirs {
-		if filepath.ToSlash(d) == dir {
-			return nil // already present
-		}
-	}
-	cfg.Secret.SkipDirs = append(cfg.Secret.SkipDirs, dir)
-	return config.Save(configPath, cfg)
+	return secret.AddSkipDir(configPath, dir)
 }
 
 // isInSkippedDir returns true if the file path is under any of the skipped directories.

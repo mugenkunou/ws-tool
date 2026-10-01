@@ -1,0 +1,30 @@
+ws  1 Dashboard  2 Repos  3 Dotfiles  4 Scratch  5 Logs  6 Capture  7 Ignore  8 Secrets  9 System
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Reset workspace
+Reverses `ws init`. Tick each step to undo (a selects all).
+
+› [ ] Reset dotfiles (restore originals, remove symlinks)
+  [ ] Reset trash setup (remove script and aliases)
+  [ ] Remove /home/tester/Workspace/ws
+  [ ] Remove /home/tester/.config/ws-tool/config.json
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+space toggle • a all/none • enter apply • esc back

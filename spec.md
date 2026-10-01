@@ -912,7 +912,7 @@ Required only if compiling `ws` from source. Not needed on machines that receive
 
 | Tool | Version | Purpose | Install |
 | --- | --- | --- | --- |
-| `go` | ≥ 1.23 | Compile the `ws` binary (statically linked) | [go.dev/dl](https://go.dev/dl/) |
+| `go` | ≥ 1.26 | Compile the `ws` binary (statically linked) | [go.dev/dl](https://go.dev/dl/) |
 | `git` | any | Clone the source repo, embed build metadata | `sudo apt install git` |
 | `make` | any | Build automation (optional — `go build` works alone) | `sudo apt install make` |
 

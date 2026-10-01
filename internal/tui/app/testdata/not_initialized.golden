@@ -1,0 +1,24 @@
+ws  Setup
+────────────────────────────────────────────────────────────────────────────────
+This workspace is not initialized yet.
+
+Workspace  /home/tester/Workspace
+Config     /home/tester/.config/ws-tool/config.json
+
+Press i to run the ws init wizard. It creates ws/manifest.json,
+.megaignore, and the config, and offers to set up soft-delete.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+i initialize workspace • ? help • q quit

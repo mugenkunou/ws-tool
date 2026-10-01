@@ -4,6 +4,7 @@ VERSION  ?= dev
 TMPDIR   ?= $(HOME)/tmp
 GOCACHE  ?= $(HOME)/.gocache
 GOTMPDIR ?= $(HOME)/gotmp
+GOMODCACHE ?= $(shell go env GOMODCACHE)
 LDFLAGS  := -s -w -X github.com/mugenkunou/ws-tool/cmd.appVersion=$(VERSION)
 
 # ── install paths ─────────────────────────────────────────────────────────────
@@ -44,17 +45,23 @@ test-local:
 # test-docker: build the image if needed, then run tests inside a container.
 # The source tree is bind-mounted read-only; only cache/tmp dirs are writable
 # so container-written files are owned cleanly by the host user.
+# Modules are downloaded on the host and mounted read-only with GOPROXY=off,
+# so the container never touches the network.
 test-docker: $(DOCKER_STAMP)
 	@mkdir -p "$(TMPDIR)" "$(GOCACHE)" "$(GOTMPDIR)"
+	TMPDIR="$(TMPDIR)" GOCACHE="$(GOCACHE)" GOTMPDIR="$(GOTMPDIR)" go mod download
 	docker run --rm --init \
 		--user "$$(id -u):$$(id -g)" \
 		-v "$(CURDIR):/workspace:ro" \
+		-v "$(GOMODCACHE):/gomodcache:ro" \
 		-v "$(TMPDIR):/workspace/tmp:rw" \
 		-v "$(CURDIR)/.gocache:/workspace/.gocache:rw" \
 		-v "$(GOTMPDIR):/workspace/.gotmp:rw" \
 		-w /workspace \
 		-e HOME=/tmp \
 		-e GOFLAGS=-mod=readonly \
+		-e GOMODCACHE=/gomodcache \
+		-e GOPROXY=off \
 		-e GONOSUMDB='*' \
 		-e GONOSUMCHECK='*' \
 		-e TMPDIR=/workspace/tmp \

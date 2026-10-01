@@ -42,7 +42,7 @@ Your digital life is scattered:
 ### Install
 
 ```bash
-# One-liner (requires Go ≥ 1.23)
+# One-liner (requires Go ≥ 1.26)
 go install github.com/mugenkunou/ws-tool@latest
 sudo mv "$(go env GOPATH)/bin/ws-tool" /usr/local/bin/ws
 
@@ -229,6 +229,7 @@ Presets: `sync` (mega-sync + dotfile-sync + repo-sync), `maintenance` (ignore-sc
 
 | Command | What it does |
 | --- | --- |
+| `ws tui` | Interactive terminal UI for everything above — dashboard, repos, dotfiles, scratch, logs, capture, ignore, secrets, trash & cron |
 | `ws version` | Binary version, schema versions, platform info |
 | `ws config` | Configuration commands (`view`, `defaults`) |
 | `ws completions <shell>` | Generate shell completions (bash/zsh/fish) |
@@ -288,7 +289,7 @@ ws ignore generate --merge  # keep your custom rules, add missing template rules
 | Principle | What it means |
 | --- | --- |
 | **Single binary** | No Python, no Node, no runtime deps. Copy it to any Linux box and go. |
-| **Zero third-party libraries** | Pure Go stdlib. Minimal attack surface. |
+| **Minimal dependencies** | Core and CLI are pure Go stdlib. The TUI (`ws tui`) uses Charm's [Bubble Tea](https://github.com/charmbracelet/bubbletea), Bubbles, and Lip Gloss — nothing else. |
 | **Offload, don't reimplement** | `ln`, `grep`, `find`, `diff`, `script(1)`, `git` — `ws` orchestrates battle-tested tools |
 | **Read/write separation** | Read commands are non-interactive and pipe-safe. Write commands are always interactive with `--dry-run`. |
 | **`--json` everywhere** | Every command supports `--json` for scripting. Stable schema envelope with version. |
@@ -422,7 +423,7 @@ cd ws-tool
 make build
 ```
 
-Requires Go ≥ 1.23. That's it. No `npm install`. No virtualenv. No cmake. One command.
+Requires Go ≥ 1.26. That's it. No `npm install`. No virtualenv. No cmake. One command.
 
 If your environment restricts executable temp dirs, use repo-local temp/cache dirs:
 

@@ -1,0 +1,30 @@
+ws  1 Dashboard  2 Repos  3 Dotfiles  4 Scratch  5 Logs  6 Capture  7 Ignore  8 Secrets  9 System
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ System path                                    Stored as                       Status         Sudo
+ ~/.bashrc                                      bashrc                          ✔ ok
+ ~/.gitconfig                                   gitconfig                       ✘ broken
+ /etc/hosts                                     etc/hosts                       ⚠ overwritten  yes
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+a add • d remove • x fix links • p git push • v git status/log • r refresh • tab next screen …

@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -92,6 +91,8 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runCapture(commandArgs, globals, stdin, stdout, stderr)
 	case "cron":
 		return runCron(commandArgs, globals, stdin, stdout, stderr)
+	case "tui":
+		return runTUI(commandArgs, globals, stdin, stdout, stderr)
 	case "credential", "git-credential-helper":
 		return runGitCredentialHelper(commandArgs, globals, stdin, stdout, stderr)
 	case "completions":
@@ -350,48 +351,15 @@ func resolveWorkspacePaths(globals globalFlags) (workspacePath, configPath, mani
 	if err := resolveGlobalPaths(&globals); err != nil {
 		return "", "", "", err
 	}
-	configPath = globals.config
-	if configPath == "" {
-		p, err := config.DefaultPath()
-		if err != nil {
-			return "", "", "", err
-		}
-		configPath = p
-	}
-
-	// Try to read workspace from config if not set via flag/env.
-	workspaceArg := globals.workspace
-	if workspaceArg == "" {
-		workspaceArg = os.Getenv("WS_WORKSPACE")
-	}
-	if workspaceArg == "" {
-		// Attempt to load config to get workspace path.
-		if cfg, err := config.Load(configPath); err == nil && cfg.Workspace != "" {
-			workspaceArg = cfg.Workspace
-		}
-	}
-	if workspaceArg == "" {
-		workspaceArg = "~/Workspace"
-	}
-
-	workspacePath, err = config.ExpandUserPath(workspaceArg)
+	p, err := workspace.ResolvePaths(workspace.PathOverrides{
+		Workspace: globals.workspace,
+		Config:    globals.config,
+		Manifest:  globals.manifest,
+	})
 	if err != nil {
 		return "", "", "", err
 	}
-
-	manifestPath = globals.manifest
-	if manifestPath == "" {
-		manifestPath = filepath.Join(workspacePath, "ws", "manifest.json")
-	}
-
-	// Migration: if XDG config doesn't exist, fall back to old workspace-embedded config.
-	if globals.config == "" && !workspace.ConfigExists(configPath) {
-		oldPath := filepath.Join(workspacePath, "ws", "config.json")
-		if workspace.ConfigExists(oldPath) {
-			configPath = oldPath
-		}
-	}
-	return workspacePath, configPath, manifestPath, nil
+	return p.Workspace, p.Config, p.Manifest, nil
 }
 
 func requireWorkspaceInitialized(globals globalFlags, stderr ...io.Writer) (string, string, string, error) {
@@ -516,6 +484,7 @@ func printHelpStyled(stdout io.Writer, noColor bool) {
 	cmds := []struct{ name, desc string }{
 		{"help", "Show command help"},
 		{"version", "Print version information"},
+		{"tui", "Interactive terminal UI"},
 		{"init", "Initialize a ws workspace"},
 		{"reset", "Reverse ws init — undo all provisions"},
 		{"restore", "Guided restore workflow"},
@@ -534,7 +503,7 @@ func printHelpStyled(stdout io.Writer, noColor bool) {
 		{"config", "Configuration of ws"},
 	}
 	for _, c := range cmds {
-		fmt.Fprintf(stdout, "  %-18s %s\n", style.Accentf(noColor, c.name), c.desc)
+		fmt.Fprintf(stdout, "  %-18s %s\n", style.Accentf(noColor, "%s", c.name), c.desc)
 	}
 
 	fmt.Fprintln(stdout)
@@ -668,7 +637,7 @@ func promptChoice(stdin io.Reader, stdout io.Writer, globals globalFlags, msg, c
 		return defaultKey
 	}
 	nc := globals.noColor
-	fmt.Fprintf(stdout, "%s %s : ", msg, style.Mutedf(nc, choices))
+	fmt.Fprintf(stdout, "%s %s : ", msg, style.Mutedf(nc, "%s", choices))
 	line, err := readLine(stdin)
 	if err != nil {
 		return defaultKey // EOF = default

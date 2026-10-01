@@ -1,0 +1,546 @@
+package app
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+
+	wscapture "github.com/mugenkunou/ws-tool/internal/capture"
+	"github.com/mugenkunou/ws-tool/internal/config"
+	"github.com/mugenkunou/ws-tool/internal/cron"
+	"github.com/mugenkunou/ws-tool/internal/dotfile"
+	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
+	wslog "github.com/mugenkunou/ws-tool/internal/log"
+	"github.com/mugenkunou/ws-tool/internal/manifest"
+	"github.com/mugenkunou/ws-tool/internal/repo"
+	wsscratch "github.com/mugenkunou/ws-tool/internal/scratch"
+	"github.com/mugenkunou/ws-tool/internal/secret"
+	"github.com/mugenkunou/ws-tool/internal/trash"
+	"github.com/mugenkunou/ws-tool/internal/tui/env"
+	"github.com/mugenkunou/ws-tool/internal/tui/nav"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/capture"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/dotfiles"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/logs"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/repos"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/scratch"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/secrets"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/system"
+	"github.com/mugenkunou/ws-tool/internal/tui/tuitest"
+	"github.com/mugenkunou/ws-tool/internal/workspace"
+)
+
+const ws = "/home/tester/Workspace"
+
+func init() {
+	// Screens render times in local time; pin it so snapshots are stable.
+	time.Local = time.UTC
+}
+
+func testEnv(t *testing.T) env.Env {
+	t.Helper()
+	t.Setenv("HOME", "/home/tester")
+	cfg := config.Default()
+	return env.Env{
+		Paths: workspace.Paths{
+			Workspace: ws,
+			Config:    "/home/tester/.config/ws-tool/config.json",
+			Manifest:  ws + "/ws/manifest.json",
+		},
+		Config:     cfg,
+		ScratchDir: "/home/tester/Scratch",
+		LogDir:     ws + "/ws/ws-log",
+	}
+}
+
+func newApp(t *testing.T, loadErr error) Model {
+	return New(workspace.PathOverrides{}, testEnv(t), loadErr)
+}
+
+// fixtures are the LoadedMsgs the screens' commands would produce.
+func fixtures() []tea.Msg {
+	return []tea.Msg{
+		repos.LoadedMsg{Entries: []repos.Entry{
+			{Status: repo.RepoStatus{Path: ws + "/Projects/api", Branch: "main", HasUpstream: true}},
+			{Status: repo.RepoStatus{Path: ws + "/Projects/web", Branch: "feature/login", Dirty: true, Ahead: 2, HasUpstream: true},
+				Findings: []repo.Finding{{Repo: ws + "/Projects/web", Check: "identity", Severity: repo.SeverityWarn, Detail: "user.email not set"}}},
+			{Status: repo.RepoStatus{Path: ws + "/Projects/old", Detached: true, Behind: 5, HasUpstream: true}},
+			{Status: repo.RepoStatus{Path: "/home/tester/.password-store", Branch: "master"}},
+		}},
+		dotfiles.LoadedMsg{Entries: []dotfiles.Entry{
+			{Record: manifest.DotfileRecord{System: "/home/tester/.bashrc", Name: "bashrc"}},
+			{Record: manifest.DotfileRecord{System: "/home/tester/.gitconfig", Name: "gitconfig"}, Status: dotfile.StatusBroken},
+			{Record: manifest.DotfileRecord{System: "/etc/hosts", Name: "etc/hosts", Sudo: true}, Status: dotfile.StatusOverwritten},
+		}},
+		scratch.LoadedMsg{
+			Entries: []wsscratch.Entry{
+				{Name: "dns-debug.2026-09", Path: "/home/tester/Scratch/dns-debug.2026-09", Age: 3 * time.Hour, SizeBytes: 2048, Items: 4, Tags: []string{"dns", "network"}},
+				{Name: "proxy-timeout.2026-08", Path: "/home/tester/Scratch/proxy-timeout.2026-08", Age: 120 * 24 * time.Hour, SizeBytes: 5 << 20, Items: 17},
+			},
+			Tags: []string{"dns", "network", "proxy"},
+		},
+		logs.LoadedMsg{Sessions: []wslog.Session{
+			{Tag: "deploy-fix", StartedAt: time.Date(2026, 9, 30, 14, 5, 0, 0, time.UTC), Commands: 12, SizeBytes: 40960, Active: true},
+			{Tag: "rsync-backup", StartedAt: time.Date(2026, 9, 28, 9, 30, 0, 0, time.UTC), DurationSec: 1865, Commands: 7, SizeBytes: 8192},
+		}},
+		capture.LoadedMsg{Locations: []wscapture.Location{
+			{Name: "default", Path: ws + "/ws/captures/captures.md", Exists: true},
+			{Name: "work", Path: ws + "/Work/captures/captures.md"},
+		}},
+		ignore.LoadedMsg{Violations: []wsignore.Violation{
+			{Type: "bloat", Severity: "CRITICAL", Path: "Projects/web/dump.log", SizeBytes: 220 << 20},
+			{Type: "depth", Severity: "WARNING", Path: "Notes/a/b/c/d/e/f/g", Depth: 7},
+			{Type: "bloat", Severity: "WARNING", Path: "Data/bruno/node_modules", SizeBytes: 40 << 20, InSafeHarbor: true},
+		}},
+		secrets.LoadedMsg{
+			Violations: []secret.Violation{{Severity: "CRITICAL", Path: "Projects/api/.env", Line: 3, Snippet: "password=hunter2"}},
+			Health:     secrets.Health{Pass: secret.PassHealth{Installed: true, GPGAvailable: true, Initialized: true, GitBacked: true, EntryCount: 42}},
+		},
+		system.LoadedMsg{
+			Trash:     trash.Status{RootDir: "/home/tester/.Trash", ShellRMConfigured: true, VSCodeConfigured: true},
+			TrashScan: trash.ScanResult{SizeBytes: 3 << 20, FileCount: 12},
+			Jobs: []system.Job{
+				{Name: "dotfile-push", Schedule: "0 * * * *", Description: "commit + push dotfiles", Installed: true,
+					LastRun: cron.RunRecord{Job: "dotfile-push", Time: time.Now().Add(-2 * time.Hour)}},
+				{Name: "repo-sync", Schedule: "*/30 * * * *", Description: "sync repo fleet"},
+				{Name: "all", Preset: true, Description: "preset: dotfile-push, repo-sync"},
+			},
+		},
+	}
+}
+
+// send feeds msgs through Update, discarding commands (no IO in tests).
+func send(m Model, msgs ...tea.Msg) Model {
+	for _, msg := range msgs {
+		next, _ := m.Update(msg)
+		m = next.(Model)
+	}
+	return m
+}
+
+// sendRun feeds msg and returns the resulting command too.
+func sendRun(m Model, msg tea.Msg) (Model, tea.Cmd) {
+	next, cmd := m.Update(msg)
+	return next.(Model), cmd
+}
+
+func loaded(t *testing.T, w, h int) Model {
+	t.Helper()
+	m := send(newApp(t, nil), tea.WindowSizeMsg{Width: w, Height: h})
+	return send(m, fixtures()...)
+}
+
+func press(s string) tea.KeyPressMsg {
+	switch s {
+	case "tab":
+		return tea.KeyPressMsg{Code: tea.KeyTab}
+	case "shift+tab":
+		return tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
+	case "esc":
+		return tea.KeyPressMsg{Code: tea.KeyEscape}
+	case "enter":
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
+	case "down":
+		return tea.KeyPressMsg{Code: tea.KeyDown}
+	case "space":
+		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
+	case "ctrl+c":
+		return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+	}
+	r := []rune(s)[0]
+	return tea.KeyPressMsg{Code: r, Text: s}
+}
+
+func typeText(m Model, s string) Model {
+	for _, r := range s {
+		m = send(m, press(string(r)))
+	}
+	return m
+}
+
+func view(m Model) string { return m.View().Content }
+
+// pump runs cmd and feeds its messages (expanding batches) back into the
+// model, repeatedly, so a flow completes. Only for tests whose environment is
+// a hermetic temp workspace.
+func pump(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	queue := []tea.Cmd{cmd}
+	for steps := 0; len(queue) > 0; steps++ {
+		if steps > 500 {
+			t.Fatal("pump: too many steps")
+		}
+		c := queue[0]
+		queue = queue[1:]
+		if c == nil {
+			continue
+		}
+		switch msg := c().(type) {
+		case nil:
+		case tea.BatchMsg:
+			queue = append(queue, msg...)
+		case tea.QuitMsg:
+			t.Fatal("pump: unexpected quit")
+		default:
+			var next tea.Cmd
+			m, next = sendRun(m, msg)
+			queue = append(queue, next)
+		}
+	}
+	return m
+}
+
+func TestSnapshots(t *testing.T) {
+	cases := []struct {
+		name string
+		keys []string
+	}{
+		{"dashboard", nil},
+		{"repos", []string{"2"}},
+		{"repos_detail", []string{"2", "down", "enter"}},
+		{"repos_pull_checklist", []string{"2", "p"}},
+		{"dotfiles", []string{"3"}},
+		{"dotfiles_reset_checklist", []string{"3", "R"}},
+		{"scratch", []string{"4"}},
+		{"scratch_new_prompt", []string{"4", "n", "d", "n"}},
+		{"scratch_tag_prompt", []string{"4", "t", "n"}},
+		{"scratch_prune_checklist", []string{"4", "P"}},
+		{"logs", []string{"5"}},
+		{"capture", []string{"6"}},
+		{"ignore", []string{"7"}},
+		{"ignore_harbors_shown", []string{"7", "H"}},
+		{"secrets", []string{"8"}},
+		{"system", []string{"9"}},
+		{"system_reset_checklist", []string{"9", "R"}},
+		{"full_help", []string{"2", "?"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := loaded(t, 100, 30)
+			for _, k := range c.keys {
+				m = send(m, press(k))
+			}
+			tuitest.Golden(t, c.name, view(m))
+		})
+	}
+}
+
+func TestSnapshotLoading(t *testing.T) {
+	m := send(newApp(t, nil), tea.WindowSizeMsg{Width: 100, Height: 30})
+	tuitest.Golden(t, "dashboard_loading", view(m))
+}
+
+func TestSnapshotNotInitialized(t *testing.T) {
+	m := send(newApp(t, env.ErrNotInitialized), tea.WindowSizeMsg{Width: 80, Height: 24})
+	tuitest.Golden(t, "not_initialized", view(m))
+}
+
+func TestSnapshotLoadError(t *testing.T) {
+	m := loaded(t, 80, 24)
+	m = send(m, dotfiles.LoadedMsg{Err: errors.New("manifest.json: permission denied")}, press("3"))
+	tuitest.Golden(t, "dotfiles_error", view(m))
+}
+
+func TestSnapshotNotice(t *testing.T) {
+	m := loaded(t, 80, 24)
+	m = send(m, press("2"), nav.NoticeMsg{Level: nav.LevelSuccess, Text: "3 done · 1 skipped"})
+	tuitest.Golden(t, "notice", view(m))
+	if m = send(m, press("down")); strings.Contains(view(m), "3 done") {
+		t.Fatal("notice not dismissed by the next key press")
+	}
+}
+
+// TestResize renders every screen (and an open dialog) at several sizes,
+// including resizing a live model, and asserts nothing overflows.
+func TestResize(t *testing.T) {
+	sizes := [][2]int{{120, 40}, {80, 24}, {60, 15}, {40, 12}, {20, 6}, {1, 1}}
+	flows := [][]string{{"1"}, {"2"}, {"3"}, {"4"}, {"5"}, {"6"}, {"7"}, {"8"}, {"9"},
+		{"2", "enter"}, {"2", "p"}, {"4", "n"}, {"9", "R"}}
+	for _, sz := range sizes {
+		for _, flow := range flows {
+			m := loaded(t, 100, 30)
+			for _, k := range flow {
+				m = send(m, press(k))
+			}
+			m = send(m, tea.WindowSizeMsg{Width: sz[0], Height: sz[1]})
+			tuitest.AssertFits(t, view(m), sz[0], sz[1])
+			if !m.current().CapturesKeys() {
+				m = send(m, press("?"))
+				tuitest.AssertFits(t, view(m), sz[0], sz[1])
+			}
+		}
+	}
+}
+
+func TestResizeRestoresLayout(t *testing.T) {
+	for _, flow := range [][]string{nil, {"2", "p"}, {"9"}} {
+		m := loaded(t, 80, 24)
+		for _, k := range flow {
+			m = send(m, press(k))
+		}
+		before := view(m)
+		m = send(m, tea.WindowSizeMsg{Width: 30, Height: 8}, tea.WindowSizeMsg{Width: 80, Height: 24})
+		if after := view(m); after != before {
+			t.Errorf("flow %v: layout changed after shrinking and restoring\n--- before\n%s\n--- after\n%s",
+				flow, tuitest.Plain(before), tuitest.Plain(after))
+		}
+	}
+}
+
+func TestTabNavigation(t *testing.T) {
+	m := loaded(t, 80, 24)
+	for _, want := range append(nav.Screens()[1:], nav.ScreenDashboard) {
+		m = send(m, press("tab"))
+		if m.active != want {
+			t.Fatalf("tab: active = %v, want %v", m.active.Title(), want.Title())
+		}
+	}
+	m = send(m, press("shift+tab"))
+	if m.active != nav.ScreenSystem {
+		t.Fatalf("shift+tab from dashboard: active = %v, want System", m.active.Title())
+	}
+	for i, s := range nav.Screens() {
+		if m = send(m, press(string(rune('1'+i)))); m.active != s {
+			t.Fatalf("key %d: active = %v, want %v", i+1, m.active.Title(), s.Title())
+		}
+	}
+}
+
+func TestDashboardEnterOpensScreen(t *testing.T) {
+	m := loaded(t, 80, 24)
+	m = send(m, press("down"))
+	m, cmd := sendRun(m, press("enter"))
+	if cmd == nil {
+		t.Fatal("enter on dashboard card returned no command")
+	}
+	m = send(m, cmd())
+	if m.active != nav.ScreenDotfiles {
+		t.Fatalf("active = %v, want Dotfiles", m.active.Title())
+	}
+}
+
+// esc pressed and its resulting command (if any) applied.
+func esc(m Model) Model {
+	m, cmd := sendRun(m, press("esc"))
+	if cmd != nil {
+		if msg := cmd(); msg != nil {
+			m = send(m, msg)
+		}
+	}
+	return m
+}
+
+// TestEscMovesOneLevelUp walks detail → list → dashboard → (stays).
+func TestEscMovesOneLevelUp(t *testing.T) {
+	m := loaded(t, 80, 24)
+	m = send(m, press("2"), press("enter"))
+	detail := view(m)
+
+	m = esc(m)
+	if m.active != nav.ScreenRepos || view(m) == detail {
+		t.Fatalf("esc from detail should return to the repos list (active = %v)", m.active.Title())
+	}
+	m = esc(m)
+	if m.active != nav.ScreenDashboard {
+		t.Fatalf("esc from repos list: active = %v, want Dashboard", m.active.Title())
+	}
+	m = esc(m)
+	if m.active != nav.ScreenDashboard {
+		t.Fatalf("esc at dashboard: active = %v, want Dashboard", m.active.Title())
+	}
+}
+
+// TestEscClosesDialogFirst: with a dialog open, esc closes only the dialog.
+func TestEscClosesDialogFirst(t *testing.T) {
+	m := loaded(t, 80, 24)
+	m = send(m, press("4"), press("n"))
+	if !m.current().CapturesKeys() {
+		t.Fatal("prompt did not open")
+	}
+	m = esc(m)
+	if m.current().CapturesKeys() {
+		t.Fatal("esc did not close the prompt")
+	}
+	if m.active != nav.ScreenScratch {
+		t.Fatalf("esc in a dialog left the screen (active = %v)", m.active.Title())
+	}
+}
+
+// TestDialogCapturesGlobalKeys: q, digits and tab type into a prompt instead
+// of quitting or switching screens; ctrl+c still quits.
+func TestDialogCapturesGlobalKeys(t *testing.T) {
+	m := loaded(t, 80, 24)
+	m = send(m, press("4"), press("n"))
+	for _, k := range []string{"q", "2", "?"} {
+		var cmd tea.Cmd
+		m, cmd = sendRun(m, press(k))
+		if cmd != nil {
+			if _, quit := cmd().(tea.QuitMsg); quit {
+				t.Fatalf("%q quit while a prompt was open", k)
+			}
+		}
+		if m.active != nav.ScreenScratch {
+			t.Fatalf("%q switched screens while a prompt was open", k)
+		}
+	}
+	if !strings.Contains(tuitest.Plain(view(m)), "› q2?") {
+		t.Fatalf("typed keys did not reach the prompt:\n%s", tuitest.Plain(view(m)))
+	}
+	_, cmd := sendRun(m, press("ctrl+c"))
+	if cmd == nil {
+		t.Fatal("ctrl+c returned no command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("ctrl+c did not quit while a prompt was open")
+	}
+}
+
+func TestQuit(t *testing.T) {
+	for _, m := range []Model{loaded(t, 80, 24), newApp(t, env.ErrNotInitialized)} {
+		_, cmd := sendRun(m, press("q"))
+		if cmd == nil {
+			t.Fatal("q returned no command")
+		}
+		if _, ok := cmd().(tea.QuitMsg); !ok {
+			t.Fatal("q did not quit")
+		}
+	}
+}
+
+func TestRefreshFromDashboard(t *testing.T) {
+	m := loaded(t, 80, 24)
+	m, cmd := sendRun(m, press("r"))
+	if cmd == nil {
+		t.Fatal("r on dashboard returned no command")
+	}
+	msg := cmd()
+	if _, ok := msg.(nav.RefreshMsg); !ok {
+		t.Fatalf("r produced %T, want nav.RefreshMsg", msg)
+	}
+	if _, cmd = sendRun(m, msg); cmd == nil {
+		t.Fatal("RefreshMsg broadcast returned no reload commands")
+	}
+}
+
+func TestViewIsPure(t *testing.T) {
+	m := loaded(t, 80, 24)
+	if view(m) != view(m) {
+		t.Fatal("View is not deterministic")
+	}
+}
+
+// hermetic points every external integration at temp locations.
+func hermetic(t *testing.T) (root string) {
+	t.Helper()
+	root = t.TempDir()
+	home := filepath.Join(root, "home")
+	for _, d := range []string{home, filepath.Join(root, "xdg"), filepath.Join(root, "pass")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	crontab := filepath.Join(root, "crontab")
+	if err := os.WriteFile(crontab, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "xdg"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(root, "xdg-data"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "xdg-state"))
+	t.Setenv("PASSWORD_STORE_DIR", filepath.Join(root, "pass"))
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(root, "gitconfig"))
+	t.Setenv("WS_CRONTAB_FILE", crontab)
+	t.Setenv("WS_WORKSPACE", "")
+	return root
+}
+
+// TestScratchNewEndToEnd drives prompt → checklist → apply against a real
+// temp workspace and checks the directory exists afterwards.
+func TestScratchNewEndToEnd(t *testing.T) {
+	root := hermetic(t)
+	wsPath := filepath.Join(root, "Workspace")
+	if err := os.MkdirAll(filepath.Join(wsPath, "ws"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Scratch.RootDir = filepath.Join(root, "Scratch")
+	cfg.Scratch.EditorCmd = "true" // the "editor" launched after creation
+	cfgPath := filepath.Join(root, "config.json")
+	if err := config.Save(cfgPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.Save(filepath.Join(wsPath, "ws", "manifest.json"), manifest.Default()); err != nil {
+		t.Fatal(err)
+	}
+	o := workspace.PathOverrides{Workspace: wsPath, Config: cfgPath}
+	e, err := env.Load(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := New(o, e, nil)
+	m = send(m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = pump(t, m, m.Init())
+	m = send(m, press("4"), press("n"))
+	m = typeText(m, "e2e-demo")
+	m, cmd := sendRun(m, press("enter")) // submit name → checklist
+	m = pump(t, m, cmd)
+	if !strings.Contains(tuitest.Plain(view(m)), "Create scratch directory e2e-demo") {
+		t.Fatalf("checklist not shown:\n%s", tuitest.Plain(view(m)))
+	}
+	m, cmd = sendRun(m, press("enter")) // apply
+	m = pump(t, m, cmd)
+	if !strings.Contains(tuitest.Plain(view(m)), "1 done") {
+		t.Fatalf("plan did not finish:\n%s", tuitest.Plain(view(m)))
+	}
+	m, cmd = sendRun(m, press("enter")) // close → notice + reload
+	m = pump(t, m, cmd)
+
+	entries, err := os.ReadDir(cfg.Scratch.RootDir)
+	if err != nil || len(entries) != 1 || !strings.HasPrefix(entries[0].Name(), "e2e-demo") {
+		t.Fatalf("scratch dir not created: %v %v", entries, err)
+	}
+	if !strings.Contains(tuitest.Plain(view(m)), entries[0].Name()) {
+		t.Fatalf("list not reloaded with the new dir:\n%s", tuitest.Plain(view(m)))
+	}
+}
+
+// TestCancelChangesNothing: esc in a checklist runs no action.
+func TestCancelChangesNothing(t *testing.T) {
+	root := hermetic(t)
+	wsPath := filepath.Join(root, "Workspace")
+	if err := os.MkdirAll(filepath.Join(wsPath, "ws"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Scratch.RootDir = filepath.Join(root, "Scratch")
+	cfgPath := filepath.Join(root, "config.json")
+	_ = config.Save(cfgPath, cfg)
+	_ = manifest.Save(filepath.Join(wsPath, "ws", "manifest.json"), manifest.Default())
+	o := workspace.PathOverrides{Workspace: wsPath, Config: cfgPath}
+	e, err := env.Load(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := send(New(o, e, nil), tea.WindowSizeMsg{Width: 100, Height: 30})
+	m = send(m, press("4"), press("n"))
+	m = typeText(m, "never")
+	m, cmd := sendRun(m, press("enter"))
+	m = pump(t, m, cmd)
+	m, cmd = sendRun(m, press("esc"))
+	m = pump(t, m, cmd)
+	if _, err := os.Stat(cfg.Scratch.RootDir); !os.IsNotExist(err) {
+		entries, _ := os.ReadDir(cfg.Scratch.RootDir)
+		if len(entries) > 0 {
+			t.Fatalf("cancel created %v", entries)
+		}
+	}
+	if m.current().CapturesKeys() {
+		t.Fatal("checklist still open after esc")
+	}
+}

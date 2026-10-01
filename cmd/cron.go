@@ -4,16 +4,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/mugenkunou/ws-tool/internal/cron"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
-	"github.com/mugenkunou/ws-tool/internal/provision"
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
 
@@ -107,76 +103,18 @@ func runCronAdd(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		return 1
 	}
 
-	// Detect X11 DISPLAY if not provided by flag.
 	dispVal := *display
 	if dispVal == "" {
-		dispVal = os.Getenv("DISPLAY")
+		dispVal = cron.DefaultDisplay()
 	}
-	if dispVal == "" {
-		dispVal = ":1"
-	}
-
-	// Resolve the ws binary path for embedding in wrapper scripts.
-	wsBin, err := os.Executable()
-	if err != nil {
-		wsBin = "ws"
-	}
-	if resolved, resolveErr := filepath.EvalSymlinks(wsBin); resolveErr == nil {
-		wsBin = resolved
-	}
-
-	statePath, err := cron.StateFilePath()
+	actions, err := cron.AddActions(jobs, cron.WSBinary(), dispVal, workspacePath, manifestPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	logPath, err := cron.LogFilePath()
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-
 	nc := globals.noColor
 	out := textOut(globals, stdout)
-
-	plan := Plan{Command: "cron.add"}
-	for _, job := range jobs {
-		j := job // capture loop variable
-		scriptPath, scriptErr := cron.ScriptPath(j.Name)
-		if scriptErr != nil {
-			fmt.Fprintln(stderr, scriptErr.Error())
-			return 1
-		}
-		scriptContent := cron.GenerateScript(j, wsBin, dispVal, workspacePath, statePath, logPath)
-
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "cron-write-script-" + j.Name,
-			Description: fmt.Sprintf("Write wrapper script %s", scriptPath),
-			Execute: func() error {
-				if mkErr := os.MkdirAll(filepath.Dir(scriptPath), 0o755); mkErr != nil {
-					return mkErr
-				}
-				return os.WriteFile(scriptPath, []byte(scriptContent), 0o755)
-			},
-		})
-
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "cron-install-" + j.Name,
-			Description: fmt.Sprintf("Install crontab entries for %s (%s + @reboot)", j.Name, j.Schedule),
-			Execute: func() error {
-				if addErr := cron.AddJob(j, scriptPath); addErr != nil {
-					return addErr
-				}
-				return manifest.RecordProvision(manifestPath, provision.Entry{
-					Type:    provision.TypeCronJob,
-					Path:    scriptPath,
-					Line:    j.Name,
-					Command: "cron add",
-				})
-			},
-		})
-	}
-
+	plan := Plan{Command: "cron.add", Actions: actions}
 	planResult := RunPlan(plan, stdin, stdout, globals)
 
 	if globals.dryRun {
@@ -247,23 +185,7 @@ func runCronRm(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 	nc := globals.noColor
 	out := textOut(globals, stdout)
 
-	plan := Plan{Command: "cron.rm"}
-	for _, job := range jobs {
-		j := job // capture loop variable
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "cron-rm-" + j.Name,
-			Description: fmt.Sprintf("Remove crontab entries and wrapper script for %s", j.Name),
-			Execute: func() error {
-				if rmErr := cron.RemoveJob(j.Name); rmErr != nil {
-					return rmErr
-				}
-				scriptPath, _ := cron.ScriptPath(j.Name)
-				_ = os.Remove(scriptPath) // best-effort; may already be absent
-				return manifest.RemoveCronJobProvision(manifestPath, j.Name)
-			},
-		})
-	}
-
+	plan := Plan{Command: "cron.rm", Actions: cron.RemoveActions(jobs, manifestPath)}
 	planResult := RunPlan(plan, stdin, stdout, globals)
 
 	if globals.json {
@@ -472,8 +394,8 @@ func runCronStatus(args []string, globals globalFlags, stdout, stderr io.Writer)
 		r, _ := cron.LastRun(statePath, job.Name)
 		installed, _ := cron.HasJob(job.Name)
 
-		fmt.Fprintln(stdout, style.Boldf(nc, job.Name))
-		fmt.Fprintln(stdout, style.Mutedf(nc, sep))
+		fmt.Fprintln(stdout, style.Boldf(nc, "%s", job.Name))
+		fmt.Fprintln(stdout, style.Mutedf(nc, "%s", sep))
 
 		if installed {
 			fmt.Fprintf(stdout, "  Status      %s\n",

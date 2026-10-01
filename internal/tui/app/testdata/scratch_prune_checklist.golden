@@ -1,0 +1,30 @@
+ws  1 Dashboard  2 Repos  3 Dotfiles  4 Scratch  5 Logs  6 Capture  7 Ignore  8 Secrets  9 System
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Prune scratch directories
+1 directory older than 90 days pre-selected.
+
+› [ ] Remove dns-debug.2026-09  2.0 KB, 3h old
+  [x] Remove proxy-timeout.2026-08  5.0 MB, 120d old
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+space toggle • a all/none • enter apply • esc back

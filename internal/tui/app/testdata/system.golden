@@ -1,0 +1,30 @@
+ws  1 Dashboard  2 Repos  3 Dotfiles  4 Scratch  5 Logs  6 Capture  7 Ignore  8 Secrets  9 System
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Trash ~/.Trash  3.0 MB, 12 files
+      ✔ shell rm  ✔ VS Code  ✘ file explorer
+
+Cron
+ Cron job        Schedule      State          Last run          Description
+ dotfile-push    0 * * * *     ✔ installed    2h ago            commit + push dotfiles
+ repo-sync       */30 * * * *  not installed                    sync repo fleet
+ all             preset        not installed                    preset: dotfile-push, repo-sync
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+a install job • d remove job • enter job log • t enable trash • x empty trash • r refresh …

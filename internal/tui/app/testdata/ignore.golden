@@ -1,0 +1,30 @@
+ws  1 Dashboard  2 Repos  3 Dotfiles  4 Scratch  5 Logs  6 Capture  7 Ignore  8 Secrets  9 System
+────────────────────────────────────────────────────────────────────────────────────────────────────
+2 violations · 1 in safe harbors (H to show)
+ Severity  Type          Size       Path
+ CRITICAL  bloat         220.0 MB   Projects/web/dump.log
+ WARNING   depth         7 lvl      Notes/a/b/c/d/e/f/g
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+e exclude • h safe-harbor parent • m move to scratch • d delete • c check path • r rescan …

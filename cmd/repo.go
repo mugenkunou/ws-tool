@@ -116,52 +116,6 @@ func isExternalRepo(workspacePath, repoPath string) bool {
 	return !repo.IsWithin(repoPath, workspacePath)
 }
 
-// wsSpecialRepos returns repos managed by ws itself (dotfiles and pass store)
-// that should always be included in repo operations regardless of configured roots.
-func wsSpecialRepos(workspacePath string) []repo.Repository {
-	var special []repo.Repository
-
-	// Dotfiles repo: <workspace>/ws/dotfiles/
-	dotfilesPath := filepath.Join(workspacePath, "ws", "dotfiles")
-	if isGitRepo(dotfilesPath) {
-		special = append(special, repo.Repository{Path: dotfilesPath})
-	}
-
-	// Pass store: $PASSWORD_STORE_DIR or ~/.password-store
-	passStorePath := ""
-	if env := os.Getenv("PASSWORD_STORE_DIR"); env != "" {
-		if abs, err := config.ExpandUserPath(env); err == nil {
-			passStorePath = abs
-		}
-	} else if home, err := os.UserHomeDir(); err == nil {
-		passStorePath = filepath.Join(home, ".password-store")
-	}
-	if passStorePath != "" && isGitRepo(passStorePath) {
-		special = append(special, repo.Repository{Path: passStorePath})
-	}
-
-	return special
-}
-
-func isGitRepo(path string) bool {
-	info, err := os.Stat(filepath.Join(path, ".git"))
-	return err == nil && info.IsDir()
-}
-
-// appendMissingRepos appends repos from extra that are not already in repos.
-func appendMissingRepos(repos []repo.Repository, extra []repo.Repository) []repo.Repository {
-	seen := make(map[string]struct{}, len(repos))
-	for _, r := range repos {
-		seen[filepath.Clean(r.Path)] = struct{}{}
-	}
-	for _, r := range extra {
-		if _, ok := seen[filepath.Clean(r.Path)]; !ok {
-			repos = append(repos, r)
-		}
-	}
-	return repos
-}
-
 func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	if hasHelpArg(args) {
 		return printCmdHelp(stdout, repoHelp)
@@ -215,7 +169,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		repos = appendMissingRepos(repos, wsSpecialRepos(workspacePath))
+		repos = repo.AppendMissing(repos, repo.SpecialRepos(workspacePath))
 		repos = filterRepos(workspacePath, repos, filters)
 		{
 			var errMsg string
@@ -252,7 +206,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		repos = appendMissingRepos(repos, wsSpecialRepos(workspacePath))
+		repos = repo.AppendMissing(repos, repo.SpecialRepos(workspacePath))
 		{
 			var errMsg string
 			repos, errMsg = targetRepo(repos, fs.Args())
@@ -312,7 +266,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		repos = appendMissingRepos(repos, wsSpecialRepos(workspacePath))
+		repos = repo.AppendMissing(repos, repo.SpecialRepos(workspacePath))
 		repos = filterRepos(workspacePath, repos, filters)
 		{
 			var errMsg string
@@ -344,7 +298,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		repos = appendMissingRepos(repos, wsSpecialRepos(workspacePath))
+		repos = repo.AppendMissing(repos, repo.SpecialRepos(workspacePath))
 		repos = filterRepos(workspacePath, repos, filters)
 		{
 			var errMsg string
@@ -403,7 +357,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		repos = appendMissingRepos(repos, wsSpecialRepos(workspacePath))
+		repos = repo.AppendMissing(repos, repo.SpecialRepos(workspacePath))
 		{
 			var errMsg string
 			repos, errMsg = targetRepo(repos, fs.Args())
@@ -551,7 +505,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		repos = appendMissingRepos(repos, wsSpecialRepos(workspacePath))
+		repos = repo.AppendMissing(repos, repo.SpecialRepos(workspacePath))
 		repos = filterRepos(workspacePath, repos, filters)
 		if globals.dryRun {
 			if globals.json {
@@ -711,26 +665,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 }
 
 func syncActionDescription(workspacePath string, sp repo.SyncPlan, rebase bool) string {
-	short := style.AbsPath(workspacePath, sp.Path)
-	switch sp.Strategy {
-	case repo.SyncPull:
-		if sp.Status.Dirty {
-			return fmt.Sprintf("Commit, pull (%s), push %s  (%s)", rebaseOrMerge(rebase), short, sp.Detail)
-		}
-		return fmt.Sprintf("Pull %s  (%s, ff)", short, sp.Detail)
-	case repo.SyncPush:
-		return fmt.Sprintf("Push %s  (%s)", short, sp.Detail)
-	case repo.SyncCommitPush:
-		return fmt.Sprintf("Commit and push %s  (%s)", short, sp.Detail)
-	case repo.SyncPullPush:
-		mode := rebaseOrMerge(rebase)
-		if sp.Status.Dirty {
-			return fmt.Sprintf("Commit, pull (%s), push %s  (%s)", mode, short, sp.Detail)
-		}
-		return fmt.Sprintf("Pull (%s) + push %s  (%s)", mode, short, sp.Detail)
-	default:
-		return fmt.Sprintf("Sync %s", short)
-	}
+	return repo.DescribeSync(sp, style.AbsPath(workspacePath, sp.Path), rebase)
 }
 
 func rebaseOrMerge(rebase bool) string {

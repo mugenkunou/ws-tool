@@ -1,0 +1,30 @@
+ws  1 Dashboard  2 Repos  3 Dotfiles  4 Scratch  5 Logs  6 Capture  7 Ignore  8 Secrets  9 System
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Projects/web
+
+Path       /home/tester/Workspace/Projects/web
+Branch     feature/login
+State      ● dirty
+Upstream   ↑2 ↓0
+
+Hygiene
+warn  identity user.email not set
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+↑/k scroll up • ↓/j scroll down • esc back • tab next screen • ? help • q quit

@@ -4,12 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 
 	"github.com/mugenkunou/ws-tool/internal/config"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
-	"github.com/mugenkunou/ws-tool/internal/provision"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/trash"
 )
@@ -108,29 +104,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 				ID:          "trash-record-provisions",
 				Description: "Record trash provisions",
 				Execute: func() error {
-					home, _ := os.UserHomeDir()
-					if home == "" {
-						return nil
-					}
-					scriptPath := filepath.Join(home, ".local", "bin", "ws-trash-rm")
-					_ = manifest.RecordProvision(manifestPath, provision.Entry{
-						Type:    provision.TypeFile,
-						Path:    scriptPath,
-						Command: "trash enable",
-					})
-					aliasLine := "alias rm='ws-trash-rm'"
-					for _, rc := range []string{
-						filepath.Join(home, ".bashrc"),
-						filepath.Join(home, ".zshrc"),
-					} {
-						_ = manifest.RecordProvision(manifestPath, provision.Entry{
-							Type:    provision.TypeConfigLine,
-							Path:    rc,
-							Line:    aliasLine,
-							Command: "trash enable",
-						})
-					}
-					return nil
+					return trash.RecordShellProvisions(manifestPath)
 				},
 			})
 		}
@@ -140,18 +114,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 				ID:          "trash-record-explorer-provision",
 				Description: "Record file-explorer trash symlink provision",
 				Execute: func() error {
-					home, _ := os.UserHomeDir()
-					if home == "" {
-						return nil
-					}
-					symlinkPath := filepath.Join(home, ".local", "share", "Trash")
-					_ = manifest.RecordProvision(manifestPath, provision.Entry{
-						Type:    provision.TypeSymlink,
-						Path:    symlinkPath,
-						Target:  *rootDir,
-						Command: "trash enable",
-					})
-					return nil
+					return trash.RecordExplorerProvision(manifestPath, *rootDir)
 				},
 			})
 		}

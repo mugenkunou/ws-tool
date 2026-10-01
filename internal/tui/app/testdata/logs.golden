@@ -1,0 +1,30 @@
+ws  1 Dashboard  2 Repos  3 Dotfiles  4 Scratch  5 Logs  6 Capture  7 Ignore  8 Secrets  9 System
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Tag                                       Started           Duration  Cmds  Size       State
+ deploy-fix                                2026-09-30 14:05  —         12    40.0 KB    ● recording
+ rsync-backup                              2026-09-28 09:30  31m 05s   7     8.0 KB     done
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+enter view • s start recording • x stop recording • / search • d delete • P prune • tab next screen

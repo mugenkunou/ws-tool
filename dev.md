@@ -29,7 +29,7 @@ sudo apt install -y jq
 
 ## 2) Install Go (required)
 
-Project target: **Go 1.23+**.
+Project target: **Go 1.26+** (required by the Charm TUI libraries).
 
 ### Option A — Official tarball (recommended)
 
@@ -550,7 +550,7 @@ ws cron rm sync
 ## 11) Troubleshooting quick hits
 
 - **`go: toolchain not available`**
-  - Install Go 1.23+ via official tarball.
+  - Install Go 1.26+ via official tarball.
 - **Build/tests fail with `permission denied` or `exec format error`**
   - `/tmp` is mounted with `noexec`. Use `make build` / `make test` — the
     Makefile sets `TMPDIR`, `GOCACHE`, `GOTMPDIR` to repo-local directories.
@@ -651,3 +651,104 @@ Global flags (`--json`, `--quiet`, `--verbose`, `--no-color`, `--dry-run`) are p
 ### 12.5) Dead code in the completion table is a bug, not tech debt
 
 A stale entry in `commandFlags()` or `completers` is not harmless dead code — it is a user-facing lie. The shell will suggest a flag or subcommand that does not exist, or fail to suggest one that does. Treat stale completion entries with the same severity as a broken command handler.
+
+---
+
+## 13) TUI (`ws tui`)
+
+The TUI is the long-term front end. It and the CLI call the same `internal/`
+packages. Logic both need lives in `internal/`, not `cmd/`, so they cannot
+drift — e.g. `workspace.ResolvePaths`, `repo.SpecialRepos`/`DescribeSync`,
+`dotfile.AutoSync`, `secret.ResolveGitToken` and the `secret fix` mutations,
+`cron.AddActions`/`RemoveActions`, `trash.Record*Provisions`, and the Action
+Plan types in `internal/plan`.
+
+Built on Charm v2: `charm.land/bubbletea/v2`, `charm.land/bubbles/v2`,
+`charm.land/lipgloss/v2`.
+
+### Layout
+
+| Package | Role |
+| --- | --- |
+| `internal/tui/app` | Root model. Owns screens, routes messages, handles global keys, lays out header / body / notice / footer, shows the setup screen when the workspace is not initialized. |
+| `internal/tui/nav` | Contract between app and screens: `Screen` enum, `Component` interface, `ResizeMsg`, `UpMsg`, `GotoMsg`, `RefreshMsg`, `ReloadEnvMsg`, `NoticeMsg`. |
+| `internal/tui/keys` | **Every key binding** (`keys.go`). App handles `Global`; each screen and dialog handles its own map. |
+| `internal/tui/screens/<name>` | One package per screen: dashboard, repos, dotfiles, scratch, logs, capture, ignore, secrets, system, setup. Unexported state; outputs are exported `LoadedMsg` types. |
+| `internal/tui/confirm` | The Action Plan checklist: review (toggle) → running (one `tea.Cmd` per action) → done. Emits `DoneMsg{Result}`. |
+| `internal/tui/prompt`, `choose` | Text input with ghost-panel suggestions (fixed list or async `Completer`); single-choice list. |
+| `internal/tui/modal` | Holds a screen's one open dialog, tagged with a typed step; `Match` routes the dialog's result back. |
+| `internal/tui/handover` | Suspends the TUI to give a program the terminal (`Run`), launches GUI programs (`Launch`), runs CLI wizards (`WS` + `Pause`/`Paged`), opens editors (`Editor`). |
+| `internal/tui/listview`, `layout`, `theme`, `format`, `complete` | Load-state-aware table; column sizing from width; lipgloss styles (16-color, matches `internal/style`); cell formatting; path completion. |
+| `internal/tui/env` | Workspace context resolved at startup (paths, config, dirs). Reloaded via `nav.ReloadEnvMsg` after init/reset. |
+| `internal/tui/tuitest` | Snapshot (golden file) and fits-in-terminal assertions. |
+
+(`internal/tui/ghostinput.go` etc. are raw-ANSI prompt widgets used by the CLI.)
+
+### Rules
+
+**Architecture.** Model holds state; `Update` changes it; `tea.Cmd`s do async
+work; `View` renders state and has no side effects. Never block `Update`;
+never do IO in `View`. Loaders and plan actions run inside commands —
+including validation that needs the filesystem (do it in the action and let
+the checklist show the failure).
+
+**Message routing.** Key presses go to the global map first, then to the
+active screen only. While a screen has a dialog open (`CapturesKeys`), every
+key except ctrl+c goes to it, so typing `q` or `2` into a prompt works. All
+other messages are broadcast to every screen; that is how the dashboard
+summarizes the others (it observes their `LoadedMsg`).
+
+**Write actions.** Every mutation goes through a `plan.Plan` shown in the
+`confirm` checklist — one action per independently meaningful mutation
+(§9). Pre-check what the CLI would do by default (`WithChecked`); start
+destructive plans (reset) unchecked. After `DoneMsg`, notify with
+`confirm.Summary` and reload.
+
+**Dialogs.** A screen keeps one `modal.Model`. Open a dialog with a typed
+`step` constant; in `Update`, first `if st, ok := m.modal.Match(msg)` to
+handle results, then forward to the modal while `Open()`. Results carry the
+dialog's ID, so stale results are ignored.
+
+**Handover.** Interactive programs (`ws log start`'s recorded shell,
+terminal editors) and the CLI's multi-step wizards run via `handover`, with a
+typed tag so the owning screen refreshes on `handover.DoneMsg`. Handed to the
+CLI today: `init`, `restore`, `dotfile git setup`, `dotfile migrate`,
+`secret setup`, `git-credential-helper setup|status|disconnect`,
+`ignore tree|ls|edit`, `config view`, `log start`.
+
+**Navigation.** Screens are `nav.Screen` constants, never strings. `esc`
+always moves one level up: a dialog closes first; a screen with nested levels
+(repos list → detail) handles esc itself; at its top level it returns
+`nav.Up` and the app goes to the dashboard. At the dashboard, esc does
+nothing (`q` / `ctrl+c` quit).
+
+**Layout.** No absolute coordinates. The app sends each screen a
+`nav.ResizeMsg` with the body's size on every resize; screens and dialogs
+derive everything from it. The frame is clipped to the terminal; below 20×6 a
+"terminal too small" notice is shown.
+
+**Stale results.** A screen that can reload while a load is in flight tags
+loads with a generation counter and drops stale results (see `repos`).
+
+### Changing a component
+
+Before: identify its state (the `Model` struct), inputs (messages it handles in
+`Update`), outputs (exported msgs / `nav.*` commands it returns), key bindings
+(its map in `keys.go`), and rendering region (the `ResizeMsg` size).
+
+After:
+
+```bash
+make test                                         # all tests, incl. TUI snapshots
+UPDATE_SNAPSHOTS=1 TMPDIR=$PWD/tmp GOCACHE=$PWD/.gocache GOTMPDIR=$PWD/.gotmp \
+  go test ./internal/tui/...                      # accept intended snapshot changes
+git diff internal/tui/**/testdata                 # review them like code
+```
+
+Snapshots live in `internal/tui/app/testdata/*.golden` (ANSI stripped,
+100×30 unless noted) and cover every screen plus open dialogs. `TestResize`
+renders every screen and several dialogs from 120×40 down to 1×1 and fails if
+anything overflows; `TestResizeRestoresLayout` checks shrinking and restoring
+is lossless. `TestScratchNewEndToEnd` drives prompt → checklist → apply
+against a real temp workspace with every integration (HOME, git config, pass,
+crontab) redirected — copy its `hermetic` helper for new end-to-end tests.

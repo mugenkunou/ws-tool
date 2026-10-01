@@ -1,0 +1,30 @@
+ws  1 Dashboard  2 Repos  3 Dotfiles  4 Scratch  5 Logs  6 Capture  7 Ignore  8 Secrets  9 System
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Pull 4 repos (ff-only)
+
+› [x] Pull Projects/api
+  [x] Pull Projects/web
+  [x] Pull Projects/old
+  [x] Pull ~/.password-store
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+space toggle • a all/none • enter apply • esc back

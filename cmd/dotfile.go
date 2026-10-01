@@ -1007,7 +1007,7 @@ func promptDirSelection(stdin io.Reader, stdout io.Writer, globals globalFlags, 
 		return result
 	}
 
-	fmt.Fprintf(out, "Select entries to track [%s] (or Enter for defaults, \"all\", \"none\"): ", style.Mutedf(nc, defaultStr))
+	fmt.Fprintf(out, "Select entries to track [%s] (or Enter for defaults, \"all\", \"none\"): ", style.Mutedf(nc, "%s", defaultStr))
 	line, err := readLine(stdin)
 	if err != nil || strings.TrimSpace(line) == "" {
 		var result []dotfile.DirEntry
@@ -1118,24 +1118,10 @@ func writeDotfileResult(globals globalFlags, command string, data any, stdout, s
 // dotfileGitAutoSync runs auto-commit/push if dotfile git is enabled.
 // Errors are non-fatal — they are printed as warnings, never block the parent command.
 func dotfileGitAutoSync(workspacePath, configPath, manifestPath, commitMessage string, globals globalFlags, stdout io.Writer) {
-	cfg, err := config.Load(configPath)
-	if err != nil || !cfg.Dotfile.Git.Enabled {
+	result, enabled := dotfile.AutoSync(workspacePath, configPath, manifestPath, commitMessage)
+	if !enabled {
 		return
 	}
-	mani, err := manifest.Load(manifestPath)
-	if err != nil {
-		return
-	}
-	repoPath := filepath.Join(workspacePath, "ws", "dotfiles")
-	result := dotfile.GitSync(dotfile.GitSyncOptions{
-		WorkspacePath: workspacePath,
-		RepoPath:      repoPath,
-		RemoteURL:     mani.DotfileGit.RemoteURL,
-		Branch:        mani.DotfileGit.Branch,
-		AutoCommit:    mani.DotfileGit.AutoCommit,
-		AutoPush:      mani.DotfileGit.AutoPush,
-		CommitMessage: commitMessage,
-	})
 	out := textOut(globals, stdout)
 	nc := globals.noColor
 	if result.Committed {
@@ -1152,58 +1138,5 @@ func dotfileGitAutoSync(workspacePath, configPath, manifestPath, commitMessage s
 // resolveGitToken tries to find a token for the remote URL via pass.
 // Returns empty string if no token is available (non-fatal).
 func resolveGitToken(remoteURL, passEntry string) string {
-	if passEntry != "" {
-		resp, ok := tryPassForToken(passEntry)
-		if ok {
-			return resp
-		}
-	}
-	// Try auto-derived entry from host.
-	host := extractHostFromURL(remoteURL)
-	if host != "" {
-		resp, ok := tryPassForToken("git/" + host)
-		if ok {
-			return resp
-		}
-	}
-	return ""
-}
-
-// tryPassForToken runs pass show and returns the password (token) if found.
-func tryPassForToken(entry string) (string, bool) {
-	resp := secret.LookupCredential(secret.CredentialRequest{
-		Protocol: "https",
-		Host:     entry,
-	})
-	if resp.Password != "" {
-		return resp.Password, true
-	}
-	// Try direct pass show for explicit entry names.
-	if secret.PassEntryExists(entry) {
-		// Entry exists but LookupCredential couldn't find it via the host path.
-		// This means the entry is at a custom path. We can't decrypt here without
-		// the full pass lookup chain, so return empty.
-		return "", false
-	}
-	return "", false
-}
-
-// extractHostFromURL extracts hostname from an HTTPS or SSH git URL.
-func extractHostFromURL(rawURL string) string {
-	rawURL = strings.TrimSpace(rawURL)
-	if strings.Contains(rawURL, "://") {
-		if idx := strings.Index(rawURL, "://"); idx >= 0 {
-			rest := rawURL[idx+3:]
-			if slashIdx := strings.Index(rest, "/"); slashIdx >= 0 {
-				return rest[:slashIdx]
-			}
-			return rest
-		}
-	}
-	if strings.HasPrefix(rawURL, "git@") {
-		if colonIdx := strings.Index(rawURL, ":"); colonIdx >= 0 {
-			return rawURL[4:colonIdx]
-		}
-	}
-	return ""
+	return secret.ResolveGitToken(remoteURL, passEntry)
 }
