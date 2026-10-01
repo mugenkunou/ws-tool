@@ -678,6 +678,7 @@ Built on Charm v2: `charm.land/bubbletea/v2`, `charm.land/bubbles/v2`,
 | `internal/tui/prompt`, `choose` | Text input with ghost-panel suggestions (fixed list or async `Completer`); single-choice list. |
 | `internal/tui/modal` | Holds a screen's one open dialog, tagged with a typed step; `Match` routes the dialog's result back. |
 | `internal/tui/handover` | Suspends the TUI to give a program the terminal (`Run`), launches GUI programs (`Launch`), runs CLI wizards (`WS` + `Pause`/`Paged`), opens editors (`Editor`). |
+| `internal/tui/selection`, `clip` | Mouse drag selection over the rendered frame; clipboard copy (OSC 52 + native tool). |
 | `internal/tui/listview`, `layout`, `theme`, `format`, `complete` | Load-state-aware table; column sizing from width; lipgloss styles (16-color, matches `internal/style`); cell formatting; path completion. |
 | `internal/tui/env` | Workspace context resolved at startup (paths, config, dirs). Reloaded via `nav.ReloadEnvMsg` after init/reset. |
 | `internal/tui/tuitest` | Snapshot (golden file) and fits-in-terminal assertions. |
@@ -735,6 +736,17 @@ screen at the problem (enter); `Request*Msg` opens the screen's own checklist
 `nav.ReloadEnvMsg`). Add an attention item by extending the area's
 derivation function in `screens/dashboard` and, if it needs one, a request
 message in the target screen.
+
+**Mouse.** The app captures the mouse (cell-motion mode) so a drag selects
+text and release copies it: `selection` extracts the dragged cells from the
+rendered frame (terminal-style, emoji-width aware) and draws the highlight;
+`clip.Copy` emits OSC 52 and also pipes to `wl-copy`/`xclip`/`xsel` when
+present. A toast ("📋 Copied …") replaces the footer's last line for 2.5 s,
+so showing it never shifts the layout. Because capture stops terminals from
+turning the wheel into arrow keys, the app maps wheel ↑/↓ to arrow presses.
+Shift+drag still uses the terminal's own selection; `WS_NO_MOUSE=1` turns
+capture off. Tests clear `DISPLAY`/`WAYLAND_DISPLAY` so they never touch the
+real clipboard.
 
 **Emoji and fun cues.** Decoration only, via `theme.Icon` (off with
 `WS_NO_EMOJI=1` and on `TERM=linux`). Use only Emoji_Presentation characters

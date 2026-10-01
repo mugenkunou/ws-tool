@@ -20,6 +20,8 @@
 package app
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -28,7 +30,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/mugenkunou/ws-tool/internal/tui/clip"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
+	"github.com/mugenkunou/ws-tool/internal/tui/format"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/capture"
@@ -42,6 +46,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/secrets"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/setup"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/trash"
+	"github.com/mugenkunou/ws-tool/internal/tui/selection"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
 )
@@ -69,9 +74,29 @@ type Model struct {
 	notice   *nav.NoticeMsg
 	frame    int
 
+	// Mouse selection: drag to select, release to copy (see selection).
+	mouse     bool // capture the mouse (off with WS_NO_MOUSE=1)
+	selecting bool
+	sel       selection.Range
+	toast     *toast // short-lived message drawn over the last footer line
+	toastSeq  int
+
 	width  int
 	height int
 }
+
+// toastTTL is how long a toast stays on screen.
+const toastTTL = 2500 * time.Millisecond
+
+// toast is a short-lived footer message (e.g. "Copied").
+type toast struct {
+	id    int
+	text  string
+	level nav.Level
+}
+
+// toastExpireMsg removes toast id when it is still the one showing.
+type toastExpireMsg struct{ id int }
 
 // envLoadedMsg carries a (re)loaded environment after setup.
 type envLoadedMsg struct {
@@ -86,6 +111,7 @@ func New(o workspace.PathOverrides, e env.Env, loadErr error) Model {
 		overrides: o,
 		keys:      keys.Global(len(nav.Screens())),
 		help:      help.New(),
+		mouse:     os.Getenv("WS_NO_MOUSE") == "",
 	}
 	return m.withEnv(e, loadErr)
 }
@@ -164,7 +190,53 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.resize()
 
 	case tea.KeyPressMsg:
+		m.selecting, m.sel = false, selection.Range{}
 		return m.updateKey(msg)
+
+	case tea.MouseClickMsg:
+		if m.mouse && msg.Button == tea.MouseLeft {
+			p := selection.Point{X: msg.X, Y: msg.Y}
+			m.selecting, m.sel = true, selection.Range{Anchor: p, Head: p}
+		}
+		return m, nil
+
+	case tea.MouseMotionMsg:
+		if m.selecting {
+			m.sel.Head = selection.Point{X: msg.X, Y: msg.Y}
+		}
+		return m, nil
+
+	case tea.MouseReleaseMsg:
+		if !m.selecting {
+			return m, nil
+		}
+		m.selecting = false
+		r := m.sel
+		m.sel = selection.Range{}
+		if text := selection.Extract(m.render(), r); strings.TrimSpace(text) != "" {
+			return m, clip.Copy(text)
+		}
+		return m, nil
+
+	case tea.MouseWheelMsg:
+		// Terminals stop turning the wheel into arrow keys once the app
+		// captures the mouse, so do it here.
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			return m.updateKey(tea.KeyPressMsg{Code: tea.KeyUp})
+		case tea.MouseWheelDown:
+			return m.updateKey(tea.KeyPressMsg{Code: tea.KeyDown})
+		}
+		return m, nil
+
+	case clip.CopiedMsg:
+		return m.showToast(copiedText(msg))
+
+	case toastExpireMsg:
+		if m.toast != nil && m.toast.id == msg.id {
+			m.toast = nil
+		}
+		return m, nil
 
 	case frameTickMsg:
 		m.frame++
@@ -239,6 +311,31 @@ func (m Model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m.updateCurrent(msg, hadNotice)
 }
 
+// showToast displays a short-lived footer message and schedules its expiry.
+func (m Model) showToast(level nav.Level, text string) (Model, tea.Cmd) {
+	m.toastSeq++
+	id := m.toastSeq
+	m.toast = &toast{id: id, text: text, level: level}
+	return m, tea.Tick(toastTTL, func(time.Time) tea.Msg { return toastExpireMsg{id: id} })
+}
+
+// copiedText describes a finished copy for the toast.
+func copiedText(msg clip.CopiedMsg) (nav.Level, string) {
+	n := len([]rune(msg.Text))
+	what := format.Plural(n, "character")
+	if lines := strings.Count(msg.Text, "\n") + 1; lines > 1 {
+		what = format.Plural(lines, "line") + ", " + what
+	}
+	switch {
+	case msg.Err != nil:
+		return nav.LevelWarn, fmt.Sprintf("Copied %s via the terminal (OSC 52); %s failed: %v", what, msg.Native, msg.Err)
+	case msg.Native == "":
+		return nav.LevelSuccess, fmt.Sprintf("Copied %s (via the terminal, OSC 52)", what)
+	default:
+		return nav.LevelSuccess, "Copied " + what + " to the clipboard"
+	}
+}
+
 // afterNotice re-lays out the body when a dismissed notice freed a line.
 func (m Model) afterNotice(hadNotice bool) (Model, tea.Cmd) {
 	if hadNotice {
@@ -296,8 +393,15 @@ func (m Model) bodyHeight() int {
 
 // View implements tea.Model. It renders state only.
 func (m Model) View() tea.View {
-	v := tea.NewView(m.render())
+	content := m.render()
+	if m.selecting {
+		content = selection.Highlight(content, m.sel, theme.Selection)
+	}
+	v := tea.NewView(content)
 	v.AltScreen = true
+	if m.mouse {
+		v.MouseMode = tea.MouseModeCellMotion
+	}
 	v.WindowTitle = "ws"
 	return v
 }
@@ -402,7 +506,7 @@ func (m Model) footer() string {
 	clip := lipgloss.NewStyle().MaxWidth(m.width)
 	cur := m.current()
 	if cur == nil {
-		return clip.Render(m.help.ShortHelpView([]key.Binding{m.keys.Quit}))
+		return m.withToast(clip.Render(m.help.ShortHelpView([]key.Binding{m.keys.Quit})))
 	}
 	h := m.help
 	h.ShowAll = m.fullHelp
@@ -413,7 +517,25 @@ func (m Model) footer() string {
 	if cur.CapturesKeys() {
 		km = cur.KeyMap() // global keys are inactive while a modal is open
 	}
-	return clip.Render(h.View(km))
+	return m.withToast(clip.Render(h.View(km)))
+}
+
+// withToast draws the active toast over the footer's last line, so showing
+// and hiding it never changes the layout.
+func (m Model) withToast(footer string) string {
+	if m.toast == nil {
+		return footer
+	}
+	st := theme.OK
+	switch m.toast.level {
+	case nav.LevelWarn:
+		st = theme.Warn
+	case nav.LevelError:
+		st = theme.Error
+	}
+	lines := strings.Split(footer, "\n")
+	lines[len(lines)-1] = lipgloss.NewStyle().MaxWidth(m.width).Render(theme.Icon(theme.IconClip) + st.Render(m.toast.text))
+	return strings.Join(lines, "\n")
 }
 
 func firstLine(s string) string {

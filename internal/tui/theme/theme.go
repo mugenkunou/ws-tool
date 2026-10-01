@@ -27,6 +27,7 @@ var (
 	Warn      = lipgloss.NewStyle().Foreground(colorWarn)
 	Error     = lipgloss.NewStyle().Foreground(colorError)
 	Rule      = lipgloss.NewStyle().Foreground(colorMuted)
+	Selection = lipgloss.NewStyle().Reverse(true) // mouse text selection
 
 	// Card frames a dashboard summary card; CardSelected marks the cursor.
 	Card         = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorMuted).Padding(0, 1)

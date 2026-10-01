@@ -10,6 +10,8 @@
 //   - tab / shift+tab next / previous screen (global; also ] [ and 1-9)
 //   - r               reload the current screen
 //   - ?               full help · q quit (ctrl+c always quits)
+//   - mouse           drag selects text and copies it on release; the wheel
+//     scrolls like ↑↓ (WS_NO_MOUSE=1 leaves the mouse to the terminal)
 //
 // Global bindings must never use keys a page needs for the grammar above
 // (arrows, hjkl, enter, esc, space); TestGlobalKeysLeavePageKeysAlone
