@@ -1,12 +1,9 @@
-ws  1 Dashboard  2 Repos  3 Dotfiles  4 Scratch  5 Logs  6 Capture  7 Ignore  8 Secrets  9 System
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Capture⁶  Ignore⁷  Secrets⁸  Cron⁹  Trash⁰
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Trash ~/.Trash  3.0 MB, 12 files
-      ✔ shell rm  ✔ VS Code  ✘ file explorer
-
-Cron
- Cron job        Schedule      State          Last run          Description
+2 jobs installed · 1 failing
+ Job             Schedule      State          Last run          Description
  dotfile-push    0 * * * *     ✔ installed    2h ago            commit + push dotfiles
- repo-sync       */30 * * * *  not installed                    sync repo fleet
+ repo-sync       */30 * * * *  ✔ installed    40m ago (exit 2)  sync repo fleet
  all             preset        not installed                    preset: dotfile-push, repo-sync
 
 
@@ -27,4 +24,7 @@ Cron
 
 
 
-a install job • d remove job • enter job log • t enable trash • x empty trash • r refresh …
+
+
+
+enter view log • a install • d remove • r refresh • tab/⇧tab screens • ? help • q quit

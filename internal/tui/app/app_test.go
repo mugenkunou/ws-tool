@@ -8,11 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
 	wscapture "github.com/mugenkunou/ws-tool/internal/capture"
 	"github.com/mugenkunou/ws-tool/internal/config"
-	"github.com/mugenkunou/ws-tool/internal/cron"
+	wscron "github.com/mugenkunou/ws-tool/internal/cron"
 	"github.com/mugenkunou/ws-tool/internal/dotfile"
 	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
 	wslog "github.com/mugenkunou/ws-tool/internal/log"
@@ -20,17 +21,20 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/repo"
 	wsscratch "github.com/mugenkunou/ws-tool/internal/scratch"
 	"github.com/mugenkunou/ws-tool/internal/secret"
-	"github.com/mugenkunou/ws-tool/internal/trash"
+	wstrash "github.com/mugenkunou/ws-tool/internal/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
+	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/capture"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/cron"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/dotfiles"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/logs"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/repos"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/scratch"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/secrets"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/system"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/trash"
+	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 	"github.com/mugenkunou/ws-tool/internal/tui/tuitest"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
 )
@@ -40,7 +44,11 @@ const ws = "/home/tester/Workspace"
 func init() {
 	// Screens render times in local time; pin it so snapshots are stable.
 	time.Local = time.UTC
+	theme.SetEmoji(true)
 }
+
+// fixedClock is a mid-morning instant so the dashboard greeting is stable.
+func fixedClock() time.Time { return time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC) }
 
 func testEnv(t *testing.T) env.Env {
 	t.Helper()
@@ -55,6 +63,7 @@ func testEnv(t *testing.T) env.Env {
 		Config:     cfg,
 		ScratchDir: "/home/tester/Scratch",
 		LogDir:     ws + "/ws/ws-log",
+		Clock:      fixedClock,
 	}
 }
 
@@ -101,14 +110,19 @@ func fixtures() []tea.Msg {
 			Violations: []secret.Violation{{Severity: "CRITICAL", Path: "Projects/api/.env", Line: 3, Snippet: "password=hunter2"}},
 			Health:     secrets.Health{Pass: secret.PassHealth{Installed: true, GPGAvailable: true, Initialized: true, GitBacked: true, EntryCount: 42}},
 		},
-		system.LoadedMsg{
-			Trash:     trash.Status{RootDir: "/home/tester/.Trash", ShellRMConfigured: true, VSCodeConfigured: true},
-			TrashScan: trash.ScanResult{SizeBytes: 3 << 20, FileCount: 12},
-			Jobs: []system.Job{
-				{Name: "dotfile-push", Schedule: "0 * * * *", Description: "commit + push dotfiles", Installed: true,
-					LastRun: cron.RunRecord{Job: "dotfile-push", Time: time.Now().Add(-2 * time.Hour)}},
-				{Name: "repo-sync", Schedule: "*/30 * * * *", Description: "sync repo fleet"},
-				{Name: "all", Preset: true, Description: "preset: dotfile-push, repo-sync"},
+		cron.LoadedMsg{Jobs: []cron.Job{
+			{Name: "dotfile-push", Schedule: "0 * * * *", Description: "commit + push dotfiles", Installed: true,
+				LastRun: wscron.RunRecord{Job: "dotfile-push", Time: time.Now().Add(-2 * time.Hour)}},
+			{Name: "repo-sync", Schedule: "*/30 * * * *", Description: "sync repo fleet", Installed: true,
+				LastRun: wscron.RunRecord{Job: "repo-sync", Time: time.Now().Add(-40 * time.Minute), ExitCode: 2}},
+			{Name: "all", Preset: true, Description: "preset: dotfile-push, repo-sync"},
+		}},
+		trash.LoadedMsg{
+			Status: wstrash.Status{RootDir: "/home/tester/.Trash", ShellRMConfigured: true, VSCodeConfigured: true},
+			Scan:   wstrash.ScanResult{SizeBytes: 3 << 20, FileCount: 12, WarnSizeMB: 1024},
+			Items: []trash.Item{
+				{Name: "old-notes.md", SizeBytes: 2048, Deleted: fixedClock().Add(-3 * time.Hour)},
+				{Name: "build", SizeBytes: 3 << 20, Deleted: fixedClock().Add(-50 * time.Hour), Dir: true},
 			},
 		},
 	}
@@ -201,6 +215,9 @@ func TestSnapshots(t *testing.T) {
 		keys []string
 	}{
 		{"dashboard", nil},
+		{"dashboard_grid_cursor", []string{"down", "down", "down", "down", "down", "down", "down", "down", "down", "down", "right", "down"}},
+		{"dashboard_reset_checklist", []string{"R"}},
+		{"capture_preview_focus", []string{"6", "enter"}},
 		{"repos", []string{"2"}},
 		{"repos_detail", []string{"2", "down", "enter"}},
 		{"repos_pull_checklist", []string{"2", "p"}},
@@ -215,8 +232,9 @@ func TestSnapshots(t *testing.T) {
 		{"ignore", []string{"7"}},
 		{"ignore_harbors_shown", []string{"7", "H"}},
 		{"secrets", []string{"8"}},
-		{"system", []string{"9"}},
-		{"system_reset_checklist", []string{"9", "R"}},
+		{"cron", []string{"9"}},
+		{"trash", []string{"0"}},
+		{"trash_empty_checklist", []string{"0", "x"}},
 		{"full_help", []string{"2", "?"}},
 	}
 	for _, c := range cases {
@@ -259,8 +277,8 @@ func TestSnapshotNotice(t *testing.T) {
 // including resizing a live model, and asserts nothing overflows.
 func TestResize(t *testing.T) {
 	sizes := [][2]int{{120, 40}, {80, 24}, {60, 15}, {40, 12}, {20, 6}, {1, 1}}
-	flows := [][]string{{"1"}, {"2"}, {"3"}, {"4"}, {"5"}, {"6"}, {"7"}, {"8"}, {"9"},
-		{"2", "enter"}, {"2", "p"}, {"4", "n"}, {"9", "R"}}
+	flows := [][]string{{"1"}, {"2"}, {"3"}, {"4"}, {"5"}, {"6"}, {"7"}, {"8"}, {"9"}, {"0"},
+		{"2", "enter"}, {"2", "p"}, {"4", "n"}, {"1", "R"}, {"1", "down", "down", "down", "down", "down", "down", "down", "down", "down", "right"}}
 	for _, sz := range sizes {
 		for _, flow := range flows {
 			m := loaded(t, 100, 30)
@@ -278,7 +296,7 @@ func TestResize(t *testing.T) {
 }
 
 func TestResizeRestoresLayout(t *testing.T) {
-	for _, flow := range [][]string{nil, {"2", "p"}, {"9"}} {
+	for _, flow := range [][]string{nil, {"2", "p"}, {"9"}, {"0"}} {
 		m := loaded(t, 80, 24)
 		for _, k := range flow {
 			m = send(m, press(k))
@@ -292,35 +310,221 @@ func TestResizeRestoresLayout(t *testing.T) {
 	}
 }
 
-func TestTabNavigation(t *testing.T) {
+func TestScreenSwitching(t *testing.T) {
 	m := loaded(t, 80, 24)
-	for _, want := range append(nav.Screens()[1:], nav.ScreenDashboard) {
-		m = send(m, press("tab"))
-		if m.active != want {
-			t.Fatalf("tab: active = %v, want %v", m.active.Title(), want.Title())
+	for _, k := range []string{"tab", "]"} {
+		for _, want := range append(nav.Screens()[1:], nav.ScreenDashboard) {
+			m = send(m, press(k))
+			if m.active != want {
+				t.Fatalf("%s: active = %v, want %v", k, m.active.Title(), want.Title())
+			}
 		}
 	}
-	m = send(m, press("shift+tab"))
-	if m.active != nav.ScreenSystem {
-		t.Fatalf("shift+tab from dashboard: active = %v, want System", m.active.Title())
+	for _, k := range []string{"shift+tab", "["} {
+		if m = send(m, press(k)); m.active != nav.ScreenTrash {
+			t.Fatalf("%s from dashboard: active = %v, want Trash", k, m.active.Title())
+		}
+		m = send(m, press("1"))
 	}
 	for i, s := range nav.Screens() {
-		if m = send(m, press(string(rune('1'+i)))); m.active != s {
-			t.Fatalf("key %d: active = %v, want %v", i+1, m.active.Title(), s.Title())
+		if m = send(m, press(keys.ScreenDigit(i))); m.active != s {
+			t.Fatalf("key %s: active = %v, want %v", keys.ScreenDigit(i), m.active.Title(), s.Title())
 		}
 	}
 }
 
-func TestDashboardEnterOpensScreen(t *testing.T) {
-	m := loaded(t, 80, 24)
-	m = send(m, press("down"))
-	m, cmd := sendRun(m, press("enter"))
-	if cmd == nil {
-		t.Fatal("enter on dashboard card returned no command")
+// TestGlobalKeysLeavePageKeysAlone enforces the key grammar in package keys:
+// global bindings never take keys a page needs.
+func TestGlobalKeysLeavePageKeysAlone(t *testing.T) {
+	reserved := map[string]bool{
+		"up": true, "down": true, "left": true, "right": true, "h": true, "j": true, "k": true, "l": true,
+		"enter": true, "esc": true, "space": true,
 	}
-	m = send(m, cmd())
-	if m.active != nav.ScreenDotfiles {
-		t.Fatalf("active = %v, want Dotfiles", m.active.Title())
+	g := newApp(t, nil).keys
+	all := append([]key.Binding{g.Quit, g.ForceQuit, g.Help, g.NextTab, g.PrevTab}, g.Screens...)
+	for _, b := range all {
+		for _, k := range b.Keys() {
+			if reserved[k] {
+				t.Errorf("global binding uses page key %q", k)
+			}
+		}
+	}
+}
+
+// TestDashboardRanksProblemsFirst: errors lead the attention list.
+func TestDashboardRanksProblemsFirst(t *testing.T) {
+	v := tuitest.Plain(view(loaded(t, 100, 30)))
+	errAt := strings.Index(v, "dotfile links broken")
+	warnAt := strings.Index(v, "out of sync")
+	if errAt < 0 || warnAt < 0 || errAt > warnAt {
+		t.Fatalf("errors should precede warnings:\n%s", v)
+	}
+	if !strings.Contains(v, "Needs attention") || !strings.Contains(v, "Good morning") {
+		t.Fatalf("missing sections:\n%s", v)
+	}
+}
+
+// dashboardTo moves the dashboard cursor to the first row containing text.
+func dashboardTo(t *testing.T, m Model, text string) Model {
+	t.Helper()
+	for range 30 {
+		for _, line := range strings.Split(tuitest.Plain(view(m)), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "›") && strings.Contains(line, text) {
+				return m
+			}
+		}
+		m = send(m, press("down"))
+	}
+	t.Fatalf("no dashboard row %q:\n%s", text, tuitest.Plain(view(m)))
+	return m
+}
+
+// apply runs cmd and feeds its messages (batches expanded) back, once.
+func apply(m Model, cmd tea.Cmd) Model {
+	queue := []tea.Cmd{cmd}
+	for len(queue) > 0 {
+		c := queue[0]
+		queue = queue[1:]
+		if c == nil {
+			continue
+		}
+		switch msg := c().(type) {
+		case nil:
+		case tea.BatchMsg:
+			queue = append(queue, msg...)
+		default:
+			m = send(m, msg)
+		}
+	}
+	return m
+}
+
+// TestDashboardQuickFix: x on a row with a fix opens that screen's checklist.
+func TestDashboardQuickFix(t *testing.T) {
+	m := dashboardTo(t, loaded(t, 100, 30), "dotfile links broken")
+	m, cmd := sendRun(m, press("x"))
+	m = apply(m, cmd)
+	if m.active != nav.ScreenDotfiles || !m.current().CapturesKeys() {
+		t.Fatalf("quick fix: active = %v, dialog open = %v", m.active.Title(), m.current().CapturesKeys())
+	}
+	if v := tuitest.Plain(view(m)); !strings.Contains(v, "Fix dotfile links") || !strings.Contains(v, "~/.gitconfig") {
+		t.Fatalf("fix checklist not shown:\n%s", v)
+	}
+
+	m = dashboardTo(t, loaded(t, 100, 30), "Cron job repo-sync failing")
+	m, cmd = sendRun(m, press("x"))
+	m = apply(m, cmd)
+	if m.active != nav.ScreenCron || !strings.Contains(tuitest.Plain(view(m)), "Cron log: repo-sync") {
+		t.Fatalf("view-log fix:\n%s", tuitest.Plain(view(m)))
+	}
+
+	// Rows without a fix say so instead of doing nothing.
+	m = dashboardTo(t, loaded(t, 100, 30), "sync hygiene violation")
+	_, cmd = sendRun(m, press("x"))
+	if msg, ok := cmd().(nav.NoticeMsg); !ok || !strings.Contains(msg.Text, "No quick fix") {
+		t.Fatalf("x without a fix: %#v", msg)
+	}
+}
+
+// TestDashboardOpenFocusesProblem: enter opens the screen with the
+// problem selected — proven by acting on the selection.
+func TestDashboardOpenFocusesProblem(t *testing.T) {
+	for _, k := range []string{"enter"} {
+		m := dashboardTo(t, loaded(t, 100, 30), "dotfile links broken")
+		m, cmd := sendRun(m, press(k))
+		m = apply(m, cmd)
+		if m.active != nav.ScreenDotfiles {
+			t.Fatalf("%s: active = %v", k, m.active.Title())
+		}
+		m = send(m, press("d"))
+		if v := tuitest.Plain(view(m)); !strings.Contains(v, "Remove dotfile /home/tester/.gitconfig") {
+			t.Fatalf("%s: problem row not selected:\n%s", k, v)
+		}
+	}
+}
+
+// TestDashboardGrid: arrows move spatially between cards and never open a
+// screen; ↑ from the top row returns to the attention list; enter opens.
+func TestDashboardGrid(t *testing.T) {
+	m := loaded(t, 100, 30) // 3 columns: Repos Dotfiles Scratch / Logs Capture Ignore / Secrets Cron Trash
+	selected := func(m Model) string { return focusedCard(t, m) }
+	// Leave the attention list for the grid's first card.
+	for range 9 {
+		m = send(m, press("down"))
+	}
+	if got := selected(m); got != "Repos" {
+		t.Fatalf("after leaving the list: %q, want Repos", got)
+	}
+	steps := []struct{ key, want string }{
+		{"right", "Dotfiles"}, {"right", "Scratch"}, {"right", "Scratch"}, // edge stops
+		{"down", "Ignore"}, {"left", "Capture"}, {"down", "Cron"}, {"down", "Cron"},
+		{"up", "Capture"}, {"up", "Dotfiles"}, {"left", "Repos"}, {"l", "Dotfiles"}, {"h", "Repos"},
+	}
+	for _, st := range steps {
+		m = send(m, press(st.key))
+		if m.active != nav.ScreenDashboard {
+			t.Fatalf("%s opened %s — only enter may open", st.key, m.active.Title())
+		}
+		if got := selected(m); got != st.want {
+			t.Fatalf("after %s: %q, want %q", st.key, got, st.want)
+		}
+	}
+	m = send(m, press("up")) // top row → back into the attention list
+	if !strings.Contains(tuitest.Plain(view(m)), "›") {
+		t.Fatal("↑ from the top row did not return to the attention list")
+	}
+	m = send(m, press("down"), press("right"), press("right"), press("down")) // → Ignore
+	m, cmd := sendRun(m, press("enter"))
+	m = apply(m, cmd)
+	if m.active != nav.ScreenIgnore {
+		t.Fatalf("enter on Ignore card opened %v", m.active.Title())
+	}
+}
+
+// focusedCard reports which card holds the cursor: only the focused card's
+// title is rendered in the accent style (theme.Title).
+func focusedCard(t *testing.T, m Model) string {
+	t.Helper()
+	v := m.screens[nav.ScreenDashboard].View()
+	for _, s := range nav.Screens()[1:] {
+		if strings.Contains(v, theme.Title.Render(theme.Icon(s.Icon())+s.Title())) {
+			return s.Title()
+		}
+	}
+	return ""
+}
+
+// TestCaptureEnterScrollsPreview: enter moves into the preview, esc back.
+func TestCaptureEnterScrollsPreview(t *testing.T) {
+	m := send(loaded(t, 100, 30), press("6"), press("enter"))
+	if !strings.Contains(tuitest.Plain(view(m)), "esc back to list") {
+		t.Fatalf("enter did not focus the preview:\n%s", tuitest.Plain(view(m)))
+	}
+	m = esc(m)
+	if m.active != nav.ScreenCapture || !strings.Contains(tuitest.Plain(view(m)), "enter to scroll") {
+		t.Fatalf("esc did not return to the list (active %v)", m.active.Title())
+	}
+	if m = esc(m); m.active != nav.ScreenDashboard {
+		t.Fatalf("esc from the list: active %v, want Dashboard", m.active.Title())
+	}
+}
+
+func TestEmojiOff(t *testing.T) {
+	theme.SetEmoji(false)
+	defer theme.SetEmoji(true)
+	m := loaded(t, 100, 30)
+	tuitest.Golden(t, "dashboard_no_emoji", view(m))
+	if v := view(m); strings.ContainsAny(v, "🏠📦🚨✨🌅") {
+		t.Fatal("emoji rendered with emoji off")
+	}
+}
+
+func TestSpinnerAnimates(t *testing.T) {
+	m := send(newApp(t, nil), tea.WindowSizeMsg{Width: 100, Height: 30})
+	a := view(m)
+	m = send(m, frameTickMsg{})
+	if view(m) == a {
+		t.Fatal("frame tick did not advance the loading spinner")
 	}
 }
 
@@ -485,7 +689,7 @@ func TestScratchNewEndToEnd(t *testing.T) {
 
 	m := New(o, e, nil)
 	m = send(m, tea.WindowSizeMsg{Width: 100, Height: 30})
-	m = pump(t, m, m.Init())
+	m = pump(t, m, m.loadAll())
 	m = send(m, press("4"), press("n"))
 	m = typeText(m, "e2e-demo")
 	m, cmd := sendRun(m, press("enter")) // submit name → checklist

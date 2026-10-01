@@ -52,6 +52,9 @@ func (m LoadedMsg) TotalBytes() int64 {
 	return n
 }
 
+// RequestPruneMsg asks the screen to open its prune checklist.
+type RequestPruneMsg struct{}
+
 type searchMsg struct {
 	query   string
 	results []wsscratch.SearchResult
@@ -122,7 +125,7 @@ func New(e env.Env) Model {
 			{Title: "Size", Min: 9},
 			{Title: "Items", Min: 5},
 			{Title: "Tags", Min: 8, Weight: 2},
-		}, "No scratch directories. Press n to create one."),
+		}, theme.Icon(theme.IconSprout)+"No scratch directories yet. Press n to start one."),
 		results: listview.New([]layout.Col{
 			{Title: "Name", Min: 16, Weight: 2},
 			{Title: "Match", Min: 7},
@@ -206,6 +209,12 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		m.entries, m.tags = msg.Entries, msg.Tags
 		m.list = m.list.SetRows(rows(msg.Entries))
 		return m, nil
+	case RequestPruneMsg:
+		if m.modal.Open() {
+			return m, nil
+		}
+		m.level = levelList
+		return m.openPrune(), nil
 	case searchMsg:
 		if msg.err != nil {
 			m.results = m.results.SetError(msg.err)

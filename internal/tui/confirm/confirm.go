@@ -24,6 +24,7 @@ import (
 
 	"github.com/mugenkunou/ws-tool/internal/plan"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
+	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 )
 
@@ -63,6 +64,7 @@ type Model struct {
 	cursor  int
 	phase   phase
 	keys    keys.ConfirmMap
+	frame   int // animation frame for the running action
 	width   int
 	height  int
 }
@@ -113,6 +115,9 @@ func (m Model) SetSize(width, height int) Model {
 // Update handles keys and action results.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case nav.FrameMsg:
+		m.frame = msg.N
+		return m, nil
 	case stepMsg:
 		if msg.id != m.id || m.phase != phaseRunning {
 			return m, nil
@@ -251,7 +256,7 @@ func (m Model) View() string {
 	var foot string
 	switch m.phase {
 	case phaseRunning:
-		foot = theme.Muted.Render("Applying…")
+		foot = theme.Muted.Render(theme.Spinner(m.frame) + " Applying…")
 	case phaseDone:
 		foot = theme.Bold.Render(m.summaryLine())
 	}
@@ -287,7 +292,7 @@ func (m Model) actionLine(i int, a plan.Action) string {
 		mark = theme.Muted.Render("–")
 	default:
 		if m.phase == phaseRunning && m.checked[i] {
-			mark = theme.Warn.Render("…")
+			mark = theme.Warn.Render(theme.Spinner(m.frame))
 		} else if m.checked[i] {
 			mark = "[x]"
 		} else {
@@ -315,7 +320,14 @@ func (m Model) summaryLine() string {
 	for i := range m.plan.Actions {
 		r.Actions = append(r.Actions, plan.ActionStatus{Status: m.status[i]})
 	}
-	return Summary(r) + theme.Muted.Render("  (enter to close)")
+	text := Summary(r)
+	switch {
+	case r.HasFailures():
+		text = theme.Icon(theme.IconOops) + text
+	case r.ExecutedCount() > 0:
+		text = theme.Celebrate("All done — " + text)
+	}
+	return text + theme.Muted.Render("  (enter to close)")
 }
 
 func (m Model) lastStarted() int {

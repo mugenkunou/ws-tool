@@ -80,6 +80,13 @@ func (m LoadedMsg) Summarize() Summary {
 	return s
 }
 
+// SelectMsg asks the screen to select a repo by path (sent by the
+// dashboard when it opens this screen at a specific problem).
+type SelectMsg struct{ Path string }
+
+// RequestSyncMsg asks the screen to start a sync (merge), as pressing s does.
+type RequestSyncMsg struct{}
+
 // syncPreparedMsg carries sync plans computed after a fetch.
 type syncPreparedMsg struct {
 	gen      int
@@ -188,7 +195,7 @@ func New(e env.Env) Model {
 			{Title: "↓", Min: 3},
 			{Title: "Issues", Min: 6},
 			{Title: "Branch", Min: 10, Weight: 1},
-		}, "No git repositories found. Press a to add a repo root."),
+		}, theme.Icon("📦")+"No git repositories found. Press a to add a repo root."),
 	}
 }
 
@@ -306,6 +313,22 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 			m.level = levelList
 		}
 		return m.refreshDetail(), nil
+	case SelectMsg:
+		for i, e := range m.entries {
+			if e.Status.Path == msg.Path {
+				m.level = levelList
+				m.list = m.list.SetCursor(i)
+			}
+		}
+		return m, nil
+	case RequestSyncMsg:
+		if m.modal.Open() || m.activity != activityIdle {
+			return m, nil
+		}
+		m.level = levelList
+		m.gen++
+		m.activity = activityPreparingSync
+		return m, prepareSync(m.env, m.roots, m.gen, false)
 	case syncPreparedMsg:
 		if msg.gen != m.gen {
 			return m, nil

@@ -1,30 +1,30 @@
 ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Capture⁶  Ignore⁷  Secrets⁸  Cron⁹  Trash⁰
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-🌅 Good morning  ·  ~/Workspace
-
-🌑 Checking your workspace…
+🚨 Needs attention (9)
+  ✘ 2 dotfile links broken or overwritten                                  🔗 Dotfiles   x fix links
+  ✘ 1 possible secret in workspace files                                                  🔐 Secrets
+  ✘ Cron job repo-sync failing (exit 2)                                         ⏰ Cron   x view log
+  ! 2 repos out of sync (1 dirty, 1 behind, 1 ahead)                               📦 Repos   x sync
+  ! 2 sync hygiene violations (bloat, depth, build artifacts)                              🧹 Ignore
+  ! Pass store has no git remote — secrets live only on this machine                      🔐 Secrets
+  ! Soft-delete is off for 1 of 3 integrations                                   🚮 Trash   x enable
+  · 1 hygiene finding in 1 repo                                                             📦 Repos
+  · 1 scratch dir older than 90 days                                            🧪 Scratch   x prune
 
 📋 Overview
 ╭──────────────────────────────╮ ╭──────────────────────────────╮ ╭──────────────────────────────╮
-│ 📦 Repos                  🌑 │ │ 🔗 Dotfiles               🌑 │ │ 🧪 Scratch                🌑 │
-│ scanning…                    │ │ scanning…                    │ │ scanning…                    │
-│                              │ │                              │ │                              │
+│ 📦 Repos                   ! │ │ 🔗 Dotfiles                ✘ │ │ 🧪 Scratch                 ✔ │
+│ 4 repos · 1 dirty            │ │ 3 dotfiles managed           │ │ 2 dirs · 5.0 MB              │
+│ ↑ 1 ahead · ↓ 1 behind       │ │ 2 links need fixing          │ │ newest dns-debug.2026-09     │
 ╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
 ╭──────────────────────────────╮ ╭──────────────────────────────╮ ╭──────────────────────────────╮
-│ 📼 Logs                   🌑 │ │ 📌 Capture                🌑 │ │ 🧹 Ignore                 🌑 │
-│ scanning…                    │ │ scanning…                    │ │ scanning…                    │
-│                              │ │                              │ │                              │
+│ 📼 Logs                    ✔ │ │ 📌 Capture                 ✔ │ │ 🧹 Ignore                  ! │
+│ 2 sessions                   │ │ 2 locations                  │ │ 2 violations                 │
+│ ● recording deploy-fix       │ │ 1 with captures              │ │ 1 in safe harbors            │
 ╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
 ╭──────────────────────────────╮ ╭──────────────────────────────╮ ╭──────────────────────────────╮
-│ 🔐 Secrets                🌑 │ │ ⏰ Cron                   🌑 │ │ 🚮 Trash                  🌑 │
-│ scanning…                    │ │ scanning…                    │ │ scanning…                    │
-│                              │ │                              │ │                              │
+│ 🔐 Secrets                 ✘ │ │ ⏰ Cron                    ✘ │ │ 🚮 Trash                   ! │
+│ 1 finding                    │ │ 2 jobs installed             │ │ 3.0 MB · 12 files            │
+│ pass: 42 entries             │ │ 1 failing                    │ │ soft-delete off (1 of 3)     │
 ╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
-
-
-
-
-
-
-
 ←→↑↓ move • enter open • x quick fix • r refresh all • tab/⇧tab screens • ? help • q quit

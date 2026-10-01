@@ -1,0 +1,30 @@
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Capture⁶  Ignore⁷  Secrets⁸  Cron⁹  Trash⁰
+────────────────────────────────────────────────────────────────────────────────────────────────────
+🚮 ~/.Trash  3.0 MB · 12 files (warns at 1024 MB)
+
+  ✔ shell rm       rm moves files here
+  ✔ VS Code        editor deletes go here
+  ✘ file explorer  desktop trash points here
+
+ Recently deleted                                                              Size       Deleted
+ old-notes.md                                                                  2.0 KB     3h ago
+ build/                                                                        3.0 MB     2d ago
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+e enable soft-delete • D disable • x empty trash • r refresh • tab/⇧tab screens • ? help • q quit

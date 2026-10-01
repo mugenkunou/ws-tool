@@ -1,30 +1,30 @@
-ws  1 Dashboard  2 Repos  3 Dotfiles  4 Scratch  5 Logs  6 Capture  7 Ignore  8 Secrets  9 System
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Capture⁶  Ignore⁷  Secrets⁸  Cron⁹  Trash⁰
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Workspace /home/tester/Workspace
+🌅 Good morning  ·  ~/Workspace
 
-╭───────────────────────────────────────────────╮ ╭───────────────────────────────────────────────╮
-│ Repos                                         │ │ Dotfiles                                      │
-│ 4 repos · 1 dirty                             │ │ 3 managed                                     │
-│ 1 ahead · 1 behind · 1 issue                  │ │ ✘ 2 need attention                            │
-╰───────────────────────────────────────────────╯ ╰───────────────────────────────────────────────╯
-╭───────────────────────────────────────────────╮ ╭───────────────────────────────────────────────╮
-│ Scratch                                       │ │ Logs                                          │
-│ 2 dirs · 5.0 MB                               │ │ 2 sessions                                    │
-│ newest: dns-debug.2026-09                     │ │ ● recording                                   │
-╰───────────────────────────────────────────────╯ ╰───────────────────────────────────────────────╯
-╭───────────────────────────────────────────────╮ ╭───────────────────────────────────────────────╮
-│ Ignore                                        │ │ Secrets                                       │
-│ 2 violations                                  │ │ 1 finding                                     │
-│ bloat, depth, build artifacts                 │ │ pass: 42 entries, no remote                   │
-╰───────────────────────────────────────────────╯ ╰───────────────────────────────────────────────╯
-╭───────────────────────────────────────────────╮
-│ System                                        │
-│ soft-delete: 1 of 3 integrations off          │
-│ 1 cron job installed                          │
-╰───────────────────────────────────────────────╯
+🚨 Needs attention (9)
+› ✘ 2 dotfile links broken or overwritten                                  🔗 Dotfiles   x fix links
+  ✘ 1 possible secret in workspace files                                                  🔐 Secrets
+  ✘ Cron job repo-sync failing (exit 2)                                         ⏰ Cron   x view log
+  ! 2 repos out of sync (1 dirty, 1 behind, 1 ahead)                               📦 Repos   x sync
+  ! 2 sync hygiene violations (bloat, depth, build artifacts)                              🧹 Ignore
+  ! Pass store has no git remote — secrets live only on this machine                      🔐 Secrets
+  ! Soft-delete is off for 1 of 3 integrations                                   🚮 Trash   x enable
+  · 1 hygiene finding in 1 repo                                                             📦 Repos
+  · 1 scratch dir older than 90 days                                            🧪 Scratch   x prune
 
-
-
-
-
-↑/k up • ↓/j down • enter open • r refresh all • tab next screen • ? help • q quit
+📋 Overview
+╭──────────────────────────────╮ ╭──────────────────────────────╮ ╭──────────────────────────────╮
+│ 📦 Repos                   ! │ │ 🔗 Dotfiles                ✘ │ │ 🧪 Scratch                 ✔ │
+│ 4 repos · 1 dirty            │ │ 3 dotfiles managed           │ │ 2 dirs · 5.0 MB              │
+│ ↑ 1 ahead · ↓ 1 behind       │ │ 2 links need fixing          │ │ newest dns-debug.2026-09     │
+╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
+╭──────────────────────────────╮ ╭──────────────────────────────╮ ╭──────────────────────────────╮
+│ 📼 Logs                    ✔ │ │ 📌 Capture                 ✔ │ │ 🧹 Ignore                  ! │
+│ 2 sessions                   │ │ 2 locations                  │ │ 2 violations                 │
+│ ● recording deploy-fix       │ │ 1 with captures              │ │ 1 in safe harbors            │
+╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
+╭──────────────────────────────╮ ╭──────────────────────────────╮ ╭──────────────────────────────╮
+│ 🔐 Secrets                 ✘ │ │ ⏰ Cron                    ✘ │ │ 🚮 Trash                   ! │
+│ 1 finding                    │ │ 2 jobs installed             │ │ 3.0 MB · 12 files            │
+←→↑↓ move • enter open • x quick fix • r refresh all • tab/⇧tab screens • ? help • q quit

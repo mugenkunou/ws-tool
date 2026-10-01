@@ -10,12 +10,13 @@ import (
 
 	"github.com/mugenkunou/ws-tool/internal/tui/app"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
+	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
 )
 
 var tuiHelp = cmdHelp{
 	Usage:       "ws tui",
-	Description: "Open the interactive terminal UI: dashboard, repos, dotfiles, scratch,\nlogs, capture, ignore, secrets, and system (trash, cron, reset).",
+	Description: "Open the interactive terminal UI: dashboard, repos, dotfiles, scratch,\nlogs, capture, ignore, secrets, cron, and trash.",
 }
 
 func runTUI(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -53,5 +54,6 @@ func runTUI(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
+	fmt.Fprintln(stdout, theme.Icon(theme.IconWave)+"See you next time.")
 	return 0
 }

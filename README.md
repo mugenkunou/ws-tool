@@ -229,7 +229,7 @@ Presets: `sync` (mega-sync + dotfile-sync + repo-sync), `maintenance` (ignore-sc
 
 | Command | What it does |
 | --- | --- |
-| `ws tui` | Interactive terminal UI for everything above — dashboard, repos, dotfiles, scratch, logs, capture, ignore, secrets, trash & cron |
+| `ws tui` | Interactive terminal UI for everything above — dashboard, repos, dotfiles, scratch, logs, capture, ignore, secrets, cron, trash |
 | `ws version` | Binary version, schema versions, platform info |
 | `ws config` | Configuration commands (`view`, `defaults`) |
 | `ws completions <shell>` | Generate shell completions (bash/zsh/fish) |

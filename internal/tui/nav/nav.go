@@ -20,7 +20,8 @@ const (
 	ScreenCapture
 	ScreenIgnore
 	ScreenSecrets
-	ScreenSystem
+	ScreenCron
+	ScreenTrash
 
 	screenCount // sentinel; keep last
 )
@@ -32,6 +33,34 @@ func Screens() []Screen {
 		out = append(out, s)
 	}
 	return out
+}
+
+// Icon is the screen's emoji (see theme.Icon for rendering rules).
+func (s Screen) Icon() string {
+	switch s {
+	case ScreenDashboard:
+		return "🏠"
+	case ScreenRepos:
+		return "📦"
+	case ScreenDotfiles:
+		return "🔗"
+	case ScreenScratch:
+		return "🧪"
+	case ScreenLogs:
+		return "📼"
+	case ScreenCapture:
+		return "📌"
+	case ScreenIgnore:
+		return "🧹"
+	case ScreenSecrets:
+		return "🔐"
+	case ScreenCron:
+		return "⏰"
+	case ScreenTrash:
+		return "🚮"
+	default:
+		return ""
+	}
 }
 
 // Title is the human label for the screen's tab.
@@ -53,8 +82,10 @@ func (s Screen) Title() string {
 		return "Ignore"
 	case ScreenSecrets:
 		return "Secrets"
-	case ScreenSystem:
-		return "System"
+	case ScreenCron:
+		return "Cron"
+	case ScreenTrash:
+		return "Trash"
 	default:
 		return "?"
 	}
@@ -92,6 +123,9 @@ type UpMsg struct{}
 
 // GotoMsg asks the app to switch to a screen.
 type GotoMsg struct{ Screen Screen }
+
+// FrameMsg advances animations (spinners). The app broadcasts it on a timer.
+type FrameMsg struct{ N int }
 
 // ReloadEnvMsg asks the app to re-resolve the workspace environment and
 // rebuild its screens — after `init` or `reset` changed whether the

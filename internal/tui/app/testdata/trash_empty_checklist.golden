@@ -1,11 +1,11 @@
 ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Capture⁶  Ignore⁷  Secrets⁸  Cron⁹  Trash⁰
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Pull 4 repos (ff-only)
+Empty trash
 
-› [x] Pull Projects/api
-  [x] Pull Projects/web
-  [x] Pull Projects/old
-  [x] Pull ~/.password-store
+› [x] Permanently delete 12 files (3.0 MB) in /home/tester/.Trash
+
+
+
 
 
 

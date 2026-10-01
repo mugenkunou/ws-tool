@@ -2,10 +2,19 @@
 // and nowhere else; the app handles Global, and each component handles its own
 // map.
 //
-// Conventions:
-//   - esc always moves one navigation level up. At the dashboard (the top
-//     level) it does nothing; use q or ctrl+c to quit.
-//   - r reloads the current screen's data from disk.
+// Key grammar (the same on every screen):
+//   - ←→↑↓ / h j k l  move within the page (lists: ↑↓; grids: all four)
+//   - enter           open / drill in — the only key that does
+//   - esc             up one level: closes a dialog, leaves a detail view,
+//     returns to the dashboard; does nothing at the dashboard
+//   - tab / shift+tab next / previous screen (global; also ] [ and 1-9)
+//   - r               reload the current screen
+//   - ?               full help · q quit (ctrl+c always quits)
+//
+// Global bindings must never use keys a page needs for the grammar above
+// (arrows, hjkl, enter, esc, space); TestGlobalKeysLeavePageKeysAlone
+// enforces this. Dialogs (prompts, checklists) capture every key but ctrl+c,
+// so tab completes inside a prompt.
 package keys
 
 import (
@@ -26,28 +35,38 @@ type GlobalMap struct {
 	PrevTab   key.Binding
 	Screens   []key.Binding // Screens[i] jumps to screen i
 	Navigate  key.Binding   // help-only summary of Screens
+	Switch    key.Binding   // help-only summary of PrevTab/NextTab/Screens
 }
 
-// Global returns the app-level bindings for n screens (at most 9).
+// ScreenDigit is the jump key for the i-th screen: 1-9, then 0 for the tenth.
+func ScreenDigit(i int) string {
+	if i == 9 {
+		return "0"
+	}
+	return string(rune('1' + i))
+}
+
+// Global returns the app-level bindings for n screens (at most 10).
 func Global(n int) GlobalMap {
 	screens := make([]key.Binding, 0, n)
-	for i := range min(n, 9) {
-		screens = append(screens, key.NewBinding(key.WithKeys(string(rune('1'+i)))))
+	for i := range min(n, 10) {
+		screens = append(screens, key.NewBinding(key.WithKeys(ScreenDigit(i))))
 	}
 	return GlobalMap{
 		Quit:      key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 		ForceQuit: key.NewBinding(key.WithKeys("ctrl+c")),
 		Help:      key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-		NextTab:   key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next screen")),
-		PrevTab:   key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev screen")),
+		NextTab:   key.NewBinding(key.WithKeys("tab", "]"), key.WithHelp("tab", "next screen")),
+		PrevTab:   key.NewBinding(key.WithKeys("shift+tab", "["), key.WithHelp("shift+tab", "prev screen")),
 		Screens:   screens,
-		Navigate:  key.NewBinding(key.WithKeys("1"), key.WithHelp("1-"+string(rune('0'+min(n, 9))), "jump to screen")),
+		Navigate:  key.NewBinding(key.WithKeys("1"), key.WithHelp("1-"+ScreenDigit(min(n, 10)-1), "jump to screen")),
+		Switch:    key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab/⇧tab", "screens")),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
 func (k GlobalMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.NextTab, k.Help, k.Quit}
+	return []key.Binding{k.Switch, k.Help, k.Quit}
 }
 
 // FullHelp implements help.KeyMap.
@@ -70,42 +89,21 @@ func Table() table.KeyMap {
 	}
 }
 
-// ListMap is the binding set for a plain list screen (dotfiles, scratch, logs).
-type ListMap struct {
-	Table   table.KeyMap
-	Refresh key.Binding
-	Back    key.Binding
-}
-
-// List returns bindings for a plain list screen.
-func List() ListMap {
-	return ListMap{
-		Table:   Table(),
-		Refresh: refresh(),
-		Back:    back(),
-	}
-}
-
-// ShortHelp implements help.KeyMap.
-func (k ListMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Table.LineUp, k.Table.LineDown, k.Refresh}
-}
-
-// FullHelp implements help.KeyMap.
-func (k ListMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{
-		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
-		{k.Table.PageUp, k.Table.PageDown, k.Table.HalfPageUp, k.Table.HalfPageDown},
-		{k.Refresh, k.Back},
-	}
-}
-
-// DashboardMap is the binding set for the dashboard.
+// DashboardMap is the binding set for the dashboard: the attention list
+// (↑↓) above a grid of area cards (←→↑↓).
 type DashboardMap struct {
 	Up      key.Binding
 	Down    key.Binding
+	Left    key.Binding
+	Right   key.Binding
+	Top     key.Binding
+	Bottom  key.Binding
 	Open    key.Binding
+	Fix     key.Binding
 	Refresh key.Binding
+	Config  key.Binding
+	Restore key.Binding
+	Reset   key.Binding
 }
 
 // Dashboard returns bindings for the dashboard.
@@ -113,19 +111,32 @@ func Dashboard() DashboardMap {
 	return DashboardMap{
 		Up:      key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 		Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+		Left:    key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "left")),
+		Right:   key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "right")),
+		Top:     key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("g", "top")),
+		Bottom:  key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("G", "bottom")),
 		Open:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
+		Fix:     key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "quick fix")),
 		Refresh: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh all")),
+		Config:  key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "view config…")),
+		Restore: key.NewBinding(key.WithKeys("O"), key.WithHelp("O", "restore wizard…")),
+		Reset:   key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "reset workspace")),
 	}
+}
+
+// Arrows is a help-only summary of the four movement keys.
+func (k DashboardMap) Arrows() key.Binding {
+	return key.NewBinding(key.WithKeys("up"), key.WithHelp("←→↑↓", "move"))
 }
 
 // ShortHelp implements help.KeyMap.
 func (k DashboardMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Open, k.Refresh}
+	return []key.Binding{k.Arrows(), k.Open, k.Fix, k.Refresh}
 }
 
 // FullHelp implements help.KeyMap.
 func (k DashboardMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.Up, k.Down}, {k.Open, k.Refresh}}
+	return [][]key.Binding{{k.Up, k.Down, k.Left, k.Right}, {k.Top, k.Bottom}, {k.Open, k.Fix, k.Refresh}, {k.Config, k.Restore, k.Reset}}
 }
 
 // ReposMap is the binding set for the repo fleet screen. Fleet actions
@@ -328,9 +339,12 @@ func (k ViewerMap) FullHelp() [][]key.Binding {
 	return append(k.Detail.FullHelp(), []key.Binding{k.ToggleMode})
 }
 
-// CaptureMap is the binding set for the capture screen.
+// CaptureMap is the binding set for the capture screen. enter moves into
+// the preview to scroll it; esc comes back to the list.
 type CaptureMap struct {
 	Table   table.KeyMap
+	Focus   key.Binding
+	Preview viewport.KeyMap
 	Pin     key.Binding
 	Amend   key.Binding
 	Note    key.Binding
@@ -343,6 +357,8 @@ type CaptureMap struct {
 func Capture() CaptureMap {
 	return CaptureMap{
 		Table:   Table(),
+		Focus:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "scroll preview")),
+		Preview: Detail().Viewport,
 		Pin:     key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "pin clipboard")),
 		Amend:   key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "amend last")),
 		Note:    key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "write note")),
@@ -354,13 +370,13 @@ func Capture() CaptureMap {
 
 // ShortHelp implements help.KeyMap.
 func (k CaptureMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Pin, k.Amend, k.Note, k.Edit, k.Refresh}
+	return []key.Binding{k.Focus, k.Pin, k.Amend, k.Note, k.Edit, k.Refresh}
 }
 
 // FullHelp implements help.KeyMap.
 func (k CaptureMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Table.LineUp, k.Table.LineDown},
+		{k.Table.LineUp, k.Table.LineDown, k.Focus},
 		{k.Pin, k.Amend, k.Note, k.Edit},
 		{k.Refresh, k.Back},
 	}
@@ -478,53 +494,76 @@ func (k SecretsMap) FullHelp() [][]key.Binding {
 	}
 }
 
-// SystemMap is the binding set for the system screen (trash, cron,
-// workspace). Cron actions apply to the selected job.
-type SystemMap struct {
-	Table        table.KeyMap
-	CronAdd      key.Binding
-	CronRemove   key.Binding
-	CronLog      key.Binding
-	TrashEnable  key.Binding
-	TrashDisable key.Binding
-	TrashEmpty   key.Binding
-	Config       key.Binding
-	Restore      key.Binding
-	Reset        key.Binding
-	Refresh      key.Binding
-	Back         key.Binding
+// CronMap is the binding set for the cron screen. Actions apply to the
+// selected job.
+type CronMap struct {
+	Table   table.KeyMap
+	Add     key.Binding
+	Remove  key.Binding
+	Log     key.Binding
+	Refresh key.Binding
+	Back    key.Binding
 }
 
-// System returns bindings for the system screen.
-func System() SystemMap {
-	return SystemMap{
-		Table:        Table(),
-		CronAdd:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "install job")),
-		CronRemove:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "remove job")),
-		CronLog:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "job log")),
-		TrashEnable:  key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "enable trash")),
-		TrashDisable: key.NewBinding(key.WithKeys("T"), key.WithHelp("T", "disable trash")),
-		TrashEmpty:   key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "empty trash")),
-		Config:       key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "view config…")),
-		Restore:      key.NewBinding(key.WithKeys("O"), key.WithHelp("O", "restore wizard…")),
-		Reset:        key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "reset workspace")),
-		Refresh:      refresh(),
-		Back:         back(),
+// Cron returns bindings for the cron screen.
+func Cron() CronMap {
+	return CronMap{
+		Table:   Table(),
+		Add:     key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "install")),
+		Remove:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "remove")),
+		Log:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "view log")),
+		Refresh: refresh(),
+		Back:    back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
-func (k SystemMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.CronAdd, k.CronRemove, k.CronLog, k.TrashEnable, k.TrashEmpty, k.Refresh}
+func (k CronMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Log, k.Add, k.Remove, k.Refresh}
 }
 
 // FullHelp implements help.KeyMap.
-func (k SystemMap) FullHelp() [][]key.Binding {
+func (k CronMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Table.LineUp, k.Table.LineDown, k.Refresh, k.Back},
-		{k.CronAdd, k.CronRemove, k.CronLog},
-		{k.TrashEnable, k.TrashDisable, k.TrashEmpty},
-		{k.Config, k.Restore, k.Reset},
+		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
+		{k.Log, k.Add, k.Remove},
+		{k.Refresh, k.Back},
+	}
+}
+
+// TrashMap is the binding set for the trash screen.
+type TrashMap struct {
+	Table   table.KeyMap
+	Enable  key.Binding
+	Disable key.Binding
+	Empty   key.Binding
+	Refresh key.Binding
+	Back    key.Binding
+}
+
+// Trash returns bindings for the trash screen.
+func Trash() TrashMap {
+	return TrashMap{
+		Table:   Table(),
+		Enable:  key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "enable soft-delete")),
+		Disable: key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "disable")),
+		Empty:   key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "empty trash")),
+		Refresh: refresh(),
+		Back:    back(),
+	}
+}
+
+// ShortHelp implements help.KeyMap.
+func (k TrashMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Enable, k.Disable, k.Empty, k.Refresh}
+}
+
+// FullHelp implements help.KeyMap.
+func (k TrashMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Table.LineUp, k.Table.LineDown},
+		{k.Enable, k.Disable, k.Empty},
+		{k.Refresh, k.Back},
 	}
 }
 

@@ -96,7 +96,7 @@ func New(e env.Env) Model {
 			{Title: "Type", Min: 12},
 			{Title: "Size", Min: 9},
 			{Title: "Path", Min: 20, Weight: 1},
-		}, "✔ No sync hygiene violations."),
+		}, theme.Icon(theme.IconBroom)+"Squeaky clean — no sync hygiene violations."),
 	}
 }
 

@@ -21,6 +21,7 @@ package app
 
 import (
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -31,6 +32,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/capture"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/cron"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/dashboard"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/dotfiles"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
@@ -39,7 +41,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/scratch"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/secrets"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/setup"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/system"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
 )
@@ -65,6 +67,7 @@ type Model struct {
 	active   nav.Screen
 	fullHelp bool
 	notice   *nav.NoticeMsg
+	frame    int
 
 	width  int
 	height int
@@ -105,7 +108,8 @@ func (m Model) withEnv(e env.Env, loadErr error) Model {
 		m.screens[nav.ScreenCapture] = capture.New(e)
 		m.screens[nav.ScreenIgnore] = ignore.New(e)
 		m.screens[nav.ScreenSecrets] = secrets.New(e)
-		m.screens[nav.ScreenSystem] = system.New(e)
+		m.screens[nav.ScreenCron] = cron.New(e)
+		m.screens[nav.ScreenTrash] = trash.New(e)
 	}
 	return m
 }
@@ -129,8 +133,21 @@ func (m Model) current() nav.Component {
 	return nil
 }
 
-// Init starts every screen's first load concurrently.
-func (m Model) Init() tea.Cmd {
+// frameInterval paces animations (spinners).
+const frameInterval = 150 * time.Millisecond
+
+// frameTickMsg drives the animation timer.
+type frameTickMsg struct{}
+
+func tick() tea.Cmd {
+	return tea.Tick(frameInterval, func(time.Time) tea.Msg { return frameTickMsg{} })
+}
+
+// Init starts every screen's first load concurrently, and the animation timer.
+func (m Model) Init() tea.Cmd { return tea.Batch(m.loadAll(), tick()) }
+
+// loadAll starts every component's first load.
+func (m Model) loadAll() tea.Cmd {
 	var cmds []tea.Cmd
 	for _, c := range m.components() {
 		cmds = append(cmds, c.Init())
@@ -148,6 +165,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return m.updateKey(msg)
+
+	case frameTickMsg:
+		m.frame++
+		m, cmd := m.broadcast(nav.FrameMsg{N: m.frame})
+		return m, tea.Batch(cmd, tick())
 
 	case nav.NoticeMsg:
 		m.notice = &msg
@@ -174,7 +196,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case envLoadedMsg:
 		m = m.withEnv(msg.env, msg.err)
 		m, cmd := m.resize()
-		return m, tea.Batch(cmd, m.Init())
+		return m, tea.Batch(cmd, m.loadAll())
 	}
 
 	return m.broadcast(msg)
@@ -308,21 +330,55 @@ func (m Model) render() string {
 	return frame.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
 }
 
+// superscripts are the jump-key hints shown after each tab label.
+var superscripts = map[string]string{
+	"1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹", "0": "⁰",
+}
+
+// tabs renders the tab bar: "🏠 Dashboard¹  📦 Repos²  …", the jump key as a
+// faint superscript. Detail is dropped until it fits the width:
+// icon+title → title → icon → digit only.
 func (m Model) tabs() string {
-	parts := []string{theme.Title.Render("ws")}
-	if m.screens != nil {
+	brand := theme.Title.Render("ws")
+	if m.screens == nil {
+		if m.setup != nil {
+			return lipgloss.NewStyle().MaxWidth(m.width).Render(brand + "  " + theme.TabActive.Render(theme.Icon(theme.IconSprout)+"Setup"))
+		}
+		return brand
+	}
+	type mode struct{ icon, title bool }
+	var bar string
+	for _, md := range []mode{{true, true}, {false, true}, {true, false}, {false, false}} {
+		parts := []string{brand}
 		for i, s := range nav.Screens() {
-			label := string(rune('1'+i)) + " " + s.Title()
+			digit := keys.ScreenDigit(i)
+			var l string
+			switch {
+			case md.icon && md.title && theme.EmojiOn():
+				l = theme.Icon(s.Icon()) + s.Title()
+			case md.title:
+				l = s.Title()
+			case md.icon && theme.EmojiOn():
+				l = strings.TrimSpace(theme.Icon(s.Icon()))
+			default:
+				l = digit
+			}
+			hint := ""
+			if l != digit {
+				hint = theme.TabHint.Render(superscripts[digit])
+			}
 			if s == m.active {
-				parts = append(parts, theme.TabActive.Render(label))
+				parts = append(parts, theme.TabActive.Render(l)+hint)
 			} else {
-				parts = append(parts, theme.TabIdle.Render(label))
+				parts = append(parts, theme.TabIdle.Render(l)+hint)
 			}
 		}
-	} else if m.setup != nil {
-		parts = append(parts, theme.TabActive.Render("Setup"))
+		bar = strings.Join(parts, "  ")
+		if lipgloss.Width(bar) <= m.width {
+			break
+		}
 	}
-	return lipgloss.NewStyle().MaxWidth(m.width).Render(strings.Join(parts, "  "))
+	return lipgloss.NewStyle().MaxWidth(m.width).Render(bar)
 }
 
 func (m Model) rule() string {
@@ -330,16 +386,16 @@ func (m Model) rule() string {
 }
 
 func (m Model) noticeLine() string {
-	st := theme.Muted
+	st, icon := theme.Muted, theme.IconBulb
 	switch m.notice.Level {
 	case nav.LevelSuccess:
-		st = theme.OK
+		st, icon = theme.OK, theme.IconCheck
 	case nav.LevelWarn:
-		st = theme.Warn
+		st, icon = theme.Warn, theme.IconWork
 	case nav.LevelError:
-		st = theme.Error
+		st, icon = theme.Error, theme.IconFire
 	}
-	return lipgloss.NewStyle().MaxWidth(m.width).Render(st.Render(firstLine(m.notice.Text)))
+	return lipgloss.NewStyle().MaxWidth(m.width).Render(theme.Icon(icon) + st.Render(firstLine(m.notice.Text)))
 }
 
 func (m Model) footer() string {

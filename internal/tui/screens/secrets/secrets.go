@@ -117,7 +117,7 @@ func New(e env.Env) Model {
 			{Title: "Severity", Min: 8},
 			{Title: "Location", Min: 20, Weight: 2},
 			{Title: "Match", Min: 16, Weight: 3},
-		}, "✔ No secrets found."),
+		}, theme.Icon(theme.IconLock)+"No secrets found in your workspace. Nice."),
 	}
 }
 

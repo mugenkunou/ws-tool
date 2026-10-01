@@ -54,6 +54,15 @@ const (
 	stepNote
 )
 
+// region is which pane receives movement keys: enter moves into the
+// preview, esc back to the list.
+type region int
+
+const (
+	regionList region = iota
+	regionPreview
+)
+
 type handoverTag int
 
 const handoverEdit handoverTag = iota
@@ -67,17 +76,20 @@ type Model struct {
 	modal   modal.Model
 	locs    []wscapture.Location
 	shown   string // path currently in the preview
+	focus   region
 	width   int
 	height  int
 }
 
 // New creates the screen.
 func New(e env.Env) Model {
+	k := keys.Capture()
 	vp := viewport.New()
 	vp.SoftWrap = true
+	vp.KeyMap = k.Preview
 	return Model{
 		env:     e,
-		keys:    keys.Capture(),
+		keys:    k,
 		preview: vp,
 		list: listview.New([]layout.Col{
 			{Title: "Location", Min: 10, Weight: 1},
@@ -198,6 +210,19 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	}
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
+		return m, nil
+	}
+	if m.focus == regionPreview {
+		if key.Matches(k, m.keys.Back) { // one level up: back to the list
+			m.focus = regionList
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.preview, cmd = m.preview.Update(k)
+		return m, cmd
+	}
+	if key.Matches(k, m.keys.Focus) {
+		m.focus = regionPreview
 		return m, nil
 	}
 	loc, haveLoc := m.selected()
@@ -347,7 +372,12 @@ func (m Model) View() string {
 	if m.modal.Open() {
 		return m.modal.View()
 	}
-	rule := theme.Rule.Render(strings.Repeat("─", max(m.width, 0)))
+	label := " preview · enter to scroll "
+	st := theme.Rule
+	if m.focus == regionPreview {
+		label, st = " preview · esc back to list ", theme.Title
+	}
+	rule := st.Render(lipgloss.NewStyle().MaxWidth(m.width).Render("──" + label + strings.Repeat("─", max(m.width-lipgloss.Width(label)-2, 0))))
 	return lipgloss.JoinVertical(lipgloss.Left, m.list.View(), rule, m.preview.View())
 }
 

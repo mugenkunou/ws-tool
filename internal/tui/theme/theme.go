@@ -20,6 +20,7 @@ var (
 	Title     = lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
 	TabActive = lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Underline(true)
 	TabIdle   = lipgloss.NewStyle().Foreground(colorMuted)
+	TabHint   = lipgloss.NewStyle().Foreground(colorMuted).Faint(true)
 	Muted     = lipgloss.NewStyle().Foreground(colorMuted)
 	Bold      = lipgloss.NewStyle().Bold(true)
 	OK        = lipgloss.NewStyle().Foreground(colorOK)

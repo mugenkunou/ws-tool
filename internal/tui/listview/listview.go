@@ -107,6 +107,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
+// SetCursor selects row i (clamped).
+func (m Model) SetCursor(i int) Model {
+	if len(m.rows) == 0 {
+		return m
+	}
+	m.table.SetCursor(min(max(i, 0), len(m.rows)-1))
+	return m.plainCursorRow()
+}
+
 // Cursor is the selected row index, or -1 when there are no rows.
 func (m Model) Cursor() int {
 	if len(m.table.Rows()) == 0 {
@@ -123,7 +132,7 @@ func (m Model) View() string {
 	line := lipgloss.NewStyle().MaxWidth(m.width)
 	switch {
 	case m.state == stateLoading && len(m.table.Rows()) == 0:
-		return line.Render(theme.Muted.Render("Loading…"))
+		return line.Render(theme.Muted.Render(theme.Icon("⏳") + "Loading…"))
 	case m.state == stateError:
 		return lipgloss.NewStyle().Width(m.width).MaxHeight(m.height).
 			Render(theme.Error.Render("Error: " + m.err.Error()))

@@ -137,7 +137,7 @@ func New(e env.Env) Model {
 			{Title: "Cmds", Min: 4},
 			{Title: "Size", Min: 9},
 			{Title: "State", Min: 11},
-		}, "No recorded sessions. Press s to start one."),
+		}, theme.Icon(theme.IconTape)+"No recorded sessions yet. Press s to start one."),
 		results: listview.New([]layout.Col{
 			{Title: "Session", Min: 14, Weight: 1},
 			{Title: "Line", Min: 5},

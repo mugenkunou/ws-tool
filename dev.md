@@ -673,7 +673,7 @@ Built on Charm v2: `charm.land/bubbletea/v2`, `charm.land/bubbles/v2`,
 | `internal/tui/app` | Root model. Owns screens, routes messages, handles global keys, lays out header / body / notice / footer, shows the setup screen when the workspace is not initialized. |
 | `internal/tui/nav` | Contract between app and screens: `Screen` enum, `Component` interface, `ResizeMsg`, `UpMsg`, `GotoMsg`, `RefreshMsg`, `ReloadEnvMsg`, `NoticeMsg`. |
 | `internal/tui/keys` | **Every key binding** (`keys.go`). App handles `Global`; each screen and dialog handles its own map. |
-| `internal/tui/screens/<name>` | One package per screen: dashboard, repos, dotfiles, scratch, logs, capture, ignore, secrets, system, setup. Unexported state; outputs are exported `LoadedMsg` types. |
+| `internal/tui/screens/<name>` | One package per screen: dashboard, repos, dotfiles, scratch, logs, capture, ignore, secrets, cron, trash, setup. Unexported state; outputs are exported `LoadedMsg` types. |
 | `internal/tui/confirm` | The Action Plan checklist: review (toggle) → running (one `tea.Cmd` per action) → done. Emits `DoneMsg{Result}`. |
 | `internal/tui/prompt`, `choose` | Text input with ghost-panel suggestions (fixed list or async `Completer`); single-choice list. |
 | `internal/tui/modal` | Holds a screen's one open dialog, tagged with a typed step; `Match` routes the dialog's result back. |
@@ -716,6 +716,32 @@ CLI today: `init`, `restore`, `dotfile git setup`, `dotfile migrate`,
 `secret setup`, `git-credential-helper setup|status|disconnect`,
 `ignore tree|ls|edit`, `config view`, `log start`.
 
+**Key grammar** (identical on every screen; documented in `keys.go`):
+←→↑↓/hjkl move within the page (lists use ↑↓, grids all four) · enter is the
+only key that opens/drills in · esc goes up one level · tab/shift+tab switch
+screens (also `]` `[`, and 1–9, 0 for the tenth) · r reloads · ? help · q
+quit. Global bindings never take arrows, hjkl, enter, esc or space —
+`TestGlobalKeysLeavePageKeysAlone` enforces it. The tab bar shows each jump
+key as a faint superscript (`Repos²`).
+
+**Dashboard.** The workspace's home. A "Needs attention" list (errors, then
+warnings, then info; ↑↓) above an overview grid with one card per area (all
+four arrows; ↑ from the top row returns to the list). It derives everything
+from other screens' `LoadedMsg`. To act on another screen it sends that
+screen's exported messages alongside `nav.Goto`: `Select*Msg` positions the
+screen at the problem (enter); `Request*Msg` opens the screen's own checklist
+(the `x` quick fix). Workspace-wide operations live here: `c` config view,
+`O` restore wizard (both handed to the CLI), `R` reset (checklist, then
+`nav.ReloadEnvMsg`). Add an attention item by extending the area's
+derivation function in `screens/dashboard` and, if it needs one, a request
+message in the target screen.
+
+**Emoji and fun cues.** Decoration only, via `theme.Icon` (off with
+`WS_NO_EMOJI=1` and on `TERM=linux`). Use only Emoji_Presentation characters
+(always 2 cells, no U+FE0F variation selector: not ⚠️ ☀️ ⚙️) so widths stay
+exact. Animations read `nav.FrameMsg`, which the app broadcasts every 150 ms;
+never read the clock in `View` — use `env.Now()` in `Update`.
+
 **Navigation.** Screens are `nav.Screen` constants, never strings. `esc`
 always moves one level up: a dialog closes first; a screen with nested levels
 (repos list → detail) handles esc itself; at its top level it returns
@@ -749,6 +775,8 @@ Snapshots live in `internal/tui/app/testdata/*.golden` (ANSI stripped,
 100×30 unless noted) and cover every screen plus open dialogs. `TestResize`
 renders every screen and several dialogs from 120×40 down to 1×1 and fails if
 anything overflows; `TestResizeRestoresLayout` checks shrinking and restoring
-is lossless. `TestScratchNewEndToEnd` drives prompt → checklist → apply
+is lossless. Tests pin `env.Clock` and `theme.SetEmoji(true)`; tests call
+`loadAll()` rather than `Init()` (which also starts the animation timer).
+`TestScratchNewEndToEnd` drives prompt → checklist → apply
 against a real temp workspace with every integration (HOME, git config, pass,
 crontab) redirected — copy its `hermetic` helper for new end-to-end tests.

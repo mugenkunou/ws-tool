@@ -65,6 +65,13 @@ func (m LoadedMsg) Issues() int {
 	return n
 }
 
+// SelectMsg asks the screen to select the entry for a system path (sent by
+// the dashboard when it opens this screen at a specific problem).
+type SelectMsg struct{ System string }
+
+// RequestFixMsg asks the screen to open its fix-links checklist.
+type RequestFixMsg struct{}
+
 // addCandidate is one file or directory entry offered for `dotfile add`.
 type addCandidate struct {
 	label string
@@ -141,7 +148,7 @@ func New(e env.Env) Model {
 			{Title: "Stored as", Min: 12, Weight: 2},
 			{Title: "Status", Min: 13},
 			{Title: "Sudo", Min: 4},
-		}, "No dotfiles managed yet. Press a to add one."),
+		}, theme.Icon(theme.IconSprout)+"No dotfiles managed yet. Press a to add one."),
 	}
 }
 
@@ -277,6 +284,20 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		m.entries = msg.Entries
 		m.list = m.list.SetRows(m.rows())
 		return m, nil
+	case SelectMsg:
+		for i, e := range m.entries {
+			if e.Record.System == msg.System {
+				m.level = levelList
+				m.list = m.list.SetCursor(i)
+			}
+		}
+		return m, nil
+	case RequestFixMsg:
+		if m.modal.Open() {
+			return m, nil
+		}
+		m.level = levelList
+		return m.openFix(), nil
 	case addPreparedMsg:
 		m.preparing = false
 		if msg.err != nil {
