@@ -162,7 +162,7 @@ func runSecretScan(args []string, globals globalFlags, workspacePath, configPath
 	}
 
 	credHelper := gitConfigGet("credential.helper")
-	credConnected := strings.Contains(credHelper, "ws git-credential-helper")
+	credConnected := isWsHelper(credHelper)
 
 	if globals.json {
 		return writeJSON(stdout, stderr, "secret.scan", secretScanResult{

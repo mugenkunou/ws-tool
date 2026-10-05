@@ -425,3 +425,18 @@ func TestUseHTTPPathFor(t *testing.T) {
 		t.Fatal("expected URL-scoped useHttpPath to apply only to gitlab.com")
 	}
 }
+
+func TestHelperPathStatusWrapper(t *testing.T) {
+	tmpDir := t.TempDir()
+	wrapper := filepath.Join(tmpDir, "ws-credential-helper")
+	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := helperPathStatus("!"+wrapper, false); !ok {
+		t.Fatal("expected bare wrapper to be connected")
+	}
+	label, detail, ok := helperPathStatus("!"+wrapper+" git-credential-helper", false)
+	if ok || !strings.Contains(strings.ToLower(label), "stale") || !strings.Contains(detail, "duplicate") {
+		t.Fatalf("expected legacy wrapper form to be stale, got %s / %s", label, detail)
+	}
+}

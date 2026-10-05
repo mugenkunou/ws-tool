@@ -130,7 +130,9 @@ func runCredentialSetup(args []string, globals globalFlags, stdin io.Reader, std
 		fmt.Fprintln(stderr, style.ResultError(nc, "cannot resolve wrapper path: %v", wrapErr))
 		return 1
 	}
-	helperValue := "!" + wrapperPath + " git-credential-helper"
+	// The wrapper already execs `ws git-credential-helper`; git appends the
+	// get/store/erase verb, so the value must not repeat the subcommand.
+	helperValue := "!" + wrapperPath
 
 	// Install the wrapper script if missing or stale.
 	if needsWrapperInstall(wrapperPath) {
@@ -145,7 +147,7 @@ func runCredentialSetup(args []string, globals globalFlags, stdin io.Reader, std
 
 	// Connect or reconcile global credential helper.
 	currentHelper := gitConfigGet("credential.helper")
-	if !strings.Contains(currentHelper, "ws git-credential-helper") {
+	if !isWsHelper(currentHelper) {
 		plan.Actions = append(plan.Actions, Action{
 			ID:          "set-credential-helper",
 			Description: fmt.Sprintf("Set global credential.helper to '%s'", helperValue),
@@ -460,7 +462,7 @@ func runCredentialDisconnect(args []string, globals globalFlags, stdin io.Reader
 	nc := globals.noColor
 
 	currentHelper := gitConfigGet("credential.helper")
-	globalConnected := strings.Contains(currentHelper, "ws git-credential-helper")
+	globalConnected := isWsHelper(currentHelper)
 
 	// Also discover local ws overrides in workspace repos.
 	var localOverrides []localHelperOverride
@@ -805,10 +807,16 @@ func discoverLocalHelperOverrides(workspacePath string) []localHelperOverride {
 		overrides = append(overrides, localHelperOverride{
 			RepoPath: r.Path,
 			Helper:   local,
-			IsWs:     strings.Contains(local, "ws git-credential-helper"),
+			IsWs:     isWsHelper(local),
 		})
 	}
 	return overrides
+}
+
+// isWsHelper reports whether a credential.helper value points at ws, either
+// directly ("ws git-credential-helper") or via the installed wrapper script.
+func isWsHelper(v string) bool {
+	return strings.Contains(v, "ws git-credential-helper") || strings.Contains(v, "ws-credential-helper")
 }
 
 // helperPathStatus checks the configured helper value and returns a status
@@ -818,17 +826,20 @@ func helperPathStatus(helperValue string, nc bool) (string, string, bool) {
 	if helperValue == "" {
 		return style.Badge("disconnected", nc), "", false
 	}
-	if !strings.Contains(helperValue, "ws git-credential-helper") {
+	if !isWsHelper(helperValue) {
 		return style.Badge("disconnected", nc), style.Mutedf(nc, "(not a ws helper)"), false
 	}
 
-	// Extract binary/script path from "!<path> git-credential-helper"
-	binPath := helperValue
-	if strings.HasPrefix(binPath, "!") {
-		binPath = binPath[1:]
-	}
+	// Extract binary/script path from "!<path>" or "!<path> git-credential-helper"
+	binPath := strings.TrimPrefix(helperValue, "!")
 	if idx := strings.Index(binPath, " git-credential-helper"); idx >= 0 {
 		binPath = binPath[:idx]
+	}
+
+	// Older setups wrote "!<wrapper> git-credential-helper"; the wrapper then
+	// passed the subcommand twice and every lookup failed.
+	if strings.HasSuffix(binPath, "ws-credential-helper") && binPath != helperValue[1:] {
+		return style.Badge("stale", nc), "wrapper called with a duplicate subcommand", false
 	}
 
 	if _, err := os.Stat(binPath); err != nil {
