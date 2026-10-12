@@ -25,7 +25,7 @@ Your digital life is scattered:
 | --- | --- | --- |
 | **Dotfiles** | Configs scattered across `~/`, `/etc/`, `~/.config/` | `ws dotfile add ~/.bashrc` — moves the original into workspace, symlinks back |
 | **Sync hygiene** | 200 MB log dumps and `node_modules/` bloating your cloud | `ws ignore scan` finds bloat; `ws ignore fix` quarantines it |
-| **Secrets** | Accidentally syncing `password=hunter2` to the cloud | `ws secret scan` catches it; `ws secret fix` lets you exclude or allowlist |
+| **Secrets** | Accidentally syncing `password=hunter2` to the cloud | `ws secret scan` catches it; `ws secret fix` lets you add to `.megaignore` or allowlist |
 | **Git credentials** | Managing HTTPS tokens across multiple git hosts | `ws git-credential-helper setup` configures git to use `pass` as credential helper |
 | **Terminal sessions** | "What was that command I ran last Tuesday?" | `ws log start` records everything via PTY. Search it later with `ws log search` |
 | **Git repos** | 6 repos, 3 need push, 1 is on a detached HEAD | `ws repo scan` shows fleet status; `ws repo sync` pulls/pushes per state in one shot |
@@ -97,6 +97,7 @@ Your `.bashrc` now lives in the workspace (synced). The system path is a symlink
 | --- | --- |
 | `ws dotfile add <path>` | Capture a system file into `ws/dotfiles/`, symlink back |
 | `ws dotfile rm <path>` | Restore file to system path, unregister |
+| `ws dotfile sync <path>` | Adopt live file content into the ws copy, re-symlink |
 | `ws dotfile ls` | List all managed dotfiles |
 | `ws dotfile scan` | Verify all symlinks are intact |
 | `ws dotfile fix` | Recreate broken/missing symlinks (the restore command) |
@@ -147,7 +148,7 @@ Your `.bashrc` now lives in the workspace (synced). The system path is a symlink
 | Command | What it does |
 | --- | --- |
 | `ws ignore check <path>` | Will this file sync? Shows the matching rule |
-| `ws ignore ls` | List all excluded files (pipe-safe, greppable) |
+| `ws ignore ls` | List all .megaignored files (pipe-safe, greppable) |
 | `ws ignore tree` | Visual directory tree with sync/ignored status |
 | `ws ignore scan` | Find bloat, excessive depth, and build artifacts |
 | `ws ignore fix` | Fix violations: move to scratch, add rules, delete build output |
@@ -162,7 +163,7 @@ Your `.bashrc` now lives in the workspace (synced). The system path is a symlink
 | Command | What it does |
 | --- | --- |
 | `ws secret scan` | Find exposed secrets (`password=`, `API_KEY=`, private keys) |
-| `ws secret fix` | View context, exclude file, or allowlist false positives |
+| `ws secret fix` | View context, add to .megaignore, or allowlist false positives |
 | `ws secret setup` | Setup/check Unix Password Store (`pass`) prerequisites |
 | `ws secret status` | Show pass health, git state, and actionable warnings |
 | `ws secret git push` | Push pass store commits to remote |
@@ -273,7 +274,7 @@ MEGA uses `.megaignore` to decide what syncs. `ws` ships a battle-tested templat
 - **Lock files** — `package-lock.json`, `yarn.lock`, `poetry.lock`, `go.sum`
 - **Hidden dirs** — `.git/`, `.obsidian/`, `.venv/` (caught by `-:.*`)
 
-**Safe harbors** override everything above. `ws/` always syncs (your metadata, dotfiles, session logs). Generate it with:
+**Suppress overrides** override everything above. `ws/` always syncs (your metadata, dotfiles, session logs). Generate it with:
 
 ```bash
 ws ignore generate          # fresh template

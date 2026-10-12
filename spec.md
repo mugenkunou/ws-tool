@@ -79,6 +79,7 @@ RW commands modify state. They:
 | `ws restore` | Per-step: trash-enable, dotfile-fix, ignore-generate |
 | `ws dotfile add` | Single action per file |
 | `ws dotfile rm` | Single action per file |
+| `ws dotfile sync` | Single action per file |
 | `ws dotfile reset` | Single action wrapping subsystem reset |
 | `ws dotfile fix` | Per-violation actions |
 | `ws dotfile git setup` | Guided walk-through: init → remote → auto-push |
@@ -176,7 +177,7 @@ Exit codes from `planResult.ExitCode()`:
 
 **Path convention:** All relative paths in config values are resolved against `<workspace>` (config values only — CLI input resolves against the current directory, and all output is absolute; see [Path Rules](#path-rules)). Absolute paths and `~`-prefixed paths are expanded at runtime (`~` → `$HOME`). `<workspace>`, `scratch.root_dir`, `repo.roots`, and `trash.root_dir` are user-provided (via config/env/flag). Derived paths: logs use `<workspace>/ws/ws-log`.
 
-**Soft-delete integration model:** `ws` delete actions execute via `rm`. Machine-level setup (`ws trash setup`) configures shell/IDE/file-explorer delete flows to soft-delete, usually to `trash.root_dir` (default `~/.Trash`). `ws` does not maintain its own workspace trash store.
+**Soft-delete integration model:** `ws` delete actions execute via `rm`. Machine-level setup (`ws trash setup`) configures shell/IDE delete flows to soft-delete, to `trash.root_dir` (default `~/.local/share/Trash` — the standard XDG trash directory). Using the XDG directory means `ws`'s own deletions, a shell `rm` once aliased, and the desktop file manager's Delete/Trash all land in the same place: `ws trash empty` and the file manager's "Empty Trash" operate on the same content, and anything `ws` deletes shows up as restorable in the file manager. `ws` does not maintain its own separate workspace trash store.
 
 `config.json`:
 
@@ -202,7 +203,7 @@ Exit codes from `planResult.ExitCode()`:
     "prune_after_days": 90
   },
   "trash": {
-    "root_dir": "~/.Trash",
+    "root_dir": "~/.local/share/Trash",
     "warn_size_mb": 1024,
     "setup": {
       "prompt_on_init": true,
@@ -335,7 +336,7 @@ Exit codes from `planResult.ExitCode()`:
 
 **Migration:** On first command after upgrade, `ws` automatically migrates schema 1 manifests to schema 2 by absorbing standalone `provisions.json` and `ignore.json` (if present) into `manifest.json`, then deleting the old files.
 
-`trash.root_dir` is a machine-local preference used by setup workflows. It defaults to `~/.Trash` and should generally stay outside `<workspace>`.
+`trash.root_dir` is a machine-local preference used by setup workflows. It defaults to `~/.local/share/Trash` (the standard XDG trash directory, shared with the desktop file manager) and should generally stay outside `<workspace>`.
 
 ---
 
@@ -536,21 +537,23 @@ Safety properties:
 | `OVERWRITTEN` | WARNING | System path is a real file, not a symlink — someone (or a package manager) replaced it | Workspace copy is stale. Edits go to the local file, not the synced workspace. Data divergence. |
 | `OK` | — | Symlink resolves correctly and target exists | No action needed. |
 
-### Deletion Model: Soft Delete via Machine Setup
+### Deletion Model: Soft Delete via a Shared XDG Trash
 
-`ws` executes delete operations via `rm`. It does not implement a separate trash engine. Instead, it helps configure the machine so common delete paths are soft-delete by default.
+`ws` deletes (`ws dotfile rm`, `ws scratch rm`/`prune`, `ws ignore fix` move-to-trash actions, and other prune operations) move the item into the trash unconditionally — no `ws trash setup` step is required for `ws`'s own deletions. Additionally, it helps configure the machine so external delete paths (a plain shell `rm`, VS Code's delete) are soft-delete by default too.
+
+`trash.root_dir` defaults to `~/.local/share/Trash` — the standard per-user XDG trash directory (`$XDG_DATA_HOME/Trash`), using the standard on-disk layout: `files/` holds the moved items, `info/*.trashinfo` holds one sidecar per item recording its original path and deletion time (https://specifications.freedesktop.org/trash-spec). This is deliberate: it is the same directory the desktop file manager (Nautilus, Thunar, Nemo, …) already reads and writes, so everything `ws` deletes is immediately visible and restorable from the file manager's trash view, and `ws trash empty` / the file manager's "Empty Trash" clear the same content. There is no separate "file explorer integration" step to configure in the default case — it's automatic because both sides use the same directory.
 
 Rules:
 
-1. `ws` delete paths (`ws dotfile rm`, project-meta delete actions, prune operations) call `rm`.
+1. `ws` delete paths call the trash subsystem (`internal/trash.SoftDelete`), which moves the item into `trash.root_dir`'s `files/` directory and writes its `.trashinfo` sidecar.
 
-2. `ws trash setup` configures machine-local tooling so delete behaves as soft-delete (shell `rm`, VS Code delete, file explorer delete).
+2. `ws trash setup` additionally configures machine-local tooling so a plain shell `rm` and VS Code's delete action also soft-delete into the same trash (shell `rm` is aliased to a helper script that writes the same `files/`+`info/` layout).
 
-3. `trash.root_dir` (default `~/.Trash`) is a setup target for these integrations.
+3. If `trash.root_dir` is overridden to a custom path (different from the default XDG directory), `ws trash setup --no-file-explorer`'s counterpart (the `file_explorer` integration) falls back to redirecting the XDG trash directory to the custom path via a symlink — the same mechanism used before unification. If the XDG path is already a real directory in that case, `ws` leaves it untouched (to avoid data loss) and reports why via `ws trash status`.
 
-4. `ws trash status` warns when soft-delete setup is missing on the current machine.
+4. `ws trash status` warns when shell-rm/VS Code soft-delete setup is missing on the current machine.
 
-Rationale: keep the binary simple and Linux-native while still enforcing safe deletion posture across everyday tools.
+Rationale: keep the binary simple and Linux-native, share one trash with the desktop environment instead of maintaining a separate `ws`-only store, and still enforce safe deletion posture across everyday tools.
 
 ### Dotfile Git Versioning (Optional)
 
@@ -615,18 +618,18 @@ When merging `.megaignore` rules (`ws ignore generate --merge`), `ws` compares r
 
 After any successful fix/merge/edit, `ws` refreshes `<workspace>/ws/megaignore.state` from the effective `<workspace>/.megaignore`.
 
-### Safe Harbor Directories
+### Suppress Overrides (Safe Harbor Directories)
 
-The `.megaignore` template excludes aggressively — compiled output, logs, archives, datasets are all blocked globally. But some directories need to sync *everything*, regardless of extension. These are **safe harbors**: directories with `+:`/`+g:` include overrides placed *after* all exclude rules, exploiting megaignore's last-match-wins evaluation order.
+The `.megaignore` template excludes aggressively — compiled output, logs, archives, datasets are all blocked globally. But some directories need to sync *everything*, regardless of extension. These are **suppress overrides** (internally "safe harbors"): directories with `+:`/`+g:` include overrides placed *after* all exclude rules, exploiting megaignore's last-match-wins evaluation order.
 
-The built-in template defines two safe harbors:
+The built-in template defines two suppress overrides:
 
 | Directory | Purpose | Why it needs override |
 | --- | --- | --- |
 | `ws/` | Tool metadata, session logs, config | `ws/ws-log/<tag>/stdin.log` would be excluded by `-g:*.log` without the override. |
 | `Archive/` | Configs, credentials, machine state | Intentional blobs — a VPN client `.deb`, an incident log dump, a backup `.tar.gz` — are legitimate here. Factor I: "Every config gets synced. No exceptions." |
 
-**Rule ordering is load-bearing.** The safe harbor includes *must* appear after all global excludes. If they were placed earlier (e.g. in the OS junk section), a later `-g:*.log` would re-exclude `ws/ws-log/tag/stdin.log`. The current placement — immediately before the `-s:*` sentinel — ensures they are the final word.
+**Rule ordering is load-bearing.** The suppress override includes *must* appear after all global excludes. If they were placed earlier (e.g. in the OS junk section), a later `-g:*.log` would re-exclude `ws/ws-log/tag/stdin.log`. The current placement — immediately before the `-s:*` sentinel — ensures they are the final word.
 
 ```text
 # Evaluation for Archive/incident-2026.tar.gz:
@@ -640,7 +643,7 @@ The built-in template defines two safe harbors:
 #   Result: EXCLUDED ✔
 ```
 
-**Interaction with violation scanning:** `ws ignore scan` detects violations inside safe harbors but **downgrades their severity to INFO**. These items don't count as actionable violations: they don't trigger exit code 2, they don't appear in `ws ignore fix`, and they render in muted/dim styling. By default, safe harbor items are collapsed to a single summary line:
+**Interaction with violation scanning:** `ws ignore scan` detects violations inside suppress overrides but **downgrades their severity to INFO**. These items don't count as actionable violations: they don't trigger exit code 2, they don't appear in `ws ignore fix`, and they render in muted/dim styling. By default, suppressed items are collapsed to a single summary line:
 
 ```text
 Violations (3)
@@ -648,13 +651,13 @@ Violations (3)
   WARNING   depth          /home/user/Workspace/Projects/vendor/deep/pkg  (depth 14 exceeds max 6)
   WARNING   project-meta   /home/user/Workspace/Projects/app/node_modules  (Node project build artifact directory should be excluded)
 
-Safe harbors (47 items, 2.3 GB)
-  Use --expand-harbors to see details.
+Suppressed (47 items, 2.3 GB)
+  Use --expand-suppressed to see details.
 ```
 
-Pass `--expand-harbors` to list each safe harbor item individually. `ws ignore check` shows the safe harbor override in its output so the user knows *why* a `*.tar.gz` file is syncing (with a `[safe harbor]` annotation).
+Pass `--expand-suppressed` to list each suppressed item individually. `ws ignore check` shows the suppress override in its output so the user knows *why* a `*.tar.gz` file is syncing (with a `[suppressed]` annotation).
 
-**Adding new safe harbors:** Users can add more safe harbor directories by appending `+:DirName` / `+g:DirName/**` in the safe harbors section of `.megaignore`. The `ws ignore edit` post-save validation warns if include rules appear before exclude rules (order-dependent correctness).
+**Adding new suppress overrides:** Users can add more suppress directories by appending `+:DirName` / `+g:DirName/**` in the suppress overrides section of `.megaignore`. The `ws ignore edit` post-save validation warns if include rules appear before exclude rules (order-dependent correctness).
 
 ### Project-Meta Detection (Dynamic Artifact Discovery)
 
@@ -683,7 +686,7 @@ The static `.megaignore` template covers universally-safe exclusions — compile
 | `composer.json` | PHP | `vendor/`, `composer.lock` |
 | `*.sln`, `*.csproj` | .NET/C# | `bin/`, `obj/` |
 
-**Scope:** Detection walks only `<workspace>` (same roots used by other ignore commands). It does **not** descend into directories that are already excluded by `.megaignore` (e.g. `node_modules/` excluded by `-:node_modules` is never walked). Safe harbor directories (`Archive/`, `ws/`) are exempt from project-meta scanning — files there are intentionally synced regardless of type.
+**Scope:** Detection walks only `<workspace>` (same roots used by other ignore commands). It does **not** descend into directories that are already excluded by `.megaignore` (e.g. `node_modules/` excluded by `-:node_modules` is never walked). Suppressed directories (`Archive/`, `ws/`) are exempt from project-meta scanning — files there are intentionally synced regardless of type.
 
 **Severity:** All `project-meta` violations are `WARNING` severity. They are never `CRITICAL` — the files are small and reproducible; the concern is sync noise, not data loss.
 
@@ -817,7 +820,7 @@ Content body — markdown, code blocks, embedded images.
 **Integration with existing `ws` systems:**
 
 - `ws restore` — No action needed. `ws/captures/` is synced. Restore a machine → captures are already there.
-- `ws ignore` — `ws/captures/assets/` is inside the `ws/` safe harbor, so attachments sync regardless of extension rules.
+- `ws ignore` — `ws/captures/assets/` is inside the `ws/` suppress override, so attachments sync regardless of extension rules.
 - `ws completions` — `ws capture <TAB>` completes to configured location names.
 
 ---
@@ -1096,6 +1099,7 @@ ws repo add-root <path>              Add one repo discovery root to config
 
 ws dotfile add <system-path>          Capture a system file into ws/dotfiles/ + symlink back
 ws dotfile rm <path>                 Restore file to system path, unregister
+ws dotfile sync <path>                Adopt live file content into the ws copy, re-symlink
 ws dotfile ls                        Show all registered dotfiles
 ws dotfile scan                      Verify all dotfile symlinks (read-only)
 ws dotfile fix                       Reconcile/enforce all dotfile symlinks from registry
@@ -1269,7 +1273,7 @@ Configure soft-delete on this machine? [Y/n]: ↵
   VS Code delete-to-trash:    enable  [Y/n]: ↵
   File explorer soft-delete:  enable  [Y/n]: ↵
 
-✔ Trash setup completed (root: /home/user/.Trash)
+✔ Trash setup completed (root: /home/user/.local/share/Trash)
 
 ── [4/4] Done ─────────────────────────────────────
 
@@ -1382,7 +1386,7 @@ No changes made.
     "manifest": { "action": "created", "path": "/home/user/Workspace/ws/manifest.json" },
     "ignore": { "action": "created", "rules": 20, "path": "/home/user/Workspace/.megaignore" },
     "trash_setup": {
-      "root_dir": "/home/user/.Trash",
+      "root_dir": "/home/user/.local/share/Trash",
       "shell_rm": "configured",
       "vscode_delete": "configured",
       "file_explorer_delete": "configured"
@@ -1467,7 +1471,7 @@ Configure and validate machine-level soft-delete behavior.
 ws trash [subcommand]
 
 ws trash setup [flags]
---root-dir <path>    Preferred trash root directory (default: ~/.Trash)
+--root-dir <path>    Preferred trash root directory (default: ~/.local/share/Trash)
 --no-shell-rm        Skip shell rm configuration
 --no-vscode          Skip VS Code delete-to-trash configuration
 --no-file-explorer   Skip file explorer delete configuration
@@ -1484,7 +1488,7 @@ ws trash status
 ```text
 ws trash setup
 
-Trash root: /home/user/.Trash
+Trash root: /home/user/.local/share/Trash
 
 Shell rm integration:      ✔ configured
 VS Code delete-to-trash:   ✔ configured
@@ -1498,7 +1502,7 @@ Done. Soft-delete setup is active on this machine.
 ```text
 ws trash status
 
-Trash root: /home/user/.Trash
+Trash root: /home/user/.local/share/Trash
 
 WARNING  shell-rm       not configured
 WARNING  vscode-delete  not configured
@@ -1512,7 +1516,7 @@ Run `ws trash setup` to configure soft-delete behavior.
 ```text
 ws trash status
 
-Trash root: /home/user/.Trash
+Trash root: /home/user/.local/share/Trash
 
   OK  shell-rm
   OK  vscode-delete
@@ -1528,7 +1532,7 @@ Trash root: /home/user/.Trash
 ```text
 ws trash status
 
-Trash root: /home/user/.Trash
+Trash root: /home/user/.local/share/Trash
 
   OK  shell-rm
   OK  vscode-delete
@@ -2010,6 +2014,22 @@ Apply? [Y/n]: ↵
 ✔ Deleted   /home/user/Workspace/ws/dotfiles/bashrc
 ✔ Unregistered from /home/user/Workspace/ws/manifest.json
 ```
+
+#### `ws dotfile sync`
+
+Adopts the live system file as authoritative, pulling its current content into the ws copy and re-creating the managed symlink. Mechanically this is an internal unregister (drop the manifest record and the now-superseded ws copy, *without* touching the live file — unlike `ws dotfile rm`, which restores the ws copy onto the system path) followed by `ws dotfile add` on the same path, which captures whatever content is currently there.
+
+This covers the case where something outside `ws` (another sync agent, an editor that replaces files atomically via `rename(2)`, etc.) has swapped a ws-managed symlink for a real file: the live file's content is exactly what you want to keep. `ws dotfile fix` remains the right command for the opposite direction — reconciling a machine to match the registry (ws copy authoritative).
+
+Takes the system path — absolute, `~`, or relative to the current directory (see [Path Rules](#path-rules)). It must already be a registered dotfile.
+
+```text
+ws dotfile sync <path> [flags]
+
+--dry-run  Preview actions without applying
+```
+
+When dotfile Git versioning is enabled, a successful `sync` auto-commits registry/content changes (and optionally auto-pushes), same as `add`/`rm`/`fix`.
 
 ---
 
@@ -2851,7 +2871,7 @@ ws ignore check artifacts/datasets/node-metrics.csv
 ws ignore check archive/incident-2026.tar.gz
 
 ✔ SYNCED      /home/user/Workspace/archive/incident-2026.tar.gz
-  Reason: safe harbor — Archive/** overrides an exclude rule
+  Reason: suppressed — Archive/** overrides a .megaignore rule
   File size: 230 MB
 ```
 
@@ -3015,16 +3035,16 @@ ws ignore tree --path ~/Workspace/artifacts/datasets
 
 Scan the workspace and report all sync-hygiene violations: oversized files (bloat), excessive directory depth, and project-meta artifacts (build outputs detected via project-marker heuristics). This is the single place where file size thresholds, depth limits, and project-type artifact detection are checked.
 
-Violations inside safe harbor directories are automatically downgraded to INFO severity. They don't count toward the violation total, don't trigger exit code 2, and are collapsed to a single summary line by default. Pass `--expand-harbors` to list each safe harbor item individually.
+Violations inside suppressed directories are automatically downgraded to INFO severity. They don't count toward the violation total, don't trigger exit code 2, and are collapsed to a single summary line by default. Pass `--expand-suppressed` to list each suppressed item individually.
 
 ```text
 ws ignore scan [flags]
 
---warn-size        File size threshold for warnings   (default: 1MB)
---crit-size        File size threshold for critical   (default: 10MB)
---depth            Max directory depth before warning (default: 6)
---no-meta          Skip project-meta artifact detection
---expand-harbors   Show safe harbor items individually instead of collapsed summary
+--warn-size           File size threshold for warnings   (default: 1MB)
+--crit-size           File size threshold for critical   (default: 10MB)
+--depth               Max directory depth before warning (default: 6)
+--no-meta             Skip project-meta artifact detection
+--expand-suppressed   Show suppressed items individually instead of collapsed summary
 ```
 
 **Output:**
@@ -3050,16 +3070,16 @@ WARNING   project-meta     24 KB   /home/user/Workspace/experiments/projects/jav
 WARNING   project-meta      4 KB   /home/user/Workspace/experiments/blog/.bundle                    (marker: Gemfile)
 ──────────────────────────────────────────────────────
 
-Safe harbors (47 items, 2.3 GB)
-  Use --expand-harbors to see details.
+Suppressed (47 items, 2.3 GB)
+  Use --expand-suppressed to see details.
 
 Run `ws ignore fix` to resolve interactively.
 ```
 
-**Output with `--expand-harbors`:**
+**Output with `--expand-suppressed`:**
 
 ```text
-Safe harbors (47 items, 2.3 GB)
+Suppressed (47 items, 2.3 GB)
   INFO      bloat           420 MB   /home/user/Workspace/ws/ws-log/session-2026-03/stdout.log
   INFO      bloat           180 MB   /home/user/Workspace/Archive/vpn-client-v3.deb
   INFO      depth            12 lvl  /home/user/Workspace/Archive/backups/2026/Q1/host/etc/nginx/conf.d/upstream.conf
@@ -3082,42 +3102,43 @@ ws ignore fix
 ── Violations (6 found) ───────────────────────────
 
 CRITICAL  bloat  114 MB  /home/user/Workspace/artifacts/datasets/node-metrics-2026.csv
-Action? [m]ove to scratch  [a]dd to .megaignore  [s]kip : m
+Action? [v]move to scratch  [m]egaignore  [k]skip : v
 
 ✔ Moved   → /home/user/Scratch/node-metrics-2026.csv
 
 CRITICAL  bloat   48 MB  /home/user/Workspace/experiments/proxy-debug/tcpdump-output.pcap
-Action? [m]ove to scratch  [a]dd to .megaignore  [s]kip : a
+Action? [v]move to scratch  [s]uppress /home/user/Workspace/experiments/proxy-debug  [m]egaignore  [k]skip : m
 
-✔ Added rule to /home/user/Workspace/.megaignore: -g:*.pcap
+✔ Added to .megaignore: /home/user/Workspace/experiments/proxy-debug/tcpdump-output.pcap
 
 WARNING   bloat   22 MB  /home/user/Workspace/artifacts/presentations/quarterly-review.pptx
-Action? [m]ove to scratch  [a]dd to .megaignore  [s]kip : s
+Action? [v]move to scratch  [s]uppress /home/user/Workspace/artifacts  [m]egaignore  [k]skip : k
 
 WARNING   depth    8 lvl  /home/user/Workspace/experiments/k8s/cluster/namespaces/logs/app/debug.txt
-Action? [a]dd to .megaignore  [s]kip : a
+Action? [m]egaignore  [k]skip : m
 
-✔ Added path exclude to /home/user/Workspace/.megaignore: -:experiments/k8s/cluster/namespaces/logs/app/debug.txt
+✔ Added to .megaignore: /home/user/Workspace/experiments/k8s/cluster/namespaces/logs/app/debug.txt
 
 WARNING   project-meta  24 KB  /home/user/Workspace/experiments/projects/java-demo/bin  (marker: *.java)
-Action? [a]dd to .megaignore  [d]elete  [s]kip : a
-  Rule scope? [d]irectory (exclude this bin/)  [g]lobal (exclude all bin/ dirs)  : d
+Action? [m]egaignore  [d]elete  [k]skip : m
+  Rule scope? [d]irectory (this bin/ only)  [g]lobal (all bin/ dirs)  : d
 
-✔ Added rule to /home/user/Workspace/.megaignore: -:experiments/projects/java-demo/bin
+✔ Added to .megaignore: /home/user/Workspace/experiments/projects/java-demo/bin
 
 WARNING   project-meta   4 KB  /home/user/Workspace/experiments/blog/.bundle  (marker: Gemfile)
-Action? [a]dd to .megaignore  [d]elete  [s]kip : s
+Action? [m]egaignore  [d]elete  [k]skip : k
 
 ──────────────────────────────────────────────────
-Fixed: 4   Skipped: 2
+Added: 4   Skipped: 2
 ```
 
 | Action | Violation types | What it does |
 | --- | --- | --- |
-| `[m]ove to scratch` | bloat | Move the file to scratch directory (not synced). Removes it from the workspace. |
-| `[a]dd to .megaignore` | bloat, depth, project-meta | Append an exclude rule for this file or pattern. File stays but MEGA stops syncing it. For `project-meta`, prompts for scope: exclude this specific path (`-:path`) or all directories with this name (`-:name`). |
+| `[v]move to scratch` | bloat | Move the file to scratch directory (not synced). Removes it from the workspace. |
+| `[m]egaignore` | bloat, depth, project-meta | Add a rule to `.megaignore` for this file or pattern. File stays but MEGA stops syncing it. For `project-meta`, prompts for scope: this specific path (`-:path`) or all directories with this name (`-:name`). |
+| `[s]uppress` | bloat, depth, project-meta | Add a suppress override for the parent directory — keeps syncing everything in it even if other rules would block it. |
 | `[d]elete` | project-meta | Delete the build output (safe — it is reproducible). Not offered for bloat/depth since those files may not be reproducible. |
-| `[s]kip` | all | Do nothing — move to the next violation. |
+| `[k]skip` | all | Do nothing — move to the next violation. |
 
 #### `ws ignore generate`
 
@@ -3220,7 +3241,7 @@ The template is embedded in the binary and covers common exclusions for a Linux 
 -g:*.orc
 -g:*.parquet
 
-# ── Safe harbors (override ALL excludes above) ──────
+# ── Suppress overrides (override ALL excludes above) ─
 # Last-match-wins: these includes are placed after all
 # excludes so they take unconditional precedence.
 +:ws                           # ws metadata directory
@@ -3780,7 +3801,7 @@ ws config view
     "prune_after_days": { "value": 90, "source": "default" }
   },
   "trash": {
-    "root_dir": { "value": "/home/user/.Trash", "source": "default" },
+    "root_dir": { "value": "/home/user/.local/share/Trash", "source": "default" },
     "warn_size_mb": { "value": 1024, "source": "default" },
     "setup": {
       "prompt_on_init": { "value": true, "source": "default" },
@@ -3876,7 +3897,7 @@ All paths are shown as absolute paths (tildes expanded, relative config values r
       "prune_after_days": { "value": 90, "source": "default" }
     },
     "trash": {
-      "root_dir": { "value": "/home/user/.Trash", "source": "default" },
+      "root_dir": { "value": "/home/user/.local/share/Trash", "source": "default" },
       "warn_size_mb": { "value": 1024, "source": "default" },
       "setup": {
         "prompt_on_init": { "value": true, "source": "default" },
@@ -3956,7 +3977,7 @@ ws config defaults
     "prune_after_days": 90
   },
   "trash": {
-    "root_dir": "~/.Trash",
+    "root_dir": "~/.local/share/Trash",
     "warn_size_mb": 1024,
     "setup": {
       "prompt_on_init": true,
