@@ -92,12 +92,13 @@ func New(e env.Env) Model {
 func root(e env.Env) string {
 	r := config.WithAbsPaths(e.Config, e.Paths.Workspace).Trash.RootDir
 	if r == "" {
-		r, _ = config.ExpandUserPath("~/.Trash")
+		r, _ = config.ExpandUserPath("~/.local/share/Trash")
 	}
 	return r
 }
 
-// Load reads trash status, size, and top-level entries.
+// Load reads trash status, size, and the trashed items (under the trash
+// root's files/ subdirectory — see internal/trash for the on-disk layout).
 func Load(e env.Env) tea.Cmd {
 	return func() tea.Msg {
 		st, err := wstrash.GetStatus(root(e))
@@ -106,7 +107,8 @@ func Load(e env.Env) tea.Cmd {
 		}
 		msg := LoadedMsg{Status: st}
 		msg.Scan, _ = wstrash.Scan(wstrash.ScanOptions{RootDir: st.RootDir, WarnSizeMB: e.Config.Trash.WarnSizeMB})
-		entries, err := os.ReadDir(st.RootDir)
+		filesDir := filepath.Join(st.RootDir, "files")
+		entries, err := os.ReadDir(filesDir)
 		if err != nil {
 			return msg // a missing trash root just means nothing deleted yet
 		}
@@ -117,7 +119,7 @@ func Load(e env.Env) tea.Cmd {
 			}
 			it := Item{Name: de.Name(), Deleted: info.ModTime(), Dir: de.IsDir(), SizeBytes: info.Size()}
 			if de.IsDir() {
-				it.SizeBytes = dirSize(filepath.Join(st.RootDir, de.Name()))
+				it.SizeBytes = dirSize(filepath.Join(filesDir, de.Name()))
 			}
 			msg.Items = append(msg.Items, it)
 		}

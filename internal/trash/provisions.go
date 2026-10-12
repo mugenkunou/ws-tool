@@ -32,15 +32,21 @@ func RecordShellProvisions(manifestPath string) error {
 }
 
 // RecordExplorerProvision records the file-explorer trash symlink written by
-// Setup with FileExplorer.
+// Setup with FileExplorer. When rootDir is the default XDG trash directory,
+// Setup doesn't create a symlink (ws uses the XDG directory directly), so
+// there is nothing to record.
 func RecordExplorerProvision(manifestPath, rootDir string) error {
 	home, _ := os.UserHomeDir()
 	if home == "" {
 		return nil
 	}
+	xdgPath := filepath.Join(home, ".local", "share", "Trash")
+	if rootDir == xdgPath {
+		return nil
+	}
 	_ = manifest.RecordProvision(manifestPath, provision.Entry{
 		Type:    provision.TypeSymlink,
-		Path:    filepath.Join(home, ".local", "share", "Trash"),
+		Path:    xdgPath,
 		Target:  rootDir,
 		Command: "trash enable",
 	})

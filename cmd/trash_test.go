@@ -59,14 +59,15 @@ func TestTrashEmptyFromCLI(t *testing.T) {
 		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
 	}
 
-	trashRoot := filepath.Join(home, ".Trash")
-	if err := os.MkdirAll(filepath.Join(trashRoot, "nested"), 0o755); err != nil {
+	trashRoot := filepath.Join(home, ".local", "share", "Trash")
+	filesDir := filepath.Join(trashRoot, "files")
+	if err := os.MkdirAll(filepath.Join(filesDir, "nested"), 0o755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(trashRoot, "a.txt"), []byte("a"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(filesDir, "a.txt"), []byte("a"), 0o644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(trashRoot, "nested", "b.txt"), []byte("b"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(filesDir, "nested", "b.txt"), []byte("b"), 0o644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
 
@@ -76,12 +77,12 @@ func TestTrashEmptyFromCLI(t *testing.T) {
 		t.Fatalf("trash empty failed: code=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
 
-	entries, err := os.ReadDir(trashRoot)
+	entries, err := os.ReadDir(filesDir)
 	if err != nil {
 		t.Fatalf("readdir failed: %v", err)
 	}
 	if len(entries) != 0 {
-		t.Fatalf("expected empty trash root, found %d entries", len(entries))
+		t.Fatalf("expected empty trash files dir, found %d entries", len(entries))
 	}
 }
 
@@ -98,11 +99,12 @@ func TestTrashEmptyDryRunFromCLI(t *testing.T) {
 		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
 	}
 
-	trashRoot := filepath.Join(home, ".Trash")
-	if err := os.MkdirAll(trashRoot, 0o755); err != nil {
+	trashRoot := filepath.Join(home, ".local", "share", "Trash")
+	filesDir := filepath.Join(trashRoot, "files")
+	if err := os.MkdirAll(filesDir, 0o755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
 	}
-	filePath := filepath.Join(trashRoot, "keep.txt")
+	filePath := filepath.Join(filesDir, "keep.txt")
 	if err := os.WriteFile(filePath, []byte("keep"), 0o644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}

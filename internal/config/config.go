@@ -153,7 +153,7 @@ func Default() Config {
 			PruneAfterDays: 90,
 		},
 		Trash: Trash{
-			RootDir:    "~/.Trash",
+			RootDir:    "~/.local/share/Trash",
 			WarnSizeMB: 1024,
 			Setup: TrashSetup{
 				PromptOnInit:     true,

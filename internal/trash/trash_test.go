@@ -1,8 +1,10 @@
 package trash
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -10,9 +12,8 @@ func TestSetupAndStatus(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	rootDir := "~/.Trash"
 	res, err := Setup(SetupOptions{
-		RootDir:      rootDir,
+		RootDir:      "", // default: XDG trash dir
 		ShellRM:      true,
 		VSCodeDelete: true,
 		FileExplorer: false,
@@ -23,11 +24,18 @@ func TestSetupAndStatus(t *testing.T) {
 	if res.DryRun {
 		t.Fatal("expected non-dry-run result")
 	}
-	if _, err := os.Stat(filepath.Join(home, ".Trash")); err != nil {
-		t.Fatalf("expected trash dir to exist: %v", err)
+	wantRoot := filepath.Join(home, ".local", "share", "Trash")
+	if res.RootDir != wantRoot {
+		t.Fatalf("root dir: want %s, got %s", wantRoot, res.RootDir)
+	}
+	if _, err := os.Stat(filepath.Join(wantRoot, "files")); err != nil {
+		t.Fatalf("expected files/ dir to exist: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wantRoot, "info")); err != nil {
+		t.Fatalf("expected info/ dir to exist: %v", err)
 	}
 
-	status, err := GetStatus(rootDir)
+	status, err := GetStatus("")
 	if err != nil {
 		t.Fatalf("status failed: %v", err)
 	}
@@ -44,7 +52,7 @@ func TestSetupDryRunDoesNotWriteState(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	res, err := Setup(SetupOptions{
-		RootDir:      "~/.Trash",
+		RootDir:      "",
 		ShellRM:      true,
 		VSCodeDelete: true,
 		FileExplorer: true,
@@ -63,12 +71,98 @@ func TestSetupDryRunDoesNotWriteState(t *testing.T) {
 	}
 }
 
+func TestDefaultRootIsXDGTrashDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", "")
+
+	status, err := GetStatus("")
+	if err != nil {
+		t.Fatalf("status failed: %v", err)
+	}
+	want := filepath.Join(home, ".local", "share", "Trash")
+	if status.RootDir != want {
+		t.Fatalf("root dir: want %s, got %s", want, status.RootDir)
+	}
+}
+
+func TestSoftDeleteMovesIntoFilesWithTrashInfo(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	src := filepath.Join(home, "doomed.txt")
+	if err := os.WriteFile(src, []byte("bye"), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+
+	if err := SoftDelete(src); err != nil {
+		t.Fatalf("SoftDelete failed: %v", err)
+	}
+
+	if _, err := os.Stat(src); !os.IsNotExist(err) {
+		t.Fatalf("expected original path to be gone, err=%v", err)
+	}
+
+	trashedPath := filepath.Join(home, ".local", "share", "Trash", "files", "doomed.txt")
+	data, err := os.ReadFile(trashedPath)
+	if err != nil {
+		t.Fatalf("expected trashed file at %s: %v", trashedPath, err)
+	}
+	if string(data) != "bye" {
+		t.Fatalf("trashed content mismatch: %q", data)
+	}
+
+	infoPath := filepath.Join(home, ".local", "share", "Trash", "info", "doomed.txt.trashinfo")
+	info, err := os.ReadFile(infoPath)
+	if err != nil {
+		t.Fatalf("expected .trashinfo at %s: %v", infoPath, err)
+	}
+	if !containsAll(string(info), "[Trash Info]", "Path=", "DeletionDate=", src) {
+		t.Fatalf("trashinfo content missing expected fields: %s", info)
+	}
+}
+
+func TestSoftDeleteCollisionGetsUniqueName(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	filesDirPath := filepath.Join(home, ".local", "share", "Trash", "files")
+	if err := os.MkdirAll(filesDirPath, 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(filesDirPath, "dup.txt"), []byte("first"), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+
+	src := filepath.Join(home, "dup.txt")
+	if err := os.WriteFile(src, []byte("second"), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+
+	if err := SoftDelete(src); err != nil {
+		t.Fatalf("SoftDelete failed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(filesDirPath, "dup.txt.2")); err != nil {
+		t.Fatalf("expected collision-renamed entry dup.txt.2: %v", err)
+	}
+}
+
+func containsAll(s string, substrs ...string) bool {
+	for _, sub := range substrs {
+		if !strings.Contains(s, sub) {
+			return false
+		}
+	}
+	return true
+}
+
 func TestScanEmptyTrashDir(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
 	trashDir := filepath.Join(home, ".Trash")
-	if err := os.MkdirAll(trashDir, 0o755); err != nil {
+	if err := os.MkdirAll(filesDir(trashDir), 0o755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
 	}
 
@@ -105,13 +199,13 @@ func TestScanOverLimit(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	trashDir := filepath.Join(home, ".Trash")
-	if err := os.MkdirAll(trashDir, 0o755); err != nil {
+	if err := os.MkdirAll(filesDir(trashDir), 0o755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
 	}
 
 	// Create a 2MB file to exceed a 1MB threshold.
 	big := make([]byte, 2*1024*1024)
-	if err := os.WriteFile(filepath.Join(trashDir, "big.bin"), big, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(filesDir(trashDir), "big.bin"), big, 0o644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
 
@@ -132,11 +226,11 @@ func TestScanUnderLimit(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	trashDir := filepath.Join(home, ".Trash")
-	if err := os.MkdirAll(trashDir, 0o755); err != nil {
+	if err := os.MkdirAll(filesDir(trashDir), 0o755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(trashDir, "small.txt"), []byte("hello"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(filesDir(trashDir), "small.txt"), []byte("hello"), 0o644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
 
@@ -156,6 +250,8 @@ func TestFileExplorerIntegrationSetupAndStatus(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
+	// A custom root (different from the default XDG trash dir) still uses
+	// the symlink-redirect mechanism.
 	rootDir := filepath.Join(home, ".Trash")
 
 	_, err := Setup(SetupOptions{
@@ -196,6 +292,34 @@ func TestFileExplorerIntegrationSetupAndStatus(t *testing.T) {
 	}
 }
 
+func TestFileExplorerIntegrationAutomaticWithDefaultRoot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// The default root IS the XDG trash dir, so FileExplorer integration
+	// needs no symlink — Setup's own mkdir of files/+info/ is sufficient.
+	_, err := Setup(SetupOptions{
+		RootDir:      "",
+		FileExplorer: true,
+	})
+	if err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+
+	symlinkPath := filepath.Join(home, ".local", "share", "Trash")
+	if info, err := os.Lstat(symlinkPath); err != nil || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("expected a real directory (not a symlink) at %s", symlinkPath)
+	}
+
+	status, err := GetStatus("")
+	if err != nil {
+		t.Fatalf("status failed: %v", err)
+	}
+	if !status.FileExplorerConfigured {
+		t.Fatal("expected FileExplorerConfigured=true with default root")
+	}
+}
+
 func TestFileExplorerIntegrationIdempotent(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -228,8 +352,9 @@ func TestFileExplorerIntegrationRealDirNotOverwritten(t *testing.T) {
 	}
 
 	rootDir := filepath.Join(home, ".Trash")
-	if err := ensureFileExplorerIntegration(rootDir); err != nil {
-		t.Fatalf("ensureFileExplorerIntegration failed: %v", err)
+	err := ensureFileExplorerIntegration(rootDir)
+	if !errors.Is(err, ErrXDGTrashDirExists) {
+		t.Fatalf("expected ErrXDGTrashDirExists, got: %v", err)
 	}
 
 	// Real directory must not have been replaced.
@@ -269,13 +394,19 @@ func TestEmptyRemovesContentsButKeepsRootDir(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	trashDir := filepath.Join(home, ".Trash")
-	if err := os.MkdirAll(filepath.Join(trashDir, "nested"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(filesDir(trashDir), "nested"), 0o755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(trashDir, "a.txt"), []byte("a"), 0o644); err != nil {
+	if err := os.MkdirAll(infoDir(trashDir), 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(filesDir(trashDir), "a.txt"), []byte("a"), 0o644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(trashDir, "nested", "b.txt"), []byte("b"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(filesDir(trashDir), "nested", "b.txt"), []byte("b"), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(infoDir(trashDir), "a.txt.trashinfo"), []byte("x"), 0o644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
 
@@ -287,18 +418,29 @@ func TestEmptyRemovesContentsButKeepsRootDir(t *testing.T) {
 		t.Fatal("expected Exists=true")
 	}
 	if res.EntryCount != 2 {
-		t.Fatalf("expected 2 top-level entries, got %d", res.EntryCount)
+		t.Fatalf("expected 2 top-level files/ entries, got %d", res.EntryCount)
 	}
 	if res.FileCount != 2 {
 		t.Fatalf("expected 2 files removed, got %d", res.FileCount)
 	}
 
-	entries, err := os.ReadDir(trashDir)
+	filesEntries, err := os.ReadDir(filesDir(trashDir))
 	if err != nil {
 		t.Fatalf("readdir failed: %v", err)
 	}
-	if len(entries) != 0 {
-		t.Fatalf("expected trash dir to be empty, found %d entries", len(entries))
+	if len(filesEntries) != 0 {
+		t.Fatalf("expected files/ to be empty, found %d entries", len(filesEntries))
+	}
+	infoEntries, err := os.ReadDir(infoDir(trashDir))
+	if err != nil {
+		t.Fatalf("readdir failed: %v", err)
+	}
+	if len(infoEntries) != 0 {
+		t.Fatalf("expected info/ to be empty, found %d entries", len(infoEntries))
+	}
+	// Root dir (and files/, info/ subdirs) must still exist.
+	if _, err := os.Stat(trashDir); err != nil {
+		t.Fatalf("expected trash root to still exist: %v", err)
 	}
 }
 
@@ -307,10 +449,10 @@ func TestEmptyDryRunDoesNotRemoveFiles(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	trashDir := filepath.Join(home, ".Trash")
-	if err := os.MkdirAll(trashDir, 0o755); err != nil {
+	if err := os.MkdirAll(filesDir(trashDir), 0o755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
 	}
-	filePath := filepath.Join(trashDir, "keep.txt")
+	filePath := filepath.Join(filesDir(trashDir), "keep.txt")
 	if err := os.WriteFile(filePath, []byte("keep"), 0o644); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}

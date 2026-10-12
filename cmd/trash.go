@@ -49,7 +49,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 	// Config value: relative → workspace. --root-dir input: relative → cwd.
 	cfgTrashRoot := config.WithAbsPaths(cfg, workspacePath).Trash.RootDir
 	if cfgTrashRoot == "" {
-		if cfgTrashRoot, err = config.ExpandUserPath("~/.Trash"); err != nil {
+		if cfgTrashRoot, err = config.ExpandUserPath("~/.local/share/Trash"); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -304,6 +304,9 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		fmt.Fprintf(out, "  %s  shell-rm\n", statusBadge(status.ShellRMConfigured, nc))
 		fmt.Fprintf(out, "  %s  vscode-delete\n", statusBadge(status.VSCodeConfigured, nc))
 		fmt.Fprintf(out, "  %s  file-explorer\n", statusBadge(status.FileExplorerConfigured, nc))
+		if !status.FileExplorerConfigured && status.FileExplorerUnconfiguredReason != "" {
+			fmt.Fprintf(out, "     %s\n", style.Mutedf(nc, "↳ %s", status.FileExplorerUnconfiguredReason))
+		}
 
 		if scanResult.Exists {
 			fmt.Fprintln(out)

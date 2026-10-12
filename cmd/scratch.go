@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -15,6 +14,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/scratch"
 	"github.com/mugenkunou/ws-tool/internal/style"
+	"github.com/mugenkunou/ws-tool/internal/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui"
 )
 
@@ -212,7 +212,7 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 				ID:          "prune-" + eName,
 				Description: fmt.Sprintf("Remove %s (%s)", ePath, style.HumanBytes(e.SizeBytes)),
 				Execute: func() error {
-					return os.RemoveAll(ePath)
+					return trash.SoftDelete(ePath)
 				},
 			})
 		}

@@ -115,7 +115,7 @@ func TestWithAbsPaths(t *testing.T) {
 	if got.Scratch.RootDir != filepath.Join(home, "Scratch") {
 		t.Errorf("scratch root = %q", got.Scratch.RootDir)
 	}
-	if got.Trash.RootDir != filepath.Join(home, ".Trash") {
+	if got.Trash.RootDir != filepath.Join(home, ".local", "share", "Trash") {
 		t.Errorf("trash root = %q", got.Trash.RootDir)
 	}
 	if len(got.Repo.Roots) != 1 || got.Repo.Roots[0] != ws {

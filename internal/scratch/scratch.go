@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mugenkunou/ws-tool/internal/trash"
 )
 
 type NewOptions struct {
@@ -150,7 +152,7 @@ func Prune(opts PruneOptions) (PruneResult, error) {
 			continue
 		}
 		if !opts.DryRun {
-			if err := os.RemoveAll(e.Path); err != nil {
+			if err := trash.SoftDelete(e.Path); err != nil {
 				return res, err
 			}
 		}
@@ -196,7 +198,7 @@ func Delete(opts DeleteOptions) (PruneResult, error) {
 			continue
 		}
 		if !opts.DryRun {
-			if err := os.RemoveAll(e.Path); err != nil {
+			if err := trash.SoftDelete(e.Path); err != nil {
 				return res, err
 			}
 		}
