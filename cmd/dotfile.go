@@ -17,7 +17,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
 
-var dotfileHelp = cmdHelp{Usage: "ws dotfile <add|rm|ls|scan|fix|reset|migrate|git> [args]"}
+var dotfileHelp = cmdHelp{Usage: "ws dotfile <add|rm|ls|scan|fix|sync|reset|migrate|git> [args]"}
 
 func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	if hasHelpArg(args) {
@@ -185,6 +185,72 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		}
 		if globals.json {
 			return writeJSONDryRun(stdout, stderr, "dotfile.rm", globals.dryRun, map[string]any{
+				"actions": planResult.Actions,
+			})
+		}
+		return planResult.ExitCode()
+	case "sync":
+		fs := flag.NewFlagSet("dotfile-sync", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		registerGlobalFlags(fs, &globals)
+		if err := fs.Parse(subArgs); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		if len(fs.Args()) != 1 {
+			fmt.Fprintln(stderr, "usage: ws dotfile sync <path>")
+			return 1
+		}
+		targetPath, err := config.ExpandUserPath(fs.Args()[0])
+		if err != nil {
+			fmt.Fprintf(stderr, "invalid path %q: %s\n", fs.Args()[0], err.Error())
+			return 1
+		}
+
+		plan := Plan{Command: "dotfile.sync"}
+		plan.Actions = append(plan.Actions, Action{
+			ID:          "dotfile-sync",
+			Description: fmt.Sprintf("Sync dotfile %s (live → workspace)", targetPath),
+			Execute: func() error {
+				// Step 1: unregister — drops the manifest record and the stale
+				// ws copy WITHOUT touching the live file at targetPath. A plain
+				// dotfile.Remove would restore that stale ws copy onto the
+				// system path, destroying the live content sync is meant to
+				// adopt — see dotfile.Unregister's doc comment.
+				if err := dotfile.Unregister(dotfile.UnregisterOptions{
+					WorkspacePath: workspacePath,
+					ManifestPath:  manifestPath,
+					SystemPath:    targetPath,
+				}); err != nil {
+					return err
+				}
+				_ = manifest.RemoveProvision(manifestPath, provision.TypeSymlink, targetPath)
+
+				// Step 2: add — moves live file into ws/dotfiles, creates symlink, registers.
+				result, err := dotfile.Add(dotfile.AddOptions{
+					WorkspacePath: workspacePath,
+					ManifestPath:  manifestPath,
+					SystemPath:    targetPath,
+					DryRun:        false,
+				})
+				if err != nil {
+					return err
+				}
+				_ = manifest.RecordProvision(manifestPath, provision.Entry{
+					Type:    provision.TypeSymlink,
+					Path:    result.Record.System,
+					Target:  dotfile.DotfilePath(result.Record.Name),
+					Command: "dotfile sync",
+				})
+				return nil
+			},
+		})
+		planResult := RunPlan(plan, stdin, stdout, globals)
+		if planResult.ExecutedCount() > 0 && !planResult.HasFailures() {
+			dotfileGitAutoSync(workspacePath, configPath, manifestPath, "dotfile sync: "+targetPath, globals, stdout)
+		}
+		if globals.json {
+			return writeJSONDryRun(stdout, stderr, "dotfile.sync", globals.dryRun, map[string]any{
 				"actions": planResult.Actions,
 			})
 		}
@@ -931,7 +997,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 
 	default:
 		fmt.Fprintf(stderr, "unknown dotfile subcommand: %s\n", subcommand)
-		fmt.Fprintln(stderr, "usage: ws dotfile <add|rm|ls|scan|fix|reset|migrate|git>")
+		fmt.Fprintln(stderr, "usage: ws dotfile <add|rm|ls|scan|fix|sync|reset|migrate|git>")
 		return 1
 	}
 }

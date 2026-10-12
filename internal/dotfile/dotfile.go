@@ -271,6 +271,71 @@ func Remove(opts RemoveOptions) (RemoveResult, error) {
 	return result, nil
 }
 
+// UnregisterOptions configures Unregister.
+type UnregisterOptions struct {
+	WorkspacePath string
+	ManifestPath  string
+	SystemPath    string
+}
+
+// Unregister drops a dotfile's manifest record without touching the live
+// file at its system path. This is the registry half of `ws dotfile sync`:
+// unlike Remove, it never restores the ws copy onto the system path, so the
+// live file (which sync treats as authoritative) is left intact for a
+// subsequent Add to capture. The now-superseded ws copy is deleted so Add
+// can write the live content to the same location.
+func Unregister(opts UnregisterOptions) error {
+	absSystem, err := expandPath(opts.SystemPath)
+	if err != nil {
+		return err
+	}
+
+	m, err := manifest.Load(opts.ManifestPath)
+	if err != nil {
+		return err
+	}
+
+	idx := -1
+	var record manifest.DotfileRecord
+	for i, r := range m.Dotfiles {
+		if filepath.Clean(r.System) == filepath.Clean(absSystem) {
+			idx = i
+			record = r
+			break
+		}
+	}
+	if idx < 0 {
+		return fmt.Errorf("dotfile not managed: %s", absSystem)
+	}
+
+	targetAbs := filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(record.Name)))
+	if err := os.RemoveAll(targetAbs); err != nil {
+		return err
+	}
+
+	// Prune now-empty ancestor directories left behind under ws/dotfiles/,
+	// same as Remove.
+	dotfilesRoot := filepath.Clean(filepath.Join(opts.WorkspacePath, dotfilesDir))
+	pruneDir := filepath.Dir(targetAbs)
+	for {
+		pruneDir = filepath.Clean(pruneDir)
+		if pruneDir == dotfilesRoot || !strings.HasPrefix(pruneDir, dotfilesRoot+string(os.PathSeparator)) {
+			break
+		}
+		entries, readErr := os.ReadDir(pruneDir)
+		if readErr != nil || len(entries) > 0 {
+			break
+		}
+		if err := os.Remove(pruneDir); err != nil {
+			break
+		}
+		pruneDir = filepath.Dir(pruneDir)
+	}
+
+	m.Dotfiles = append(m.Dotfiles[:idx], m.Dotfiles[idx+1:]...)
+	return manifest.Save(opts.ManifestPath, m)
+}
+
 func List(manifestPath string) ([]manifest.DotfileRecord, error) {
 	m, err := manifest.Load(manifestPath)
 	if err != nil {

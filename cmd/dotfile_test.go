@@ -77,6 +77,58 @@ func TestScanExitCodeOnViolation(t *testing.T) {
 	}
 }
 
+func TestDotfileSyncCommand(t *testing.T) {
+	testSetXDG(t)
+	workspace := filepath.Join(t.TempDir(), "Workspace")
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	// Create and add the dotfile with initial content.
+	systemFile := filepath.Join(t.TempDir(), ".bashrc")
+	if err := os.WriteFile(systemFile, []byte("export PATH=$PATH\n"), 0o644); err != nil {
+		t.Fatalf("write system file: %v", err)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := Execute([]string{"--workspace", workspace, "dotfile", "add", systemFile}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("dotfile add failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	// Simulate 0Helper: remove the symlink, write a real file with updated content.
+	if err := os.Remove(systemFile); err != nil {
+		t.Fatalf("remove symlink: %v", err)
+	}
+	updatedContent := "export PATH=$PATH\nexport UPDATED=1\n"
+	if err := os.WriteFile(systemFile, []byte(updatedContent), 0o644); err != nil {
+		t.Fatalf("write updated file: %v", err)
+	}
+
+	// Run sync: live file should be pulled into ws copy and symlink re-created.
+	out.Reset()
+	errOut.Reset()
+	if code := Execute([]string{"--workspace", workspace, "dotfile", "sync", systemFile}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("dotfile sync failed: code=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
+	}
+
+	// system path must now be a symlink.
+	target, err := os.Readlink(systemFile)
+	if err != nil {
+		t.Fatalf("expected symlink after sync, readlink failed: %v", err)
+	}
+	// ws copy must contain the updated content (live file was pulled in).
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read ws copy: %v", err)
+	}
+	if string(got) != updatedContent {
+		t.Fatalf("ws copy content mismatch: got %q, want %q", string(got), updatedContent)
+	}
+}
+
 func TestDotfileNoArgsShowsHelp(t *testing.T) {
 	testSetXDG(t)
 	var out, errOut bytes.Buffer
