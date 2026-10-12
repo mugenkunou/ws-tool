@@ -293,6 +293,29 @@ func AddIgnoreSafeHarbor(manifestPath string, pattern, note string) (bool, error
 	return true, Save(manifestPath, m)
 }
 
+// RemoveIgnoreSafeHarbor atomically removes a safe harbor rule from the
+// manifest's ignore section. Returns true if the rule was found and removed.
+func RemoveIgnoreSafeHarbor(manifestPath string, pattern string) (bool, error) {
+	m, err := Load(manifestPath)
+	if err != nil {
+		return false, err
+	}
+	updated := m.Ignore.SafeHarbors[:0:0]
+	found := false
+	for _, h := range m.Ignore.SafeHarbors {
+		if h.Pattern == pattern {
+			found = true
+			continue
+		}
+		updated = append(updated, h)
+	}
+	if !found {
+		return false, nil
+	}
+	m.Ignore.SafeHarbors = updated
+	return true, Save(manifestPath, m)
+}
+
 // LoadIgnoreRules loads just the ignore rules from the manifest.
 func LoadIgnoreRules(manifestPath string) (ignore.UserRules, error) {
 	m, err := Load(manifestPath)

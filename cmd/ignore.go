@@ -108,7 +108,8 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 	case "scan":
 		fs := flag.NewFlagSet("ignore-scan", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
-		expandHarbors := fs.Bool("expand-harbors", false, "show safe harbor items individually")
+		expandHarbors := fs.Bool("expand-suppressed", false, "show suppressed items individually")
+		fs.Bool("expand-harbors", false, "alias for --expand-suppressed (deprecated)") // hidden compat alias
 		registerGlobalFlags(fs, &globals)
 		if err := fs.Parse(subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
@@ -132,7 +133,12 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 		if len(violations) == 0 {
 			fmt.Fprintln(out, style.ResultSuccess(globals.noColor, "Ignore scan: %s", style.Badge("ok", globals.noColor)))
 		} else {
-			printIgnoreViolationsSplit(out, absIgnoreViolations(workspacePath, violations), globals.noColor, *expandHarbors)
+			// --expand-harbors is a deprecated alias for --expand-suppressed.
+			expandSuppressed := *expandHarbors
+			if f := fs.Lookup("expand-harbors"); f != nil && f.Value.String() == "true" {
+				expandSuppressed = true
+			}
+			printIgnoreViolationsSplit(out, absIgnoreViolations(workspacePath, violations), globals.noColor, expandSuppressed)
 		}
 		// Only actionable (non-safe-harbor) violations trigger exit 2.
 		for _, v := range violations {
@@ -195,7 +201,7 @@ func runIgnoreFixInteractive(violations []ignore.Violation, manifestPath, megaig
 
 	style.Header(out, style.IconWrench(nc)+" Ignore Fix "+fmt.Sprintf("(%d found)", len(violations)), nc)
 
-	var added, deleted, moved, harbored, skipped int
+	var added, deleted, moved, suppressed, skipped int
 	needsRegen := false
 
 	scratchRoot, _ := config.ResolvePath(workspacePath, cfg.Scratch.RootDir)
@@ -218,70 +224,70 @@ func runIgnoreFixInteractive(violations []ignore.Violation, manifestPath, megaig
 			style.Infof(nc, "%s", absPath))
 
 		if globals.dryRun {
-			fmt.Fprintf(out, "  %s would add exclude rule for %s\n", style.Mutedf(nc, "[dry-run]"), absPath)
+			fmt.Fprintf(out, "  %s would add to .megaignore: %s\n", style.Mutedf(nc, "[dry-run]"), absPath)
 			added++
 			continue
 		}
 
-		// Derive the parent directory for the safe harbor option. harborDir is
-		// the workspace-relative form used in the rule; harborAbs is shown.
-		harborDir := filepath.ToSlash(filepath.Dir(v.Path))
-		if harborDir == "." {
-			harborDir = ""
+		// Derive the parent directory for the suppress option. suppressDir is
+		// the workspace-relative form used in the rule; suppressAbs is shown.
+		suppressDir := filepath.ToSlash(filepath.Dir(v.Path))
+		if suppressDir == "." {
+			suppressDir = ""
 		}
-		harborAbs := style.AbsPath(workspacePath, harborDir)
+		suppressAbs := style.AbsPath(workspacePath, suppressDir)
 
 		var choice string
 		switch v.Type {
 		case "bloat":
-			if harborDir != "" {
+			if suppressDir != "" {
 				choice = promptChoice(stdin, stdout, globals,
-					"  Action?", "[a]dd exclude rule  [h]arbor "+harborAbs+"  [m]ove to scratch  [d]elete  [s]kip  [q]uit", "ahmdsq", "s")
+					"  Action?", "[m]egaignore  [s]uppress "+suppressAbs+"  [v]move to scratch  [d]elete  [k]skip  [q]uit", "msvdkq", "k")
 			} else {
 				choice = promptChoice(stdin, stdout, globals,
-					"  Action?", "[a]dd exclude rule  [m]ove to scratch  [d]elete  [s]kip  [q]uit", "amdsq", "s")
+					"  Action?", "[m]egaignore  [v]move to scratch  [d]elete  [k]skip  [q]uit", "mvdkq", "k")
 			}
 		default:
-			if harborDir != "" {
+			if suppressDir != "" {
 				choice = promptChoice(stdin, stdout, globals,
-					"  Action?", "[a]dd exclude rule  [h]arbor "+harborAbs+"  [d]elete  [s]kip  [q]uit", "ahdsq", "s")
+					"  Action?", "[m]egaignore  [s]uppress "+suppressAbs+"  [d]elete  [k]skip  [q]uit", "msdkq", "k")
 			} else {
 				choice = promptChoice(stdin, stdout, globals,
-					"  Action?", "[a]dd exclude rule  [d]elete  [s]kip  [q]uit", "adsq", "s")
+					"  Action?", "[m]egaignore  [d]elete  [k]skip  [q]uit", "mdkq", "k")
 			}
 		}
 
 		switch choice {
-		case "a":
+		case "m":
 			ok, err := manifest.AddIgnoreExclude(manifestPath, v.Path, "")
 			if err != nil {
 				fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
 			} else if ok {
-				fmt.Fprintf(out, "  %s Added exclude rule for %s %s %s\n", style.IconCheck(nc), style.Infof(nc, "%s", absPath), style.IconArrow(nc), manifestPath)
+				fmt.Fprintf(out, "  %s Added to .megaignore: %s %s %s\n", style.IconCheck(nc), style.Infof(nc, "%s", absPath), style.IconArrow(nc), manifestPath)
 				added++
 				needsRegen = true
 			} else {
 				fmt.Fprintf(out, "  %s Rule already exists\n", style.Mutedf(nc, ""))
 				skipped++
 			}
-		case "h":
-			if harborDir == "" {
+		case "s":
+			if suppressDir == "" {
 				skipped++
 				continue
 			}
-			harborPattern := harborDir + "/**"
-			ok, err := manifest.AddIgnoreSafeHarbor(manifestPath, harborPattern, "")
+			suppressPattern := suppressDir + "/**"
+			ok, err := manifest.AddIgnoreSafeHarbor(manifestPath, suppressPattern, "")
 			if err != nil {
 				fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
 			} else if ok {
-				fmt.Fprintf(out, "  %s Added safe harbor for %s %s %s\n", style.IconCheck(nc), style.Infof(nc, "%s", harborAbs), style.IconArrow(nc), manifestPath)
-				harbored++
+				fmt.Fprintf(out, "  %s Suppressed warnings for %s %s %s\n", style.IconCheck(nc), style.Infof(nc, "%s", suppressAbs), style.IconArrow(nc), manifestPath)
+				suppressed++
 				needsRegen = true
 			} else {
-				fmt.Fprintf(out, "  %s Harbor already exists\n", style.Mutedf(nc, ""))
+				fmt.Fprintf(out, "  %s Suppress rule already exists\n", style.Mutedf(nc, ""))
 				skipped++
 			}
-		case "m":
+		case "v":
 			if scratchRoot == "" {
 				fmt.Fprintf(out, "  %s scratch root not configured\n", style.IconWarning(nc))
 				skipped++
@@ -312,7 +318,7 @@ func runIgnoreFixInteractive(violations []ignore.Violation, manifestPath, megaig
 			skipped += len(violations) // approximate
 			fmt.Fprintf(out, "\n  %s\n", style.Mutedf(nc, "Quit — remaining violations skipped."))
 			goto done
-		default:
+		default: // "k" (skip) or anything else
 			skipped++
 		}
 	}
@@ -337,15 +343,15 @@ done:
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, style.Divider(nc))
 	parts := []string{fmt.Sprintf("Added: %d", added)}
-	if harbored > 0 {
-		parts = append(parts, fmt.Sprintf("Harbored: %d", harbored))
+	if suppressed > 0 {
+		parts = append(parts, fmt.Sprintf("Suppressed: %d", suppressed))
 	}
 	parts = append(parts, fmt.Sprintf("Moved: %d", moved), fmt.Sprintf("Deleted: %d", deleted), fmt.Sprintf("Skipped: %d", skipped))
 	fmt.Fprintln(out, strings.Join(parts, "   "))
 
 	if globals.json {
 		return writeJSON(stdout, stderr, "ignore.fix", map[string]any{
-			"added": added, "harbored": harbored, "moved": moved, "deleted": deleted, "skipped": skipped,
+			"added": added, "suppressed": suppressed, "moved": moved, "deleted": deleted, "skipped": skipped,
 		})
 	}
 	return 0

@@ -167,14 +167,14 @@ func runIgnoreCheckPath(engine *ignore.Engine, workspacePath, target string, glo
 	// Reason line
 	if res.Included {
 		if res.SafeHarbor {
-			fmt.Fprintf(out, "  Reason: safe harbor — %s overrides an exclude rule\n", style.Mutedf(nc, "%s", res.Rule))
+			fmt.Fprintf(out, "  Reason: suppressed — %s overrides a .megaignore rule\n", style.Mutedf(nc, "%s", res.Rule))
 		} else if res.Rule == "<default>" {
-			fmt.Fprintf(out, "  Reason: no matching exclude rule\n")
+			fmt.Fprintf(out, "  Reason: no matching .megaignore rule\n")
 		} else {
 			fmt.Fprintf(out, "  Reason: included by rule %s\n", style.Mutedf(nc, "`%s`", res.Rule))
 		}
 	} else {
-		fmt.Fprintf(out, "  Reason: excluded by rule %s\n", style.Mutedf(nc, "`%s`", res.Rule))
+		fmt.Fprintf(out, "  Reason: blocked by .megaignore rule %s\n", style.Mutedf(nc, "`%s`", res.Rule))
 	}
 
 	// File size line (files only)

@@ -79,6 +79,7 @@ type Model struct {
 	modal       modal.Model
 	all         []wsignore.Violation
 	shown       []wsignore.Violation // all, or only actionable when harbors are hidden
+	marks       map[int]bool         // indices into shown that are marked for bulk action
 	showHarbors bool
 	scanning    bool
 	width       int
@@ -165,6 +166,7 @@ func (m Model) CapturesKeys() bool { return m.modal.Open() }
 
 func (m Model) rescan() (Model, tea.Cmd) {
 	m.scanning = true
+	m.marks = nil
 	m.list = m.list.SetLoading()
 	return m, Load(m.env)
 }
@@ -243,21 +245,82 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		return m, handover.Run(handover.WS(m.env.Paths, "ignore", "edit"), handoverRules)
 	case key.Matches(k, m.keys.ExcludeAll):
 		return m.openExcludeAll(), nil
-	case key.Matches(k, m.keys.Exclude) && haveV:
-		return m.openFix("Exclude", m.excludeAction(v)), nil
-	case key.Matches(k, m.keys.Harbor) && haveV:
-		a, ok := m.harborAction(v)
-		if !ok {
-			return m, nav.Notify(nav.LevelInfo, "Top-level path has no parent to harbor")
+	case key.Matches(k, m.keys.Select) && len(m.shown) > 0:
+		idx := m.list.Cursor()
+		if m.marks == nil {
+			m.marks = make(map[int]bool)
 		}
-		return m.openFix("Safe-harbor", a), nil
+		if m.marks[idx] {
+			delete(m.marks, idx)
+		} else {
+			m.marks[idx] = true
+		}
+		// Advance cursor one row after marking (ergonomic bulk-marking).
+		m.list, _ = m.list.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		return m.refreshRows(), nil
+	case key.Matches(k, m.keys.SelectAll) && len(m.shown) > 0:
+		if len(m.marks) == len(m.shown) {
+			m.marks = nil
+		} else {
+			m.marks = make(map[int]bool, len(m.shown))
+			for i := range m.shown {
+				m.marks[i] = true
+			}
+		}
+		return m.refreshRows(), nil
+	case key.Matches(k, m.keys.Exclude) && haveV:
+		targets := m.markedViolations(v)
+		var actions []plan.Action
+		for _, t := range targets {
+			actions = append(actions, m.excludeAction(t))
+		}
+		return m.openFixMulti("Add to .megaignore", actions), nil
+	case key.Matches(k, m.keys.Harbor) && haveV:
+		if haveV && v.InSafeHarbor {
+			// Cursor is on a suppressed item — redirect to unsuppress.
+			a, ok := m.unsuppressAction(v)
+			if !ok {
+				return m, nav.Notify(nav.LevelInfo, "Cannot determine suppress rule for this item")
+			}
+			return m.openFix("Remove suppress rule", a), nil
+		}
+		targets := m.markedViolations(v)
+		var actions []plan.Action
+		for _, t := range targets {
+			a, ok := m.harborAction(t)
+			if ok {
+				actions = append(actions, a)
+			}
+		}
+		if len(actions) == 0 {
+			return m, nav.Notify(nav.LevelInfo, "Top-level path has no parent to suppress")
+		}
+		return m.openFixMulti("Suppress warning", actions), nil
+	case key.Matches(k, m.keys.Unsuppress) && haveV && v.InSafeHarbor:
+		a, ok := m.unsuppressAction(v)
+		if !ok {
+			return m, nav.Notify(nav.LevelInfo, "Cannot determine suppress rule for this item")
+		}
+		return m.openFix("Remove suppress rule", a), nil
 	case key.Matches(k, m.keys.Move) && haveV:
 		if v.Type != "bloat" {
 			return m, nav.Notify(nav.LevelInfo, "Only bloat can be moved to scratch")
 		}
-		return m.openFix("Move to scratch", m.moveAction(v)), nil
+		targets := m.markedViolations(v)
+		var actions []plan.Action
+		for _, t := range targets {
+			if t.Type == "bloat" {
+				actions = append(actions, m.moveAction(t))
+			}
+		}
+		return m.openFixMulti("Move to scratch", actions), nil
 	case key.Matches(k, m.keys.Delete) && haveV:
-		return m.openFix("Delete", m.deleteAction(v)), nil
+		targets := m.markedViolations(v)
+		var actions []plan.Action
+		for _, t := range targets {
+			actions = append(actions, m.deleteAction(t))
+		}
+		return m.openFixMulti("Delete", actions), nil
 	}
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(k)
@@ -270,6 +333,28 @@ func (m Model) selected() (wsignore.Violation, bool) {
 		return wsignore.Violation{}, false
 	}
 	return m.shown[i], true
+}
+
+// markedViolations returns the marked subset of shown, or [fallback] when no
+// marks are set. This lets action keys work on a bulk selection or fall back
+// to the cursor item seamlessly.
+func (m Model) markedViolations(fallback wsignore.Violation) []wsignore.Violation {
+	if len(m.marks) == 0 {
+		return []wsignore.Violation{fallback}
+	}
+	out := make([]wsignore.Violation, 0, len(m.marks))
+	for i, v := range m.shown {
+		if m.marks[i] {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// refreshRows rebuilds the list rows to reflect current mark state.
+func (m Model) refreshRows() Model {
+	m.list = m.list.SetRows(m.rows())
+	return m
 }
 
 func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
@@ -308,7 +393,7 @@ func (m Model) excludeAction(v wsignore.Violation) plan.Action {
 	e, rel := m.env, v.Path
 	return plan.Action{
 		ID:          "exclude-" + rel,
-		Description: "Add exclude rule for " + m.abs(v),
+		Description: "Add to .megaignore: " + m.abs(v),
 		Execute: func() error {
 			if _, err := manifest.AddIgnoreExclude(e.Paths.Manifest, rel, ""); err != nil {
 				return err
@@ -326,9 +411,27 @@ func (m Model) harborAction(v wsignore.Violation) (plan.Action, bool) {
 	e, pattern := m.env, dir+"/**"
 	return plan.Action{
 		ID:          "harbor-" + dir,
-		Description: "Mark " + style.AbsPath(e.Paths.Workspace, dir) + " as a safe harbor",
+		Description: "Suppress warnings for " + style.AbsPath(e.Paths.Workspace, dir) + "/**",
 		Execute: func() error {
 			if _, err := manifest.AddIgnoreSafeHarbor(e.Paths.Manifest, pattern, ""); err != nil {
+				return err
+			}
+			return regenerate(e)
+		},
+	}, true
+}
+
+func (m Model) unsuppressAction(v wsignore.Violation) (plan.Action, bool) {
+	dir := filepath.ToSlash(filepath.Dir(v.Path))
+	if dir == "." || dir == "" {
+		return plan.Action{}, false
+	}
+	e, pattern := m.env, dir+"/**"
+	return plan.Action{
+		ID:          "unsuppress-" + dir,
+		Description: "Remove suppress rule for " + style.AbsPath(e.Paths.Workspace, dir) + "/**",
+		Execute: func() error {
+			if _, err := manifest.RemoveIgnoreSafeHarbor(e.Paths.Manifest, pattern); err != nil {
 				return err
 			}
 			return regenerate(e)
@@ -365,7 +468,11 @@ func (m Model) deleteAction(v wsignore.Violation) plan.Action {
 }
 
 func (m Model) openFix(title string, a plan.Action) Model {
-	p := plan.Plan{Command: "ignore.fix", Actions: []plan.Action{a}}
+	return m.openFixMulti(title, []plan.Action{a})
+}
+
+func (m Model) openFixMulti(title string, actions []plan.Action) Model {
+	p := plan.Plan{Command: "ignore.fix", Actions: actions}
 	m.modal = m.modal.Confirm(stepFix, confirm.New(title, p))
 	return m
 }
@@ -377,22 +484,25 @@ func (m Model) openExcludeAll() Model {
 			p.Actions = append(p.Actions, m.excludeAction(v))
 		}
 	}
-	title := "Exclude " + format.Plural(len(p.Actions), "violation")
+	title := "Add " + format.Plural(len(p.Actions), "violation") + " to .megaignore"
 	m.modal = m.modal.Confirm(stepExcludeAll, confirm.New(title, p))
 	return m
 }
 
 func (m Model) rows() []table.Row {
 	out := make([]table.Row, 0, len(m.shown))
-	for _, v := range m.shown {
+	for i, v := range m.shown {
 		sev := v.Severity
 		switch {
 		case v.InSafeHarbor:
-			sev = theme.Muted.Render("harbor")
+			sev = theme.Muted.Render("suppressed")
 		case sev == "CRITICAL":
 			sev = theme.Error.Render(sev)
 		case sev == "WARNING":
 			sev = theme.Warn.Render(sev)
+		}
+		if m.marks[i] {
+			sev = theme.Title.Render("✓")
 		}
 		size := ""
 		switch {
@@ -401,7 +511,11 @@ func (m Model) rows() []table.Row {
 		case v.Depth > 0:
 			size = fmt.Sprintf("%d lvl", v.Depth)
 		}
-		out = append(out, table.Row{sev, v.Type, size, m.env.Rel(m.abs(v))})
+		path := m.env.Rel(m.abs(v))
+		if v.InSafeHarbor {
+			path = theme.Muted.Render(path)
+		}
+		out = append(out, table.Row{sev, v.Type, size, path})
 	}
 	return out
 }
@@ -410,19 +524,22 @@ func (m Model) statusLine() string {
 	if m.scanning {
 		return theme.Muted.Render("Scanning workspace…")
 	}
-	actionable, harbored := 0, 0
+	actionable, suppressed := 0, 0
 	for _, v := range m.all {
 		if v.InSafeHarbor {
-			harbored++
+			suppressed++
 		} else {
 			actionable++
 		}
 	}
 	parts := []string{format.Plural(actionable, "violation")}
-	if harbored > 0 {
-		label := fmt.Sprintf("%d in safe harbors", harbored)
+	if len(m.marks) > 0 {
+		parts = []string{theme.Title.Render(fmt.Sprintf("%d marked", len(m.marks))), format.Plural(actionable, "violation")}
+	}
+	if suppressed > 0 {
+		label := fmt.Sprintf("%d suppressed", suppressed)
 		if !m.showHarbors {
-			label += " (H to show)"
+			label += " (H to view/manage)"
 		}
 		parts = append(parts, theme.Muted.Render(label))
 	}

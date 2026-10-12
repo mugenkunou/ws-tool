@@ -56,16 +56,16 @@ func absPaths(workspacePath string, ps []string) []string {
 //   indent=false → used by ws ignore scan / ws secret scan / etc. (no indent, no header)
 
 // printIgnoreViolationsSplit prints violations in two sections:
-// actionable violations first, then a safe harbor summary. When expandHarbors
-// is true, safe harbor items are listed individually; otherwise they are
+// actionable violations first, then a suppressed summary. When expandHarbors
+// is true, suppressed items are listed individually; otherwise they are
 // collapsed to a single summary line.
 func printIgnoreViolationsSplit(w io.Writer, violations []ignore.Violation, nc bool, expandHarbors bool) {
-	var actionable, harbors []ignore.Violation
-	var harborBytes int64
+	var actionable, suppressed []ignore.Violation
+	var suppressedBytes int64
 	for _, v := range violations {
 		if v.InSafeHarbor {
-			harbors = append(harbors, v)
-			harborBytes += v.SizeBytes
+			suppressed = append(suppressed, v)
+			suppressedBytes += v.SizeBytes
 		} else {
 			actionable = append(actionable, v)
 		}
@@ -83,18 +83,18 @@ func printIgnoreViolationsSplit(w io.Writer, violations []ignore.Violation, nc b
 		}
 	}
 
-	if len(harbors) > 0 {
+	if len(suppressed) > 0 {
 		if len(actionable) > 0 {
 			fmt.Fprintln(w)
 		}
 		sizePart := ""
-		if harborBytes > 0 {
-			sizePart = fmt.Sprintf(", %s", style.HumanBytes(harborBytes))
+		if suppressedBytes > 0 {
+			sizePart = fmt.Sprintf(", %s", style.HumanBytes(suppressedBytes))
 		}
 		fmt.Fprintf(w, "%s (%d items%s)\n",
-			style.Mutedf(nc, "Safe harbors"), len(harbors), sizePart)
+			style.Mutedf(nc, "Suppressed"), len(suppressed), sizePart)
 		if expandHarbors {
-			for _, v := range harbors {
+			for _, v := range suppressed {
 				detail := v.Path
 				if v.Message != "" {
 					detail = fmt.Sprintf("%s  %s", v.Path, style.Mutedf(nc, "(%s)", v.Message))
@@ -102,7 +102,7 @@ func printIgnoreViolationsSplit(w io.Writer, violations []ignore.Violation, nc b
 				fmt.Fprintf(w, "  %s  %-14s %s\n", severityLabel(v.Severity, nc), v.Type, detail)
 			}
 		} else {
-			fmt.Fprintf(w, "  %s\n", style.Mutedf(nc, "Use --expand-harbors to see details."))
+			fmt.Fprintf(w, "  %s\n", style.Mutedf(nc, "Use --expand-suppressed to see details."))
 		}
 	}
 }

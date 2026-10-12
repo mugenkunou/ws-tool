@@ -406,7 +406,7 @@ func commandFlags(command string, rest []string) []string {
 	case "ignore":
 		switch sub {
 		case "scan":
-			return []string{"--expand-harbors"}
+			return []string{"--expand-suppressed", "--expand-harbors"}
 		case "fix":
 			return []string{dryRun}
 		case "ls":

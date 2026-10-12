@@ -224,8 +224,8 @@ func GenerateMegaignore(userRules UserRules) string {
 		suppressedHarbors[s] = true
 	}
 
-	// Default exclude rules.
-	sb.WriteString("# Default exclude rules\n")
+	// Default .megaignore rules.
+	sb.WriteString("# Default .megaignore rules\n")
 	for _, dr := range defaultExcludeRules {
 		if suppressedDefaults[dr.Pattern] {
 			continue
@@ -233,9 +233,9 @@ func GenerateMegaignore(userRules UserRules) string {
 		sb.WriteString(dr.Raw + "\n")
 	}
 
-	// User exclude rules.
+	// User .megaignore rules.
 	if len(userRules.Exclude) > 0 {
-		sb.WriteString("\n# User exclude rules\n")
+		sb.WriteString("\n# User .megaignore rules\n")
 		for _, e := range userRules.Exclude {
 			p := strings.TrimSpace(e.Pattern)
 			if p == "" {
@@ -249,8 +249,8 @@ func GenerateMegaignore(userRules UserRules) string {
 		}
 	}
 
-	// Built-in safe harbors.
-	sb.WriteString("\n# Safe harbors\n")
+	// Suppress overrides (override ALL excludes above).
+	sb.WriteString("\n# Suppress overrides\n")
 	for _, hr := range defaultHarborRules {
 		if suppressedHarbors[hr.Pattern] {
 			continue
@@ -258,9 +258,9 @@ func GenerateMegaignore(userRules UserRules) string {
 		sb.WriteString(hr.Raw + "\n")
 	}
 
-	// User safe harbors.
+	// User suppress overrides.
 	if len(userRules.SafeHarbors) > 0 {
-		sb.WriteString("\n# User safe harbors\n")
+		sb.WriteString("\n# User suppress overrides\n")
 		for _, h := range userRules.SafeHarbors {
 			p := strings.TrimSpace(h.Pattern)
 			if p == "" {
