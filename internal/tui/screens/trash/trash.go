@@ -60,7 +60,10 @@ type RequestEmptyMsg struct{}
 
 type step int
 
-const stepChange step = iota
+const (
+	stepChange step = iota
+	stepDeleteItem
+)
 
 // Model is the trash screen state.
 type Model struct {
@@ -157,7 +160,7 @@ func (m Model) reload() (Model, tea.Cmd) {
 
 // Update implements nav.Component.
 func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
-	if _, ok := m.modal.Match(msg); ok {
+	if st, ok := m.modal.Match(msg); ok {
 		m.modal = m.modal.Close()
 		done := msg.(confirm.DoneMsg)
 		if done.Result.Aborted {
@@ -167,6 +170,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		if done.Result.HasFailures() {
 			level = nav.LevelWarn
 		}
+		_ = st // both steps reload after completion
 		m, cmd := m.reload()
 		return m, tea.Batch(nav.Notify(level, confirm.Summary(done.Result)), cmd)
 	}
@@ -220,6 +224,11 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		return m.openDisable(), nil
 	case key.Matches(k, m.keys.Empty):
 		return m.openEmpty(), nil
+	case key.Matches(k, m.keys.DeleteItem):
+		if i := m.list.Cursor(); i >= 0 && i < len(m.state.Items) {
+			return m.openDeleteItem(m.state.Items[i]), nil
+		}
+		return m, nil
 	}
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(k)
@@ -266,6 +275,32 @@ func (m Model) openDisable() Model {
 		},
 	}}}
 	m.modal = m.modal.Confirm(stepChange, confirm.New("Disable soft-delete", pl))
+	return m
+}
+
+func (m Model) openDeleteItem(it Item) Model {
+	r := m.state.Status.RootDir
+	if r == "" {
+		r = root(m.env)
+	}
+	itemPath := filepath.Join(r, "files", it.Name)
+	infoPath := filepath.Join(r, "info", it.Name+".trashinfo")
+	desc := it.Name
+	if it.SizeBytes > 0 {
+		desc += " (" + style.HumanBytes(it.SizeBytes) + ")"
+	}
+	pl := plan.Plan{Command: "trash.delete-item", Actions: []plan.Action{{
+		ID:          "trash-delete-item",
+		Description: "Permanently delete " + desc,
+		Execute: func() error {
+			if err := os.RemoveAll(itemPath); err != nil {
+				return err
+			}
+			_ = os.Remove(infoPath) // best-effort: remove .trashinfo
+			return nil
+		},
+	}}}
+	m.modal = m.modal.Confirm(stepDeleteItem, confirm.New("Delete trash item", pl))
 	return m
 }
 

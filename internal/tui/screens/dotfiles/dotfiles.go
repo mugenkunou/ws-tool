@@ -105,6 +105,7 @@ const (
 	stepAdd
 	stepRemove
 	stepFix
+	stepSync
 	stepReset
 	stepPush
 )
@@ -363,6 +364,11 @@ func (m Model) updateList(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 		return m, nil
 	case key.Matches(k, m.keys.Fix):
 		return m.openFix(), nil
+	case key.Matches(k, m.keys.Sync):
+		if i := m.list.Cursor(); i >= 0 && i < len(m.entries) {
+			return m.openSync(m.entries[i].Record), nil
+		}
+		return m, nil
 	case key.Matches(k, m.keys.Reset):
 		return m.openReset(), nil
 	case key.Matches(k, m.keys.Push):
@@ -400,8 +406,8 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 		level = nav.LevelWarn
 	}
 	cmds := []tea.Cmd{nav.Notify(level, confirm.Summary(done.Result))}
-	// Auto-commit/push after a successful add or remove, as the CLI does.
-	if (st == stepAdd || st == stepRemove) && done.Result.ExecutedCount() > 0 && !done.Result.HasFailures() {
+	// Auto-commit/push after a successful add, remove, or sync, as the CLI does.
+	if (st == stepAdd || st == stepRemove || st == stepSync) && done.Result.ExecutedCount() > 0 && !done.Result.HasFailures() {
 		cmds = append(cmds, m.autoSync(st))
 	}
 	m.list = m.list.SetLoading()
@@ -412,8 +418,11 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 func (m Model) autoSync(st step) tea.Cmd {
 	p := m.env.Paths
 	msg := "dotfile add"
-	if st == stepRemove {
+	switch st {
+	case stepRemove:
 		msg = "dotfile rm"
+	case stepSync:
+		msg = "dotfile sync"
 	}
 	return func() tea.Msg {
 		res, enabled := dotfile.AutoSync(p.Workspace, p.Config, p.Manifest, msg)
@@ -521,6 +530,49 @@ func (m Model) openFix() Model {
 		}}
 	}
 	m.modal = m.modal.Confirm(stepFix, confirm.New("Fix dotfile links", pl))
+	return m
+}
+
+func (m Model) openSync(r manifest.DotfileRecord) Model {
+	p := m.env.Paths
+	sys := r.System
+	pl := plan.Plan{Command: "dotfile.sync", Actions: []plan.Action{{
+		ID:          "dotfile-sync",
+		Description: "Sync " + sys + theme.Muted.Render("  (live file → workspace copy)"),
+		Execute: func() error {
+			// Step 1: unregister — drops the manifest record and the stale
+			// ws copy WITHOUT touching the live file at sys. A plain
+			// dotfile.Remove would restore the stale ws copy onto the system
+			// path, destroying the live content sync is meant to adopt.
+			if err := dotfile.Unregister(dotfile.UnregisterOptions{
+				WorkspacePath: p.Workspace,
+				ManifestPath:  p.Manifest,
+				SystemPath:    sys,
+			}); err != nil {
+				return err
+			}
+			_ = manifest.RemoveProvision(p.Manifest, provision.TypeSymlink, sys)
+
+			// Step 2: add — moves the live file into ws/dotfiles/, creates
+			// the symlink, and registers the manifest record.
+			res, err := dotfile.Add(dotfile.AddOptions{
+				WorkspacePath: p.Workspace,
+				ManifestPath:  p.Manifest,
+				SystemPath:    sys,
+			})
+			if err != nil {
+				return err
+			}
+			_ = manifest.RecordProvision(p.Manifest, provision.Entry{
+				Type:    provision.TypeSymlink,
+				Path:    res.Record.System,
+				Target:  dotfile.DotfilePath(res.Record.Name),
+				Command: "dotfile sync",
+			})
+			return nil
+		},
+	}}}
+	m.modal = m.modal.Confirm(stepSync, confirm.New("Sync dotfile", pl))
 	return m
 }
 

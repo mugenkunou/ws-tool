@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 
 	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/style"
@@ -11,12 +13,13 @@ import (
 )
 
 var trashHelp = cmdHelp{
-	Usage: "ws trash <enable|setup|disable|empty|status>",
+	Usage: "ws trash <enable|setup|disable|empty|rm|status>",
 	Subcommands: []string{
 		"  enable   Configure soft-delete integrations",
 		"  setup    Alias for enable",
 		"  disable  Remove soft-delete integrations",
 		"  empty    Remove all entries from trash root",
+		"  rm       Permanently delete a single trash item by name",
 		"  status   Show integration status and trash size",
 	},
 	SetupFlags: []string{
@@ -265,6 +268,59 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 				style.KV(out, "Files removed", fmt.Sprintf("%d", result.FileCount), nc)
 				style.KV(out, "Freed", style.HumanBytes(result.SizeBytes), nc)
 			}
+		}
+		return planResult.ExitCode()
+
+	case "rm":
+		fs := flag.NewFlagSet("trash-rm", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		rootDir := fs.String("root-dir", cfgTrashRoot, "trash root directory")
+		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
+		registerGlobalFlags(fs, &globals)
+		if err := fs.Parse(subArgs); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		if *dryRun {
+			globals.dryRun = true
+		}
+		if len(fs.Args()) != 1 {
+			fmt.Fprintln(stderr, "usage: ws trash rm <item-name>")
+			return 1
+		}
+		itemName := fs.Args()[0]
+		// Reject path separators to prevent directory traversal.
+		if strings.ContainsAny(itemName, "/\\") {
+			fmt.Fprintln(stderr, "item name must not contain path separators; pass just the filename shown in `ws trash status`")
+			return 1
+		}
+		resolvedRoot := *rootDir
+		itemPath := resolvedRoot + "/files/" + itemName
+		infoPath := resolvedRoot + "/info/" + itemName + ".trashinfo"
+
+		plan := Plan{Command: "trash.rm"}
+		plan.Actions = append(plan.Actions, Action{
+			ID:          "trash-rm-item",
+			Description: "Permanently delete " + itemName + " from trash",
+			Execute: func() error {
+				if err := os.RemoveAll(itemPath); err != nil {
+					return err
+				}
+				_ = os.Remove(infoPath) // best-effort
+				return nil
+			},
+		})
+		planResult := RunPlan(plan, stdin, stdout, globals)
+		if globals.json {
+			return writeJSONDryRun(stdout, stderr, "trash.rm", globals.dryRun, map[string]any{
+				"item":    itemName,
+				"actions": planResult.Actions,
+			})
+		}
+		out := textOut(globals, stdout)
+		nc := globals.noColor
+		if !globals.dryRun && planResult.WasExecuted("trash-rm-item") {
+			fmt.Fprintln(out, style.ResultSuccess(nc, "Deleted %s from trash.", itemName))
 		}
 		return planResult.ExitCode()
 

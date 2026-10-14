@@ -195,6 +195,7 @@ type DotfilesMap struct {
 	Add      key.Binding
 	Remove   key.Binding
 	Fix      key.Binding
+	Sync     key.Binding
 	Reset    key.Binding
 	Push     key.Binding
 	GitView  key.Binding
@@ -211,6 +212,7 @@ func Dotfiles() DotfilesMap {
 		Add:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add")),
 		Remove:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "remove")),
 		Fix:      key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "fix links")),
+		Sync:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync live→ws")),
 		Reset:    key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "reset all")),
 		Push:     key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "git push")),
 		GitView:  key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "git status/log")),
@@ -223,14 +225,14 @@ func Dotfiles() DotfilesMap {
 
 // ShortHelp implements help.KeyMap.
 func (k DotfilesMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Add, k.Remove, k.Fix, k.Push, k.GitView, k.Refresh}
+	return []key.Binding{k.Add, k.Remove, k.Fix, k.Sync, k.Push, k.Refresh}
 }
 
 // FullHelp implements help.KeyMap.
 func (k DotfilesMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
-		{k.Add, k.Remove, k.Fix, k.Reset},
+		{k.Add, k.Remove, k.Fix, k.Sync, k.Reset},
 		{k.Push, k.GitView, k.GitSetup, k.Migrate},
 		{k.Refresh, k.Back},
 	}
@@ -387,58 +389,59 @@ func (k CaptureMap) FullHelp() [][]key.Binding {
 // IgnoreMap is the binding set for the sync-hygiene (ignore) screen.
 // Fix actions apply to the selected violation (or all marked violations when
 // marks are set), except MegaignoreAll which always covers everything.
+// The screen has two levels: live violations and suppressed warnings.
 type IgnoreMap struct {
-	Table          table.KeyMap
-	Exclude        key.Binding // add selected/marked to .megaignore
-	Harbor         key.Binding // suppress warning for parent dir
-	Unsuppress     key.Binding // remove suppress rule (when cursor is on a suppressed item)
-	Move           key.Binding
-	Delete         key.Binding
-	ExcludeAll     key.Binding // megaignore all violations at once
-	Select         key.Binding // mark/unmark current row
-	SelectAll      key.Binding // mark all / clear all marks
-	Check          key.Binding
-	ToggleHarbor   key.Binding
-	Tree           key.Binding
-	List           key.Binding
-	EditRules      key.Binding
-	Refresh        key.Binding
-	Back           key.Binding
+	Table        table.KeyMap
+	Exclude      key.Binding // add selected/marked to .megaignore
+	Suppress     key.Binding // suppress warning for parent dir (was Harbor/h, now s)
+	Unsuppress   key.Binding // remove suppress rule (when in suppressed level)
+	Move         key.Binding
+	Delete       key.Binding
+	ExcludeAll   key.Binding // megaignore all violations at once
+	Select       key.Binding // mark/unmark current row
+	SelectAll    key.Binding // mark all / clear all marks
+	Check        key.Binding
+	ViewSuppressed key.Binding // switch to suppressed-warnings screen
+	Tree         key.Binding
+	List         key.Binding
+	EditRules    key.Binding
+	Refresh      key.Binding
+	Back         key.Binding
 }
 
 // Ignore returns bindings for the ignore screen.
 func Ignore() IgnoreMap {
 	return IgnoreMap{
-		Table:        Table(),
-		Exclude:      key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "add to .megaignore")),
-		Harbor:       key.NewBinding(key.WithKeys("h"), key.WithHelp("h", "suppress warning")),
-		Unsuppress:   key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "remove suppress rule")),
-		Move:         key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "move to scratch")),
-		Delete:       key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
-		ExcludeAll:   key.NewBinding(key.WithKeys("X"), key.WithHelp("X", "megaignore all")),
-		Select:       key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "mark")),
-		SelectAll:    key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "mark all/none")),
-		Check:        key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "check path")),
-		ToggleHarbor: key.NewBinding(key.WithKeys("H"), key.WithHelp("H", "show/hide suppressed")),
-		Tree:         key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tree…")),
-		List:         key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "list megaignored…")),
-		EditRules:    key.NewBinding(key.WithKeys("E"), key.WithHelp("E", "edit rules…")),
-		Refresh:      key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rescan")),
-		Back:         back(),
+		Table:          Table(),
+		Exclude:        key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add to .megaignore")),
+		Suppress:       key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "suppress warning")),
+		Unsuppress:     key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "remove suppress rule")),
+		Move:           key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "move to scratch")),
+		Delete:         key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
+		ExcludeAll:     key.NewBinding(key.WithKeys("X"), key.WithHelp("X", "megaignore all")),
+		Select:         key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "mark")),
+		SelectAll:      key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "mark all/none")),
+		Check:          key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "check path")),
+		ViewSuppressed: key.NewBinding(key.WithKeys("H"), key.WithHelp("H", "view suppressed")),
+		Tree:           key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tree…")),
+		List:           key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "list megaignored…")),
+		EditRules:      key.NewBinding(key.WithKeys("E"), key.WithHelp("E", "edit rules…")),
+		Refresh:        key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rescan")),
+		Back:           back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
 func (k IgnoreMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Exclude, k.Harbor, k.Move, k.Delete, k.Select, k.Refresh}
+	return []key.Binding{k.Exclude, k.Suppress, k.Move, k.Delete, k.Select, k.Refresh}
 }
 
 // FullHelp implements help.KeyMap.
 func (k IgnoreMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
-		{k.Exclude, k.Harbor, k.Unsuppress, k.Move, k.Delete, k.ExcludeAll},
-		{k.Select, k.SelectAll, k.Check, k.ToggleHarbor},
+		{k.Exclude, k.Suppress, k.Unsuppress, k.Move, k.Delete, k.ExcludeAll},
+		{k.Select, k.SelectAll, k.Check, k.ViewSuppressed},
 		{k.Tree, k.List, k.EditRules, k.Refresh, k.Back},
 	}
 }
@@ -542,29 +545,31 @@ func (k CronMap) FullHelp() [][]key.Binding {
 
 // TrashMap is the binding set for the trash screen.
 type TrashMap struct {
-	Table   table.KeyMap
-	Enable  key.Binding
-	Disable key.Binding
-	Empty   key.Binding
-	Refresh key.Binding
-	Back    key.Binding
+	Table      table.KeyMap
+	Enable     key.Binding
+	Disable    key.Binding
+	Empty      key.Binding
+	DeleteItem key.Binding
+	Refresh    key.Binding
+	Back       key.Binding
 }
 
 // Trash returns bindings for the trash screen.
 func Trash() TrashMap {
 	return TrashMap{
-		Table:   Table(),
-		Enable:  key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "enable soft-delete")),
-		Disable: key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "disable")),
-		Empty:   key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "empty trash")),
-		Refresh: refresh(),
-		Back:    back(),
+		Table:      Table(),
+		Enable:     key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "enable soft-delete")),
+		Disable:    key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "disable")),
+		Empty:      key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "empty trash")),
+		DeleteItem: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete item")),
+		Refresh:    refresh(),
+		Back:       back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
 func (k TrashMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Enable, k.Disable, k.Empty, k.Refresh}
+	return []key.Binding{k.Enable, k.Disable, k.DeleteItem, k.Empty, k.Refresh}
 }
 
 // FullHelp implements help.KeyMap.
@@ -572,7 +577,7 @@ func (k TrashMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown},
 		{k.Enable, k.Disable, k.Empty},
-		{k.Refresh, k.Back},
+		{k.DeleteItem, k.Refresh, k.Back},
 	}
 }
 
