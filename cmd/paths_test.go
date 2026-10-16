@@ -272,21 +272,22 @@ func TestPathRuleInitStoresAbsoluteWorkspace(t *testing.T) {
 	parent := t.TempDir()
 	chdir(t, parent)
 	var out, errOut bytes.Buffer
-	if code := Execute([]string{"init", "--workspace", "Workspace"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+	if code := Execute([]string{"--json", "init", "--workspace", "Workspace"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
 		t.Fatalf("init failed: %d %s", code, errOut.String())
 	}
-	cfgPath := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "ws-tool", "config.json")
-	raw, err := os.ReadFile(cfgPath)
-	if err != nil {
-		t.Fatal(err)
+	want := filepath.Join(parent, "Workspace")
+	var payload struct {
+		Data struct {
+			WorkspacePath string `json:"workspace_path"`
+		} `json:"data"`
 	}
-	var cfg struct {
-		Workspace string `json:"workspace"`
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, out.String())
 	}
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		t.Fatal(err)
+	if payload.Data.WorkspacePath != want {
+		t.Fatalf("init workspace_path = %q, want absolute %q", payload.Data.WorkspacePath, want)
 	}
-	if cfg.Workspace != filepath.Join(parent, "Workspace") {
-		t.Fatalf("config workspace = %q, want absolute %q", cfg.Workspace, filepath.Join(parent, "Workspace"))
+	if _, err := os.Stat(filepath.Join(want, "configs", "ws.json")); err != nil {
+		t.Fatalf("expected configs/ws.json under %s: %v", want, err)
 	}
 }

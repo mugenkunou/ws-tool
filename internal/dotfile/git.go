@@ -10,10 +10,16 @@ import (
 	"strings"
 )
 
+// RepoPath returns the dotfile git repo, which is configs/dotfiles/ itself:
+// the originals are the work tree.
+func RepoPath(workspacePath string) string {
+	return filepath.Join(workspacePath, "configs", "dotfiles")
+}
+
 // GitSyncOptions configures an auto-commit/push operation on the dotfiles repo.
 type GitSyncOptions struct {
 	WorkspacePath string
-	RepoPath      string // absolute path to ws/dotfiles (the git repo itself)
+	RepoPath      string // absolute path to configs/dotfiles (the git repo itself)
 	RemoteURL     string
 	Branch        string
 	AutoCommit    bool
@@ -30,7 +36,7 @@ type GitSyncResult struct {
 }
 
 // GitSync performs auto-commit and optional auto-push on the dotfiles repo.
-// The git repo lives directly inside ws/dotfiles/ (like pass uses ~/.password-store/).
+// The git repo lives directly inside configs/dotfiles/ (like pass uses ~/.password-store/).
 // Errors are non-fatal — the operation returns a result
 // rather than failing the parent command.
 func GitSync(opts GitSyncOptions) GitSyncResult {

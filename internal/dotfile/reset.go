@@ -52,7 +52,7 @@ func Reset(opts ResetOptions) (ResetResult, error) {
 	for _, link := range cfg.Links {
 		entry := ResetEntry{Link: link}
 
-		workspaceAbs := filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(link.Original, link.Class)))
+		workspaceAbs := filepath.Join(opts.WorkspacePath, filepath.FromSlash(LinkDotfilePath(link)))
 
 		if opts.DryRun {
 			entry.Action = "would-restore"

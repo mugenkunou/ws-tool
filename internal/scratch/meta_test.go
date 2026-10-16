@@ -55,7 +55,7 @@ func TestMetaSeededOnNew(t *testing.T) {
 }
 
 func TestTagsLoadSaveMerge(t *testing.T) {
-	wsDir := t.TempDir()
+	wsDir := filepath.Join(t.TempDir(), "configs", "ws.json")
 	tc, err := LoadTags(wsDir)
 	if err != nil {
 		t.Fatalf("load empty: %v", err)
@@ -259,5 +259,23 @@ func TestAutoTagEmpty(t *testing.T) {
 	}
 	if len(tags) != 0 {
 		t.Fatalf("expected no tags for empty dir, got %v", tags)
+	}
+}
+
+func TestSaveTagsKeepsUnreadableConfig(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "ws.json")
+	broken := []byte("{\"links\": [ not json")
+	if err := os.WriteFile(cfgPath, broken, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := SaveTags(cfgPath, TagCollection{Tags: []string{"k8s"}}); err == nil {
+		t.Fatal("expected an error for an unparsable ws.json")
+	}
+	got, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if string(got) != string(broken) {
+		t.Fatalf("ws.json was overwritten: %q", got)
 	}
 }

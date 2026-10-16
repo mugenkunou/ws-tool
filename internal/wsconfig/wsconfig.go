@@ -391,6 +391,39 @@ func ResolvePath(workspaceRoot, value string) (string, error) {
 	return filepath.Clean(filepath.Join(root, v)), nil
 }
 
+// WithAbsPaths returns a copy of cfg with every path-valued setting resolved
+// against workspacePath. It is used wherever config values are displayed
+// (spec "Path Rules"). cfg itself is not modified. Empty values stay empty.
+func WithAbsPaths(cfg WsConfig, workspacePath string) WsConfig {
+	abs := func(v string) string {
+		if strings.TrimSpace(v) == "" {
+			return v
+		}
+		p, err := ResolvePath(workspacePath, v)
+		if err != nil {
+			return v
+		}
+		return p
+	}
+	absAll := func(vs []string) []string {
+		if vs == nil {
+			return nil
+		}
+		out := make([]string, len(vs))
+		for i, v := range vs {
+			out[i] = abs(v)
+		}
+		return out
+	}
+
+	out := cfg
+	out.Scratch.RootDir = abs(cfg.Scratch.RootDir)
+	out.Repo.Roots = absAll(cfg.Repo.Roots)
+	out.Repo.ExcludeDirs = absAll(cfg.Repo.ExcludeDirs)
+	out.Secret.SkipDirs = absAll(cfg.Secret.SkipDirs)
+	return out
+}
+
 // StateDir returns the XDG-compliant state directory for ws-tool
 // (machine-local, not synced).
 // Resolution: $XDG_STATE_HOME/ws-tool → ~/.local/state/ws-tool

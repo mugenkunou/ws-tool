@@ -1,9 +1,7 @@
 ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Capture⁶  Ignore⁷  Secrets⁸  Cron⁹  Trash⁰
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-2 violations · 1 suppressed
+Suppressed warnings · 1 item(s) · u unsuppress · esc back
  Severity  Type          Size       Path
- CRITICAL  bloat         220.0 MB   Projects/web/dump.log
- WARNING   depth         7 lvl      Notes/a/b/c/d/e/f/g
  suppres…  bloat         40.0 MB    Data/bruno/node_modules
 
 
@@ -27,4 +25,6 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Capture⁶  Ignore⁷
 
 
 
-e add to .megaignore • h suppress warning • m move to scratch • d delete • space mark • r rescan …
+
+
+a add to .megaignore • s suppress warning • m move to scratch • d delete • space mark • r rescan …

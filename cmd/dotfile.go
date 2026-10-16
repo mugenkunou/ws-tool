@@ -257,7 +257,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			lsRecords = append(lsRecords, lsRecord{
 				System:        l.System,
 				Original:      l.Original,
-				WorkspacePath: style.AbsPath(workspacePath, dotfile.DotfilePath(l.Original, l.Class)),
+				WorkspacePath: style.AbsPath(workspacePath, dotfile.LinkDotfilePath(l)),
 				Sudo:          l.Sudo,
 				Class:         l.Class,
 			})
@@ -392,8 +392,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			fmt.Fprintln(stderr, cfgErr.Error())
 			return 1
 		}
-		// The dotfile git repo now lives under configs/dotfiles-git/
-		repoPath := filepath.Join(workspacePath, "configs", "dotfiles-git")
+		repoPath := dotfile.RepoPath(workspacePath)
 
 		switch subArgs[0] {
 		case "remote":
@@ -851,7 +850,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		exitCode := 0
 
 		for _, link := range dirLinks {
-			wsDir := filepath.Join(workspacePath, filepath.FromSlash(dotfile.DotfilePath(link.Original, link.Class)))
+			wsDir := filepath.Join(workspacePath, filepath.FromSlash(dotfile.LinkDotfilePath(link)))
 			fmt.Fprintf(out, "%s %s\n", style.Infof(nc, "%s", link.System), style.Mutedf(nc, "(→ %s)", wsDir))
 
 			entries, expanded, expandErr := dotfile.ExpandDir(wsDir)

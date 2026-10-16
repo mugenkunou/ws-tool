@@ -10,7 +10,6 @@ package dotfiles
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"charm.land/bubbles/v2/help"
@@ -213,7 +212,7 @@ func prepareAdd(input string) tea.Cmd {
 // loadGitView builds the dotfile git status + recent log.
 func loadGitView(e env.Env) tea.Cmd {
 	return func() tea.Msg {
-		repoPath := filepath.Join(e.Paths.Workspace, "configs", "dotfiles-git")
+		repoPath := dotfile.RepoPath(e.Paths.Workspace)
 		var b strings.Builder
 		b.WriteString(theme.Title.Render("Dotfile git backup") + "\n\n")
 		field := func(label, value string) {
@@ -577,7 +576,7 @@ func (m Model) openPush() Model {
 		ID:          "dotfile-git-push",
 		Description: "Commit pending dotfile changes and push",
 		Execute: func() error {
-			repoPath := filepath.Join(p.Workspace, "configs", "dotfiles-git")
+			repoPath := dotfile.RepoPath(p.Workspace)
 			if !dotfile.GitIsInitialized(repoPath) {
 				return fmt.Errorf("git not initialized — press G to run setup")
 			}

@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Capture⁶  Ignore⁷
 
 
 
-a add • d remove • x fix links • p git push • v git status/log • r refresh • tab/⇧tab screens …
+a add • d remove • x fix links • s sync live→ws • p git push • r refresh • tab/⇧tab screens • ? help

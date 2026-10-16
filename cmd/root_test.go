@@ -111,7 +111,7 @@ func TestInitAndConfigView(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("config view failed: exit=%d stderr=%s", exit, errOut.String())
 	}
-	if !strings.Contains(out.String(), "\"config_schema\": 1") {
+	if !strings.Contains(out.String(), "\"schema\": 1") {
 		t.Fatalf("unexpected config output: %s", out.String())
 	}
 }
@@ -142,16 +142,16 @@ func TestConfigDefaultsFlag(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("config --defaults failed: exit=%d stderr=%s", exit, errOut.String())
 	}
-	if !strings.Contains(out.String(), "\"config_schema\": 1") {
+	if !strings.Contains(out.String(), "\"schema\": 1") {
 		t.Fatalf("unexpected defaults output: %s", out.String())
 	}
 }
 
 // allDispatchedCommands must be kept in sync with the switch in Execute.
 var allDispatchedCommands = []string{
-	"help", "version", "init", "reset", "restore", "config",
+	"help", "version", "init", "config",
 	"dotfile", "ignore", "secret", "log", "scratch", "repo",
-	"trash", "capture", "cron", "credential", "git-credential-helper",
+	"trash", "cron", "credential", "git-credential-helper",
 	"completions",
 }
 

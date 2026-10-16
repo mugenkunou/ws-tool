@@ -13,8 +13,8 @@ import (
 func SpecialRepos(workspacePath string) []Repository {
 	var special []Repository
 
-	// Dotfiles repo: <workspace>/ws/dotfiles/
-	dotfilesPath := filepath.Join(workspacePath, "ws", "dotfiles")
+	// Dotfiles repo: <workspace>/configs/dotfiles/ (dotfile.RepoPath)
+	dotfilesPath := filepath.Join(workspacePath, "configs", "dotfiles")
 	if isGitRepo(dotfilesPath) {
 		special = append(special, Repository{Path: dotfilesPath})
 	}

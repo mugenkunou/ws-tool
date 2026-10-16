@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Capture⁶  Ignore⁷
 
 
 
-e enable soft-delete • D disable • x empty trash • r refresh • tab/⇧tab screens • ? help • q quit
+e enable soft-delete • D disable • d delete item • x empty trash • r refresh • tab/⇧tab screens …

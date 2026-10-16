@@ -442,12 +442,13 @@ func runConfig(args []string, globals globalFlags, stdout, stderr io.Writer) int
 		return 1
 	}
 
-	// Annotate with absolute workspace path for display.
+	// "Resolved config": every path value shown absolute (spec "Path Rules"),
+	// annotated with the absolute workspace path.
 	type viewPayload struct {
 		wsconfig.WsConfig
 		Workspace string `json:"workspace"`
 	}
-	view := viewPayload{WsConfig: cfg, Workspace: workspacePath}
+	view := viewPayload{WsConfig: wsconfig.WithAbsPaths(cfg, workspacePath), Workspace: workspacePath}
 
 	if globals.json {
 		return writeJSON(stdout, stderr, "config.view", view)

@@ -22,7 +22,6 @@ var layoutDirs = []string{
 	"agent/skills",
 	"configs",
 	"configs/dotfiles",
-	"configs/dotfiles-git",
 	"secrets",
 	"secrets/dotfiles",
 	"secrets/pass",

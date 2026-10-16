@@ -1,8 +1,6 @@
 package dotfile
 
 import (
-	"path/filepath"
-
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
@@ -13,7 +11,7 @@ func AutoSync(workspacePath, configPath, _ /* manifestPath compat */, commitMess
 	if err != nil || cfg.Dotfile.Git.RemoteURL == "" {
 		return GitSyncResult{}, false
 	}
-	repoPath := filepath.Join(workspacePath, "configs", "dotfiles-git")
+	repoPath := RepoPath(workspacePath)
 	return GitSync(GitSyncOptions{
 		WorkspacePath: workspacePath,
 		RepoPath:      repoPath,

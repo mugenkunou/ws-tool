@@ -3,6 +3,7 @@ package dotfile
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
@@ -110,7 +111,7 @@ func TestScanAndFixBrokenSymlink(t *testing.T) {
 		t.Fatalf("expected one link, got %d", len(links))
 	}
 
-	target := filepath.Join(workspaceRoot, filepath.FromSlash(DotfilePath(links[0].Original, links[0].Class)))
+	target := filepath.Join(workspaceRoot, filepath.FromSlash(LinkDotfilePath(links[0])))
 	if err := os.Remove(target); err != nil {
 		t.Fatalf("remove target failed: %v", err)
 	}
@@ -256,7 +257,7 @@ func TestRemovePrunesEmptyDirs(t *testing.T) {
 	if len(links) != 1 {
 		t.Fatalf("expected 1 link, got %d", len(links))
 	}
-	wsFile := filepath.Join(workspaceRoot, filepath.FromSlash(DotfilePath(links[0].Original, links[0].Class)))
+	wsFile := filepath.Join(workspaceRoot, filepath.FromSlash(LinkDotfilePath(links[0])))
 	wsParent := filepath.Dir(wsFile)
 	if _, err := os.Stat(wsParent); err != nil {
 		t.Fatalf("workspace parent dir should exist before remove: %v", err)
@@ -329,9 +330,201 @@ func TestRemovePrunesOnlyEmptyDirs(t *testing.T) {
 	if len(links) != 1 {
 		t.Fatalf("expected 1 remaining link, got %d", len(links))
 	}
-	wsBFile := filepath.Join(workspaceRoot, filepath.FromSlash(DotfilePath(links[0].Original, links[0].Class)))
+	wsBFile := filepath.Join(workspaceRoot, filepath.FromSlash(LinkDotfilePath(links[0])))
 	wsParent := filepath.Dir(wsBFile)
 	if _, err := os.Stat(wsParent); err != nil {
 		t.Fatalf("workspace parent dir should NOT be removed while sibling %s still exists: %v", wsBFile, err)
+	}
+}
+
+func TestAddStoresWorkspacePath(t *testing.T) {
+	workspaceRoot, configPath := setupWorkspace(t)
+	systemFile := filepath.Join(t.TempDir(), ".inputrc")
+	if err := os.WriteFile(systemFile, []byte("set bell-style none\n"), 0o644); err != nil {
+		t.Fatalf("write file failed: %v", err)
+	}
+
+	res, err := Add(AddOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath, SystemPath: systemFile})
+	if err != nil {
+		t.Fatalf("add failed: %v", err)
+	}
+
+	original := res.Link.Original
+	if !strings.HasPrefix(original, "configs/dotfiles/") {
+		t.Fatalf("expected original under configs/dotfiles/, got %q", original)
+	}
+	if _, err := os.Stat(filepath.Join(workspaceRoot, filepath.FromSlash(original))); err != nil {
+		t.Fatalf("original %q not found in workspace: %v", original, err)
+	}
+}
+
+func TestLinkScanFixRoundTrip(t *testing.T) {
+	workspaceRoot, configPath := setupWorkspace(t)
+	original := filepath.Join(workspaceRoot, "agent", "AGENTS.md")
+	if err := os.MkdirAll(filepath.Dir(original), 0o755); err != nil {
+		t.Fatalf("mkdir agent/ failed: %v", err)
+	}
+	if err := os.WriteFile(original, []byte("# Agents\n"), 0o644); err != nil {
+		t.Fatalf("write AGENTS.md failed: %v", err)
+	}
+	systemFile := filepath.Join(t.TempDir(), ".claude", "CLAUDE.md")
+
+	if _, err := Link(LinkOptions{
+		WorkspacePath:    workspaceRoot,
+		ConfigPath:       configPath,
+		SystemPath:       systemFile,
+		WorkspaceRelPath: "agent/AGENTS.md",
+	}); err != nil {
+		t.Fatalf("link failed: %v", err)
+	}
+
+	issues, err := Scan(ScanOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath})
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+	if len(issues) != 0 {
+		t.Fatalf("expected a clean scan after link, got %+v", issues)
+	}
+
+	// Simulate a fresh machine: the link is gone, the original is synced.
+	if err := os.Remove(systemFile); err != nil {
+		t.Fatalf("remove link failed: %v", err)
+	}
+	fixRes, err := Fix(FixOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath})
+	if err != nil {
+		t.Fatalf("fix failed: %v", err)
+	}
+	if len(fixRes.Fixed) != 1 {
+		t.Fatalf("expected 1 fixed, got fixed=%d failed=%+v", len(fixRes.Fixed), fixRes.Failed)
+	}
+	target, err := os.Readlink(systemFile)
+	if err != nil {
+		t.Fatalf("readlink failed: %v", err)
+	}
+	if target != original {
+		t.Fatalf("expected link to %s, got %s", original, target)
+	}
+}
+
+func TestLinkDirScanClean(t *testing.T) {
+	workspaceRoot, configPath := setupWorkspace(t)
+	original := filepath.Join(workspaceRoot, "secrets", "pass")
+	if err := os.MkdirAll(original, 0o700); err != nil {
+		t.Fatalf("mkdir secrets/pass failed: %v", err)
+	}
+	systemDir := filepath.Join(t.TempDir(), ".password-store")
+
+	if _, err := Link(LinkOptions{
+		WorkspacePath:    workspaceRoot,
+		ConfigPath:       configPath,
+		SystemPath:       systemDir,
+		WorkspaceRelPath: "secrets/pass",
+	}); err != nil {
+		t.Fatalf("link failed: %v", err)
+	}
+
+	issues, err := Scan(ScanOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath})
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+	if len(issues) != 0 {
+		t.Fatalf("expected a clean scan after dir link, got %+v", issues)
+	}
+}
+
+func TestFixKeepsExistingBackup(t *testing.T) {
+	workspaceRoot, configPath := setupWorkspace(t)
+	systemFile := filepath.Join(t.TempDir(), ".sshconfig")
+	if err := os.WriteFile(systemFile, []byte("Host a\n"), 0o644); err != nil {
+		t.Fatalf("write file failed: %v", err)
+	}
+	if _, err := Add(AddOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath, SystemPath: systemFile}); err != nil {
+		t.Fatalf("add failed: %v", err)
+	}
+
+	// The link was overwritten by a live file, and an older backup exists.
+	if err := os.Remove(systemFile); err != nil {
+		t.Fatalf("remove link failed: %v", err)
+	}
+	if err := os.WriteFile(systemFile, []byte("live\n"), 0o644); err != nil {
+		t.Fatalf("write live file failed: %v", err)
+	}
+	oldBackup := systemFile + ".ws-backup"
+	if err := os.WriteFile(oldBackup, []byte("older backup\n"), 0o644); err != nil {
+		t.Fatalf("write old backup failed: %v", err)
+	}
+
+	if _, err := Fix(FixOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath}); err != nil {
+		t.Fatalf("fix failed: %v", err)
+	}
+
+	if got, _ := os.ReadFile(oldBackup); string(got) != "older backup\n" {
+		t.Fatalf("existing backup was overwritten: %q", got)
+	}
+	if got, _ := os.ReadFile(systemFile + ".ws-backup.1"); string(got) != "live\n" {
+		t.Fatalf("expected live file in .ws-backup.1, got %q", got)
+	}
+	if entry, err := os.Lstat(systemFile); err != nil || entry.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("expected system path to be a symlink after fix (err=%v)", err)
+	}
+}
+
+// dotfile sync drops the ws copy before re-adding the live file. A link made
+// by ws dotfile link points at an original that isn't a copy (agent/AGENTS.md,
+// secrets/pass), so Unregister must refuse rather than delete it.
+func TestUnregisterKeepsLinkedOriginal(t *testing.T) {
+	workspaceRoot, configPath := setupWorkspace(t)
+	original := filepath.Join(workspaceRoot, "agent", "AGENTS.md")
+	if err := os.MkdirAll(filepath.Dir(original), 0o755); err != nil {
+		t.Fatalf("mkdir agent/ failed: %v", err)
+	}
+	if err := os.WriteFile(original, []byte("# Agents\n"), 0o644); err != nil {
+		t.Fatalf("write AGENTS.md failed: %v", err)
+	}
+	systemFile := filepath.Join(t.TempDir(), "CLAUDE.md")
+	if _, err := Link(LinkOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath, SystemPath: systemFile, WorkspaceRelPath: "agent/AGENTS.md"}); err != nil {
+		t.Fatalf("link failed: %v", err)
+	}
+	// A program replaced the link with a live file.
+	if err := os.Remove(systemFile); err != nil {
+		t.Fatalf("remove link failed: %v", err)
+	}
+	if err := os.WriteFile(systemFile, []byte("live\n"), 0o644); err != nil {
+		t.Fatalf("write live file failed: %v", err)
+	}
+
+	if err := Unregister(UnregisterOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath, SystemPath: systemFile}); err == nil {
+		t.Fatal("expected Unregister to refuse a link made by ws dotfile link")
+	}
+	if _, err := os.Stat(original); err != nil {
+		t.Fatalf("original was removed: %v", err)
+	}
+	if links, _ := List(configPath); len(links) != 1 {
+		t.Fatalf("expected the link to stay registered, got %d links", len(links))
+	}
+}
+
+func TestUnregisterKeepsCopyWhenLiveIsDir(t *testing.T) {
+	workspaceRoot, configPath := setupWorkspace(t)
+	systemFile := filepath.Join(t.TempDir(), ".npmrc")
+	if err := os.WriteFile(systemFile, []byte("x=1\n"), 0o644); err != nil {
+		t.Fatalf("write file failed: %v", err)
+	}
+	res, err := Add(AddOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath, SystemPath: systemFile})
+	if err != nil {
+		t.Fatalf("add failed: %v", err)
+	}
+	if err := os.Remove(systemFile); err != nil {
+		t.Fatalf("remove link failed: %v", err)
+	}
+	if err := os.Mkdir(systemFile, 0o755); err != nil {
+		t.Fatalf("mkdir live dir failed: %v", err)
+	}
+
+	if err := Unregister(UnregisterOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath, SystemPath: systemFile}); err == nil {
+		t.Fatal("expected Unregister to refuse when the live path is a directory")
+	}
+	if _, err := os.Stat(filepath.Join(workspaceRoot, filepath.FromSlash(res.Link.Original))); err != nil {
+		t.Fatalf("ws copy was removed: %v", err)
 	}
 }

@@ -75,7 +75,7 @@ func Load(o workspace.PathOverrides) (Env, error) {
 // the home directory, falling back to the path itself.
 func (e Env) Rel(path string) string {
 	ws := e.Paths.Workspace
-	if rel, err := filepath.Rel(ws, path); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+	if rel, err := filepath.Rel(ws, path); err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, "../") {
 		return rel
 	}
 	if home, err := os.UserHomeDir(); err == nil {

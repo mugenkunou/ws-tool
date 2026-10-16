@@ -1,6 +1,8 @@
 package scratch
 
 import (
+	"errors"
+	"os"
 	"sort"
 	"strings"
 
@@ -35,8 +37,10 @@ func SaveTags(configPath string, tc TagCollection) error {
 	sort.Strings(tc.Tags)
 
 	cfg, err := wsconfig.Load(configPath)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		cfg = wsconfig.Default()
+	} else if err != nil {
+		return err
 	}
 	cfg.Scratch.Tags = tc.Tags
 	return wsconfig.Save(configPath, cfg)

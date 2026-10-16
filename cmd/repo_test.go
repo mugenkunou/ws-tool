@@ -141,7 +141,7 @@ func TestRepoSync(t *testing.T) {
 	}
 }
 
-func TestRepoExcludesWsDir(t *testing.T) {
+func TestRepoListsDotfilesRepoOnce(t *testing.T) {
 	testSetXDG(t)
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -155,14 +155,11 @@ func TestRepoExcludesWsDir(t *testing.T) {
 		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
 	}
 
-	// Create a git repo inside ws/ (like dotfiles-git).
-	wsRepo := filepath.Join(workspace, "ws", "dotfiles-git")
-	if err := os.MkdirAll(wsRepo, 0o755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
-	runGitLocal(t, wsRepo, "init")
+	// The dotfile repo is configs/dotfiles/ itself. The walker finds it and
+	// it is also a built-in repo, so it must not be listed twice.
+	dotfilesRepo := filepath.Join(workspace, "configs", "dotfiles")
+	runGitLocal(t, dotfilesRepo, "init")
 
-	// Create a user repo.
 	userRepo := filepath.Join(workspace, "projects", "app")
 	if err := os.MkdirAll(userRepo, 0o755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
@@ -176,18 +173,17 @@ func TestRepoExcludesWsDir(t *testing.T) {
 	runGitLocal(t, userRepo, "add", "f.txt")
 	runGitLocal(t, userRepo, "commit", "-m", "init")
 
-	// ws repo ls should only show the user repo, not ws/dotfiles-git.
 	out.Reset()
 	errOut.Reset()
 	if code := Execute([]string{"--workspace", workspace, "repo", "ls"}, strings.NewReader(""), &out, &errOut); code != 0 {
 		t.Fatalf("repo ls expected 0, got %d stderr=%s", code, errOut.String())
 	}
 	output := out.String()
-	if strings.Contains(output, "dotfiles-git") {
-		t.Fatalf("ws/ repo should be excluded from repo ls, got: %s", output)
+	if n := strings.Count(output, dotfilesRepo+"\n") + strings.Count(output, dotfilesRepo+" "); n != 1 {
+		t.Fatalf("expected %s listed once, got %d times:\n%s", dotfilesRepo, n, output)
 	}
-	if !strings.Contains(output, "projects/app") {
-		t.Fatalf("expected projects/app in repo ls output, got: %s", output)
+	if !strings.Contains(output, userRepo) {
+		t.Fatalf("expected %s in repo ls output, got: %s", userRepo, output)
 	}
 }
 

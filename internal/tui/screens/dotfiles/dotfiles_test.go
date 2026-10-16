@@ -38,7 +38,7 @@ func TestLoadReportsBrokenLinks(t *testing.T) {
 	links, _ := dotfile.List(cfgPath)
 	for _, l := range links {
 		if filepath.Base(l.System) == ".broken" {
-			if err := os.Remove(filepath.Join(root, filepath.FromSlash(dotfile.DotfilePath(l.Original, l.Class)))); err != nil {
+			if err := os.Remove(filepath.Join(root, filepath.FromSlash(dotfile.LinkDotfilePath(l)))); err != nil {
 				t.Fatal(err)
 			}
 		}

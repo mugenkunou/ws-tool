@@ -108,14 +108,11 @@ func dotfilesDirForClass(class string) string {
 	return "configs/dotfiles"
 }
 
-// DotfilePath returns the workspace-relative path for a dotfile name and class.
-func DotfilePath(name, class string) string {
-	return filepath.ToSlash(filepath.Join(dotfilesDirForClass(class), name))
-}
-
-// LinkDotfilePath returns the workspace-relative path for a wsconfig.Link.
+// LinkDotfilePath returns the workspace-relative path of a link's original.
+// Original is stored as that path for every link, whether ws dotfile add moved
+// the file under configs/dotfiles/ or ws dotfile link pointed at agent/AGENTS.md.
 func LinkDotfilePath(link wsconfig.Link) string {
-	return DotfilePath(link.Original, link.Class)
+	return filepath.ToSlash(filepath.Clean(filepath.FromSlash(link.Original)))
 }
 
 // resolveClass picks the class: uses provided class if non-empty, otherwise
@@ -167,9 +164,7 @@ func Add(opts AddOptions) (AddResult, error) {
 	if err != nil {
 		return result, err
 	}
-	// wsRel is like "configs/dotfiles/bashrc"; extract just the name (relative to dotfiles dir).
-	dotfilesDir := dotfilesDirForClass(class) + "/"
-	name := strings.TrimPrefix(filepath.ToSlash(wsRel), dotfilesDir)
+	// wsRel is like "configs/dotfiles/bashrc", and is stored as the original.
 	workspaceAbs := filepath.Join(opts.WorkspacePath, wsRel)
 
 	if _, err := os.Stat(workspaceAbs); err == nil {
@@ -179,7 +174,7 @@ func Add(opts AddOptions) (AddResult, error) {
 	needsSudo := NeedsSudo(absSystem)
 	link := wsconfig.Link{
 		System:   absSystem,
-		Original: name,
+		Original: filepath.ToSlash(wsRel),
 		Sudo:     needsSudo,
 		Class:    class,
 	}
@@ -256,7 +251,7 @@ func Remove(opts RemoveOptions) (RemoveResult, error) {
 		return result, fmt.Errorf("dotfile not managed: %s", absSystem)
 	}
 
-	targetAbs := filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(link.Original, link.Class)))
+	targetAbs := filepath.Join(opts.WorkspacePath, filepath.FromSlash(LinkDotfilePath(link)))
 	result.Link = link
 
 	if opts.DryRun {
@@ -363,13 +358,25 @@ func Unregister(opts UnregisterOptions) error {
 		return fmt.Errorf("dotfile not managed: %s", absSystem)
 	}
 
-	targetAbs := filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(link.Original, link.Class)))
+	targetAbs := filepath.Join(opts.WorkspacePath, filepath.FromSlash(LinkDotfilePath(link)))
+
+	// Only a copy that ws dotfile add made under the dotfiles root may go. An
+	// original that ws dotfile link points at (agent/AGENTS.md, secrets/pass)
+	// is the only copy there is.
+	dotfilesRoot := filepath.Clean(filepath.Join(opts.WorkspacePath, dotfilesDirForClass(link.Class)))
+	if !strings.HasPrefix(filepath.Clean(targetAbs), dotfilesRoot+string(os.PathSeparator)) {
+		return fmt.Errorf("%s links to %s, which is not a ws dotfile copy; replace the live file by hand", absSystem, targetAbs)
+	}
+	// Add can't take a directory, so dropping the copy would leave nothing.
+	if info, err := os.Stat(absSystem); err == nil && info.IsDir() {
+		return fmt.Errorf("%s is a directory; ws dotfile sync adopts files only", absSystem)
+	}
+
 	if err := os.RemoveAll(targetAbs); err != nil {
 		return err
 	}
 
 	// Prune now-empty ancestor directories left behind under the dotfiles root.
-	dotfilesRoot := filepath.Clean(filepath.Join(opts.WorkspacePath, dotfilesDirForClass(link.Class)))
 	pruneDir := filepath.Dir(targetAbs)
 	for {
 		pruneDir = filepath.Clean(pruneDir)
@@ -407,7 +414,7 @@ func Scan(opts ScanOptions) ([]Issue, error) {
 
 	issues := make([]Issue, 0)
 	for _, link := range cfg.Links {
-		expected := filepath.Clean(filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(link.Original, link.Class))))
+		expected := filepath.Clean(filepath.Join(opts.WorkspacePath, filepath.FromSlash(LinkDotfilePath(link))))
 
 		entry, err := os.Lstat(link.System)
 		if err != nil {
@@ -485,7 +492,7 @@ func Fix(opts FixOptions) (FixResult, error) {
 	}
 
 	for _, link := range cfg.Links {
-		expectedTarget := filepath.Clean(filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(link.Original, link.Class))))
+		expectedTarget := filepath.Clean(filepath.Join(opts.WorkspacePath, filepath.FromSlash(LinkDotfilePath(link))))
 		issue := Issue{
 			SystemPath:    link.System,
 			WorkspacePath: expectedTarget,
@@ -562,20 +569,19 @@ func Fix(opts FixOptions) (FixResult, error) {
 		}
 
 		// System path exists but is not correct: overwritten or wrong symlink.
-		// Back up the existing file, then create the symlink.
-		backupPath := link.System + ".ws-backup"
+		// Back up the existing file, then create the symlink. An older backup
+		// is kept, so the new one takes the next free name.
+		backupPath := freeBackupPath(link.System)
 
 		if opts.DryRun {
 			issue.Status = "WOULD_FIX"
-			issue.Message = fmt.Sprintf("would backup %s and create symlink → %s", link.System, expectedTarget)
+			issue.Message = fmt.Sprintf("would backup %s to %s and create symlink → %s", link.System, backupPath, expectedTarget)
 			result.Fixed = append(result.Fixed, issue)
 			result.Messages = append(result.Messages, issue.Message)
 			continue
 		}
 
-		// Remove any stale backup.
 		if link.Sudo {
-			_ = sudoRemoveAll(backupPath)
 			if err := sudoRename(link.System, backupPath); err != nil {
 				issue.Status = StatusBroken
 				issue.Message = fmt.Sprintf("failed to backup: %v", err)
@@ -590,7 +596,6 @@ func Fix(opts FixOptions) (FixResult, error) {
 				continue
 			}
 		} else {
-			_ = os.RemoveAll(backupPath)
 			if err := os.Rename(link.System, backupPath); err != nil {
 				issue.Status = StatusBroken
 				issue.Message = fmt.Sprintf("failed to backup: %v", err)
@@ -607,12 +612,24 @@ func Fix(opts FixOptions) (FixResult, error) {
 			}
 		}
 		issue.Status = "FIXED"
-		issue.Message = fmt.Sprintf("backed up and re-linked %s → %s", link.System, expectedTarget)
+		issue.Message = fmt.Sprintf("backed up %s to %s and re-linked → %s", link.System, backupPath, expectedTarget)
 		result.Fixed = append(result.Fixed, issue)
 		result.Messages = append(result.Messages, issue.Message)
 	}
 
 	return result, nil
+}
+
+// freeBackupPath returns <path>.ws-backup, or <path>.ws-backup.N with the
+// lowest N that is free, so Fix never overwrites an earlier backup.
+func freeBackupPath(path string) string {
+	candidate := path + ".ws-backup"
+	for n := 1; ; n++ {
+		if _, err := os.Lstat(candidate); os.IsNotExist(err) {
+			return candidate
+		}
+		candidate = fmt.Sprintf("%s.ws-backup.%d", path, n)
+	}
 }
 
 // Link registers a system path → existing workspace file as a symlink, without
@@ -708,7 +725,7 @@ func FindDirEntries(workspacePath, configPath string) ([]wsconfig.Link, error) {
 	}
 	var dirs []wsconfig.Link
 	for _, l := range cfg.Links {
-		wsPath := filepath.Join(workspacePath, filepath.FromSlash(DotfilePath(l.Original, l.Class)))
+		wsPath := filepath.Join(workspacePath, filepath.FromSlash(LinkDotfilePath(l)))
 		info, err := os.Stat(wsPath)
 		if err == nil && info.IsDir() {
 			dirs = append(dirs, l)
