@@ -37,13 +37,13 @@ func TestSecretFixAllowlistBatch(t *testing.T) {
 		t.Fatalf("secret fix allowlist: code=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
 
-	// Verify the allowlist was updated in manifest.
-	manifestBytes, err := os.ReadFile(filepath.Join(workspace, "ws", "manifest.json"))
+	// Verify the allowlist was updated in ws.json.
+	wsCfgBytes, err := os.ReadFile(filepath.Join(workspace, "configs", "ws.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(manifestBytes), "creds.env:1") {
-		t.Fatalf("expected creds.env:1 in manifest allowlist, got: %s", string(manifestBytes))
+	if !strings.Contains(string(wsCfgBytes), "creds.env:1") {
+		t.Fatalf("expected creds.env:1 in ws.json allowlist, got: %s", string(wsCfgBytes))
 	}
 
 	// Re-scan should find no violations (allowlisted).

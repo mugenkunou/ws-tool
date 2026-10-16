@@ -1,4 +1,4 @@
-// Package dotfiles is the managed-dotfiles screen: every manifest record with
+// Package dotfiles is the managed-dotfiles screen: every link record with
 // its symlink health, plus add / remove / fix / reset and the dotfile git
 // backup (push, status, log). Multi-step git wizards (setup, migrate) are
 // handed to the CLI in the terminal.
@@ -19,11 +19,8 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/dotfile"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/plan"
-	"github.com/mugenkunou/ws-tool/internal/provision"
 	"github.com/mugenkunou/ws-tool/internal/repo"
 	"github.com/mugenkunou/ws-tool/internal/secret"
 	"github.com/mugenkunou/ws-tool/internal/style"
@@ -39,11 +36,12 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/prompt"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // Entry is one managed dotfile and its health.
 type Entry struct {
-	Record manifest.DotfileRecord
+	Link   wsconfig.Link
 	Status string // "" when healthy, else dotfile.StatusBroken / StatusOverwritten
 }
 
@@ -153,14 +151,14 @@ func New(e env.Env) Model {
 	}
 }
 
-// Load reads the manifest and checks every symlink.
+// Load reads the config and checks every symlink.
 func Load(e env.Env) tea.Cmd {
 	return func() tea.Msg {
-		records, err := dotfile.List(e.Paths.Manifest)
+		links, err := dotfile.List(e.Paths.Config)
 		if err != nil {
 			return LoadedMsg{Err: err}
 		}
-		issues, err := dotfile.Scan(dotfile.ScanOptions{WorkspacePath: e.Paths.Workspace, ManifestPath: e.Paths.Manifest})
+		issues, err := dotfile.Scan(dotfile.ScanOptions{WorkspacePath: e.Paths.Workspace, ConfigPath: e.Paths.Config})
 		if err != nil {
 			return LoadedMsg{Err: err}
 		}
@@ -168,9 +166,9 @@ func Load(e env.Env) tea.Cmd {
 		for _, is := range issues {
 			status[is.SystemPath] = is.Status
 		}
-		entries := make([]Entry, 0, len(records))
-		for _, r := range records {
-			entries = append(entries, Entry{Record: r, Status: status[r.System]})
+		entries := make([]Entry, 0, len(links))
+		for _, l := range links {
+			entries = append(entries, Entry{Link: l, Status: status[l.System]})
 		}
 		return LoadedMsg{Entries: entries}
 	}
@@ -179,7 +177,7 @@ func Load(e env.Env) tea.Cmd {
 // prepareAdd stats the path and, for directories, expands it as the CLI does.
 func prepareAdd(input string) tea.Cmd {
 	return func() tea.Msg {
-		abs, err := config.ExpandUserPath(input)
+		abs, err := wsconfig.ExpandUserPath(input)
 		if err != nil {
 			return addPreparedMsg{input: input, err: err}
 		}
@@ -215,7 +213,7 @@ func prepareAdd(input string) tea.Cmd {
 // loadGitView builds the dotfile git status + recent log.
 func loadGitView(e env.Env) tea.Cmd {
 	return func() tea.Msg {
-		repoPath := filepath.Join(e.Paths.Workspace, "ws", "dotfiles")
+		repoPath := filepath.Join(e.Paths.Workspace, "configs", "dotfiles-git")
 		var b strings.Builder
 		b.WriteString(theme.Title.Render("Dotfile git backup") + "\n\n")
 		field := func(label, value string) {
@@ -287,7 +285,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		return m, nil
 	case SelectMsg:
 		for i, e := range m.entries {
-			if e.Record.System == msg.System {
+			if e.Link.System == msg.System {
 				m.level = levelList
 				m.list = m.list.SetCursor(i)
 			}
@@ -353,20 +351,20 @@ func (m Model) updateList(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 		}
 		var cmd tea.Cmd
 		m.modal, cmd = m.modal.Prompt(stepAddPath, prompt.New("Add a dotfile or config directory",
-			prompt.WithHint("The original moves into ws/dotfiles/ and is symlinked back."),
+			prompt.WithHint("The original moves into configs/dotfiles/ and is symlinked back."),
 			prompt.WithValue("~/"),
 			prompt.WithCompleter(complete.Paths)))
 		return m, cmd
 	case key.Matches(k, m.keys.Remove):
 		if i := m.list.Cursor(); i >= 0 && i < len(m.entries) {
-			return m.openRemove(m.entries[i].Record), nil
+			return m.openRemove(m.entries[i].Link), nil
 		}
 		return m, nil
 	case key.Matches(k, m.keys.Fix):
 		return m.openFix(), nil
 	case key.Matches(k, m.keys.Sync):
 		if i := m.list.Cursor(); i >= 0 && i < len(m.entries) {
-			return m.openSync(m.entries[i].Record), nil
+			return m.openSync(m.entries[i].Link), nil
 		}
 		return m, nil
 	case key.Matches(k, m.keys.Reset):
@@ -446,9 +444,9 @@ func (m Model) openAdd(msg addPreparedMsg) Model {
 	for _, c := range msg.candidates {
 		desc := "Add " + m.env.Rel(c.label)
 		switch c.class {
-		case dotfile.ClassSecret:
+		case dotfile.FileClassSecret:
 			desc += theme.Warn.Render("  ⚠ looks like a secret")
-		case dotfile.ClassState:
+		case dotfile.FileClassState:
 			desc += theme.Muted.Render("  likely state")
 		}
 		files := c.files
@@ -457,16 +455,10 @@ func (m Model) openAdd(msg addPreparedMsg) Model {
 			Description: desc,
 			Execute: func() error {
 				for _, f := range files {
-					res, err := dotfile.Add(dotfile.AddOptions{WorkspacePath: p.Workspace, ManifestPath: p.Manifest, SystemPath: f})
+					_, err := dotfile.Add(dotfile.AddOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config, SystemPath: f})
 					if err != nil {
 						return fmt.Errorf("%s: %w", f, err)
 					}
-					_ = manifest.RecordProvision(p.Manifest, provision.Entry{
-						Type:    provision.TypeSymlink,
-						Path:    res.Record.System,
-						Target:  dotfile.DotfilePath(res.Record.Name),
-						Command: "dotfile add",
-					})
 				}
 				return nil
 			},
@@ -475,25 +467,21 @@ func (m Model) openAdd(msg addPreparedMsg) Model {
 	// Defaults match the CLI: only config-like entries are pre-selected.
 	cands := msg.candidates
 	c := confirm.New("Add dotfiles from "+msg.input, pl).WithChecked(func(i int, _ plan.Action) bool {
-		return cands[i].class == dotfile.ClassConfig
+		return cands[i].class == dotfile.FileClassConfig
 	})
 	m.modal = m.modal.Confirm(stepAdd, c)
 	return m
 }
 
-func (m Model) openRemove(r manifest.DotfileRecord) Model {
+func (m Model) openRemove(link wsconfig.Link) Model {
 	p := m.env.Paths
-	sys := r.System
+	sys := link.System
 	pl := plan.Plan{Command: "dotfile.rm", Actions: []plan.Action{{
 		ID:          "dotfile-rm",
 		Description: "Remove dotfile " + sys + theme.Muted.Render("  (restores the file to its system path)"),
 		Execute: func() error {
-			res, err := dotfile.Remove(dotfile.RemoveOptions{WorkspacePath: p.Workspace, ManifestPath: p.Manifest, SystemPath: sys})
-			if err != nil {
-				return err
-			}
-			_ = manifest.RemoveProvision(p.Manifest, provision.TypeSymlink, res.Record.System)
-			return nil
+			_, err := dotfile.Remove(dotfile.RemoveOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config, SystemPath: sys})
+			return err
 		},
 	}}}
 	m.modal = m.modal.Confirm(stepRemove, confirm.New("Remove dotfile", pl))
@@ -505,7 +493,7 @@ func (m Model) openFix() Model {
 	var broken []string
 	for _, e := range m.entries {
 		if e.Status != "" {
-			broken = append(broken, m.env.Rel(e.Record.System))
+			broken = append(broken, m.env.Rel(e.Link.System))
 		}
 	}
 	pl := plan.Plan{Command: "dotfile.fix"}
@@ -514,7 +502,7 @@ func (m Model) openFix() Model {
 			ID:          "dotfile-fix",
 			Description: "Recreate " + format.Plural(len(broken), "link") + ": " + strings.Join(broken, ", "),
 			Execute: func() error {
-				res, err := dotfile.Fix(dotfile.FixOptions{WorkspacePath: p.Workspace, ManifestPath: p.Manifest})
+				res, err := dotfile.Fix(dotfile.FixOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config})
 				if err != nil {
 					return err
 				}
@@ -533,43 +521,33 @@ func (m Model) openFix() Model {
 	return m
 }
 
-func (m Model) openSync(r manifest.DotfileRecord) Model {
+func (m Model) openSync(link wsconfig.Link) Model {
 	p := m.env.Paths
-	sys := r.System
+	sys := link.System
 	pl := plan.Plan{Command: "dotfile.sync", Actions: []plan.Action{{
 		ID:          "dotfile-sync",
 		Description: "Sync " + sys + theme.Muted.Render("  (live file → workspace copy)"),
 		Execute: func() error {
-			// Step 1: unregister — drops the manifest record and the stale
+			// Step 1: unregister — drops the config record and the stale
 			// ws copy WITHOUT touching the live file at sys. A plain
 			// dotfile.Remove would restore the stale ws copy onto the system
 			// path, destroying the live content sync is meant to adopt.
 			if err := dotfile.Unregister(dotfile.UnregisterOptions{
 				WorkspacePath: p.Workspace,
-				ManifestPath:  p.Manifest,
+				ConfigPath:    p.Config,
 				SystemPath:    sys,
 			}); err != nil {
 				return err
 			}
-			_ = manifest.RemoveProvision(p.Manifest, provision.TypeSymlink, sys)
 
-			// Step 2: add — moves the live file into ws/dotfiles/, creates
-			// the symlink, and registers the manifest record.
-			res, err := dotfile.Add(dotfile.AddOptions{
+			// Step 2: add — moves the live file into configs/dotfiles/, creates
+			// the symlink, and registers the config record.
+			_, err := dotfile.Add(dotfile.AddOptions{
 				WorkspacePath: p.Workspace,
-				ManifestPath:  p.Manifest,
+				ConfigPath:    p.Config,
 				SystemPath:    sys,
 			})
-			if err != nil {
-				return err
-			}
-			_ = manifest.RecordProvision(p.Manifest, provision.Entry{
-				Type:    provision.TypeSymlink,
-				Path:    res.Record.System,
-				Target:  dotfile.DotfilePath(res.Record.Name),
-				Command: "dotfile sync",
-			})
-			return nil
+			return err
 		},
 	}}}
 	m.modal = m.modal.Confirm(stepSync, confirm.New("Sync dotfile", pl))
@@ -582,7 +560,7 @@ func (m Model) openReset() Model {
 		ID:          "dotfile-reset-all",
 		Description: "Reset all " + format.Plural(len(m.entries), "managed dotfile") + theme.Warn.Render("  (restores originals, unregisters all)"),
 		Execute: func() error {
-			_, err := dotfile.Reset(dotfile.ResetOptions{WorkspacePath: p.Workspace, ManifestPath: p.Manifest})
+			_, err := dotfile.Reset(dotfile.ResetOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config})
 			return err
 		},
 	}}}
@@ -599,26 +577,22 @@ func (m Model) openPush() Model {
 		ID:          "dotfile-git-push",
 		Description: "Commit pending dotfile changes and push",
 		Execute: func() error {
-			repoPath := filepath.Join(p.Workspace, "ws", "dotfiles")
+			repoPath := filepath.Join(p.Workspace, "configs", "dotfiles-git")
 			if !dotfile.GitIsInitialized(repoPath) {
 				return fmt.Errorf("git not initialized — press G to run setup")
 			}
 			if !dotfile.GitHasRemote(repoPath) {
 				return fmt.Errorf("no remote configured — press G to run setup")
 			}
-			cfg, err := config.Load(p.Config)
-			if err != nil {
-				return err
-			}
-			mani, err := manifest.Load(p.Manifest)
+			cfg, err := wsconfig.Load(p.Config)
 			if err != nil {
 				return err
 			}
 			res := dotfile.GitSync(dotfile.GitSyncOptions{
 				WorkspacePath: p.Workspace,
 				RepoPath:      repoPath,
-				RemoteURL:     mani.DotfileGit.RemoteURL,
-				Branch:        mani.DotfileGit.Branch,
+				RemoteURL:     cfg.Dotfile.Git.RemoteURL,
+				Branch:        cfg.Dotfile.Git.Branch,
 				AutoCommit:    true,
 				CommitMessage: "manual push",
 			})
@@ -630,7 +604,7 @@ func (m Model) openPush() Model {
 			if vis.Checked && !vis.Private {
 				return repo.ErrPublicRepository
 			}
-			if err := dotfile.GitPush(repoPath, mani.DotfileGit.Branch); err != nil {
+			if err := dotfile.GitPush(repoPath, cfg.Dotfile.Git.Branch); err != nil {
 				return fmt.Errorf("push failed: %w", err)
 			}
 			return nil
@@ -651,10 +625,10 @@ func (m Model) rows() []table.Row {
 			status = theme.Warn.Render("⚠ overwritten")
 		}
 		sudo := ""
-		if e.Record.Sudo {
+		if e.Link.Sudo {
 			sudo = "yes"
 		}
-		rows = append(rows, table.Row{m.env.Rel(e.Record.System), e.Record.Name, status, sudo})
+		rows = append(rows, table.Row{m.env.Rel(e.Link.System), e.Link.Original, status, sudo})
 	}
 	return rows
 }

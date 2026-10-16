@@ -12,12 +12,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	wscapture "github.com/mugenkunou/ws-tool/internal/capture"
-	"github.com/mugenkunou/ws-tool/internal/config"
 	wscron "github.com/mugenkunou/ws-tool/internal/cron"
 	"github.com/mugenkunou/ws-tool/internal/dotfile"
 	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
 	wslog "github.com/mugenkunou/ws-tool/internal/log"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/repo"
 	wsscratch "github.com/mugenkunou/ws-tool/internal/scratch"
 	"github.com/mugenkunou/ws-tool/internal/secret"
@@ -37,6 +35,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 	"github.com/mugenkunou/ws-tool/internal/tui/tuitest"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 const ws = "/home/tester/Workspace"
@@ -53,16 +52,16 @@ func fixedClock() time.Time { return time.Date(2026, 10, 1, 10, 0, 0, 0, time.UT
 func testEnv(t *testing.T) env.Env {
 	t.Helper()
 	t.Setenv("HOME", "/home/tester")
-	cfg := config.Default()
+	cfg := wsconfig.Default()
 	return env.Env{
 		Paths: workspace.Paths{
 			Workspace: ws,
-			Config:    "/home/tester/.config/ws-tool/config.json",
-			Manifest:  ws + "/ws/manifest.json",
+			Config:    ws + "/configs/ws.json",
+			Manifest:  ws + "/configs/ws.json",
 		},
 		Config:     cfg,
 		ScratchDir: "/home/tester/Scratch",
-		LogDir:     ws + "/ws/ws-log",
+		LogDir:     ws + "/data/ws-log",
 		Clock:      fixedClock,
 	}
 }
@@ -82,9 +81,9 @@ func fixtures() []tea.Msg {
 			{Status: repo.RepoStatus{Path: "/home/tester/.password-store", Branch: "master"}},
 		}},
 		dotfiles.LoadedMsg{Entries: []dotfiles.Entry{
-			{Record: manifest.DotfileRecord{System: "/home/tester/.bashrc", Name: "bashrc"}},
-			{Record: manifest.DotfileRecord{System: "/home/tester/.gitconfig", Name: "gitconfig"}, Status: dotfile.StatusBroken},
-			{Record: manifest.DotfileRecord{System: "/etc/hosts", Name: "etc/hosts", Sudo: true}, Status: dotfile.StatusOverwritten},
+			{Link: wsconfig.Link{System: "/home/tester/.bashrc", Original: "bashrc"}},
+			{Link: wsconfig.Link{System: "/home/tester/.gitconfig", Original: "gitconfig"}, Status: dotfile.StatusBroken},
+			{Link: wsconfig.Link{System: "/etc/hosts", Original: "etc/hosts", Sudo: true}, Status: dotfile.StatusOverwritten},
 		}},
 		scratch.LoadedMsg{
 			Entries: []wsscratch.Entry{
@@ -260,7 +259,7 @@ func TestSnapshotNotInitialized(t *testing.T) {
 
 func TestSnapshotLoadError(t *testing.T) {
 	m := loaded(t, 80, 24)
-	m = send(m, dotfiles.LoadedMsg{Err: errors.New("manifest.json: permission denied")}, press("3"))
+	m = send(m, dotfiles.LoadedMsg{Err: errors.New("ws.json: permission denied")}, press("3"))
 	tuitest.Golden(t, "dotfiles_error", view(m))
 }
 
@@ -668,17 +667,15 @@ func hermetic(t *testing.T) (root string) {
 func TestScratchNewEndToEnd(t *testing.T) {
 	root := hermetic(t)
 	wsPath := filepath.Join(root, "Workspace")
-	if err := os.MkdirAll(filepath.Join(wsPath, "ws"), 0o755); err != nil {
+	configsDir := filepath.Join(wsPath, "configs")
+	if err := os.MkdirAll(configsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Default()
+	cfg := wsconfig.Default()
 	cfg.Scratch.RootDir = filepath.Join(root, "Scratch")
 	cfg.Scratch.EditorCmd = "true" // the "editor" launched after creation
-	cfgPath := filepath.Join(root, "config.json")
-	if err := config.Save(cfgPath, cfg); err != nil {
-		t.Fatal(err)
-	}
-	if err := manifest.Save(filepath.Join(wsPath, "ws", "manifest.json"), manifest.Default()); err != nil {
+	cfgPath := filepath.Join(configsDir, "ws.json")
+	if err := wsconfig.Save(cfgPath, cfg); err != nil {
 		t.Fatal(err)
 	}
 	o := workspace.PathOverrides{Workspace: wsPath, Config: cfgPath}
@@ -718,15 +715,15 @@ func TestScratchNewEndToEnd(t *testing.T) {
 func TestCancelChangesNothing(t *testing.T) {
 	root := hermetic(t)
 	wsPath := filepath.Join(root, "Workspace")
-	if err := os.MkdirAll(filepath.Join(wsPath, "ws"), 0o755); err != nil {
+	configsDir2 := filepath.Join(wsPath, "configs")
+	if err := os.MkdirAll(configsDir2, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Default()
-	cfg.Scratch.RootDir = filepath.Join(root, "Scratch")
-	cfgPath := filepath.Join(root, "config.json")
-	_ = config.Save(cfgPath, cfg)
-	_ = manifest.Save(filepath.Join(wsPath, "ws", "manifest.json"), manifest.Default())
-	o := workspace.PathOverrides{Workspace: wsPath, Config: cfgPath}
+	cfg2 := wsconfig.Default()
+	cfg2.Scratch.RootDir = filepath.Join(root, "Scratch")
+	cfgPath2 := filepath.Join(configsDir2, "ws.json")
+	_ = wsconfig.Save(cfgPath2, cfg2)
+	o := workspace.PathOverrides{Workspace: wsPath, Config: cfgPath2}
 	e, err := env.Load(o)
 	if err != nil {
 		t.Fatal(err)
@@ -738,8 +735,8 @@ func TestCancelChangesNothing(t *testing.T) {
 	m = pump(t, m, cmd)
 	m, cmd = sendRun(m, press("esc"))
 	m = pump(t, m, cmd)
-	if _, err := os.Stat(cfg.Scratch.RootDir); !os.IsNotExist(err) {
-		entries, _ := os.ReadDir(cfg.Scratch.RootDir)
+	if _, err := os.Stat(cfg2.Scratch.RootDir); !os.IsNotExist(err) {
+		entries, _ := os.ReadDir(cfg2.Scratch.RootDir)
 		if len(entries) > 0 {
 			t.Fatalf("cancel created %v", entries)
 		}

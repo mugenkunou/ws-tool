@@ -6,16 +6,17 @@ import (
 	"path/filepath"
 
 	"github.com/mugenkunou/ws-tool/internal/dotfile"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/provision"
 	"github.com/mugenkunou/ws-tool/internal/trash"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // ResetOptions configures a workspace reset operation.
 type ResetOptions struct {
 	WorkspacePath string
-	ManifestPath  string // optional; defaults to <workspace>/ws/manifest.json
 	DryRun        bool
+	// ManifestPath is accepted for backward-compat callers; ignored in the new layout.
+	ManifestPath string
 }
 
 // SubResetResult summarises one subsystem reset (dotfile, trash).
@@ -35,9 +36,9 @@ type ResetResult struct {
 }
 
 // Reset tears down a workspace by delegating to subsystem resets
-// (dotfile, trash) and then removing the ws/ directory.
+// (dotfile, trash) and then removing the configs/ directory.
 //
-// Pre-condition: the ws/ directory must exist; callers should verify this
+// Pre-condition: configs/ws.json must exist; callers should verify this
 // before calling Reset so they can render an appropriate error.
 func Reset(opts ResetOptions) (ResetResult, error) {
 	result := ResetResult{
@@ -50,21 +51,17 @@ func Reset(opts ResetOptions) (ResetResult, error) {
 		return result, fmt.Errorf("workspace path is required")
 	}
 
-	wsDir := filepath.Join(opts.WorkspacePath, "ws")
+	configPath := wsconfig.ConfigPath(opts.WorkspacePath)
+	configsDir := filepath.Join(opts.WorkspacePath, "configs")
 
-	if _, err := os.Stat(wsDir); err != nil {
-		return result, fmt.Errorf("workspace not initialized (no ws/ at %s)", opts.WorkspacePath)
-	}
-
-	manifestPath := opts.ManifestPath
-	if manifestPath == "" {
-		manifestPath = filepath.Join(wsDir, "manifest.json")
+	if _, err := os.Stat(configsDir); err != nil {
+		return result, fmt.Errorf("workspace not initialized (no configs/ at %s)", opts.WorkspacePath)
 	}
 
 	// --- Phase 1: dotfile reset ---
 	dfResult, err := dotfile.Reset(dotfile.ResetOptions{
 		WorkspacePath: opts.WorkspacePath,
-		ManifestPath:  manifestPath,
+		ConfigPath:    configPath,
 		DryRun:        opts.DryRun,
 	})
 	sub := SubResetResult{Subsystem: "dotfile", Messages: dfResult.Messages}
@@ -84,7 +81,7 @@ func Reset(opts ResetOptions) (ResetResult, error) {
 	// --- Phase 2: trash reset ---
 	trashResult, err := trash.Reset(trash.ResetOptions{
 		WorkspacePath: opts.WorkspacePath,
-		ManifestPath:  manifestPath,
+		ConfigPath:    configPath,
 		DryRun:        opts.DryRun,
 	})
 	sub = SubResetResult{Subsystem: "trash", Messages: trashResult.Messages}
@@ -101,18 +98,17 @@ func Reset(opts ResetOptions) (ResetResult, error) {
 	}
 	result.Subsystems = append(result.Subsystems, sub)
 
-	// --- Phase 4: remove ws/ directory ---
+	// --- Phase 3: remove configs/ directory ---
 	if opts.DryRun {
 		result.WSRemoved = false
 		return result, nil
 	}
 
-	if _, err := os.Stat(wsDir); err != nil {
-		// Already gone (deleted by provision undo).
+	if _, err := os.Stat(configsDir); err != nil {
 		result.WSRemoved = true
-	} else if err := os.RemoveAll(wsDir); err != nil {
+	} else if err := os.RemoveAll(configsDir); err != nil {
 		result.WSRemoved = false
-		result.Errors = append(result.Errors, fmt.Sprintf("failed to remove %s: %s", wsDir, err))
+		result.Errors = append(result.Errors, fmt.Sprintf("failed to remove %s: %s", configsDir, err))
 	} else {
 		result.WSRemoved = true
 	}
@@ -120,19 +116,27 @@ func Reset(opts ResetOptions) (ResetResult, error) {
 	return result, nil
 }
 
-// Provisions returns the loaded ledger entries for a workspace. This allows
-// the CLI layer to render a pre-reset summary without duplicating the
-// ledger-loading logic.
+// Provisions returns any symlink entries recorded in the link registry.
+// This allows the CLI layer to render a pre-reset summary.
 func Provisions(workspacePath string) ([]provision.Entry, error) {
-	manifestPath := filepath.Join(workspacePath, "ws", "manifest.json")
-	m, err := manifest.Load(manifestPath)
+	configPath := wsconfig.ConfigPath(workspacePath)
+	cfg, err := wsconfig.Load(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []provision.Entry{}, nil
 		}
 		return nil, err
 	}
-	return m.Provisions, nil
+	entries := make([]provision.Entry, 0, len(cfg.Links))
+	for _, l := range cfg.Links {
+		t := provision.TypeSymlink
+		entries = append(entries, provision.Entry{
+			Type:    t,
+			Path:    l.System,
+			Command: "dotfile add",
+		})
+	}
+	return entries, nil
 }
 
 // UndoActionLabel returns a human-readable description of what undoing

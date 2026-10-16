@@ -8,11 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/ignore"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/secret"
 	"github.com/mugenkunou/ws-tool/internal/style"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // stringSliceFlag implements flag.Value for repeatable string flags.
@@ -83,7 +82,7 @@ func runSecret(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 
 // ── ws secret scan (RO) ──
 
-func runSecretScan(args []string, globals globalFlags, workspacePath, configPath, manifestPath string, stdout, stderr io.Writer) int {
+func runSecretScan(args []string, globals globalFlags, workspacePath, configPath, _ /* manifestPath compat */ string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("secret-scan", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	passAudit := fs.Bool("pass", false, "")
@@ -95,7 +94,7 @@ func runSecretScan(args []string, globals globalFlags, workspacePath, configPath
 		return 1
 	}
 
-	cfg, err := config.Load(configPath)
+	wscfg, err := wsconfig.Load(configPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -105,21 +104,14 @@ func runSecretScan(args []string, globals globalFlags, workspacePath, configPath
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	skipDirs := mergeSkipDirs(workspacePath, cfg.Secret.SkipDirs, flagSkipDirs)
-
-	userRules, err := manifest.LoadIgnoreRules(manifestPath)
+	skipDirs := mergeSkipDirs(workspacePath, wscfg.Secret.SkipDirs, flagSkipDirs)
+	userRules, err := wsconfig.LoadIgnoreRules(configPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
 	engine := ignore.BuildEngine(userRules)
-
-	m, err := manifest.Load(manifestPath)
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	allow := buildAllowlistMap(m)
+	allow := wsconfig.AllowlistMap(wscfg)
 
 	violations, err := secret.Scan(secret.ScanOptions{
 		WorkspacePath: workspacePath,
@@ -134,7 +126,7 @@ func runSecretScan(args []string, globals globalFlags, workspacePath, configPath
 
 	// Prune stale allowlist entries: re-scan without allowlist to find
 	// which anchors still match a pattern, then remove the rest.
-	if len(m.Secret.Allowlist) > 0 {
+	if len(wscfg.Secret.Allowlist) > 0 {
 		allViolations, scanErr := secret.Scan(secret.ScanOptions{
 			WorkspacePath: workspacePath,
 			Engine:        engine,
@@ -142,13 +134,13 @@ func runSecretScan(args []string, globals globalFlags, workspacePath, configPath
 			SkipDirs:      skipDirs,
 		})
 		if scanErr == nil {
-			kept, _ := secret.PruneAllowlist(m.Secret.Allowlist, allViolations)
-			if len(kept) != len(m.Secret.Allowlist) {
-				m.Secret.Allowlist = kept
+			kept, _ := secret.PruneAllowlist(wscfg.Secret.Allowlist, allViolations)
+			if len(kept) != len(wscfg.Secret.Allowlist) {
+				wscfg.Secret.Allowlist = kept
 				if kept == nil {
-					m.Secret.Allowlist = []string{}
+					wscfg.Secret.Allowlist = []string{}
 				}
-				manifest.Save(manifestPath, m)
+				_ = wsconfig.Save(configPath, wscfg)
 			}
 		}
 	}
@@ -366,7 +358,7 @@ func runSecretFix(args []string, globals globalFlags, workspacePath, configPath,
 		globals.dryRun = true
 	}
 
-	cfg, err := config.Load(configPath)
+	wscfg2, err := wsconfig.Load(configPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -376,21 +368,15 @@ func runSecretFix(args []string, globals globalFlags, workspacePath, configPath,
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	skipDirs := mergeSkipDirs(workspacePath, cfg.Secret.SkipDirs, flagSkipDirs)
+	skipDirs := mergeSkipDirs(workspacePath, wscfg2.Secret.SkipDirs, flagSkipDirs)
 
-	userRules, err := manifest.LoadIgnoreRules(manifestPath)
+	userRules2, err := wsconfig.LoadIgnoreRules(configPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	engine := ignore.BuildEngine(userRules)
-
-	m, err := manifest.Load(manifestPath)
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	allow := buildAllowlistMap(m)
+	engine := ignore.BuildEngine(userRules2)
+	allow := wsconfig.AllowlistMap(wscfg2)
 
 	violations, err := secret.Scan(secret.ScanOptions{
 		WorkspacePath: workspacePath,
@@ -478,11 +464,11 @@ func runSecretFixBatch(violations []secret.Violation, mode string, workspacePath
 				ID:          "exclude-" + absFile,
 				Description: fmt.Sprintf("Add exclude rule for %s", absFile),
 				Execute: func() error {
-					_, err := manifest.AddIgnoreExclude(manifestPath, v.Path, "secret: excluded by ws secret fix")
+					_, err := wsconfig.AddIgnoreExclude(manifestPath, v.Path, "secret: excluded by ws secret fix")
 					if err != nil {
 						return err
 					}
-					ur, err := manifest.LoadIgnoreRules(manifestPath)
+					ur, err := wsconfig.LoadIgnoreRules(manifestPath)
 					if err != nil {
 						return err
 					}
@@ -612,13 +598,13 @@ func runSecretFixInteractive(violations []secret.Violation, workspacePath, confi
 				}
 
 			case "a":
-				ok, err := manifest.AddIgnoreExclude(manifestPath, v.Path, "secret: excluded by ws secret fix")
+				ok, err := wsconfig.AddIgnoreExclude(manifestPath, v.Path, "secret: excluded by ws secret fix")
 				if err != nil {
 					fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
 					result.Skipped++
 				} else if ok {
 					// Regenerate .megaignore.
-					ur, loadErr := manifest.LoadIgnoreRules(manifestPath)
+					ur, loadErr := wsconfig.LoadIgnoreRules(manifestPath)
 					if loadErr == nil {
 						_ = ignore.WriteMegaignore(megaignorePath, ur)
 					}
@@ -1037,16 +1023,12 @@ func runSecretGit(args []string, globals globalFlags, stdin io.Reader, stdout, s
 
 // ── Helpers (secret) ──
 
-func buildAllowlistMap(m manifest.Manifest) map[string]struct{} {
-	return secret.AllowlistMap(m)
+func addToAllowlist(configPath, anchor string) error {
+	return wsconfig.AddToAllowlist(configPath, anchor)
 }
 
-func addToAllowlist(manifestPath, anchor string) error {
-	return secret.AddToAllowlist(manifestPath, anchor)
-}
-
-func trackPassEntry(manifestPath, anchor string) {
-	_ = secret.TrackPassEntry(manifestPath, anchor)
+func trackPassEntry(configPath, anchor string) {
+	_ = wsconfig.AddToAllowlist(configPath, anchor)
 }
 
 // promptLine reads a full line of input with a default value.

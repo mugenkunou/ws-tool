@@ -5,15 +5,34 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/ignore"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
+
+// layoutDirs are the workspace directories created by `ws init`.
+// They follow the phase-1 layout defined in phase-1.md.
+var layoutDirs = []string{
+	"notes",
+	"experiments",
+	"artifacts",
+	"references",
+	"scripts",
+	"scripts/lib",
+	"agent",
+	"agent/skills",
+	"configs",
+	"configs/dotfiles",
+	"configs/dotfiles-git",
+	"secrets",
+	"secrets/dotfiles",
+	"secrets/pass",
+	"data",
+	"data/ws-log",
+	"archive",
+}
 
 type InitOptions struct {
 	WorkspacePath string
-	ConfigPath    string // XDG config path (outside workspace)
-	ManifestPath  string
 	DryRun        bool
 }
 
@@ -23,11 +42,6 @@ type InitResult struct {
 	Created       []string `json:"created"`
 	Skipped       []string `json:"skipped"`
 	Messages      []string `json:"messages"`
-}
-
-func ConfigExists(configPath string) bool {
-	_, err := os.Stat(configPath)
-	return err == nil
 }
 
 func Init(opts InitOptions) (InitResult, error) {
@@ -43,58 +57,40 @@ func Init(opts InitOptions) (InitResult, error) {
 		return result, fmt.Errorf("workspace path is required")
 	}
 
-	wsDir := filepath.Join(opts.WorkspacePath, "ws")
+	configPath := wsconfig.ConfigPath(opts.WorkspacePath)
 	megaignorePath := filepath.Join(opts.WorkspacePath, ".megaignore")
 
-	if opts.ConfigPath == "" {
-		p, err := config.DefaultPath()
-		if err != nil {
-			return result, err
-		}
-		opts.ConfigPath = p
-	}
-	if opts.ManifestPath == "" {
-		opts.ManifestPath = filepath.Join(wsDir, "manifest.json")
-	}
-
 	if opts.DryRun {
+		for _, d := range layoutDirs {
+			result.Messages = append(result.Messages, "Would create dir: "+filepath.Join(opts.WorkspacePath, d))
+		}
 		result.Messages = append(result.Messages,
-			"Dry run: no changes applied.",
-			"Would create: "+wsDir,
-			"Would create: "+opts.ConfigPath,
-			"Would create: "+opts.ManifestPath,
+			"Would create: "+configPath,
 			"Would create: "+megaignorePath,
 		)
+		result.DryRun = true
 		return result, nil
 	}
 
-	if err := os.MkdirAll(wsDir, 0o755); err != nil {
-		return result, err
-	}
-	result.Created = append(result.Created, wsDir)
-	result.Messages = append(result.Messages, "Created: "+wsDir)
-
-	if err := writeIfMissing(opts.ConfigPath, func() error {
-		return config.Save(opts.ConfigPath, config.Default())
-	}, &result); err != nil {
-		return result, err
-	}
-
-	if err := writeIfMissing(opts.ManifestPath, func() error {
-		return manifest.Save(opts.ManifestPath, manifest.Default())
-	}, &result); err != nil {
-		return result, err
-	}
-
-	// Ignore rules live inside manifest.json (schema 2). No standalone
-	// ignore.json is created.
-
-	if err := writeIfMissing(megaignorePath, func() error {
-		m, err := manifest.Load(opts.ManifestPath)
-		if err != nil {
-			return ignore.WriteMegaignore(megaignorePath, ignore.DefaultUserRules())
+	// Create layout directories.
+	for _, d := range layoutDirs {
+		abs := filepath.Join(opts.WorkspacePath, filepath.FromSlash(d))
+		if err := os.MkdirAll(abs, 0o755); err != nil {
+			return result, fmt.Errorf("creating %s: %w", abs, err)
 		}
-		return ignore.WriteMegaignore(megaignorePath, m.Ignore)
+		result.Created = append(result.Created, abs)
+	}
+
+	// Write configs/ws.json if missing.
+	if err := writeFileIfMissing(configPath, func() error {
+		return wsconfig.Save(configPath, wsconfig.Default())
+	}, &result); err != nil {
+		return result, err
+	}
+
+	// Write .megaignore if missing.
+	if err := writeFileIfMissing(megaignorePath, func() error {
+		return ignore.WriteMegaignore(megaignorePath, ignore.DefaultUserRules())
 	}, &result); err != nil {
 		return result, err
 	}
@@ -103,17 +99,15 @@ func Init(opts InitOptions) (InitResult, error) {
 	return result, nil
 }
 
-func writeIfMissing(path string, write func() error, result *InitResult) error {
+func writeFileIfMissing(path string, write func() error, result *InitResult) error {
 	if _, err := os.Stat(path); err == nil {
 		result.Skipped = append(result.Skipped, path)
 		result.Messages = append(result.Messages, "Skipped (already exists): "+path)
 		return nil
 	}
-
 	if err := write(); err != nil {
 		return err
 	}
-
 	result.Created = append(result.Created, path)
 	result.Messages = append(result.Messages, "Created: "+path)
 	return nil

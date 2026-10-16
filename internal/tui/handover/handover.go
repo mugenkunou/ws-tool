@@ -47,7 +47,7 @@ func WS(p workspace.Paths, args ...string) *exec.Cmd {
 	if err != nil {
 		bin = "ws"
 	}
-	full := append([]string{"--workspace", p.Workspace, "--config", p.Config, "--manifest", p.Manifest}, args...)
+	full := append([]string{"--workspace", p.Workspace, "--config", p.Config}, args...)
 	return exec.Command(bin, full...)
 }
 

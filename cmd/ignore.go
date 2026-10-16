@@ -8,10 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/ignore"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/style"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 var ignoreHelp = cmdHelp{
@@ -34,20 +33,20 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 		return printCmdHelp(stdout, ignoreHelp)
 	}
 
-	workspacePath, configPath, manifestPath, err := requireWorkspaceInitialized(globals, stderr)
+	workspacePath, configPath, _, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
 
-	cfg, err := config.Load(configPath)
+	wscfg, err := wsconfig.Load(configPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
 
-	// Load layered ignore rules: built-in defaults + user overrides (from manifest).
-	userRules, err := manifest.LoadIgnoreRules(manifestPath)
+	// Load layered ignore rules: built-in defaults + user overrides (from ws.json).
+	userRules, err := wsconfig.LoadIgnoreRules(configPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -104,7 +103,7 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 	case "ls":
 		return runIgnoreList(engine, workspacePath, subArgs, globals, stdout, stderr)
 	case "edit":
-		return runIgnoreEdit(manifestPath, megaignorePath, userRules, subArgs, globals, stdin, stdout, stderr)
+		return runIgnoreEdit(configPath, megaignorePath, userRules, subArgs, globals, stdin, stdout, stderr)
 	case "scan":
 		fs := flag.NewFlagSet("ignore-scan", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -117,9 +116,9 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 		}
 		violations, err := ignore.Scan(ignore.ScanOptions{
 			WorkspacePath: workspacePath,
-			WarnSizeMB:    cfg.Ignore.WarnSizeMB,
-			CritSizeMB:    cfg.Ignore.CritSizeMB,
-			MaxDepth:      cfg.Ignore.MaxDepth,
+			WarnSizeMB:    wscfg.Ignore.WarnSizeMB,
+			CritSizeMB:    wscfg.Ignore.CritSizeMB,
+			MaxDepth:      wscfg.Ignore.MaxDepth,
 			Engine:        engine,
 		})
 		if err != nil {
@@ -161,9 +160,9 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 		}
 		violations, err := ignore.Scan(ignore.ScanOptions{
 			WorkspacePath: workspacePath,
-			WarnSizeMB:    cfg.Ignore.WarnSizeMB,
-			CritSizeMB:    cfg.Ignore.CritSizeMB,
-			MaxDepth:      cfg.Ignore.MaxDepth,
+			WarnSizeMB:    wscfg.Ignore.WarnSizeMB,
+			CritSizeMB:    wscfg.Ignore.CritSizeMB,
+			MaxDepth:      wscfg.Ignore.MaxDepth,
 			Engine:        engine,
 		})
 		if err != nil {
@@ -185,7 +184,7 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 			fmt.Fprintln(textOut(globals, stdout), style.ResultSuccess(globals.noColor, "No ignore violations to fix."))
 			return 0
 		}
-		return runIgnoreFixInteractive(actionable, manifestPath, megaignorePath, workspacePath, cfg, globals, stdin, stdout, stderr)
+		return runIgnoreFixInteractive(actionable, configPath, megaignorePath, workspacePath, wscfg, globals, stdin, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown ignore subcommand: %s\n", sub)
 		return 1
@@ -194,8 +193,8 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 
 // runIgnoreFixInteractive walks through violations one by one, prompting
 // the user for an action on each. Actions vary by violation type.
-// Rules are added to manifest.json and .megaignore is regenerated.
-func runIgnoreFixInteractive(violations []ignore.Violation, manifestPath, megaignorePath, workspacePath string, cfg config.Config, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+// Rules are added to configs/ws.json and .megaignore is regenerated.
+func runIgnoreFixInteractive(violations []ignore.Violation, configPath, megaignorePath, workspacePath string, cfg wsconfig.WsConfig, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	out := textOut(globals, stdout)
 	nc := globals.noColor
 
@@ -204,7 +203,7 @@ func runIgnoreFixInteractive(violations []ignore.Violation, manifestPath, megaig
 	var added, deleted, moved, suppressed, skipped int
 	needsRegen := false
 
-	scratchRoot, _ := config.ResolvePath(workspacePath, cfg.Scratch.RootDir)
+	scratchRoot, _ := wsconfig.ResolvePath(workspacePath, cfg.Scratch.RootDir)
 
 	for _, v := range violations {
 		absPath := style.AbsPath(workspacePath, v.Path)
@@ -259,11 +258,11 @@ func runIgnoreFixInteractive(violations []ignore.Violation, manifestPath, megaig
 
 		switch choice {
 		case "m":
-			ok, err := manifest.AddIgnoreExclude(manifestPath, v.Path, "")
+			ok, err := wsconfig.AddIgnoreExclude(configPath, v.Path, "")
 			if err != nil {
 				fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
 			} else if ok {
-				fmt.Fprintf(out, "  %s Added to .megaignore: %s %s %s\n", style.IconCheck(nc), style.Infof(nc, "%s", absPath), style.IconArrow(nc), manifestPath)
+				fmt.Fprintf(out, "  %s Added to .megaignore: %s %s %s\n", style.IconCheck(nc), style.Infof(nc, "%s", absPath), style.IconArrow(nc), configPath)
 				added++
 				needsRegen = true
 			} else {
@@ -276,11 +275,11 @@ func runIgnoreFixInteractive(violations []ignore.Violation, manifestPath, megaig
 				continue
 			}
 			suppressPattern := suppressDir + "/**"
-			ok, err := manifest.AddIgnoreSafeHarbor(manifestPath, suppressPattern, "")
+			ok, err := wsconfig.AddIgnoreSafeHarbor(configPath, suppressPattern, "")
 			if err != nil {
 				fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
 			} else if ok {
-				fmt.Fprintf(out, "  %s Suppressed warnings for %s %s %s\n", style.IconCheck(nc), style.Infof(nc, "%s", suppressAbs), style.IconArrow(nc), manifestPath)
+				fmt.Fprintf(out, "  %s Suppressed warnings for %s %s %s\n", style.IconCheck(nc), style.Infof(nc, "%s", suppressAbs), style.IconArrow(nc), configPath)
 				suppressed++
 				needsRegen = true
 			} else {
@@ -324,9 +323,9 @@ func runIgnoreFixInteractive(violations []ignore.Violation, manifestPath, megaig
 	}
 
 done:
-	// Regenerate .megaignore if any rules were added to manifest.
+	// Regenerate .megaignore if any rules were added to configs/ws.json.
 	if needsRegen {
-		userRules, err := manifest.LoadIgnoreRules(manifestPath)
+		userRules, err := wsconfig.LoadIgnoreRules(configPath)
 		if err != nil {
 			fmt.Fprintf(stderr, "warning: could not reload user rules: %s\n", err)
 		} else {

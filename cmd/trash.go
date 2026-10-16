@@ -7,9 +7,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/trash"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 var trashHelp = cmdHelp{
@@ -39,24 +39,19 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		return printCmdHelp(stdout, trashHelp)
 	}
 
-	workspacePath, configPath, manifestPath, err := requireWorkspaceInitialized(globals, stderr)
+	workspacePath, configPath, _, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	cfg, err := config.Load(configPath)
+	// In the phase-1 layout, trash.root_dir is not in ws.json; use the XDG default.
+	cfgTrashRoot, err := wsconfig.ExpandUserPath("~/.local/share/Trash")
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	// Config value: relative → workspace. --root-dir input: relative → cwd.
-	cfgTrashRoot := config.WithAbsPaths(cfg, workspacePath).Trash.RootDir
-	if cfgTrashRoot == "" {
-		if cfgTrashRoot, err = config.ExpandUserPath("~/.local/share/Trash"); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-	}
+	// Keep a sentinel for the WarnSizeMB field (not in ws.json yet).
+	const trashWarnSizeMB = 1024
 
 	sub := args[0]
 	subArgs := args[1:]
@@ -75,7 +70,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 			return 1
 		}
 		if *rootDir != "" { // empty: trash package applies its default
-			resolvedRoot, err := config.ExpandUserPath(*rootDir)
+			resolvedRoot, err := wsconfig.ExpandUserPath(*rootDir)
 			if err != nil {
 				fmt.Fprintf(stderr, "invalid --root-dir: %s\n", err.Error())
 				return 1
@@ -107,7 +102,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 				ID:          "trash-record-provisions",
 				Description: "Record trash provisions",
 				Execute: func() error {
-					return trash.RecordShellProvisions(manifestPath)
+					return trash.RecordShellProvisions(configPath)
 				},
 			})
 		}
@@ -117,7 +112,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 				ID:          "trash-record-explorer-provision",
 				Description: "Record file-explorer trash symlink provision",
 				Execute: func() error {
-					return trash.RecordExplorerProvision(manifestPath, *rootDir)
+					return trash.RecordExplorerProvision(configPath, *rootDir)
 				},
 			})
 		}
@@ -200,7 +195,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 			return 1
 		}
 		if *rootDir != "" { // empty: trash package applies its default
-			resolvedRoot, err := config.ExpandUserPath(*rootDir)
+			resolvedRoot, err := wsconfig.ExpandUserPath(*rootDir)
 			if err != nil {
 				fmt.Fprintf(stderr, "invalid --root-dir: %s\n", err.Error())
 				return 1
@@ -339,7 +334,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		}
 		scanResult, err := trash.Scan(trash.ScanOptions{
 			RootDir:    cfgTrashRoot,
-			WarnSizeMB: cfg.Trash.WarnSizeMB,
+			WarnSizeMB: trashWarnSizeMB,
 		})
 		if err != nil {
 			fmt.Fprintln(stderr, err.Error())

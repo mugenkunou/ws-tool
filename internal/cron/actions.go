@@ -5,10 +5,13 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/plan"
-	"github.com/mugenkunou/ws-tool/internal/provision"
 )
+
+// Note: The old wrapper-script approach (GenerateScript + write to cron-jobs/*.sh)
+// has been replaced. Each crontab entry now calls `ws cron run <job>` directly,
+// so RunJob handles state/logging. ScriptPath and GenerateScript are kept for
+// reference; the legacy script files can be cleaned up by removing the cron-jobs dir.
 
 // WSBinary resolves the running ws binary (symlinks followed) for embedding
 // in wrapper scripts.
@@ -32,48 +35,18 @@ func DefaultDisplay() string {
 	return ":1"
 }
 
-// AddActions builds the `cron add` plan actions: per job, write its wrapper
-// script, then install its crontab entries and record the provision.
-func AddActions(jobs []*BuiltinJob, wsBin, display, workspacePath, manifestPath string) ([]plan.Action, error) {
-	statePath, err := StateFilePath()
-	if err != nil {
-		return nil, err
-	}
-	logPath, err := LogFilePath()
-	if err != nil {
-		return nil, err
-	}
+// AddActions builds the `cron add` plan actions: install the crontab entries
+// for each job. Each crontab entry calls `ws cron run <job>` directly — no
+// separate wrapper script is needed.
+func AddActions(jobs []*BuiltinJob, wsBin, display, workspacePath string) ([]plan.Action, error) {
 	var actions []plan.Action
 	for _, j := range jobs {
-		scriptPath, err := ScriptPath(j.Name)
-		if err != nil {
-			return nil, err
-		}
-		content := GenerateScript(j, wsBin, display, workspacePath, statePath, logPath)
 		actions = append(actions,
-			plan.Action{
-				ID:          "cron-write-script-" + j.Name,
-				Description: fmt.Sprintf("Write wrapper script %s", scriptPath),
-				Execute: func() error {
-					if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err != nil {
-						return err
-					}
-					return os.WriteFile(scriptPath, []byte(content), 0o755)
-				},
-			},
 			plan.Action{
 				ID:          "cron-install-" + j.Name,
 				Description: fmt.Sprintf("Install crontab entries for %s (%s + @reboot)", j.Name, j.Schedule),
 				Execute: func() error {
-					if err := AddJob(j, scriptPath); err != nil {
-						return err
-					}
-					return manifest.RecordProvision(manifestPath, provision.Entry{
-						Type:    provision.TypeCronJob,
-						Path:    scriptPath,
-						Line:    j.Name,
-						Command: "cron add",
-					})
+					return AddJob(j, wsBin)
 				},
 			})
 	}
@@ -81,8 +54,8 @@ func AddActions(jobs []*BuiltinJob, wsBin, display, workspacePath, manifestPath 
 }
 
 // RemoveActions builds the `cron rm` plan actions: per job, remove its
-// crontab entries and wrapper script, and drop the provision.
-func RemoveActions(jobs []*BuiltinJob, manifestPath string) []plan.Action {
+// crontab entries and wrapper script.
+func RemoveActions(jobs []*BuiltinJob) []plan.Action {
 	var actions []plan.Action
 	for _, j := range jobs {
 		actions = append(actions, plan.Action{
@@ -95,7 +68,7 @@ func RemoveActions(jobs []*BuiltinJob, manifestPath string) []plan.Action {
 				if scriptPath, err := ScriptPath(j.Name); err == nil {
 					_ = os.Remove(scriptPath) // best-effort; may already be absent
 				}
-				return manifest.RemoveCronJobProvision(manifestPath, j.Name)
+				return nil
 			},
 		})
 	}

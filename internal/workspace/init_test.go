@@ -9,9 +9,8 @@ import (
 func TestInitCreatesWorkspaceScaffold(t *testing.T) {
 	tmp := t.TempDir()
 	root := filepath.Join(tmp, "Workspace")
-	cfgPath := filepath.Join(tmp, "config", "ws-tool", "config.json")
 
-	res, err := Init(InitOptions{WorkspacePath: root, ConfigPath: cfgPath})
+	res, err := Init(InitOptions{WorkspacePath: root})
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
@@ -20,9 +19,10 @@ func TestInitCreatesWorkspaceScaffold(t *testing.T) {
 		t.Fatal("expected created files")
 	}
 
-	mustExist(t, cfgPath)
-	mustExist(t, filepath.Join(root, "ws", "manifest.json"))
+	mustExist(t, filepath.Join(root, "configs", "ws.json"))
 	mustExist(t, filepath.Join(root, ".megaignore"))
+	mustExist(t, filepath.Join(root, "configs", "dotfiles"))
+	mustExist(t, filepath.Join(root, "secrets", "dotfiles"))
 }
 
 func TestInitDryRunDoesNotWrite(t *testing.T) {
@@ -38,14 +38,14 @@ func TestInitDryRunDoesNotWrite(t *testing.T) {
 		t.Fatal("expected dry_run=true in result")
 	}
 
-	if _, err := os.Stat(filepath.Join(root, "ws")); err == nil {
+	if _, err := os.Stat(filepath.Join(root, "configs")); err == nil {
 		t.Fatal("workspace should not be created in dry run")
 	}
 }
 
 func TestConfigExists(t *testing.T) {
 	tmp := t.TempDir()
-	path := filepath.Join(tmp, "ws", "config.json")
+	path := filepath.Join(tmp, "configs", "ws.json")
 
 	if ConfigExists(path) {
 		t.Fatal("config should not exist")

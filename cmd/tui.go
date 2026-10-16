@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/mugenkunou/ws-tool/internal/tui"
 	"github.com/mugenkunou/ws-tool/internal/tui/app"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
@@ -37,7 +38,7 @@ func runTUI(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 
 	inFile, inOK := stdin.(*os.File)
 	outFile, outOK := stdout.(*os.File)
-	if !inOK || !outOK || !isTerminal(inFile.Fd()) || !isTerminal(outFile.Fd()) {
+	if !inOK || !outOK || !tui.IsTTY(inFile.Fd()) || !tui.IsTTY(outFile.Fd()) {
 		fmt.Fprintln(stderr, "ws tui requires an interactive terminal.")
 		return 1
 	}

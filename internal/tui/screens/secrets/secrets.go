@@ -23,8 +23,8 @@ import (
 	"charm.land/lipgloss/v2"
 
 	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/plan"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 	"github.com/mugenkunou/ws-tool/internal/secret"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
@@ -133,18 +133,14 @@ func Load(e env.Env) tea.Cmd {
 			h.CredHelper = strings.Contains(v, "ws") || strings.Contains(v, "git-credential-helper")
 		}
 
-		rules, err := manifest.LoadIgnoreRules(e.Paths.Manifest)
-		if err != nil {
-			return LoadedMsg{Health: h, Err: err}
-		}
-		mani, err := manifest.Load(e.Paths.Manifest)
+		rules, err := wsconfig.LoadIgnoreRules(e.Paths.Config)
 		if err != nil {
 			return LoadedMsg{Health: h, Err: err}
 		}
 		vs, err := secret.Scan(secret.ScanOptions{
 			WorkspacePath: e.Paths.Workspace,
 			Engine:        wsignore.BuildEngine(rules),
-			Allowlist:     secret.AllowlistMap(mani),
+			Allowlist:     wsconfig.AllowlistMap(e.Config),
 			SkipDirs:      secret.MergeSkipDirs(e.Paths.Workspace, e.Config.Secret.SkipDirs, nil),
 		})
 		return LoadedMsg{Violations: vs, Health: h, Err: err}
@@ -415,11 +411,11 @@ func (m Model) confirmOne(st step, title string, a plan.Action) Model {
 }
 
 func (m Model) allowAction(v secret.Violation) plan.Action {
-	mp, anchor := m.env.Paths.Manifest, secret.Anchor(v)
+	mp, anchor := m.env.Paths.Config, secret.Anchor(v)
 	return plan.Action{
 		ID:          "allowlist-" + anchor,
 		Description: fmt.Sprintf("Allowlist %s:%d", m.abs(v), v.Line),
-		Execute:     func() error { return secret.AddToAllowlist(mp, anchor) },
+		Execute:     func() error { return wsconfig.AddToAllowlist(mp, anchor) },
 	}
 }
 
@@ -429,10 +425,10 @@ func (m Model) excludeAction(v secret.Violation) plan.Action {
 		ID:          "exclude-" + rel,
 		Description: "Exclude " + m.abs(v) + " from sync (.megaignore)",
 		Execute: func() error {
-			if _, err := manifest.AddIgnoreExclude(p.Manifest, rel, "secret: excluded by ws secret fix"); err != nil {
+			if _, err := wsconfig.AddIgnoreExclude(p.Config, rel, "secret: excluded by ws secret fix"); err != nil {
 				return err
 			}
-			rules, err := manifest.LoadIgnoreRules(p.Manifest)
+			rules, err := wsconfig.LoadIgnoreRules(p.Config)
 			if err != nil {
 				return err
 			}
@@ -444,7 +440,7 @@ func (m Model) excludeAction(v secret.Violation) plan.Action {
 // passAction stores the matched value in pass, as `secret fix` [p] does. The
 // file itself is not rewritten (same as the CLI).
 func (m Model) passAction(v secret.Violation, entry string) plan.Action {
-	mp, anchor := m.env.Paths.Manifest, secret.Anchor(v)
+	mp, anchor := m.env.Paths.Config, secret.Anchor(v)
 	value := secret.ExtractSecretValue(v.Snippet)
 	return plan.Action{
 		ID:          "pass-" + anchor,
@@ -456,7 +452,7 @@ func (m Model) passAction(v secret.Violation, entry string) plan.Action {
 			if err := secret.InsertEntry(entry, value); err != nil {
 				return err
 			}
-			return secret.TrackPassEntry(mp, anchor)
+			return wsconfig.AddToAllowlist(mp, anchor)
 		},
 	}
 }

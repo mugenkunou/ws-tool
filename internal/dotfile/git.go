@@ -43,13 +43,13 @@ func GitSync(opts GitSyncOptions) GitSyncResult {
 		return GitSyncResult{Error: "git repo setup: " + err.Error()}
 	}
 
-	// Copy manifest.json into ws/dotfiles/ for portable restore.
-	manifestSrc := filepath.Join(opts.WorkspacePath, "ws", "manifest.json")
-	manifestDest := filepath.Join(opts.RepoPath, "manifest.json")
-	if _, err := os.Stat(manifestSrc); err == nil {
-		data, err := os.ReadFile(manifestSrc)
+	// Copy ws.json into the dotfiles git repo for portable restore.
+	configSrc := filepath.Join(opts.WorkspacePath, "configs", "ws.json")
+	configDest := filepath.Join(opts.RepoPath, "ws.json")
+	if _, err := os.Stat(configSrc); err == nil {
+		data, err := os.ReadFile(configSrc)
 		if err == nil {
-			_ = os.WriteFile(manifestDest, data, 0o644)
+			_ = os.WriteFile(configDest, data, 0o644)
 		}
 	}
 

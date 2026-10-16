@@ -11,8 +11,39 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
+
+// workspaceRel resolves a path to workspace-relative form. Paths may be
+// workspace-relative, absolute, or ~-prefixed.
+func workspaceRel(workspacePath, value string) (rel string, ok bool) {
+	var abs string
+	var err error
+	if value == "" {
+		return "", false
+	}
+	// ~ or absolute → expand; otherwise join with workspace.
+	if len(value) > 0 && value[0] == '~' {
+		abs, err = wsconfig.ExpandUserPath(value)
+		if err != nil {
+			return "", false
+		}
+	} else if filepath.IsAbs(value) {
+		abs = filepath.Clean(value)
+	} else {
+		abs = filepath.Join(filepath.Clean(workspacePath), filepath.FromSlash(value))
+	}
+	r, err := filepath.Rel(filepath.Clean(workspacePath), abs)
+	if err != nil {
+		return "", false
+	}
+	r = filepath.ToSlash(r)
+	if r == ".." || len(r) > 2 && r[:3] == "../" {
+		return "", false
+	}
+	return r, true
+}
+
 
 type Repository struct {
 	Path string `json:"path"`
@@ -79,7 +110,7 @@ func Discover(workspacePath string, roots []string, excludeDirs []string) ([]Rep
 	// on the workspace-relative form.
 	excludeSet := make(map[string]struct{}, len(excludeDirs))
 	for _, d := range excludeDirs {
-		if rel, ok := config.WorkspaceRel(workspacePath, d); ok && rel != "." {
+		if rel, ok := workspaceRel(workspacePath, d); ok && rel != "." {
 			excludeSet[rel] = struct{}{}
 		}
 	}

@@ -20,7 +20,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // BuiltinJob defines a ws-managed cron job.
@@ -93,7 +93,7 @@ func Resolve(name string) ([]*BuiltinJob, error) {
 
 // DataDir returns the ws cron data directory (~/.local/share/ws-tool).
 func DataDir() (string, error) {
-	return config.DataDir()
+	return wsconfig.StateDir()
 }
 
 // JobsDir returns the directory where wrapper scripts are written.

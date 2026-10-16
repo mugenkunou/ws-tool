@@ -3,28 +3,24 @@ package dotfile
 import (
 	"path/filepath"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
-// AutoSync runs the configured auto-commit/push after a dotfile change. It
-// does nothing (enabled=false) unless dotfile git is enabled in config.
-func AutoSync(workspacePath, configPath, manifestPath, commitMessage string) (res GitSyncResult, enabled bool) {
-	cfg, err := config.Load(configPath)
-	if err != nil || !cfg.Dotfile.Git.Enabled {
+// AutoSync runs the configured auto-commit/push after a dotfile change.
+// It does nothing (enabled=false) unless a dotfile git remote is configured.
+func AutoSync(workspacePath, configPath, _ /* manifestPath compat */, commitMessage string) (res GitSyncResult, enabled bool) {
+	cfg, err := wsconfig.Load(configPath)
+	if err != nil || cfg.Dotfile.Git.RemoteURL == "" {
 		return GitSyncResult{}, false
 	}
-	mani, err := manifest.Load(manifestPath)
-	if err != nil {
-		return GitSyncResult{}, false
-	}
+	repoPath := filepath.Join(workspacePath, "configs", "dotfiles-git")
 	return GitSync(GitSyncOptions{
 		WorkspacePath: workspacePath,
-		RepoPath:      filepath.Join(workspacePath, "ws", "dotfiles"),
-		RemoteURL:     mani.DotfileGit.RemoteURL,
-		Branch:        mani.DotfileGit.Branch,
-		AutoCommit:    mani.DotfileGit.AutoCommit,
-		AutoPush:      mani.DotfileGit.AutoPush,
+		RepoPath:      repoPath,
+		RemoteURL:     cfg.Dotfile.Git.RemoteURL,
+		Branch:        cfg.Dotfile.Git.Branch,
+		AutoCommit:    cfg.Dotfile.Git.AutoCommit,
+		AutoPush:      cfg.Dotfile.Git.AutoPush,
 		CommitMessage: commitMessage,
 	}), true
 }

@@ -12,22 +12,22 @@ import (
 type FileClass int
 
 const (
-	// ClassConfig is a likely user config file worth tracking.
-	ClassConfig FileClass = iota
-	// ClassState is likely app state, cache, or runtime data — skipped by default.
-	ClassState
-	// ClassSecret is likely a secret — the user is warned before tracking.
-	ClassSecret
+	// FileClassConfig is a likely user config file worth tracking.
+	FileClassConfig FileClass = iota
+	// FileClassState is likely app state, cache, or runtime data — skipped by default.
+	FileClassState
+	// FileClassSecret is likely a secret — the user is warned before tracking.
+	FileClassSecret
 )
 
 // String returns a short human-readable label.
 func (c FileClass) String() string {
 	switch c {
-	case ClassConfig:
+	case FileClassConfig:
 		return "config"
-	case ClassState:
+	case FileClassState:
 		return "likely state"
-	case ClassSecret:
+	case FileClassSecret:
 		return "secret"
 	default:
 		return "unknown"
@@ -66,38 +66,38 @@ func ClassifyFile(absPath string) FileClass {
 	base := strings.ToLower(filepath.Base(absPath))
 
 	if secretBaseNames[base] {
-		return ClassSecret
+		return FileClassSecret
 	}
 	if secretPattern.MatchString(base) {
-		return ClassSecret
+		return FileClassSecret
 	}
 	if stateExactNames[base] {
-		return ClassState
+		return FileClassState
 	}
 	if statePattern.MatchString(base) {
-		return ClassState
+		return FileClassState
 	}
 	if hasPEMPrivateKey(absPath) {
-		return ClassSecret
+		return FileClassSecret
 	}
 	if isBinaryFile(absPath) {
-		return ClassState
+		return FileClassState
 	}
-	return ClassConfig
+	return FileClassConfig
 }
 
 // ClassifyDir returns the classification of a directory by name, file count, and size.
 func ClassifyDir(name string, fileCount int, totalBytes int64) FileClass {
 	lower := strings.ToLower(name)
 	if statePattern.MatchString(lower) {
-		return ClassState
+		return FileClassState
 	}
 	const largeCount = 100
 	const largeMB int64 = 10 << 20
 	if fileCount > largeCount || totalBytes > largeMB {
-		return ClassState
+		return FileClassState
 	}
-	return ClassConfig
+	return FileClassConfig
 }
 
 func hasPEMPrivateKey(absPath string) bool {

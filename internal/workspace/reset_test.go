@@ -5,9 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/provision"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // helper: bootstrap a minimal workspace so reset has something to tear down.
@@ -15,19 +14,19 @@ func setupWorkspace(t *testing.T) (string, string) {
 	t.Helper()
 	tmp := t.TempDir()
 	root := filepath.Join(tmp, "Workspace")
-	cfgPath := filepath.Join(tmp, "config", "ws-tool", "config.json")
 
-	res, err := Init(InitOptions{WorkspacePath: root, ConfigPath: cfgPath})
+	res, err := Init(InitOptions{WorkspacePath: root})
 	if err != nil {
 		t.Fatalf("init failed: %v", err)
 	}
 	if len(res.Created) == 0 {
 		t.Fatal("init created nothing")
 	}
+	cfgPath := wsconfig.ConfigPath(root)
 	return root, cfgPath
 }
 
-func TestResetRemovesWS(t *testing.T) {
+func TestResetRemovesConfigsDir(t *testing.T) {
 	root, _ := setupWorkspace(t)
 
 	res, err := Reset(ResetOptions{WorkspacePath: root})
@@ -36,44 +35,15 @@ func TestResetRemovesWS(t *testing.T) {
 	}
 
 	if !res.WSRemoved {
-		t.Fatal("expected ws/ to be removed")
+		t.Fatal("expected configs/ to be removed")
 	}
 
-	if _, err := os.Stat(filepath.Join(root, "ws")); !os.IsNotExist(err) {
-		t.Fatal("ws/ dir should be gone")
+	if _, err := os.Stat(filepath.Join(root, "configs")); !os.IsNotExist(err) {
+		t.Fatal("configs/ dir should be gone")
 	}
 
 	if len(res.Subsystems) == 0 {
 		t.Fatal("expected subsystem results")
-	}
-}
-
-func TestResetUndoesTrashProvisions(t *testing.T) {
-	root, _ := setupWorkspace(t)
-
-	// Record a trash-related file provision.
-	ext := filepath.Join(t.TempDir(), "ws-trash-rm")
-	os.WriteFile(ext, []byte("#!/bin/bash"), 0o755)
-	manifestPath := filepath.Join(root, "ws", "manifest.json")
-	if err := manifest.RecordProvision(manifestPath, provision.Entry{
-		Type:    provision.TypeFile,
-		Path:    ext,
-		Command: "trash setup",
-	}); err != nil {
-		t.Fatalf("record provision: %v", err)
-	}
-
-	res, err := Reset(ResetOptions{WorkspacePath: root})
-	if err != nil {
-		t.Fatalf("reset failed: %v", err)
-	}
-
-	if !res.WSRemoved {
-		t.Fatal("expected ws/ to be removed")
-	}
-
-	if _, err := os.Stat(ext); !os.IsNotExist(err) {
-		t.Fatal("trash script should be deleted by reset")
 	}
 }
 
@@ -89,35 +59,17 @@ func TestResetDryRunPreservesEverything(t *testing.T) {
 		t.Fatal("expected dry_run=true")
 	}
 	if res.WSRemoved {
-		t.Fatal("ws/ should not be removed in dry-run")
+		t.Fatal("configs/ should not be removed in dry-run")
 	}
 
-	// ws/ should still exist.
-	if _, err := os.Stat(filepath.Join(root, "ws")); err != nil {
-		t.Fatal("ws/ should still exist after dry-run")
+	// configs/ should still exist.
+	if _, err := os.Stat(filepath.Join(root, "configs")); err != nil {
+		t.Fatal("configs/ should still exist after dry-run")
 	}
 
 	// config should still exist.
 	if !ConfigExists(cfgPath) {
 		t.Fatal("config should still exist after dry-run")
-	}
-}
-
-func TestResetNoProvisionsStillRemovesWS(t *testing.T) {
-	// Create workspace manually without provisions ledger.
-	root := filepath.Join(t.TempDir(), "Workspace")
-	wsDir := filepath.Join(root, "ws")
-	os.MkdirAll(wsDir, 0o755)
-	config.Save(filepath.Join(wsDir, "config.json"), config.Default())
-	manifest.Save(filepath.Join(wsDir, "manifest.json"), manifest.Default())
-
-	res, err := Reset(ResetOptions{WorkspacePath: root})
-	if err != nil {
-		t.Fatalf("reset failed: %v", err)
-	}
-
-	if !res.WSRemoved {
-		t.Fatal("expected ws/ to be removed even with no provisions")
 	}
 }
 
@@ -140,15 +92,13 @@ func TestResetRequiresWorkspacePath(t *testing.T) {
 func TestProvisions(t *testing.T) {
 	root, cfgPath := setupWorkspace(t)
 
-	// workspace.Init doesn't record provisions (that's done by the cmd layer),
-	// so record one manually to test the Provisions() helper.
-	manifestPath := filepath.Join(root, "ws", "manifest.json")
-	if err := manifest.RecordProvision(manifestPath, provision.Entry{
-		Type:    provision.TypeFile,
-		Path:    cfgPath,
-		Command: "init",
+	// Record a link manually to test Provisions() helper.
+	if err := wsconfig.AddLink(cfgPath, wsconfig.Link{
+		System:   "/home/user/.bashrc",
+		Original: "configs/dotfiles/bashrc",
+		Class:    "config",
 	}); err != nil {
-		t.Fatalf("record provision: %v", err)
+		t.Fatalf("AddLink: %v", err)
 	}
 
 	entries, err := Provisions(root)

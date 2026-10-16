@@ -1,55 +1,45 @@
 package scratch
 
 import (
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/mugenkunou/ws-tool/internal/manifest"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
-// TagCollection is the workspace-level tag vocabulary stored in manifest.json.
+// TagCollection is the workspace-level tag vocabulary stored in configs/ws.json.
 type TagCollection struct {
 	Tags []string `json:"tags"`
 }
 
-// LoadTags reads the tag collection from the manifest at wsDir/manifest.json.
-// Returns an empty collection (no error) if the manifest does not exist.
-func LoadTags(wsDir string) (TagCollection, error) {
-	p := filepath.Join(wsDir, "manifest.json")
-	m, err := manifest.Load(p)
+// LoadTags reads the tag collection from configs/ws.json.
+// configPath is the path to configs/ws.json.
+// Returns an empty collection (no error) if the config does not exist.
+func LoadTags(configPath string) (TagCollection, error) {
+	cfg, err := wsconfig.Load(configPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return TagCollection{Tags: []string{}}, nil
-		}
-		return TagCollection{}, err
+		return TagCollection{Tags: []string{}}, nil
 	}
-	tags := m.ScratchTags
+	tags := cfg.Scratch.Tags
 	if tags == nil {
 		tags = []string{}
 	}
 	return TagCollection{Tags: tags}, nil
 }
 
-// SaveTags writes the tag collection into the manifest at wsDir/manifest.json.
-func SaveTags(wsDir string, tc TagCollection) error {
+// SaveTags writes the tag collection into configs/ws.json.
+func SaveTags(configPath string, tc TagCollection) error {
 	if tc.Tags == nil {
 		tc.Tags = []string{}
 	}
 	sort.Strings(tc.Tags)
 
-	p := filepath.Join(wsDir, "manifest.json")
-	m, err := manifest.Load(p)
+	cfg, err := wsconfig.Load(configPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			m = manifest.Default()
-		} else {
-			return err
-		}
+		cfg = wsconfig.Default()
 	}
-	m.ScratchTags = tc.Tags
-	return manifest.Save(p, m)
+	cfg.Scratch.Tags = tc.Tags
+	return wsconfig.Save(configPath, cfg)
 }
 
 // MergeTags adds new tags to the collection, deduplicating and sorting.

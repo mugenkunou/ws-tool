@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/repo"
 	"github.com/mugenkunou/ws-tool/internal/style"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 var repoHelp = cmdHelp{
@@ -49,7 +49,7 @@ func (f *repoFilterFlags) resolve() error {
 	if f.path == "" {
 		return nil
 	}
-	abs, err := config.ExpandUserPath(f.path)
+	abs, err := wsconfig.ExpandUserPath(f.path)
 	if err != nil {
 		return fmt.Errorf("invalid --path: %w", err)
 	}
@@ -98,7 +98,7 @@ func targetRepo(repos []repo.Repository, args []string) ([]repo.Repository, stri
 	if len(args) > 1 {
 		return nil, fmt.Sprintf("expected at most one repo path, got %d: %s", len(args), strings.Join(args, " "))
 	}
-	target, err := config.ExpandUserPath(args[0])
+	target, err := wsconfig.ExpandUserPath(args[0])
 	if err != nil {
 		return nil, fmt.Sprintf("invalid repo path %q: %s", args[0], err.Error())
 	}
@@ -130,7 +130,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		return 1
 	}
 
-	cfg, err := config.Load(configPath)
+	cfg, err := wsconfig.Load(configPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -138,7 +138,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 
 	roots := make([]string, 0, len(cfg.Repo.Roots))
 	for _, r := range cfg.Repo.Roots {
-		resolved, err := config.ResolvePath(workspacePath, r)
+		resolved, err := wsconfig.ResolvePath(workspacePath, r)
 		if err != nil {
 			continue
 		}
@@ -557,7 +557,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		}
 
 		// Resolve like every path input: absolute, ~, or relative to cwd.
-		resolvedPath, err := config.ExpandUserPath(posArgs[0])
+		resolvedPath, err := wsconfig.ExpandUserPath(posArgs[0])
 		if err != nil {
 			fmt.Fprintf(stderr, "invalid path: %s\n", err.Error())
 			return 1
@@ -583,7 +583,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		}
 
 		// Load current config
-		cfg, err := config.Load(configPath)
+		cfg, err := wsconfig.Load(configPath)
 		if err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
@@ -591,7 +591,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 
 		// Check if root already exists (config roots are workspace-relative).
 		for _, r := range cfg.Repo.Roots {
-			resolvedRoot, err := config.ResolvePath(workspacePath, r)
+			resolvedRoot, err := wsconfig.ResolvePath(workspacePath, r)
 			if err != nil {
 				continue
 			}
@@ -615,12 +615,12 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			Description: fmt.Sprintf("Add repo root: %s", resolvedPath),
 			Execute: func() error {
 				// Reload config to ensure we have the latest version
-				cfg, err := config.Load(configPath)
+				cfg, err := wsconfig.Load(configPath)
 				if err != nil {
 					return err
 				}
 				cfg.Repo.Roots = append(cfg.Repo.Roots, storedRoot)
-				return config.Save(configPath, cfg)
+				return wsconfig.Save(configPath, cfg)
 			},
 		})
 

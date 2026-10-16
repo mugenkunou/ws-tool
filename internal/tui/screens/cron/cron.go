@@ -339,10 +339,10 @@ func (m Model) openChange(name string, remove bool) (Model, tea.Cmd) {
 	pl := plan.Plan{Command: "cron.add"}
 	title := "Install cron job " + name
 	if remove {
-		pl = plan.Plan{Command: "cron.rm", Actions: wscron.RemoveActions(jobs, p.Manifest)}
+		pl = plan.Plan{Command: "cron.rm", Actions: wscron.RemoveActions(jobs)}
 		title = "Remove cron job " + name
 	} else {
-		actions, err := wscron.AddActions(jobs, wscron.WSBinary(), wscron.DefaultDisplay(), p.Workspace, p.Manifest)
+		actions, err := wscron.AddActions(jobs, wscron.WSBinary(), wscron.DefaultDisplay(), p.Workspace)
 		if err != nil {
 			return m, nav.Notify(nav.LevelError, err.Error())
 		}

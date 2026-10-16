@@ -22,13 +22,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/plan"
 	"github.com/mugenkunou/ws-tool/internal/repo"
 	"github.com/mugenkunou/ws-tool/internal/tui/complete"
 	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/format"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/layout"
 	"github.com/mugenkunou/ws-tool/internal/tui/listview"
@@ -547,7 +547,7 @@ func (m Model) openRun(command string) Model {
 // openAddRoot resolves the path (stat is IO, so it happens in the action),
 // and stores it workspace-relative when inside the workspace, as the CLI does.
 func (m Model) openAddRoot(input string) (Model, tea.Cmd) {
-	abs, err := config.ExpandUserPath(input)
+	abs, err := wsconfig.ExpandUserPath(input)
 	if err != nil {
 		return m, nav.Notify(nav.LevelError, "Invalid path: "+err.Error())
 	}
@@ -575,12 +575,12 @@ func (m Model) openAddRoot(input string) (Model, tea.Cmd) {
 			if !info.IsDir() {
 				return fmt.Errorf("path is not a directory")
 			}
-			cfg, err := config.Load(cfgPath)
+			cfg, err := wsconfig.Load(cfgPath)
 			if err != nil {
 				return err
 			}
 			cfg.Repo.Roots = append(cfg.Repo.Roots, stored)
-			return config.Save(cfgPath, cfg)
+			return wsconfig.Save(cfgPath, cfg)
 		},
 	}}}
 	m.roots = append(append([]string(nil), m.roots...), abs)

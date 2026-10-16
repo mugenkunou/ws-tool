@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
 	wslog "github.com/mugenkunou/ws-tool/internal/log"
 	"github.com/mugenkunou/ws-tool/internal/style"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 var logHelp = cmdHelp{Usage: "ws log <start|stop|ls|prune|rm>"}
@@ -28,14 +28,14 @@ func runLog(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	cfg, err := config.Load(configPath)
+	cfg, err := wsconfig.Load(configPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
 
-	// Log sessions live under <workspace>/ws/ws-log/.
-	logDir := filepath.Join(resolvedWorkspace, "ws", "ws-log")
+	// Log sessions live under <workspace>/data/ws-log/.
+	logDir := filepath.Join(resolvedWorkspace, "data", "ws-log")
 
 	sub := args[0]
 	subArgs := args[1:]

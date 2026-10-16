@@ -17,7 +17,6 @@ import (
 	"charm.land/lipgloss/v2"
 
 	wscapture "github.com/mugenkunou/ws-tool/internal/capture"
-	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/plan"
 	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
@@ -99,17 +98,19 @@ func New(e env.Env) Model {
 	}
 }
 
-func (m Model) wsDir() string { return filepath.Join(m.env.Paths.Workspace, "ws") }
+func (m Model) wsDir() string { return filepath.Join(m.env.Paths.Workspace, "data") }
 
 // locations resolves configured capture dirs (relative → workspace).
-func locations(e env.Env) map[string]string {
-	return config.WithAbsPaths(e.Config, e.Paths.Workspace).Capture.Locations
+// Capture.Locations are not in the new layout (wsconfig.WsConfig does not have
+// a Capture field); return an empty map so the screen computes the default.
+func locations(_ env.Env) map[string]string {
+	return nil
 }
 
 // Load lists capture locations.
 func Load(e env.Env) tea.Cmd {
 	return func() tea.Msg {
-		locs := wscapture.Locations(filepath.Join(e.Paths.Workspace, "ws"), locations(e))
+		locs := wscapture.Locations(filepath.Join(e.Paths.Workspace, "data"), locations(e))
 		sort.SliceStable(locs, func(i, j int) bool {
 			if (locs[i].Name == "default") != (locs[j].Name == "default") {
 				return locs[i].Name == "default"

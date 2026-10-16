@@ -2,80 +2,94 @@ package workspace
 
 import (
 	"os"
-	"path/filepath"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
-// PathOverrides carries explicit path choices (e.g. from --workspace,
-// --config, --manifest). Empty fields fall back to the standard resolution.
+// PathOverrides carries explicit path choices (e.g. from --workspace, --config).
+// Empty fields fall back to the standard resolution.
 type PathOverrides struct {
 	Workspace string
-	Config    string
-	Manifest  string
+	Config    string // if set, used instead of <workspace>/configs/ws.json
+	// Manifest is accepted for backward compatibility with callers that still
+	// pass it; in the new layout it is ignored (Config is the single file).
+	Manifest string
 }
 
-// Paths are the resolved, absolute locations of a workspace's state.
+// Paths holds the resolved, absolute locations of a workspace's key files.
 type Paths struct {
-	Workspace string
-	Config    string
-	Manifest  string
+	Workspace string // absolute path to the workspace root
+	Config    string // absolute path to configs/ws.json
+	// Manifest equals Config and is kept for call-site compatibility while the
+	// TUI and cmd layers are progressively migrated to the new single-file layout.
+	Manifest string
 }
 
-// ResolvePaths resolves the workspace, config, and manifest paths without
-// side effects: override → env → config file → default, all absolute.
-// It is shared by every front end (CLI, TUI) so they cannot drift.
+// ResolvePaths resolves the workspace and config paths without side effects:
+// override → env → default, all absolute.
+//
+// Resolution:
+//   - Workspace: --workspace flag → $WS_WORKSPACE → ~/Workspace
+//   - Config: --config flag → $WS_CONFIG → <workspace>/configs/ws.json
+//   - Manifest: always equal to Config (compatibility shim; old callers still compile)
+//
+// This is a clean-break implementation: there is no fallback to the old
+// XDG config (~/.config/ws-tool/config.json) or the old ws/manifest.json.
 func ResolvePaths(o PathOverrides) (Paths, error) {
-	for _, v := range []*string{&o.Workspace, &o.Config, &o.Manifest} {
-		if *v == "" {
-			continue
-		}
-		abs, err := config.ExpandUserPath(*v)
+	// Expand any provided override paths.
+	if o.Workspace != "" {
+		abs, err := wsconfig.ExpandUserPath(o.Workspace)
 		if err != nil {
 			return Paths{}, err
 		}
-		*v = abs
+		o.Workspace = abs
+	}
+	if o.Config != "" {
+		abs, err := wsconfig.ExpandUserPath(o.Config)
+		if err != nil {
+			return Paths{}, err
+		}
+		o.Config = abs
 	}
 
+	// Resolve workspace root.
+	workspacePath := o.Workspace
+	if workspacePath == "" {
+		workspacePath = os.Getenv("WS_WORKSPACE")
+	}
+	if workspacePath == "" {
+		def, err := wsconfig.DefaultWorkspace()
+		if err != nil {
+			return Paths{}, err
+		}
+		workspacePath = def
+	} else {
+		abs, err := wsconfig.ExpandUserPath(workspacePath)
+		if err != nil {
+			return Paths{}, err
+		}
+		workspacePath = abs
+	}
+
+	// Resolve config path.
 	configPath := o.Config
 	if configPath == "" {
-		p, err := config.DefaultPath()
-		if err != nil {
-			return Paths{}, err
-		}
-		configPath = p
-	}
-
-	// Try to read workspace from config if not set via override/env.
-	workspaceArg := o.Workspace
-	if workspaceArg == "" {
-		workspaceArg = os.Getenv("WS_WORKSPACE")
-	}
-	if workspaceArg == "" {
-		if cfg, err := config.Load(configPath); err == nil && cfg.Workspace != "" {
-			workspaceArg = cfg.Workspace
+		if envCfg := os.Getenv("WS_CONFIG"); envCfg != "" {
+			abs, err := wsconfig.ExpandUserPath(envCfg)
+			if err != nil {
+				return Paths{}, err
+			}
+			configPath = abs
+		} else {
+			configPath = wsconfig.ConfigPath(workspacePath)
 		}
 	}
-	if workspaceArg == "" {
-		workspaceArg = "~/Workspace"
-	}
 
-	workspacePath, err := config.ExpandUserPath(workspaceArg)
-	if err != nil {
-		return Paths{}, err
-	}
+	return Paths{Workspace: workspacePath, Config: configPath, Manifest: configPath}, nil
+}
 
-	manifestPath := o.Manifest
-	if manifestPath == "" {
-		manifestPath = filepath.Join(workspacePath, "ws", "manifest.json")
-	}
-
-	// Migration: if XDG config doesn't exist, fall back to old workspace-embedded config.
-	if o.Config == "" && !ConfigExists(configPath) {
-		oldPath := filepath.Join(workspacePath, "ws", "config.json")
-		if ConfigExists(oldPath) {
-			configPath = oldPath
-		}
-	}
-	return Paths{Workspace: workspacePath, Config: configPath, Manifest: manifestPath}, nil
+// ConfigExists reports whether the config file exists at path.
+func ConfigExists(configPath string) bool {
+	_, err := os.Stat(configPath)
+	return err == nil
 }

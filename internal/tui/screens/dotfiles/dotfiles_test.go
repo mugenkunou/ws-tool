@@ -5,24 +5,22 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/dotfile"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // TestLoadReportsBrokenLinks runs the real loader against a temp workspace.
 func TestLoadReportsBrokenLinks(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "Workspace")
-	if err := os.MkdirAll(filepath.Join(root, "ws"), 0o755); err != nil {
-		t.Fatal(err)
+	for _, dir := range []string{"configs/dotfiles", "secrets/dotfiles"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
-	mPath := filepath.Join(root, "ws", "manifest.json")
-	if err := manifest.Save(mPath, manifest.Default()); err != nil {
-		t.Fatal(err)
-	}
-	if err := config.Save(filepath.Join(root, "ws", "config.json"), config.Default()); err != nil {
+	cfgPath := wsconfig.ConfigPath(root)
+	if err := wsconfig.Save(cfgPath, wsconfig.Default()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -32,21 +30,21 @@ func TestLoadReportsBrokenLinks(t *testing.T) {
 		if err := os.WriteFile(p, []byte("x\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := dotfile.Add(dotfile.AddOptions{WorkspacePath: root, ManifestPath: mPath, SystemPath: p}); err != nil {
+		if _, err := dotfile.Add(dotfile.AddOptions{WorkspacePath: root, ConfigPath: cfgPath, SystemPath: p}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// Break one link by deleting its workspace target.
-	records, _ := dotfile.List(mPath)
-	for _, r := range records {
-		if filepath.Base(r.System) == ".broken" {
-			if err := os.Remove(filepath.Join(root, filepath.FromSlash(dotfile.DotfilePath(r.Name)))); err != nil {
+	links, _ := dotfile.List(cfgPath)
+	for _, l := range links {
+		if filepath.Base(l.System) == ".broken" {
+			if err := os.Remove(filepath.Join(root, filepath.FromSlash(dotfile.DotfilePath(l.Original, l.Class)))); err != nil {
 				t.Fatal(err)
 			}
 		}
 	}
 
-	e := env.Env{Paths: workspace.Paths{Workspace: root, Manifest: mPath}}
+	e := env.Env{Paths: workspace.Paths{Workspace: root, Config: cfgPath}}
 	msg := Load(e)().(LoadedMsg)
 	if msg.Err != nil {
 		t.Fatal(msg.Err)
@@ -56,11 +54,11 @@ func TestLoadReportsBrokenLinks(t *testing.T) {
 	}
 	for _, en := range msg.Entries {
 		want := ""
-		if filepath.Base(en.Record.System) == ".broken" {
+		if filepath.Base(en.Link.System) == ".broken" {
 			want = dotfile.StatusBroken
 		}
 		if en.Status != want {
-			t.Errorf("%s: status = %q, want %q", en.Record.System, en.Status, want)
+			t.Errorf("%s: status = %q, want %q", en.Link.System, en.Status, want)
 		}
 	}
 	if msg.Issues() != 1 {
@@ -68,9 +66,9 @@ func TestLoadReportsBrokenLinks(t *testing.T) {
 	}
 }
 
-func TestLoadMissingManifest(t *testing.T) {
-	e := env.Env{Paths: workspace.Paths{Workspace: t.TempDir(), Manifest: filepath.Join(t.TempDir(), "nope.json")}}
+func TestLoadMissingConfig(t *testing.T) {
+	e := env.Env{Paths: workspace.Paths{Workspace: t.TempDir(), Config: filepath.Join(t.TempDir(), "nope.json")}}
 	if msg := Load(e)().(LoadedMsg); msg.Err == nil {
-		t.Fatal("expected an error for a missing manifest")
+		t.Fatal("expected an error for a missing config")
 	}
 }

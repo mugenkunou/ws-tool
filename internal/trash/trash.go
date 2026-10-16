@@ -21,7 +21,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // xdgTrashDir returns the user's standard XDG trash directory:
@@ -446,7 +446,7 @@ func Empty(opts EmptyOptions) (EmptyResult, error) {
 }
 
 func stateFilePath() (string, error) {
-	dir, err := config.StateDir()
+	dir, err := wsconfig.StateDir()
 	if err != nil {
 		return "", err
 	}

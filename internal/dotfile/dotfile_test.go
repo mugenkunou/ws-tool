@@ -5,30 +5,29 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
-func setupWorkspace(t *testing.T) (workspaceRoot, manifestPath string) {
+func setupWorkspace(t *testing.T) (workspaceRoot, configPath string) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "Workspace")
-	wsDir := filepath.Join(root, "ws")
-	if err := os.MkdirAll(wsDir, 0o755); err != nil {
-		t.Fatalf("mkdir ws/ failed: %v", err)
+	configsDir := filepath.Join(root, "configs", "dotfiles")
+	if err := os.MkdirAll(configsDir, 0o755); err != nil {
+		t.Fatalf("mkdir configs/dotfiles/ failed: %v", err)
 	}
-	cfgPath := filepath.Join(wsDir, "config.json")
-	if err := config.Save(cfgPath, config.Default()); err != nil {
-		t.Fatalf("save config failed: %v", err)
+	secretsDir := filepath.Join(root, "secrets", "dotfiles")
+	if err := os.MkdirAll(secretsDir, 0o755); err != nil {
+		t.Fatalf("mkdir secrets/dotfiles/ failed: %v", err)
 	}
-	mPath := filepath.Join(wsDir, "manifest.json")
-	if err := manifest.Save(mPath, manifest.Default()); err != nil {
-		t.Fatalf("save manifest failed: %v", err)
+	cfgPath := wsconfig.ConfigPath(root)
+	if err := wsconfig.Save(cfgPath, wsconfig.Default()); err != nil {
+		t.Fatalf("save wsconfig failed: %v", err)
 	}
-	return root, mPath
+	return root, cfgPath
 }
 
 func TestAddListRemoveRoundTrip(t *testing.T) {
-	workspaceRoot, manifestPath := setupWorkspace(t)
+	workspaceRoot, configPath := setupWorkspace(t)
 
 	systemFile := filepath.Join(t.TempDir(), ".bashrc")
 	if err := os.WriteFile(systemFile, []byte("export TEST=1\n"), 0o644); err != nil {
@@ -37,7 +36,7 @@ func TestAddListRemoveRoundTrip(t *testing.T) {
 
 	addRes, err := Add(AddOptions{
 		WorkspacePath: workspaceRoot,
-		ManifestPath:  manifestPath,
+		ConfigPath:    configPath,
 		SystemPath:    systemFile,
 	})
 	if err != nil {
@@ -47,12 +46,12 @@ func TestAddListRemoveRoundTrip(t *testing.T) {
 		t.Fatal("expected add messages")
 	}
 
-	records, err := List(manifestPath)
+	links, err := List(configPath)
 	if err != nil {
 		t.Fatalf("list failed: %v", err)
 	}
-	if len(records) != 1 {
-		t.Fatalf("expected 1 managed dotfile, got %d", len(records))
+	if len(links) != 1 {
+		t.Fatalf("expected 1 managed dotfile, got %d", len(links))
 	}
 
 	entry, err := os.Lstat(systemFile)
@@ -65,7 +64,7 @@ func TestAddListRemoveRoundTrip(t *testing.T) {
 
 	removeRes, err := Remove(RemoveOptions{
 		WorkspacePath: workspaceRoot,
-		ManifestPath:  manifestPath,
+		ConfigPath:    configPath,
 		SystemPath:    systemFile,
 	})
 	if err != nil {
@@ -83,40 +82,40 @@ func TestAddListRemoveRoundTrip(t *testing.T) {
 		t.Fatal("expected restored system file to be regular file")
 	}
 
-	records, err = List(manifestPath)
+	links, err = List(configPath)
 	if err != nil {
 		t.Fatalf("list after remove failed: %v", err)
 	}
-	if len(records) != 0 {
-		t.Fatalf("expected no managed dotfiles, got %d", len(records))
+	if len(links) != 0 {
+		t.Fatalf("expected no managed dotfiles, got %d", len(links))
 	}
 }
 
 func TestScanAndFixBrokenSymlink(t *testing.T) {
-	workspaceRoot, manifestPath := setupWorkspace(t)
+	workspaceRoot, configPath := setupWorkspace(t)
 	systemFile := filepath.Join(t.TempDir(), ".zshrc")
 	if err := os.WriteFile(systemFile, []byte("alias ll='ls -la'\n"), 0o644); err != nil {
 		t.Fatalf("write file failed: %v", err)
 	}
 
-	if _, err := Add(AddOptions{WorkspacePath: workspaceRoot, ManifestPath: manifestPath, SystemPath: systemFile}); err != nil {
+	if _, err := Add(AddOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath, SystemPath: systemFile}); err != nil {
 		t.Fatalf("add failed: %v", err)
 	}
 
-	records, err := List(manifestPath)
+	links, err := List(configPath)
 	if err != nil {
 		t.Fatalf("list failed: %v", err)
 	}
-	if len(records) != 1 {
-		t.Fatalf("expected one record, got %d", len(records))
+	if len(links) != 1 {
+		t.Fatalf("expected one link, got %d", len(links))
 	}
 
-	target := filepath.Join(workspaceRoot, filepath.FromSlash(DotfilePath(records[0].Name)))
+	target := filepath.Join(workspaceRoot, filepath.FromSlash(DotfilePath(links[0].Original, links[0].Class)))
 	if err := os.Remove(target); err != nil {
 		t.Fatalf("remove target failed: %v", err)
 	}
 
-	issues, err := Scan(ScanOptions{WorkspacePath: workspaceRoot, ManifestPath: manifestPath})
+	issues, err := Scan(ScanOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath})
 	if err != nil {
 		t.Fatalf("scan failed: %v", err)
 	}
@@ -128,7 +127,7 @@ func TestScanAndFixBrokenSymlink(t *testing.T) {
 	}
 
 	// Fix cannot fix this — workspace target is missing, so it should fail the dotfile.
-	fixRes, err := Fix(FixOptions{WorkspacePath: workspaceRoot, ManifestPath: manifestPath})
+	fixRes, err := Fix(FixOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath})
 	if err != nil {
 		t.Fatalf("fix failed: %v", err)
 	}
@@ -138,14 +137,14 @@ func TestScanAndFixBrokenSymlink(t *testing.T) {
 }
 
 func TestFixCreatesSymlink(t *testing.T) {
-	workspaceRoot, manifestPath := setupWorkspace(t)
+	workspaceRoot, configPath := setupWorkspace(t)
 	systemFile := filepath.Join(t.TempDir(), ".profile")
 	if err := os.WriteFile(systemFile, []byte("export PATH=$PATH\n"), 0o644); err != nil {
 		t.Fatalf("write file failed: %v", err)
 	}
 
 	// Add the dotfile normally.
-	if _, err := Add(AddOptions{WorkspacePath: workspaceRoot, ManifestPath: manifestPath, SystemPath: systemFile}); err != nil {
+	if _, err := Add(AddOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath, SystemPath: systemFile}); err != nil {
 		t.Fatalf("add failed: %v", err)
 	}
 
@@ -155,7 +154,7 @@ func TestFixCreatesSymlink(t *testing.T) {
 	}
 
 	// Fix should recreate the symlink.
-	fixRes, err := Fix(FixOptions{WorkspacePath: workspaceRoot, ManifestPath: manifestPath})
+	fixRes, err := Fix(FixOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath})
 	if err != nil {
 		t.Fatalf("fix failed: %v", err)
 	}
@@ -174,18 +173,18 @@ func TestFixCreatesSymlink(t *testing.T) {
 }
 
 func TestFixUnchanged(t *testing.T) {
-	workspaceRoot, manifestPath := setupWorkspace(t)
+	workspaceRoot, configPath := setupWorkspace(t)
 	systemFile := filepath.Join(t.TempDir(), ".gitconfig")
 	if err := os.WriteFile(systemFile, []byte("[user]\n"), 0o644); err != nil {
 		t.Fatalf("write file failed: %v", err)
 	}
 
-	if _, err := Add(AddOptions{WorkspacePath: workspaceRoot, ManifestPath: manifestPath, SystemPath: systemFile}); err != nil {
+	if _, err := Add(AddOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath, SystemPath: systemFile}); err != nil {
 		t.Fatalf("add failed: %v", err)
 	}
 
 	// Fix when everything is already correct.
-	fixRes, err := Fix(FixOptions{WorkspacePath: workspaceRoot, ManifestPath: manifestPath})
+	fixRes, err := Fix(FixOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath})
 	if err != nil {
 		t.Fatalf("fix failed: %v", err)
 	}
@@ -195,7 +194,7 @@ func TestFixUnchanged(t *testing.T) {
 }
 
 func TestAddDryRun(t *testing.T) {
-	workspaceRoot, manifestPath := setupWorkspace(t)
+	workspaceRoot, configPath := setupWorkspace(t)
 	systemFile := filepath.Join(t.TempDir(), ".tmux.conf")
 	if err := os.WriteFile(systemFile, []byte("set -g mouse on\n"), 0o644); err != nil {
 		t.Fatalf("write file failed: %v", err)
@@ -203,7 +202,7 @@ func TestAddDryRun(t *testing.T) {
 
 	res, err := Add(AddOptions{
 		WorkspacePath: workspaceRoot,
-		ManifestPath:  manifestPath,
+		ConfigPath:    configPath,
 		SystemPath:    systemFile,
 		DryRun:        true,
 	})
@@ -214,25 +213,25 @@ func TestAddDryRun(t *testing.T) {
 		t.Fatal("expected dry-run messages")
 	}
 
-	cfgPath, _ := config.ResolvePath(workspaceRoot, "ws/config.json")
-	if _, err := os.Stat(cfgPath); err != nil {
+	// ws.json should still exist
+	if _, err := os.Stat(configPath); err != nil {
 		t.Fatalf("workspace config should still exist: %v", err)
 	}
 
-	m, err := manifest.Load(manifestPath)
+	cfg, err := wsconfig.Load(configPath)
 	if err != nil {
-		t.Fatalf("manifest load failed: %v", err)
+		t.Fatalf("config load failed: %v", err)
 	}
-	if len(m.Dotfiles) != 0 {
-		t.Fatalf("dry-run should not modify manifest, got %d entries", len(m.Dotfiles))
+	if len(cfg.Links) != 0 {
+		t.Fatalf("dry-run should not modify config, got %d entries", len(cfg.Links))
 	}
 }
 
 // TestRemovePrunesEmptyDirs verifies that removing a file-level dotfile whose
-// workspace path lives inside a subdirectory (e.g. ws/dotfiles/ssh/config)
-// also removes the now-empty parent directory hierarchy under ws/dotfiles/.
+// workspace path lives inside a subdirectory (e.g. configs/dotfiles/ssh/config)
+// also removes the now-empty parent directory hierarchy under the dotfiles root.
 func TestRemovePrunesEmptyDirs(t *testing.T) {
-	workspaceRoot, manifestPath := setupWorkspace(t)
+	workspaceRoot, configPath := setupWorkspace(t)
 
 	// Simulate ~/.ssh/config: create a file inside a subdirectory.
 	sshDir := filepath.Join(t.TempDir(), ".ssh")
@@ -246,18 +245,18 @@ func TestRemovePrunesEmptyDirs(t *testing.T) {
 
 	if _, err := Add(AddOptions{
 		WorkspacePath: workspaceRoot,
-		ManifestPath:  manifestPath,
+		ConfigPath:    configPath,
 		SystemPath:    systemFile,
 	}); err != nil {
 		t.Fatalf("add failed: %v", err)
 	}
 
 	// Workspace should contain the nested directory.
-	records, _ := List(manifestPath)
-	if len(records) != 1 {
-		t.Fatalf("expected 1 record, got %d", len(records))
+	links, _ := List(configPath)
+	if len(links) != 1 {
+		t.Fatalf("expected 1 link, got %d", len(links))
 	}
-	wsFile := filepath.Join(workspaceRoot, filepath.FromSlash(DotfilePath(records[0].Name)))
+	wsFile := filepath.Join(workspaceRoot, filepath.FromSlash(DotfilePath(links[0].Original, links[0].Class)))
 	wsParent := filepath.Dir(wsFile)
 	if _, err := os.Stat(wsParent); err != nil {
 		t.Fatalf("workspace parent dir should exist before remove: %v", err)
@@ -266,7 +265,7 @@ func TestRemovePrunesEmptyDirs(t *testing.T) {
 	// Remove the dotfile.
 	if _, err := Remove(RemoveOptions{
 		WorkspacePath: workspaceRoot,
-		ManifestPath:  manifestPath,
+		ConfigPath:    configPath,
 		SystemPath:    systemFile,
 	}); err != nil {
 		t.Fatalf("remove failed: %v", err)
@@ -290,7 +289,7 @@ func TestRemovePrunesEmptyDirs(t *testing.T) {
 // TestRemovePrunesOnlyEmptyDirs verifies that non-empty directories are not
 // removed when one sibling file is removed but others remain.
 func TestRemovePrunesOnlyEmptyDirs(t *testing.T) {
-	workspaceRoot, manifestPath := setupWorkspace(t)
+	workspaceRoot, configPath := setupWorkspace(t)
 
 	sshDir := filepath.Join(t.TempDir(), ".ssh")
 	if err := os.MkdirAll(sshDir, 0o700); err != nil {
@@ -298,18 +297,18 @@ func TestRemovePrunesOnlyEmptyDirs(t *testing.T) {
 	}
 
 	fileA := filepath.Join(sshDir, "config")
-	fileB := filepath.Join(sshDir, "known_hosts")
+	fileB := filepath.Join(sshDir, "authorized_keys")
 	if err := os.WriteFile(fileA, []byte("Host *\n"), 0o600); err != nil {
 		t.Fatalf("write fileA: %v", err)
 	}
-	if err := os.WriteFile(fileB, []byte("github.com ...\n"), 0o600); err != nil {
+	if err := os.WriteFile(fileB, []byte("ssh-rsa AAAA...\n"), 0o600); err != nil {
 		t.Fatalf("write fileB: %v", err)
 	}
 
 	for _, f := range []string{fileA, fileB} {
 		if _, err := Add(AddOptions{
 			WorkspacePath: workspaceRoot,
-			ManifestPath:  manifestPath,
+			ConfigPath:    configPath,
 			SystemPath:    f,
 		}); err != nil {
 			t.Fatalf("add %s failed: %v", f, err)
@@ -319,18 +318,18 @@ func TestRemovePrunesOnlyEmptyDirs(t *testing.T) {
 	// Remove only fileA.
 	if _, err := Remove(RemoveOptions{
 		WorkspacePath: workspaceRoot,
-		ManifestPath:  manifestPath,
+		ConfigPath:    configPath,
 		SystemPath:    fileA,
 	}); err != nil {
 		t.Fatalf("remove fileA failed: %v", err)
 	}
 
 	// The workspace subdirectory should still exist (fileB is still there).
-	records, _ := List(manifestPath)
-	if len(records) != 1 {
-		t.Fatalf("expected 1 remaining record, got %d", len(records))
+	links, _ := List(configPath)
+	if len(links) != 1 {
+		t.Fatalf("expected 1 remaining link, got %d", len(links))
 	}
-	wsBFile := filepath.Join(workspaceRoot, filepath.FromSlash(DotfilePath(records[0].Name)))
+	wsBFile := filepath.Join(workspaceRoot, filepath.FromSlash(DotfilePath(links[0].Original, links[0].Class)))
 	wsParent := filepath.Dir(wsBFile)
 	if _, err := os.Stat(wsParent); err != nil {
 		t.Fatalf("workspace parent dir should NOT be removed while sibling %s still exists: %v", wsBFile, err)

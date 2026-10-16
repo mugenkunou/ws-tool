@@ -9,43 +9,70 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/mugenkunou/ws-tool/internal/manifest"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 type AddOptions struct {
 	WorkspacePath string
-	ManifestPath  string
+	ConfigPath    string
 	SystemPath    string
+	Class         string // "config" or "secret"; empty = auto-detect
 	DryRun        bool
 }
 
+// LinkOptions configures Link, which registers a system path → workspace
+// original mapping WITHOUT moving any files. Use this when the workspace
+// original already exists (e.g. agent/AGENTS.md) and the caller just wants ws
+// to track the relationship and create the symlink.
+type LinkOptions struct {
+	WorkspacePath string
+	ConfigPath    string
+	// SystemPath is the system path that should become the symlink
+	// (e.g. ~/.claude/CLAUDE.md). If it already exists and is not a symlink,
+	// Link returns an error — use dotfile add to adopt an existing live file.
+	SystemPath string
+	// WorkspaceRelPath is the path within the workspace of the original file
+	// (e.g. "agent/AGENTS.md"). The file must already exist there.
+	WorkspaceRelPath string
+	// Class is "config", "secret", or "state"; defaults to "config" when empty.
+	Class  string
+	DryRun bool
+}
+
+// LinkResult is returned by Link.
+type LinkResult struct {
+	Link     wsconfig.Link `json:"link"`
+	Messages []string      `json:"messages"`
+	DryRun   bool          `json:"dry_run"`
+}
+
 type AddResult struct {
-	Record   manifest.DotfileRecord `json:"record"`
-	Messages []string               `json:"messages"`
-	DryRun   bool                   `json:"dry_run"`
+	Link     wsconfig.Link `json:"link"`
+	Messages []string      `json:"messages"`
+	DryRun   bool          `json:"dry_run"`
 }
 
 type RemoveOptions struct {
 	WorkspacePath string
-	ManifestPath  string
+	ConfigPath    string
 	SystemPath    string
 	DryRun        bool
 }
 
 type RemoveResult struct {
-	Record   manifest.DotfileRecord `json:"record"`
-	Messages []string               `json:"messages"`
-	DryRun   bool                   `json:"dry_run"`
+	Link     wsconfig.Link `json:"link"`
+	Messages []string      `json:"messages"`
+	DryRun   bool          `json:"dry_run"`
 }
 
 type ScanOptions struct {
 	WorkspacePath string
-	ManifestPath  string
+	ConfigPath    string
 }
 
 type FixOptions struct {
 	WorkspacePath string
-	ManifestPath  string
+	ConfigPath    string
 	DryRun        bool
 }
 
@@ -59,7 +86,7 @@ type FixResult struct {
 
 type Issue struct {
 	SystemPath    string `json:"system_path"`
-	WorkspacePath string `json:"workspace_path"` // absolute path of the file under ws/dotfiles/
+	WorkspacePath string `json:"workspace_path"` // absolute path of the file under configs/dotfiles/ or secrets/dotfiles/
 	Status        string `json:"status"`
 	Message       string `json:"message"`
 }
@@ -67,13 +94,42 @@ type Issue struct {
 const (
 	StatusBroken      = "BROKEN"
 	StatusOverwritten = "OVERWRITTEN"
+
+	// Class constants match wsconfig.Link.Class values.
+	ClassConfig = "config"
+	ClassSecret = "secret"
 )
 
-const dotfilesDir = "ws/dotfiles"
+// dotfilesDirForClass returns the workspace-relative directory for a given class.
+func dotfilesDirForClass(class string) string {
+	if class == ClassSecret {
+		return "secrets/dotfiles"
+	}
+	return "configs/dotfiles"
+}
 
-// DotfilePath returns the workspace-relative path for a dotfile name.
-func DotfilePath(name string) string {
-	return filepath.ToSlash(filepath.Join(dotfilesDir, name))
+// DotfilePath returns the workspace-relative path for a dotfile name and class.
+func DotfilePath(name, class string) string {
+	return filepath.ToSlash(filepath.Join(dotfilesDirForClass(class), name))
+}
+
+// LinkDotfilePath returns the workspace-relative path for a wsconfig.Link.
+func LinkDotfilePath(link wsconfig.Link) string {
+	return DotfilePath(link.Original, link.Class)
+}
+
+// resolveClass picks the class: uses provided class if non-empty, otherwise
+// classifies the file at absPath. Returns "config" when unambiguous config,
+// "secret" when a secret is detected, or "config" as default.
+func resolveClass(absPath, class string) string {
+	if class == ClassSecret || class == ClassConfig {
+		return class
+	}
+	fc := ClassifyFile(absPath)
+	if fc == FileClassSecret {
+		return ClassSecret
+	}
+	return ClassConfig
 }
 
 func Add(opts AddOptions) (AddResult, error) {
@@ -95,36 +151,39 @@ func Add(opts AddOptions) (AddResult, error) {
 		return result, fmt.Errorf("cannot add a directory directly: expand it with 'ws dotfile add <dir>' to select individual files interactively")
 	}
 
-	m, err := manifest.Load(opts.ManifestPath)
+	cfg, err := wsconfig.Load(opts.ConfigPath)
 	if err != nil {
 		return result, err
 	}
 
-	for _, record := range m.Dotfiles {
-		if filepath.Clean(record.System) == filepath.Clean(absSystem) {
+	for _, link := range cfg.Links {
+		if filepath.Clean(link.System) == filepath.Clean(absSystem) {
 			return result, fmt.Errorf("dotfile already managed: %s", absSystem)
 		}
 	}
 
-	workspaceRel, err := workspaceRelativePath(opts.WorkspacePath, absSystem)
+	class := resolveClass(absSystem, opts.Class)
+	wsRel, err := workspaceRelativePath(opts.WorkspacePath, absSystem, class)
 	if err != nil {
 		return result, err
 	}
-	// workspaceRel is like "ws/dotfiles/bashrc"; extract just the name.
-	name := strings.TrimPrefix(filepath.ToSlash(workspaceRel), dotfilesDir+"/")
-	workspaceAbs := filepath.Join(opts.WorkspacePath, workspaceRel)
+	// wsRel is like "configs/dotfiles/bashrc"; extract just the name (relative to dotfiles dir).
+	dotfilesDir := dotfilesDirForClass(class) + "/"
+	name := strings.TrimPrefix(filepath.ToSlash(wsRel), dotfilesDir)
+	workspaceAbs := filepath.Join(opts.WorkspacePath, wsRel)
 
 	if _, err := os.Stat(workspaceAbs); err == nil {
 		return result, fmt.Errorf("workspace dotfile target already exists: %s", workspaceAbs)
 	}
 
 	needsSudo := NeedsSudo(absSystem)
-	record := manifest.DotfileRecord{
-		System: absSystem,
-		Name:   name,
-		Sudo:   needsSudo,
+	link := wsconfig.Link{
+		System:   absSystem,
+		Original: name,
+		Sudo:     needsSudo,
+		Class:    class,
 	}
-	result.Record = record
+	result.Link = link
 
 	if opts.DryRun {
 		result.DryRun = true
@@ -135,7 +194,7 @@ func Add(opts AddOptions) (AddResult, error) {
 		result.Messages = append(result.Messages,
 			"Would move: "+absSystem+" -> "+workspaceAbs+sudoNote,
 			"Would symlink: "+absSystem+" -> "+workspaceAbs+sudoNote,
-			"Would register in manifest",
+			"Would register in ws.json",
 		)
 		return result, nil
 	}
@@ -160,8 +219,7 @@ func Add(opts AddOptions) (AddResult, error) {
 		}
 	}
 
-	m.Dotfiles = append(m.Dotfiles, record)
-	if err := manifest.Save(opts.ManifestPath, m); err != nil {
+	if err := wsconfig.AddLink(opts.ConfigPath, link); err != nil {
 		return result, err
 	}
 
@@ -180,17 +238,17 @@ func Remove(opts RemoveOptions) (RemoveResult, error) {
 		return result, err
 	}
 
-	m, err := manifest.Load(opts.ManifestPath)
+	cfg, err := wsconfig.Load(opts.ConfigPath)
 	if err != nil {
 		return result, err
 	}
 
 	idx := -1
-	var record manifest.DotfileRecord
-	for i, r := range m.Dotfiles {
-		if filepath.Clean(r.System) == filepath.Clean(absSystem) {
+	var link wsconfig.Link
+	for i, l := range cfg.Links {
+		if filepath.Clean(l.System) == filepath.Clean(absSystem) {
 			idx = i
-			record = r
+			link = l
 			break
 		}
 	}
@@ -198,21 +256,21 @@ func Remove(opts RemoveOptions) (RemoveResult, error) {
 		return result, fmt.Errorf("dotfile not managed: %s", absSystem)
 	}
 
-	targetAbs := filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(record.Name)))
-	result.Record = record
+	targetAbs := filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(link.Original, link.Class)))
+	result.Link = link
 
 	if opts.DryRun {
 		result.DryRun = true
 		result.Messages = append(result.Messages,
 			"Would remove symlink: "+absSystem,
 			"Would restore: "+targetAbs+" -> "+absSystem,
-			"Would unregister from manifest",
+			"Would unregister from ws.json",
 		)
 		return result, nil
 	}
 
 	if _, err := os.Lstat(absSystem); err == nil {
-		if record.Sudo {
+		if link.Sudo {
 			if err := sudoRemoveAll(absSystem); err != nil {
 				return result, err
 			}
@@ -223,7 +281,7 @@ func Remove(opts RemoveOptions) (RemoveResult, error) {
 		}
 	}
 
-	if record.Sudo {
+	if link.Sudo {
 		if err := sudoMkdirAll(filepath.Dir(absSystem)); err != nil {
 			return result, err
 		}
@@ -239,10 +297,8 @@ func Remove(opts RemoveOptions) (RemoveResult, error) {
 		}
 	}
 
-	// Remove any empty ancestor directories left behind under ws/dotfiles/.
-	// Walk up from the file's parent until we hit the dotfiles root, pruning
-	// each directory that is now empty.
-	dotfilesRoot := filepath.Clean(filepath.Join(opts.WorkspacePath, dotfilesDir))
+	// Remove any empty ancestor directories left behind under the dotfiles root.
+	dotfilesRoot := filepath.Clean(filepath.Join(opts.WorkspacePath, dotfilesDirForClass(link.Class)))
 	pruneDir := filepath.Dir(targetAbs)
 	for {
 		pruneDir = filepath.Clean(pruneDir)
@@ -259,9 +315,8 @@ func Remove(opts RemoveOptions) (RemoveResult, error) {
 		pruneDir = filepath.Dir(pruneDir)
 	}
 
-	m.Dotfiles = append(m.Dotfiles[:idx], m.Dotfiles[idx+1:]...)
-	if err := manifest.Save(opts.ManifestPath, m); err != nil {
-		return result, err
+	if _, rmErr := wsconfig.RemoveLink(opts.ConfigPath, absSystem); rmErr != nil {
+		return result, rmErr
 	}
 
 	result.Messages = append(result.Messages,
@@ -274,11 +329,11 @@ func Remove(opts RemoveOptions) (RemoveResult, error) {
 // UnregisterOptions configures Unregister.
 type UnregisterOptions struct {
 	WorkspacePath string
-	ManifestPath  string
+	ConfigPath    string
 	SystemPath    string
 }
 
-// Unregister drops a dotfile's manifest record without touching the live
+// Unregister drops a dotfile's link record without touching the live
 // file at its system path. This is the registry half of `ws dotfile sync`:
 // unlike Remove, it never restores the ws copy onto the system path, so the
 // live file (which sync treats as authoritative) is left intact for a
@@ -290,17 +345,17 @@ func Unregister(opts UnregisterOptions) error {
 		return err
 	}
 
-	m, err := manifest.Load(opts.ManifestPath)
+	cfg, err := wsconfig.Load(opts.ConfigPath)
 	if err != nil {
 		return err
 	}
 
 	idx := -1
-	var record manifest.DotfileRecord
-	for i, r := range m.Dotfiles {
-		if filepath.Clean(r.System) == filepath.Clean(absSystem) {
+	var link wsconfig.Link
+	for i, l := range cfg.Links {
+		if filepath.Clean(l.System) == filepath.Clean(absSystem) {
 			idx = i
-			record = r
+			link = l
 			break
 		}
 	}
@@ -308,14 +363,13 @@ func Unregister(opts UnregisterOptions) error {
 		return fmt.Errorf("dotfile not managed: %s", absSystem)
 	}
 
-	targetAbs := filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(record.Name)))
+	targetAbs := filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(link.Original, link.Class)))
 	if err := os.RemoveAll(targetAbs); err != nil {
 		return err
 	}
 
-	// Prune now-empty ancestor directories left behind under ws/dotfiles/,
-	// same as Remove.
-	dotfilesRoot := filepath.Clean(filepath.Join(opts.WorkspacePath, dotfilesDir))
+	// Prune now-empty ancestor directories left behind under the dotfiles root.
+	dotfilesRoot := filepath.Clean(filepath.Join(opts.WorkspacePath, dotfilesDirForClass(link.Class)))
 	pruneDir := filepath.Dir(targetAbs)
 	for {
 		pruneDir = filepath.Clean(pruneDir)
@@ -332,32 +386,33 @@ func Unregister(opts UnregisterOptions) error {
 		pruneDir = filepath.Dir(pruneDir)
 	}
 
-	m.Dotfiles = append(m.Dotfiles[:idx], m.Dotfiles[idx+1:]...)
-	return manifest.Save(opts.ManifestPath, m)
+	_, err = wsconfig.RemoveLink(opts.ConfigPath, absSystem) //nolint:errcheck - idempotent
+	return err
+
 }
 
-func List(manifestPath string) ([]manifest.DotfileRecord, error) {
-	m, err := manifest.Load(manifestPath)
+func List(configPath string) ([]wsconfig.Link, error) {
+	cfg, err := wsconfig.Load(configPath)
 	if err != nil {
 		return nil, err
 	}
-	return m.Dotfiles, nil
+	return cfg.Links, nil
 }
 
 func Scan(opts ScanOptions) ([]Issue, error) {
-	m, err := manifest.Load(opts.ManifestPath)
+	cfg, err := wsconfig.Load(opts.ConfigPath)
 	if err != nil {
 		return nil, err
 	}
 
 	issues := make([]Issue, 0)
-	for _, record := range m.Dotfiles {
-		expected := filepath.Clean(filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(record.Name))))
+	for _, link := range cfg.Links {
+		expected := filepath.Clean(filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(link.Original, link.Class))))
 
-		entry, err := os.Lstat(record.System)
+		entry, err := os.Lstat(link.System)
 		if err != nil {
 			issues = append(issues, Issue{
-				SystemPath:    record.System,
+				SystemPath:    link.System,
 				WorkspacePath: expected,
 				Status:        StatusBroken,
 				Message:       "system path is missing",
@@ -367,7 +422,7 @@ func Scan(opts ScanOptions) ([]Issue, error) {
 
 		if entry.Mode()&os.ModeSymlink == 0 {
 			issues = append(issues, Issue{
-				SystemPath:    record.System,
+				SystemPath:    link.System,
 				WorkspacePath: expected,
 				Status:        StatusOverwritten,
 				Message:       "system path is no longer a symlink",
@@ -375,10 +430,10 @@ func Scan(opts ScanOptions) ([]Issue, error) {
 			continue
 		}
 
-		target, err := os.Readlink(record.System)
+		target, err := os.Readlink(link.System)
 		if err != nil {
 			issues = append(issues, Issue{
-				SystemPath:    record.System,
+				SystemPath:    link.System,
 				WorkspacePath: expected,
 				Status:        StatusBroken,
 				Message:       "failed to read symlink target",
@@ -387,14 +442,14 @@ func Scan(opts ScanOptions) ([]Issue, error) {
 		}
 
 		if !filepath.IsAbs(target) {
-			target = filepath.Join(filepath.Dir(record.System), target)
+			target = filepath.Join(filepath.Dir(link.System), target)
 		}
 		target = filepath.Clean(target)
 		expected = filepath.Clean(expected)
 
 		if target != expected {
 			issues = append(issues, Issue{
-				SystemPath:    record.System,
+				SystemPath:    link.System,
 				WorkspacePath: expected,
 				Status:        StatusOverwritten,
 				Message:       "symlink points to an unexpected target",
@@ -404,7 +459,7 @@ func Scan(opts ScanOptions) ([]Issue, error) {
 
 		if _, err := os.Stat(expected); err != nil {
 			issues = append(issues, Issue{
-				SystemPath:    record.System,
+				SystemPath:    link.System,
 				WorkspacePath: expected,
 				Status:        StatusBroken,
 				Message:       "symlink target is missing",
@@ -424,15 +479,15 @@ func Fix(opts FixOptions) (FixResult, error) {
 		DryRun:    opts.DryRun,
 	}
 
-	m, err := manifest.Load(opts.ManifestPath)
+	cfg, err := wsconfig.Load(opts.ConfigPath)
 	if err != nil {
-		return result, fmt.Errorf("loading manifest: %w", err)
+		return result, fmt.Errorf("loading config: %w", err)
 	}
 
-	for _, record := range m.Dotfiles {
-		expectedTarget := filepath.Clean(filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(record.Name))))
+	for _, link := range cfg.Links {
+		expectedTarget := filepath.Clean(filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(link.Original, link.Class))))
 		issue := Issue{
-			SystemPath:    record.System,
+			SystemPath:    link.System,
 			WorkspacePath: expectedTarget,
 		}
 
@@ -441,42 +496,42 @@ func Fix(opts FixOptions) (FixResult, error) {
 			issue.Status = StatusBroken
 			issue.Message = "workspace dotfile missing"
 			result.Failed = append(result.Failed, issue)
-			result.Messages = append(result.Messages, fmt.Sprintf("skip %s: workspace file missing", record.System))
+			result.Messages = append(result.Messages, fmt.Sprintf("skip %s: workspace file missing", link.System))
 			continue
 		}
 
 		// Check current state of system path.
-		entry, err := os.Lstat(record.System)
+		entry, err := os.Lstat(link.System)
 		if err != nil {
 			// System path doesn't exist — create symlink.
 			if opts.DryRun {
 				issue.Status = "WOULD_CREATE"
-				issue.Message = fmt.Sprintf("would create symlink %s → %s", record.System, expectedTarget)
+				issue.Message = fmt.Sprintf("would create symlink %s → %s", link.System, expectedTarget)
 				result.Fixed = append(result.Fixed, issue)
 				result.Messages = append(result.Messages, issue.Message)
 				continue
 			}
-			if record.Sudo {
-				if mkErr := sudoMkdirAll(filepath.Dir(record.System)); mkErr != nil {
+			if link.Sudo {
+				if mkErr := sudoMkdirAll(filepath.Dir(link.System)); mkErr != nil {
 					issue.Status = StatusBroken
 					issue.Message = fmt.Sprintf("failed to create parent dir: %v", mkErr)
 					result.Failed = append(result.Failed, issue)
 					continue
 				}
-				if lnErr := sudoSymlink(expectedTarget, record.System); lnErr != nil {
+				if lnErr := sudoSymlink(expectedTarget, link.System); lnErr != nil {
 					issue.Status = StatusBroken
 					issue.Message = fmt.Sprintf("failed to create symlink: %v", lnErr)
 					result.Failed = append(result.Failed, issue)
 					continue
 				}
 			} else {
-				if err := os.MkdirAll(filepath.Dir(record.System), 0o755); err != nil {
+				if err := os.MkdirAll(filepath.Dir(link.System), 0o755); err != nil {
 					issue.Status = StatusBroken
 					issue.Message = fmt.Sprintf("failed to create parent dir: %v", err)
 					result.Failed = append(result.Failed, issue)
 					continue
 				}
-				if err := os.Symlink(expectedTarget, record.System); err != nil {
+				if err := os.Symlink(expectedTarget, link.System); err != nil {
 					issue.Status = StatusBroken
 					issue.Message = fmt.Sprintf("failed to create symlink: %v", err)
 					result.Failed = append(result.Failed, issue)
@@ -484,7 +539,7 @@ func Fix(opts FixOptions) (FixResult, error) {
 				}
 			}
 			issue.Status = "CREATED"
-			issue.Message = fmt.Sprintf("created symlink %s → %s", record.System, expectedTarget)
+			issue.Message = fmt.Sprintf("created symlink %s → %s", link.System, expectedTarget)
 			result.Fixed = append(result.Fixed, issue)
 			result.Messages = append(result.Messages, issue.Message)
 			continue
@@ -492,10 +547,10 @@ func Fix(opts FixOptions) (FixResult, error) {
 
 		// System path exists — check if it's already a correct symlink.
 		if entry.Mode()&os.ModeSymlink != 0 {
-			target, err := os.Readlink(record.System)
+			target, err := os.Readlink(link.System)
 			if err == nil {
 				if !filepath.IsAbs(target) {
-					target = filepath.Join(filepath.Dir(record.System), target)
+					target = filepath.Join(filepath.Dir(link.System), target)
 				}
 				if filepath.Clean(target) == filepath.Clean(expectedTarget) {
 					issue.Status = "OK"
@@ -508,27 +563,27 @@ func Fix(opts FixOptions) (FixResult, error) {
 
 		// System path exists but is not correct: overwritten or wrong symlink.
 		// Back up the existing file, then create the symlink.
-		backupPath := record.System + ".ws-backup"
+		backupPath := link.System + ".ws-backup"
 
 		if opts.DryRun {
 			issue.Status = "WOULD_FIX"
-			issue.Message = fmt.Sprintf("would backup %s and create symlink → %s", record.System, expectedTarget)
+			issue.Message = fmt.Sprintf("would backup %s and create symlink → %s", link.System, expectedTarget)
 			result.Fixed = append(result.Fixed, issue)
 			result.Messages = append(result.Messages, issue.Message)
 			continue
 		}
 
 		// Remove any stale backup.
-		if record.Sudo {
+		if link.Sudo {
 			_ = sudoRemoveAll(backupPath)
-			if err := sudoRename(record.System, backupPath); err != nil {
+			if err := sudoRename(link.System, backupPath); err != nil {
 				issue.Status = StatusBroken
 				issue.Message = fmt.Sprintf("failed to backup: %v", err)
 				result.Failed = append(result.Failed, issue)
 				continue
 			}
-			if err := sudoSymlink(expectedTarget, record.System); err != nil {
-				_ = sudoRename(backupPath, record.System)
+			if err := sudoSymlink(expectedTarget, link.System); err != nil {
+				_ = sudoRename(backupPath, link.System)
 				issue.Status = StatusBroken
 				issue.Message = fmt.Sprintf("failed to create symlink: %v", err)
 				result.Failed = append(result.Failed, issue)
@@ -536,15 +591,15 @@ func Fix(opts FixOptions) (FixResult, error) {
 			}
 		} else {
 			_ = os.RemoveAll(backupPath)
-			if err := os.Rename(record.System, backupPath); err != nil {
+			if err := os.Rename(link.System, backupPath); err != nil {
 				issue.Status = StatusBroken
 				issue.Message = fmt.Sprintf("failed to backup: %v", err)
 				result.Failed = append(result.Failed, issue)
 				continue
 			}
-			if err := os.Symlink(expectedTarget, record.System); err != nil {
+			if err := os.Symlink(expectedTarget, link.System); err != nil {
 				// Restore backup on failure.
-				_ = os.Rename(backupPath, record.System)
+				_ = os.Rename(backupPath, link.System)
 				issue.Status = StatusBroken
 				issue.Message = fmt.Sprintf("failed to create symlink: %v", err)
 				result.Failed = append(result.Failed, issue)
@@ -552,7 +607,7 @@ func Fix(opts FixOptions) (FixResult, error) {
 			}
 		}
 		issue.Status = "FIXED"
-		issue.Message = fmt.Sprintf("backed up and re-linked %s → %s", record.System, expectedTarget)
+		issue.Message = fmt.Sprintf("backed up and re-linked %s → %s", link.System, expectedTarget)
 		result.Fixed = append(result.Fixed, issue)
 		result.Messages = append(result.Messages, issue.Message)
 	}
@@ -560,25 +615,109 @@ func Fix(opts FixOptions) (FixResult, error) {
 	return result, nil
 }
 
-// FindDirEntries returns all manifest entries whose workspace copy is a directory.
+// Link registers a system path → existing workspace file as a symlink, without
+// moving any files. The workspace original at WorkspaceRelPath must already
+// exist. If the system path already exists and is not already the correct
+// symlink, Link returns an error (use dotfile add to adopt a live file).
+func Link(opts LinkOptions) (LinkResult, error) {
+	result := LinkResult{Messages: []string{}}
+
+	absSystem, err := expandPath(opts.SystemPath)
+	if err != nil {
+		return result, err
+	}
+
+	if opts.WorkspaceRelPath == "" {
+		return result, errors.New("WorkspaceRelPath must not be empty")
+	}
+	workspaceAbs := filepath.Join(opts.WorkspacePath, filepath.FromSlash(opts.WorkspaceRelPath))
+	if _, err := os.Stat(workspaceAbs); err != nil {
+		return result, fmt.Errorf("workspace original not found: %s", workspaceAbs)
+	}
+
+	class := opts.Class
+	if class == "" {
+		class = ClassConfig
+	}
+
+	// Check for an existing symlink that already points to the right place.
+	if fi, err := os.Lstat(absSystem); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			target, readErr := os.Readlink(absSystem)
+			if readErr == nil && filepath.Clean(target) == filepath.Clean(workspaceAbs) {
+				// Already correct symlink — idempotent.
+				link := wsconfig.Link{
+					System:   absSystem,
+					Original: opts.WorkspaceRelPath,
+					Class:    class,
+					Sudo:     NeedsSudo(absSystem),
+				}
+				result.Link = link
+				result.Messages = append(result.Messages, "Already linked: "+absSystem+" -> "+workspaceAbs)
+				if err := wsconfig.AddLink(opts.ConfigPath, link); err != nil {
+					return result, err
+				}
+				return result, nil
+			}
+		}
+		if !opts.DryRun {
+			return result, fmt.Errorf("system path already exists and is not the expected symlink: %s (use 'ws dotfile add' to adopt a live file)", absSystem)
+		}
+	}
+
+	link := wsconfig.Link{
+		System:   absSystem,
+		Original: opts.WorkspaceRelPath,
+		Class:    class,
+		Sudo:     NeedsSudo(absSystem),
+	}
+	result.Link = link
+
+	if opts.DryRun {
+		result.DryRun = true
+		result.Messages = append(result.Messages,
+			"Would create symlink: "+absSystem+" -> "+workspaceAbs,
+			"Would register in ws.json",
+		)
+		return result, nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(absSystem), 0o755); err != nil {
+		return result, err
+	}
+	if err := os.Symlink(workspaceAbs, absSystem); err != nil {
+		return result, err
+	}
+	if err := wsconfig.AddLink(opts.ConfigPath, link); err != nil {
+		return result, err
+	}
+
+	result.Messages = append(result.Messages,
+		"Linked: "+absSystem+" -> "+workspaceAbs,
+		"Registered in ws.json",
+	)
+	return result, nil
+}
+
+// FindDirEntries returns all link entries whose workspace copy is a directory.
 // These are candidates for migration to file-level entries.
-func FindDirEntries(workspacePath, manifestPath string) ([]manifest.DotfileRecord, error) {
-	m, err := manifest.Load(manifestPath)
+func FindDirEntries(workspacePath, configPath string) ([]wsconfig.Link, error) {
+	cfg, err := wsconfig.Load(configPath)
 	if err != nil {
 		return nil, err
 	}
-	var dirs []manifest.DotfileRecord
-	for _, r := range m.Dotfiles {
-		wsPath := filepath.Join(workspacePath, filepath.FromSlash(DotfilePath(r.Name)))
+	var dirs []wsconfig.Link
+	for _, l := range cfg.Links {
+		wsPath := filepath.Join(workspacePath, filepath.FromSlash(DotfilePath(l.Original, l.Class)))
 		info, err := os.Stat(wsPath)
 		if err == nil && info.IsDir() {
-			dirs = append(dirs, r)
+			dirs = append(dirs, l)
 		}
 	}
 	return dirs, nil
 }
 
-func workspaceRelativePath(workspacePath, systemPath string) (string, error) {
+func workspaceRelativePath(workspacePath, systemPath, class string) (string, error) {
 	home, _ := os.UserHomeDir()
 	cleanSystem := filepath.Clean(systemPath)
 
@@ -597,11 +736,11 @@ func workspaceRelativePath(workspacePath, systemPath string) (string, error) {
 		return "", fmt.Errorf("invalid path: %s", systemPath)
 	}
 
-	if strings.HasPrefix(parts[0], ".") {
-		parts[0] = strings.TrimPrefix(parts[0], ".")
-		if parts[0] == "" {
-			parts[0] = "dot"
+	if after, ok := strings.CutPrefix(parts[0], "."); ok {
+		if after == "" {
+			after = "dot"
 		}
+		parts[0] = after
 	}
 
 	rel = filepath.Join(parts...)
@@ -612,7 +751,7 @@ func workspaceRelativePath(workspacePath, systemPath string) (string, error) {
 	}
 
 	_ = workspacePath // reserved for future collision strategies.
-	return filepath.Join("ws", "dotfiles", rel), nil
+	return filepath.Join(dotfilesDirForClass(class), rel), nil
 }
 
 func expandPath(path string) (string, error) {

@@ -18,10 +18,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
 	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/plan"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/tui/complete"
 	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
@@ -114,7 +113,7 @@ func New(e env.Env) Model {
 }
 
 func engine(e env.Env) (*wsignore.Engine, error) {
-	rules, err := manifest.LoadIgnoreRules(e.Paths.Manifest)
+	rules, err := wsconfig.LoadIgnoreRules(e.Paths.Config)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +140,7 @@ func Load(e env.Env) tea.Cmd {
 
 func check(e env.Env, input string) tea.Cmd {
 	return func() tea.Msg {
-		abs, err := config.ExpandUserPath(input)
+		abs, err := wsconfig.ExpandUserPath(input)
 		if err != nil {
 			return checkMsg{level: nav.LevelError, text: "Invalid path: " + err.Error()}
 		}
@@ -450,7 +449,7 @@ func (m Model) abs(v wsignore.Violation) string { return style.AbsPath(m.env.Pat
 // regenerate rewrites .megaignore from the manifest's rules, as `ignore fix`
 // does after adding rules.
 func regenerate(e env.Env) error {
-	rules, err := manifest.LoadIgnoreRules(e.Paths.Manifest)
+	rules, err := wsconfig.LoadIgnoreRules(e.Paths.Config)
 	if err != nil {
 		return err
 	}
@@ -463,7 +462,7 @@ func (m Model) excludeAction(v wsignore.Violation) plan.Action {
 		ID:          "exclude-" + rel,
 		Description: "Add to .megaignore: " + m.abs(v),
 		Execute: func() error {
-			if _, err := manifest.AddIgnoreExclude(e.Paths.Manifest, rel, ""); err != nil {
+			if _, err := wsconfig.AddIgnoreExclude(e.Paths.Config, rel, ""); err != nil {
 				return err
 			}
 			return regenerate(e)
@@ -481,7 +480,7 @@ func (m Model) harborAction(v wsignore.Violation) (plan.Action, bool) {
 		ID:          "harbor-" + dir,
 		Description: "Suppress warnings for " + style.AbsPath(e.Paths.Workspace, dir) + "/**",
 		Execute: func() error {
-			if _, err := manifest.AddIgnoreSafeHarbor(e.Paths.Manifest, pattern, ""); err != nil {
+			if _, err := wsconfig.AddIgnoreSafeHarbor(e.Paths.Config, pattern, ""); err != nil {
 				return err
 			}
 			return regenerate(e)
@@ -499,7 +498,7 @@ func (m Model) unsuppressAction(v wsignore.Violation) (plan.Action, bool) {
 		ID:          "unsuppress-" + dir,
 		Description: "Remove suppress rule for " + style.AbsPath(e.Paths.Workspace, dir) + "/**",
 		Execute: func() error {
-			if _, err := manifest.RemoveIgnoreSafeHarbor(e.Paths.Manifest, pattern); err != nil {
+			if _, err := wsconfig.RemoveIgnoreSafeHarbor(e.Paths.Config, pattern); err != nil {
 				return err
 			}
 			return regenerate(e)

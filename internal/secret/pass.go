@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // PassHealth describes the state of the Unix Password Store (pass) on this machine.
@@ -58,7 +58,7 @@ func CheckPass() PassHealth {
 		}
 		storePath = filepath.Join(home, ".password-store")
 	} else {
-		abs, err := config.ExpandUserPath(storePath)
+		abs, err := wsconfig.ExpandUserPath(storePath)
 		if err != nil {
 			return h
 		}

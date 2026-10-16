@@ -6,24 +6,21 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // initWorkspace writes a minimal initialized workspace and returns overrides
-// pointing at it, so the test never touches the real XDG config.
+// pointing at it, so the test never touches the real workspace.
 func initWorkspace(t *testing.T) workspace.PathOverrides {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "Workspace")
-	if err := os.MkdirAll(filepath.Join(root, "ws"), 0o755); err != nil {
+	configsDir := filepath.Join(root, "configs")
+	if err := os.MkdirAll(configsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	if err := config.Save(cfgPath, config.Default()); err != nil {
-		t.Fatal(err)
-	}
-	if err := manifest.Save(filepath.Join(root, "ws", "manifest.json"), manifest.Default()); err != nil {
+	cfgPath := filepath.Join(configsDir, "ws.json")
+	if err := wsconfig.Save(cfgPath, wsconfig.Default()); err != nil {
 		t.Fatal(err)
 	}
 	return workspace.PathOverrides{Workspace: root, Config: cfgPath}
@@ -46,10 +43,7 @@ func TestLoadResolvesDirs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(o.Workspace, "ws", "manifest.json"); e.Paths.Manifest != want {
-		t.Errorf("manifest = %q, want %q", e.Paths.Manifest, want)
-	}
-	if want := filepath.Join(o.Workspace, "ws", "ws-log"); e.LogDir != want {
+	if want := filepath.Join(o.Workspace, "data", "ws-log"); e.LogDir != want {
 		t.Errorf("log dir = %q, want %q", e.LogDir, want)
 	}
 	if !filepath.IsAbs(e.ScratchDir) {
@@ -64,7 +58,6 @@ func TestRel(t *testing.T) {
 		"/home/tester/Workspace/Projects/api": "Projects/api",
 		"/home/tester/.password-store":        "~/.password-store",
 		"/etc/hosts":                          "/etc/hosts",
-		"/home/tester/Workspace":              "~/Workspace",
 	} {
 		if got := e.Rel(in); got != want {
 			t.Errorf("Rel(%q) = %q, want %q", in, got, want)

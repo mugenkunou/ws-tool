@@ -11,12 +11,17 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/ignore"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/repo"
 	"github.com/mugenkunou/ws-tool/internal/style"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
+
+// expandUserPath resolves a ~ or absolute or relative path.
+// Thin wrapper over wsconfig.ExpandUserPath for this package.
+func expandUserPath(path string) (string, error) {
+	return wsconfig.ExpandUserPath(path)
+}
 
 // runIgnoreList handles ws ignore ls (flat list of excluded files).
 // Also supports positional path arg (legacy) and --tree flag for tree view.
@@ -36,7 +41,7 @@ func runIgnoreList(engine *ignore.Engine, workspacePath string, args []string, g
 	// --path resolves like every path input (absolute, ~, or cwd-relative).
 	absFilter := ""
 	if strings.TrimSpace(*pathFilter) != "" {
-		p, err := config.ExpandUserPath(*pathFilter)
+		p, err := expandUserPath(*pathFilter)
 		if err != nil {
 			fmt.Fprintf(stderr, "invalid --path: %s\n", err.Error())
 			return 1
@@ -122,7 +127,7 @@ func runIgnoreList(engine *ignore.Engine, workspacePath string, args []string, g
 func runIgnoreCheckPath(engine *ignore.Engine, workspacePath, target string, globals globalFlags, stdout, stderr io.Writer) int {
 	// Resolve like every path input: absolute, ~, or relative to cwd. There is
 	// no workspace-relative fallback (spec "Path Rules").
-	absPath, err := config.ExpandUserPath(target)
+	absPath, err := expandUserPath(target)
 	if err != nil {
 		fmt.Fprintf(stderr, "invalid path %q: %s\n", target, err.Error())
 		return 1
@@ -214,7 +219,7 @@ func runIgnoreTreeView(engine *ignore.Engine, workspacePath, pathFilter string, 
 	start := filepath.Clean(workspacePath)
 	if strings.TrimSpace(pathFilter) != "" {
 		// Resolve like every path input: absolute, ~, or relative to cwd.
-		p, err := config.ExpandUserPath(pathFilter)
+		p, err := expandUserPath(pathFilter)
 		if err != nil {
 			fmt.Fprintf(stderr, "invalid path %q: %s\n", pathFilter, err.Error())
 			return 1
@@ -489,10 +494,10 @@ func treeStatusIcon(status string, nc bool) string {
 	}
 }
 
-// runIgnoreEdit extracts ignore rules from manifest.json to a temp file,
+// runIgnoreEdit extracts ignore rules from configs/ws.json to a temp file,
 // opens it in $EDITOR, validates on save, merges back, and regenerates
 // .megaignore.
-func runIgnoreEdit(manifestPath, megaignorePath string, currentRules ignore.UserRules, args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+func runIgnoreEdit(configPath, megaignorePath string, currentRules ignore.UserRules, args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ignore-edit", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	registerGlobalFlags(fs, &globals)
@@ -503,7 +508,7 @@ func runIgnoreEdit(manifestPath, megaignorePath string, currentRules ignore.User
 	}
 
 	// Write current ignore rules to a temp file for editing.
-	wsDir := filepath.Dir(manifestPath)
+	wsDir := filepath.Dir(configPath)
 	editPath := filepath.Join(wsDir, ".ignore-edit.json")
 	data, err := json.MarshalIndent(currentRules, "", "  ")
 	if err != nil {
@@ -548,10 +553,18 @@ func runIgnoreEdit(manifestPath, megaignorePath string, currentRules ignore.User
 		return 1
 	}
 
-	// Save back to manifest.
-	if err := manifest.SaveIgnoreRules(manifestPath, updatedRules); err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
+	// Save back to configs/ws.json.
+	{
+		cfg, err := wsconfig.Load(configPath)
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		cfg.IgnoreRules = updatedRules
+		if err := wsconfig.Save(configPath, cfg); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
 	}
 
 	if err := ignore.WriteMegaignore(megaignorePath, updatedRules); err != nil {
@@ -564,9 +577,9 @@ func runIgnoreEdit(manifestPath, megaignorePath string, currentRules ignore.User
 
 	if globals.json {
 		return writeJSON(stdout, stderr, "ignore.edit", map[string]any{
-			"manifest": manifestPath,
-			"editor":   cmdName,
-			"stats":    stats,
+			"config": configPath,
+			"editor": cmdName,
+			"stats":  stats,
 		})
 	}
 	out := textOut(globals, stdout)

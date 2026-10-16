@@ -4,16 +4,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"runtime"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
-	"github.com/mugenkunou/ws-tool/internal/ignore"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
-	"github.com/mugenkunou/ws-tool/internal/provision"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // appVersion is set at build time via ldflags:
@@ -21,17 +16,11 @@ import (
 //	go build -ldflags "-X github.com/mugenkunou/ws-tool/cmd.appVersion=v0.2.0"
 var appVersion = "dev"
 
-const (
-	configSchema   = 1
-	manifestSchema = 1
-)
-
 type versionData struct {
-	Version        string `json:"version"`
-	ConfigSchema   int    `json:"config_schema"`
-	ManifestSchema int    `json:"manifest_schema"`
-	Platform       string `json:"platform"`
-	GoVersion      string `json:"go_version"`
+	Version    string `json:"version"`
+	Schema     int    `json:"schema"`
+	Platform   string `json:"platform"`
+	GoVersion  string `json:"go_version"`
 }
 
 var versionHelp = cmdHelp{
@@ -61,11 +50,10 @@ func runVersion(args []string, globals globalFlags, stdout, stderr io.Writer) in
 	}
 
 	data := versionData{
-		Version:        appVersion,
-		ConfigSchema:   configSchema,
-		ManifestSchema: manifestSchema,
-		Platform:       runtime.GOOS + "/" + runtime.GOARCH,
-		GoVersion:      runtime.Version(),
+		Version:   appVersion,
+		Schema:    wsconfig.CurrentSchema,
+		Platform:  runtime.GOOS + "/" + runtime.GOARCH,
+		GoVersion: runtime.Version(),
 	}
 
 	if globals.json {
@@ -75,8 +63,7 @@ func runVersion(args []string, globals globalFlags, stdout, stderr io.Writer) in
 	out := textOut(globals, stdout)
 	nc := globals.noColor
 	fmt.Fprintf(out, "%s %s\n", style.Boldf(nc, "ws"), style.Accentf(nc, "%s", data.Version))
-	style.KV(out, "Config schema", fmt.Sprintf("%d", data.ConfigSchema), nc)
-	style.KV(out, "Manifest schema", fmt.Sprintf("%d", data.ManifestSchema), nc)
+	style.KV(out, "Schema", fmt.Sprintf("%d", data.Schema), nc)
 	style.KV(out, "Platform", data.Platform, nc)
 	style.KV(out, "Go version", data.GoVersion, nc)
 
@@ -91,7 +78,7 @@ var initHelp = cmdHelp{
 	},
 }
 
-func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+func runInit(args []string, globals globalFlags, _ io.Reader, stdout, stderr io.Writer) int {
 	if hasHelpArg(args) {
 		return printCmdHelp(stdout, initHelp)
 	}
@@ -120,153 +107,51 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		workspacePath = "~/Workspace"
 	}
 
-	resolvedWorkspace, err := config.ExpandUserPath(workspacePath)
+	resolvedWorkspace, err := wsconfig.ExpandUserPath(workspacePath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	if err := resolveGlobalPaths(&globals); err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
 
-	configPath := globals.config
-	if configPath == "" {
-		p, err := config.DefaultPath()
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		configPath = p
-	}
-
-	manifestPath := globals.manifest
-	if manifestPath == "" {
-		manifestPath = filepath.Join(resolvedWorkspace, "ws", "manifest.json")
-	}
-
-	// Guard: if workspace is already initialized, warn and suggest reset.
-	alreadyInitialized := workspace.ConfigExists(configPath)
-	if !alreadyInitialized && globals.config == "" {
-		// Migration: also check old workspace-embedded location.
-		oldPath := filepath.Join(resolvedWorkspace, "ws", "config.json")
-		alreadyInitialized = workspace.ConfigExists(oldPath)
-	}
-	if alreadyInitialized {
+	// Guard: if workspace is already initialized, warn and suggest reinit.
+	configPath := wsconfig.ConfigPath(resolvedWorkspace)
+	if workspace.ConfigExists(configPath) {
 		if globals.json {
 			return writeJSON(stdout, stderr, "init", map[string]any{
 				"already_initialized": true,
 				"workspace_path":      resolvedWorkspace,
-				"suggestion":          "ws reset && ws init",
+				"suggestion":          "remove configs/ws.json and re-run ws init",
 			})
 		}
 		out := textOut(globals, stdout)
 		fmt.Fprintln(out, "Workspace already initialized at "+resolvedWorkspace)
 		fmt.Fprintln(out, "")
-		fmt.Fprintln(out, "To reinitialize, run:")
-		fmt.Fprintln(out, "  ws reset && ws init")
+		fmt.Fprintln(out, "To reinitialize, remove configs/ws.json and re-run ws init.")
 		return 0
 	}
 
-	wsDir := filepath.Join(resolvedWorkspace, "ws")
-	megaignorePath := filepath.Join(resolvedWorkspace, ".megaignore")
-
-	// Build plan: one action per file/directory to create.
-	plan := Plan{Command: "init"}
-
-	if _, err := os.Stat(wsDir); err != nil {
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "create-ws-dir",
-			Description: fmt.Sprintf("Create %s", wsDir),
-			Execute:     func() error { return os.MkdirAll(wsDir, 0o755) },
-		})
-	}
-
-	if _, err := os.Stat(configPath); err != nil {
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "create-config",
-			Description: fmt.Sprintf("Create config at %s", configPath),
-			Execute: func() error {
-				if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-					return err
-				}
-				cfg := config.Default()
-				cfg.Workspace = resolvedWorkspace
-				return config.Save(configPath, cfg)
-			},
-		})
-	}
-
-	if _, err := os.Stat(manifestPath); err != nil {
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "create-manifest",
-			Description: fmt.Sprintf("Create %s", manifestPath),
-			Execute: func() error {
-				if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
-					return err
-				}
-				return manifest.Save(manifestPath, manifest.Default())
-			},
-		})
-	}
-
-	if _, err := os.Stat(megaignorePath); err != nil {
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "create-megaignore",
-			Description: fmt.Sprintf("Create %s", megaignorePath),
-			Execute: func() error {
-				userRules, loadErr := manifest.LoadIgnoreRules(manifestPath)
-				if loadErr != nil {
-					userRules = manifest.Default().Ignore
-				}
-				return ignore.WriteMegaignore(megaignorePath, userRules)
-			},
-		})
-	}
-
-	if len(plan.Actions) == 0 {
+	if globals.dryRun {
 		out := textOut(globals, stdout)
-		fmt.Fprintln(out, "Workspace already initialized at "+resolvedWorkspace)
+		fmt.Fprintf(out, "[dry-run] Would initialize workspace at %s\n", resolvedWorkspace)
 		return 0
 	}
 
-	if !globals.json && !globals.dryRun {
-		out := textOut(globals, stdout)
-		fmt.Fprintf(out, "Initialize workspace at %s\n", resolvedWorkspace)
-	}
-
-	planResult := RunPlan(plan, stdin, stdout, globals)
-
-	// Record provisions for executed actions.
-	if !globals.dryRun {
-		provMap := map[string]provision.Entry{
-			"create-ws-dir":     {Type: provision.TypeDir, Path: wsDir, Command: "init"},
-			"create-config":     {Type: provision.TypeFile, Path: configPath, Command: "init"},
-			"create-manifest":   {Type: provision.TypeFile, Path: manifestPath, Command: "init"},
-			"create-megaignore": {Type: provision.TypeFile, Path: megaignorePath, Command: "init"},
-		}
-		var entries []provision.Entry
-		for _, id := range planResult.ExecutedIDs() {
-			if e, ok := provMap[id]; ok {
-				entries = append(entries, e)
-			}
-		}
-		if len(entries) > 0 {
-			_ = manifest.RecordAllProvisions(manifestPath, entries)
-		}
+	result, err := workspace.Init(workspace.InitOptions{
+		WorkspacePath: resolvedWorkspace,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
 	}
 
 	if globals.json {
-		return writeJSONDryRun(stdout, stderr, "init", globals.dryRun, map[string]any{
+		return writeJSON(stdout, stderr, "init", map[string]any{
 			"workspace_path": resolvedWorkspace,
-			"actions":        planResult.Actions,
+			"created":        result.Created,
 		})
 	}
 
-	if planResult.ExecutedCount() > 0 {
-		out := textOut(globals, stdout)
-		fmt.Fprintln(out, style.ResultSuccess(globals.noColor, "Workspace initialized: %s", resolvedWorkspace))
-	}
-
-	return planResult.ExitCode()
+	out := textOut(globals, stdout)
+	fmt.Fprintln(out, style.ResultSuccess(globals.noColor, "Workspace initialized: %s", resolvedWorkspace))
+	return 0
 }

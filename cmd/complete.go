@@ -7,9 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/repo"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // Shell completion directives — values match Cobra's protocol so standard
@@ -501,39 +500,34 @@ func loadCompletionCtx(globals globalFlags) completionCtx {
 
 	// Same (side-effect-free) resolution as every command, so completions
 	// match what the command will see.
-	resolved, resolvedConfig, resolvedManifest, err := resolveWorkspacePaths(globals)
+	resolved, resolvedConfig, _, err := resolveWorkspacePaths(globals)
 	if err != nil {
 		return ctx
 	}
 	ctx.workspace = resolved
 
-	// Load config for scratch.root_dir, capture locations, and repo roots.
-	cfg, cfgErr := config.Load(resolvedConfig)
+	// Load config for scratch.root_dir, repo roots, and dotfile links.
+	cfg, cfgErr := wsconfig.Load(resolvedConfig)
 	if cfgErr == nil {
-		if dir, err := config.ResolvePath(resolved, cfg.Scratch.RootDir); err == nil {
+		if dir, err := wsconfig.ResolvePath(resolved, cfg.Scratch.RootDir); err == nil {
 			ctx.scratchDir = dir
-		}
-		for name := range cfg.Capture.Locations {
-			ctx.captureLocations = append(ctx.captureLocations, name)
 		}
 	}
 	if ctx.scratchDir == "" {
-		if home, err := config.ExpandUserPath("~/Scratch"); err == nil {
+		if home, err := wsconfig.ExpandUserPath("~/Scratch"); err == nil {
 			ctx.scratchDir = home
 		}
 	}
 
-	// Load manifest for dotfile names.
-	if m, err := manifest.Load(resolvedManifest); err == nil {
-		// `ws dotfile rm` takes the system path (absolute); names are not
-		// valid input there.
-		for _, d := range m.Dotfiles {
-			ctx.dotfiles = append(ctx.dotfiles, d.System)
+	// Load dotfile links from ws.json for completions.
+	if cfgErr == nil {
+		for _, link := range cfg.Links {
+			ctx.dotfiles = append(ctx.dotfiles, link.System)
 		}
 	}
 
-	// Log session tags: directory names under ws/ws-log/.
-	ctx.logDir = filepath.Join(resolved, "ws", "ws-log")
+	// Log session tags: directory names under data/ws-log/.
+	ctx.logDir = filepath.Join(resolved, "data", "ws-log")
 	ctx.logTags = listDirNames(ctx.logDir)
 
 	// Scratch directory names.
@@ -543,7 +537,7 @@ func loadCompletionCtx(globals globalFlags) completionCtx {
 	if cfgErr == nil {
 		roots := make([]string, 0, len(cfg.Repo.Roots))
 		for _, r := range cfg.Repo.Roots {
-			if res, err := config.ResolvePath(resolved, r); err == nil {
+			if res, err := wsconfig.ResolvePath(resolved, r); err == nil {
 				roots = append(roots, res)
 			}
 		}

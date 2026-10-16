@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
 )
 
 func TestMain(m *testing.M) {
@@ -63,17 +62,6 @@ func testSetXDG(t *testing.T) {
 func testConfigPath(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), "ws-tool", "config.json")
-}
-
-// xdgConfigPath returns the XDG config path that config.DefaultPath() would resolve
-// to in the current test environment. Useful for tests that need to write custom config.
-func xdgConfigPath(t *testing.T) string {
-	t.Helper()
-	p, err := config.DefaultPath()
-	if err != nil {
-		t.Fatalf("config.DefaultPath: %v", err)
-	}
-	return p
 }
 
 // initWorkspace initialises a workspace with an isolated XDG config.

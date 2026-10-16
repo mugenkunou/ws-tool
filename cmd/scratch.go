@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/scratch"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 var scratchHelp = cmdHelp{
@@ -41,13 +41,12 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	wsDir := filepath.Join(workspacePath, "ws")
-	cfg, err := config.Load(configPath)
+	cfg, err := wsconfig.Load(configPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	rootDir, err := config.ResolvePath(workspacePath, cfg.Scratch.RootDir)
+	rootDir, err := wsconfig.ResolvePath(workspacePath, cfg.Scratch.RootDir)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -105,7 +104,7 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			Description: "Create scratch directory",
 			Execute: func() error {
 				var err error
-				res, err = scratch.New(scratch.NewOptions{RootDir: rootDir, Name: name, NoDateSuffix: *noDateSuffix, SuffixMode: cfg.Scratch.NameSuffix, DryRun: false})
+				res, err = scratch.New(scratch.NewOptions{RootDir: rootDir, Name: name, NoDateSuffix: *noDateSuffix, SuffixMode: "auto", DryRun: false})
 				return err
 			},
 		})
@@ -405,9 +404,9 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 					fmt.Fprintln(stderr, err.Error())
 					return 1
 				}
-				tc, _ := scratch.LoadTags(wsDir)
+				tc, _ := scratch.LoadTags(configPath)
 				if scratch.MergeTags(&tc, meta.Tags) {
-					_ = scratch.SaveTags(wsDir, tc)
+					_ = scratch.SaveTags(configPath, tc)
 				}
 			}
 			if globals.json {
@@ -417,7 +416,7 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		}
 
 		// Interactive multi-tag input with ghost suggestions from tag collection.
-		tc, _ := scratch.LoadTags(wsDir)
+		tc, _ := scratch.LoadTags(configPath)
 		gmi := &tui.GhostMultiInput{
 			Prompt:  "Tag",
 			Entries: tc.Tags,
@@ -464,7 +463,7 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		}
 		// Merge into workspace tag collection.
 		if scratch.MergeTags(&tc, added) {
-			_ = scratch.SaveTags(wsDir, tc)
+			_ = scratch.SaveTags(configPath, tc)
 		}
 
 		if globals.json {

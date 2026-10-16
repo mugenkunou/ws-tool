@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // SpecialRepos returns repos managed by ws itself (dotfiles and pass store)
@@ -22,7 +22,7 @@ func SpecialRepos(workspacePath string) []Repository {
 	// Pass store: $PASSWORD_STORE_DIR or ~/.password-store
 	passStorePath := ""
 	if env := os.Getenv("PASSWORD_STORE_DIR"); env != "" {
-		if abs, err := config.ExpandUserPath(env); err == nil {
+		if abs, err := wsconfig.ExpandUserPath(env); err == nil {
 			passStorePath = abs
 		}
 	} else if home, err := os.UserHomeDir(); err == nil {

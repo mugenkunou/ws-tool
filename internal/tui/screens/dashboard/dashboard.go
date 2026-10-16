@@ -19,7 +19,6 @@ package dashboard
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -50,7 +49,6 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/secrets"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
-	"github.com/mugenkunou/ws-tool/internal/workspace"
 )
 
 type severity int
@@ -345,17 +343,16 @@ func (m Model) allLoaded() bool {
 	return true
 }
 
-// openReset mirrors `ws reset`: undo dotfiles and trash, remove ws/ and the
-// config. Nothing is pre-checked — this is destructive.
+// openReset reverses `ws init`: resets dotfiles and trash, then removes
+// configs/ws.json. Nothing is pre-checked — this is destructive.
 func (m Model) openReset() Model {
 	p := m.env.Paths
-	wsDir := filepath.Join(p.Workspace, "ws")
 	pl := plan.Plan{Command: "reset", Actions: []plan.Action{
 		{
 			ID:          "reset-dotfiles",
 			Description: "Reset dotfiles (restore originals, remove symlinks)",
 			Execute: func() error {
-				_, err := dotfile.Reset(dotfile.ResetOptions{WorkspacePath: p.Workspace, ManifestPath: p.Manifest})
+				_, err := dotfile.Reset(dotfile.ResetOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config})
 				return err
 			},
 		},
@@ -363,14 +360,9 @@ func (m Model) openReset() Model {
 			ID:          "reset-trash",
 			Description: "Reset trash setup (remove script and aliases)",
 			Execute: func() error {
-				_, err := wstrash.Reset(wstrash.ResetOptions{WorkspacePath: p.Workspace, ManifestPath: p.Manifest})
+				_, err := wstrash.Reset(wstrash.ResetOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config})
 				return err
 			},
-		},
-		{
-			ID:          "remove-ws-dir",
-			Description: "Remove " + wsDir,
-			Execute:     func() error { return os.RemoveAll(wsDir) },
 		},
 		{
 			ID:          "remove-config",
@@ -384,9 +376,6 @@ func (m Model) openReset() Model {
 		},
 	}}
 	note := "Reverses `ws init`. Tick each step to undo (a selects all)."
-	if entries, err := workspace.Provisions(p.Workspace); err == nil && len(entries) > 0 {
-		note += fmt.Sprintf(" %s recorded.", format.Plural(len(entries), "provision"))
-	}
 	c := confirm.New("Reset workspace", pl).WithNote(note).WithChecked(func(int, plan.Action) bool { return false })
 	m.modal = m.modal.Confirm(stepReset, c)
 	return m
@@ -454,7 +443,7 @@ func dotfilesArea(msg dotfiles.LoadedMsg) area {
 		first := ""
 		for _, e := range msg.Entries {
 			if e.Status != "" {
-				first = e.Record.System
+				first = e.Link.System
 				break
 			}
 		}

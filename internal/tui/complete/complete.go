@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 const maxEntries = 50
@@ -31,7 +31,7 @@ func paths(value string, dirsOnly bool) []string {
 			dirPart = ""
 		}
 	}
-	abs, err := config.ExpandUserPath(orDot(dirPart))
+	abs, err := wsconfig.ExpandUserPath(orDot(dirPart))
 	if err != nil {
 		return nil
 	}

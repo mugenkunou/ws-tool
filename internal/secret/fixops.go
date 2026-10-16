@@ -5,9 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/repo"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // Mutations behind `ws secret fix`, shared by the CLI and the TUI.
@@ -15,50 +14,29 @@ import (
 // Anchor is the stored (workspace-relative) allowlist form of a violation.
 func Anchor(v Violation) string { return fmt.Sprintf("%s:%d", v.Path, v.Line) }
 
-// AllowlistMap builds the scan allowlist from the manifest.
-func AllowlistMap(m manifest.Manifest) map[string]struct{} {
-	allow := make(map[string]struct{}, len(m.Secret.Allowlist))
-	for _, a := range m.Secret.Allowlist {
-		allow[a] = struct{}{}
-	}
-	return allow
+// AllowlistMap builds the scan allowlist from the config.
+// Deprecated: use wsconfig.AllowlistMap directly.
+func AllowlistMap(cfg wsconfig.WsConfig) map[string]struct{} {
+	return wsconfig.AllowlistMap(cfg)
 }
 
-// AddToAllowlist records anchor in the manifest allowlist (idempotent).
-func AddToAllowlist(manifestPath, anchor string) error {
-	m, err := manifest.Load(manifestPath)
-	if err != nil {
-		return err
-	}
-	for _, a := range m.Secret.Allowlist {
-		if a == anchor {
-			return nil
-		}
-	}
-	m.Secret.Allowlist = append(m.Secret.Allowlist, anchor)
-	return manifest.Save(manifestPath, m)
+// AddToAllowlist records anchor in the config allowlist (idempotent).
+// Deprecated: use wsconfig.AddToAllowlist directly.
+func AddToAllowlist(configPath, anchor string) error {
+	return wsconfig.AddToAllowlist(configPath, anchor)
 }
 
-// TrackPassEntry records that anchor was resolved by storing it in pass.
-func TrackPassEntry(manifestPath, anchor string) error {
-	m, err := manifest.Load(manifestPath)
-	if err != nil {
-		return err
-	}
-	for _, e := range m.Secret.PassEntries {
-		if e == anchor {
-			return nil
-		}
-	}
-	m.Secret.PassEntries = append(m.Secret.PassEntries, anchor)
-	return manifest.Save(manifestPath, m)
+// TrackPassEntry records that anchor was resolved by storing it in the allowlist.
+// (In the new layout there is no separate PassEntries field — we reuse the allowlist.)
+func TrackPassEntry(configPath, anchor string) error {
+	return wsconfig.AddToAllowlist(configPath, anchor)
 }
 
 // WorkspaceRelDir resolves a user-supplied directory (absolute, ~, or
 // relative to the cwd) to its workspace-relative form; it must be inside the
 // workspace.
 func WorkspaceRelDir(workspacePath, input string) (string, error) {
-	abs, err := config.ExpandUserPath(input)
+	abs, err := wsconfig.ExpandUserPath(input)
 	if err != nil {
 		return "", fmt.Errorf("invalid directory %q: %w", input, err)
 	}
@@ -72,6 +50,23 @@ func WorkspaceRelDir(workspacePath, input string) (string, error) {
 	return filepath.ToSlash(rel), nil
 }
 
+// workspaceRel resolves a path to workspace-relative form.
+func workspaceRel(workspacePath, value string) (rel string, ok bool) {
+	abs, err := wsconfig.ResolvePath(workspacePath, value)
+	if err != nil {
+		return "", false
+	}
+	r, err := filepath.Rel(filepath.Clean(workspacePath), abs)
+	if err != nil {
+		return "", false
+	}
+	r = filepath.ToSlash(r)
+	if r == ".." || strings.HasPrefix(r, "../") {
+		return "", false
+	}
+	return r, true
+}
+
 // MergeSkipDirs combines config and flag skip dirs, deduplicating and
 // normalizing to forward-slash workspace-relative paths. Config values follow
 // the config path convention (relative, absolute, or ~); extra values are
@@ -80,7 +75,7 @@ func MergeSkipDirs(workspacePath string, configDirs, extra []string) []string {
 	seen := make(map[string]bool)
 	var result []string
 	for _, d := range append(append([]string{}, configDirs...), extra...) {
-		rel, ok := config.WorkspaceRel(workspacePath, strings.TrimSpace(d))
+		rel, ok := workspaceRel(workspacePath, strings.TrimSpace(d))
 		if !ok || rel == "." || seen[rel] {
 			continue
 		}
@@ -90,10 +85,10 @@ func MergeSkipDirs(workspacePath string, configDirs, extra []string) []string {
 	return result
 }
 
-// AddSkipDir appends a workspace-relative dir to secret.skip_dirs in config
+// AddSkipDir appends a workspace-relative dir to secret.skip_dirs in the ws config
 // (idempotent).
 func AddSkipDir(configPath, dir string) error {
-	cfg, err := config.Load(configPath)
+	cfg, err := wsconfig.Load(configPath)
 	if err != nil {
 		return err
 	}
@@ -103,5 +98,5 @@ func AddSkipDir(configPath, dir string) error {
 		}
 	}
 	cfg.Secret.SkipDirs = append(cfg.Secret.SkipDirs, dir)
-	return config.Save(configPath, cfg)
+	return wsconfig.Save(configPath, cfg)
 }

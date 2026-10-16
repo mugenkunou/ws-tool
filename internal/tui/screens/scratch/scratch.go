@@ -8,7 +8,6 @@ package scratch
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -142,7 +141,7 @@ func Load(e env.Env) tea.Cmd {
 		if err != nil {
 			return LoadedMsg{Err: err}
 		}
-		tc, _ := wsscratch.LoadTags(filepath.Join(e.Paths.Workspace, "ws"))
+		tc, _ := wsscratch.LoadTags(e.Paths.Config)
 		return LoadedMsg{Entries: entries, Tags: tc.Tags}
 	}
 }
@@ -396,7 +395,8 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 }
 
 func (m Model) openNew(name string) Model {
-	root, suffix := m.env.ScratchDir, m.env.Config.Scratch.NameSuffix
+	root := m.env.ScratchDir
+	suffix := "auto" // NameSuffix removed from new layout; default to "auto"
 	path := new(string)
 	p := plan.Plan{Command: "scratch.new", Actions: []plan.Action{{
 		ID:          "scratch-new",
@@ -445,7 +445,7 @@ func (m Model) openAutoTag(msg autoTagMsg) Model {
 // tagAction adds tags to a scratch dir's metadata and the workspace tag
 // collection. Each action reloads the metadata, so several can run in turn.
 func (m Model) tagAction(e wsscratch.Entry, tags []string, desc string) plan.Action {
-	wsDir := filepath.Join(m.env.Paths.Workspace, "ws")
+	configPath := m.env.Paths.Config
 	return plan.Action{
 		ID:          "tag-" + e.Name + "-" + strings.Join(tags, ","),
 		Description: desc,
@@ -458,9 +458,9 @@ func (m Model) tagAction(e wsscratch.Entry, tags []string, desc string) plan.Act
 			if err := wsscratch.SaveMeta(e.Path, meta); err != nil {
 				return err
 			}
-			tc, _ := wsscratch.LoadTags(wsDir)
+			tc, _ := wsscratch.LoadTags(configPath)
 			if wsscratch.MergeTags(&tc, meta.Tags) {
-				return wsscratch.SaveTags(wsDir, tc)
+				return wsscratch.SaveTags(configPath, tc)
 			}
 			return nil
 		},

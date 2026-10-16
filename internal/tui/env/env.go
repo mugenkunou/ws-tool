@@ -10,9 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // ErrNotInitialized means the resolved workspace has no ws config.
@@ -21,7 +20,7 @@ var ErrNotInitialized = errors.New("workspace not initialized — run `ws init` 
 // Env is the resolved workspace context.
 type Env struct {
 	Paths       workspace.Paths
-	Config      config.Config
+	Config      wsconfig.WsConfig
 	RepoRoots   []string // absolute
 	ExcludeDirs []string
 	ScratchDir  string // absolute
@@ -49,10 +48,8 @@ func Load(o workspace.PathOverrides) (Env, error) {
 	if !workspace.ConfigExists(p.Config) {
 		return Env{Paths: p}, ErrNotInitialized
 	}
-	// Migrate manifest to schema 2 if needed, as the CLI does.
-	_ = manifest.MigrateIfNeeded(p.Manifest)
 
-	cfg, err := config.Load(p.Config)
+	cfg, err := wsconfig.Load(p.Config)
 	if err != nil {
 		return Env{Paths: p}, err
 	}
@@ -61,14 +58,14 @@ func Load(o workspace.PathOverrides) (Env, error) {
 		Paths:       p,
 		Config:      cfg,
 		ExcludeDirs: cfg.Repo.ExcludeDirs,
-		LogDir:      filepath.Join(p.Workspace, "ws", "ws-log"),
+		LogDir:      filepath.Join(p.Workspace, "data", "ws-log"),
 	}
 	for _, r := range cfg.Repo.Roots {
-		if resolved, err := config.ResolvePath(p.Workspace, r); err == nil {
+		if resolved, err := wsconfig.ResolvePath(p.Workspace, r); err == nil {
 			e.RepoRoots = append(e.RepoRoots, resolved)
 		}
 	}
-	if dir, err := config.ResolvePath(p.Workspace, cfg.Scratch.RootDir); err == nil {
+	if dir, err := wsconfig.ResolvePath(p.Workspace, cfg.Scratch.RootDir); err == nil {
 		e.ScratchDir = dir
 	}
 	return e, nil
@@ -77,7 +74,8 @@ func Load(o workspace.PathOverrides) (Env, error) {
 // Rel shortens an absolute path for display relative to the workspace, or
 // the home directory, falling back to the path itself.
 func (e Env) Rel(path string) string {
-	if rel, ok := config.WorkspaceRel(e.Paths.Workspace, path); ok && rel != "." {
+	ws := e.Paths.Workspace
+	if rel, err := filepath.Rel(ws, path); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
 		return rel
 	}
 	if home, err := os.UserHomeDir(); err == nil {

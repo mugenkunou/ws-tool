@@ -12,10 +12,9 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
-	"github.com/mugenkunou/ws-tool/internal/manifest"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 type globalFlags struct {
@@ -67,10 +66,6 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runVersion(commandArgs, globals, stdout, stderr)
 	case "init":
 		return runInit(commandArgs, globals, stdin, stdout, stderr)
-	case "reset":
-		return runReset(commandArgs, globals, stdin, stdout, stderr)
-	case "restore":
-		return runRestore(commandArgs, globals, stdin, stdout, stderr)
 	case "config":
 		return runConfig(commandArgs, globals, stdout, stderr)
 	case "dotfile":
@@ -87,8 +82,6 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runRepo(commandArgs, globals, stdin, stdout, stderr)
 	case "trash":
 		return runTrash(commandArgs, globals, stdin, stdout, stderr)
-	case "capture":
-		return runCapture(commandArgs, globals, stdin, stdout, stderr)
 	case "cron":
 		return runCron(commandArgs, globals, stdin, stdout, stderr)
 	case "tui":
@@ -321,7 +314,7 @@ func writeJSONDryRun(stdout, stderr io.Writer, command string, dryRun bool, data
 }
 
 // resolveGlobalPaths resolves the path-valued global flags (--workspace,
-// --config, --manifest) in place, per spec "Path Rules": absolute as is, ~
+// --config) in place, per spec "Path Rules": absolute as is, ~
 // expanded, anything else relative to the current directory. Empty values stay
 // empty so callers can still apply their defaults.
 func resolveGlobalPaths(globals *globalFlags) error {
@@ -336,7 +329,7 @@ func resolveGlobalPaths(globals *globalFlags) error {
 		if *f.v == "" {
 			continue
 		}
-		abs, err := config.ExpandUserPath(*f.v)
+		abs, err := wsconfig.ExpandUserPath(*f.v)
 		if err != nil {
 			return fmt.Errorf("invalid --%s: %w", f.name, err)
 		}
@@ -345,8 +338,9 @@ func resolveGlobalPaths(globals *globalFlags) error {
 	return nil
 }
 
-// resolveWorkspacePaths resolves the workspace, config, and manifest paths
-// without side effects: flag → env → config file → default, all absolute.
+// resolveWorkspacePaths resolves the workspace and config paths without
+// side effects: flag → env → default, all absolute.
+// Returns workspacePath, configPath, manifestPath (=configPath for compat).
 func resolveWorkspacePaths(globals globalFlags) (workspacePath, configPath, manifestPath string, err error) {
 	if err := resolveGlobalPaths(&globals); err != nil {
 		return "", "", "", err
@@ -370,15 +364,12 @@ func requireWorkspaceInitialized(globals globalFlags, stderr ...io.Writer) (stri
 
 	// Verbose: log resolved paths if stderr was provided.
 	if len(stderr) > 0 && stderr[0] != nil {
-		verboseLog(globals, stderr[0], "workspace=%s config=%s manifest=%s", resolvedWorkspace, configPath, manifestPath)
+		verboseLog(globals, stderr[0], "workspace=%s config=%s", resolvedWorkspace, configPath)
 	}
 
 	if !workspace.ConfigExists(configPath) {
 		return "", "", "", errors.New("Error: workspace not initialized.\nRun `ws init` to set up this directory as a ws workspace.")
 	}
-
-	// Migrate manifest to schema 2 if needed (absorbs provisions.json + ignore.json).
-	_ = manifest.MigrateIfNeeded(manifestPath)
 
 	return resolvedWorkspace, configPath, manifestPath, nil
 }
@@ -411,9 +402,9 @@ func runConfig(args []string, globals globalFlags, stdout, stderr io.Writer) int
 			return 1
 		}
 		// Printed in stored (config-file) form so it can be redirected into
-		// config.json; the one documented exception to absolute output (spec
+		// ws.json; the one documented exception to absolute output (spec
 		// "Path Rules"). `ws config view` shows resolved absolute values.
-		defaults := config.Default()
+		defaults := wsconfig.Default()
 		if globals.json {
 			return writeJSON(stdout, stderr, "config.defaults", defaults)
 		}
@@ -445,20 +436,24 @@ func runConfig(args []string, globals globalFlags, stdout, stderr io.Writer) int
 		return 1
 	}
 
-	cfg, err := config.Load(configPath)
+	cfg, err := wsconfig.Load(configPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	// "Resolved config": every path value shown absolute (spec "Path Rules").
-	cfg = config.WithAbsPaths(cfg, workspacePath)
-	cfg.Workspace = workspacePath
+
+	// Annotate with absolute workspace path for display.
+	type viewPayload struct {
+		wsconfig.WsConfig
+		Workspace string `json:"workspace"`
+	}
+	view := viewPayload{WsConfig: cfg, Workspace: workspacePath}
 
 	if globals.json {
-		return writeJSON(stdout, stderr, "config.view", cfg)
+		return writeJSON(stdout, stderr, "config.view", view)
 	}
 
-	encoded, err := json.MarshalIndent(cfg, "", "  ")
+	encoded, err := json.MarshalIndent(view, "", "  ")
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -486,15 +481,12 @@ func printHelpStyled(stdout io.Writer, noColor bool) {
 		{"version", "Print version information"},
 		{"tui", "Interactive terminal UI"},
 		{"init", "Initialize a ws workspace"},
-		{"reset", "Reverse ws init — undo all provisions"},
-		{"restore", "Guided restore workflow"},
 		{"dotfile", "Manage workspace-backed dotfiles"},
 		{"cron", "Managed cron jobs"},
 		{"repo", "Repository fleet operations"},
 		{"trash", "Soft-delete setup and status"},
 		{"log", "Session recording commands"},
 		{"scratch", "Scratch directory commands"},
-		{"capture", "Frictionless knowledge capture"},
 		{"completions", "Generate shell completions"},
 		{"ignore", "Ignore rule scan/check"},
 		{"secret", "Secret scanning and pass store management"},
@@ -509,9 +501,8 @@ func printHelpStyled(stdout io.Writer, noColor bool) {
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, style.Boldf(noColor, "Global Flags:"))
 	flags := []string{
-		"  -w, --workspace string   Path to workspace root (default: from config, or ~/Workspace)",
-		"  -c, --config string      Path to config file (default: $XDG_CONFIG_HOME/ws-tool/config.json)",
-		"      --manifest string    Path to manifest file (default: <workspace>/ws/manifest.json)",
+		"  -w, --workspace string   Path to workspace root (default: $WS_WORKSPACE or ~/Workspace)",
+		"  -c, --config string      Path to ws.json (default: <workspace>/configs/ws.json)",
 		"  -q, --quiet              Errors only (default: false)",
 		"      --verbose            Show internal decisions (default: false)",
 		"      --json               Machine-readable output (default: false)",

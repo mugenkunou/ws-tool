@@ -172,7 +172,7 @@ func TestCronLogJobFilter(t *testing.T) {
 	// Pre-create a log file in the expected location.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	logDir := filepath.Join(home, ".local", "share", "ws")
+	logDir := filepath.Join(home, ".local", "state", "ws-tool")
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -250,11 +250,73 @@ func TestCronAddPreflightAccessDenied(t *testing.T) {
 		t.Errorf("expected 'crontab access denied' in stderr, got: %s", errOut.String())
 	}
 
-	// No wrapper script should have been written.
-	home := os.Getenv("HOME")
-	scriptGlob := filepath.Join(home, ".local", "share", "ws-tool", "cron-jobs", "log-prune.sh")
-	if _, err := os.Stat(scriptGlob); err == nil {
-		t.Error("wrapper script should NOT be written when preflight fails")
+	// No crontab entry should have been written (preflight runs before any write).
+	// Since cron add no longer writes wrapper scripts, there is nothing extra to check.
+}
+
+// ── cron run/apply tests ─────────────────────────────────────────────────────
+
+// TestCronRunUnknownJob verifies ws cron run exits with an error for unknown jobs.
+func TestCronRunUnknownJob(t *testing.T) {
+	testSetXDG(t)
+	workspace := newTestWorkspace(t)
+	var out, errOut bytes.Buffer
+	code := Execute([]string{"--workspace", workspace, "cron", "run", "no-such-job"},
+		strings.NewReader(""), &out, &errOut)
+	if code == 0 {
+		t.Fatal("expected non-zero for unknown cron job")
+	}
+	if !strings.Contains(errOut.String(), "unknown cron job") {
+		t.Errorf("expected 'unknown cron job' in stderr, got: %s", errOut.String())
+	}
+}
+
+// TestCronRunMissingArg verifies ws cron run exits with error when no job is given.
+func TestCronRunMissingArg(t *testing.T) {
+	testSetXDG(t)
+	workspace := newTestWorkspace(t)
+	var out, errOut bytes.Buffer
+	code := Execute([]string{"--workspace", workspace, "cron", "run"},
+		strings.NewReader(""), &out, &errOut)
+	if code == 0 {
+		t.Fatal("expected non-zero when no job name given to cron run")
+	}
+}
+
+// TestCronApplyMissingFile verifies ws cron apply fails when configs/crontab is absent.
+func TestCronApplyMissingFile(t *testing.T) {
+	testSetXDG(t)
+	workspace := newTestWorkspace(t)
+	// Do not create configs/crontab — it should not exist after plain init.
+	var out, errOut bytes.Buffer
+	code := Execute([]string{"--workspace", workspace, "cron", "apply"},
+		strings.NewReader(""), &out, &errOut)
+	if code == 0 {
+		t.Fatalf("expected non-zero when configs/crontab is absent; stdout=%s stderr=%s",
+			out.String(), errOut.String())
+	}
+}
+
+// TestCronApplyDryRun verifies ws cron apply --dry-run reports nothing to apply
+// when no ws blocks are present in configs/crontab.
+func TestCronApplyDryRun(t *testing.T) {
+	testSetXDG(t)
+	workspace := newTestWorkspace(t)
+
+	// Create a minimal crontab file with no ws blocks.
+	crontabPath := filepath.Join(workspace, "configs", "crontab")
+	if err := os.WriteFile(crontabPath, []byte("# user cron\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errOut bytes.Buffer
+	code := Execute([]string{
+		"--workspace", workspace,
+		"cron", "apply", "--dry-run",
+	}, strings.NewReader(""), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("cron apply --dry-run: code=%d stderr=%s stdout=%s",
+			code, errOut.String(), out.String())
 	}
 }
 

@@ -18,7 +18,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/mugenkunou/ws-tool/internal/config"
 	"github.com/mugenkunou/ws-tool/internal/plan"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	wstrash "github.com/mugenkunou/ws-tool/internal/trash"
@@ -93,11 +92,10 @@ func New(e env.Env) Model {
 }
 
 func root(e env.Env) string {
-	r := config.WithAbsPaths(e.Config, e.Paths.Workspace).Trash.RootDir
-	if r == "" {
-		r, _ = config.ExpandUserPath("~/.local/share/Trash")
-	}
-	return r
+	// The new layout does not have a Trash field in wsconfig;
+	// use the standard XDG trash location unconditionally.
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "share", "Trash")
 }
 
 // Load reads trash status, size, and the trashed items (under the trash
@@ -109,7 +107,7 @@ func Load(e env.Env) tea.Cmd {
 			return LoadedMsg{Err: err}
 		}
 		msg := LoadedMsg{Status: st}
-		msg.Scan, _ = wstrash.Scan(wstrash.ScanOptions{RootDir: st.RootDir, WarnSizeMB: e.Config.Trash.WarnSizeMB})
+		msg.Scan, _ = wstrash.Scan(wstrash.ScanOptions{RootDir: st.RootDir, WarnSizeMB: 1024})
 		filesDir := filepath.Join(st.RootDir, "files")
 		entries, err := os.ReadDir(filesDir)
 		if err != nil {
@@ -238,7 +236,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 // openEnable mirrors `ws trash enable` with all integrations (use the CLI's
 // --no-… flags for a subset: the state file records one combination).
 func (m Model) openEnable() Model {
-	r, mp := root(m.env), m.env.Paths.Manifest
+	r, mp := root(m.env), m.env.Paths.Config
 	pl := plan.Plan{Command: "trash.enable", Actions: []plan.Action{
 		{
 			ID:          "trash-setup",
@@ -270,7 +268,7 @@ func (m Model) openDisable() Model {
 		ID:          "trash-reset",
 		Description: "Remove soft-delete integrations (script, aliases, symlink)",
 		Execute: func() error {
-			_, err := wstrash.Reset(wstrash.ResetOptions{WorkspacePath: p.Workspace, ManifestPath: p.Manifest})
+			_, err := wstrash.Reset(wstrash.ResetOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config})
 			return err
 		},
 	}}}

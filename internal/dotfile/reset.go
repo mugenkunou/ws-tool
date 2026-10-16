@@ -5,22 +5,21 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mugenkunou/ws-tool/internal/manifest"
-	"github.com/mugenkunou/ws-tool/internal/provision"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // ResetOptions configures a dotfile reset operation.
 type ResetOptions struct {
 	WorkspacePath string
-	ManifestPath  string
+	ConfigPath    string
 	DryRun        bool
 }
 
 // ResetEntry describes the outcome of resetting a single dotfile.
 type ResetEntry struct {
-	Record  manifest.DotfileRecord `json:"record"`
-	Action  string                 `json:"action"` // "restored", "would-restore", "skipped", "failed"
-	Message string                 `json:"message"`
+	Link    wsconfig.Link `json:"link"`
+	Action  string        `json:"action"` // "restored", "would-restore", "skipped", "failed"
+	Message string        `json:"message"`
 }
 
 // ResetResult describes the outcome of a full dotfile reset.
@@ -32,8 +31,7 @@ type ResetResult struct {
 
 // Reset undoes all managed dotfile symlinks: removes symlinks at system
 // paths, restores the original files from the workspace, and clears dotfile
-// records from the manifest. It also removes the matching symlink provisions
-// from the ledger.
+// link records from ws.json.
 func Reset(opts ResetOptions) (ResetResult, error) {
 	result := ResetResult{
 		Entries:  []ResetEntry{},
@@ -41,26 +39,24 @@ func Reset(opts ResetOptions) (ResetResult, error) {
 		DryRun:   opts.DryRun,
 	}
 
-	m, err := manifest.Load(opts.ManifestPath)
+	cfg, err := wsconfig.Load(opts.ConfigPath)
 	if err != nil {
 		return result, err
 	}
 
-	if len(m.Dotfiles) == 0 {
+	if len(cfg.Links) == 0 {
 		result.Messages = append(result.Messages, "No managed dotfiles.")
 		return result, nil
 	}
 
-	manifestPath := opts.ManifestPath
+	for _, link := range cfg.Links {
+		entry := ResetEntry{Link: link}
 
-	for _, record := range m.Dotfiles {
-		entry := ResetEntry{Record: record}
-
-		workspaceAbs := filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(record.Name)))
+		workspaceAbs := filepath.Join(opts.WorkspacePath, filepath.FromSlash(DotfilePath(link.Original, link.Class)))
 
 		if opts.DryRun {
 			entry.Action = "would-restore"
-			entry.Message = fmt.Sprintf("would remove symlink %s and restore from %s", record.System, workspaceAbs)
+			entry.Message = fmt.Sprintf("would remove symlink %s and restore from %s", link.System, workspaceAbs)
 			result.Entries = append(result.Entries, entry)
 			continue
 		}
@@ -74,72 +70,79 @@ func Reset(opts ResetOptions) (ResetResult, error) {
 		}
 
 		// Remove the symlink (or whatever is at the system path now).
-		if _, err := os.Lstat(record.System); err == nil {
+		if _, err := os.Lstat(link.System); err == nil {
 			var rmErr error
-			if record.Sudo {
-				rmErr = sudoRemoveAll(record.System)
+			if link.Sudo {
+				rmErr = sudoRemoveAll(link.System)
 			} else {
-				rmErr = os.RemoveAll(record.System)
+				rmErr = os.RemoveAll(link.System)
 			}
 			if rmErr != nil {
 				entry.Action = "failed"
-				entry.Message = fmt.Sprintf("failed to remove %s: %s", record.System, rmErr)
+				entry.Message = fmt.Sprintf("failed to remove %s: %s", link.System, rmErr)
 				result.Entries = append(result.Entries, entry)
 				continue
 			}
 		}
 
 		// Restore original file from workspace → system path.
-		if record.Sudo {
-			if mkErr := sudoMkdirAll(filepath.Dir(record.System)); mkErr != nil {
+		if link.Sudo {
+			if mkErr := sudoMkdirAll(filepath.Dir(link.System)); mkErr != nil {
 				entry.Action = "failed"
 				entry.Message = mkErr.Error()
 				result.Entries = append(result.Entries, entry)
 				continue
 			}
-			if mvErr := sudoRename(workspaceAbs, record.System); mvErr != nil {
+			if mvErr := sudoRename(workspaceAbs, link.System); mvErr != nil {
 				entry.Action = "failed"
-				entry.Message = fmt.Sprintf("failed to restore %s: %s", record.System, mvErr)
+				entry.Message = fmt.Sprintf("failed to restore %s: %s", link.System, mvErr)
 				result.Entries = append(result.Entries, entry)
 				continue
 			}
 		} else {
-			if err := os.MkdirAll(filepath.Dir(record.System), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(link.System), 0o755); err != nil {
 				entry.Action = "failed"
 				entry.Message = err.Error()
 				result.Entries = append(result.Entries, entry)
 				continue
 			}
-			if err := movePath(workspaceAbs, record.System); err != nil {
+			if err := movePath(workspaceAbs, link.System); err != nil {
 				entry.Action = "failed"
-				entry.Message = fmt.Sprintf("failed to restore %s: %s", record.System, err)
+				entry.Message = fmt.Sprintf("failed to restore %s: %s", link.System, err)
 				result.Entries = append(result.Entries, entry)
 				continue
 			}
 		}
 
-		// Remove symlink provision.
-		_ = manifest.RemoveProvision(manifestPath, provision.TypeSymlink, record.System)
-
 		entry.Action = "restored"
-		entry.Message = fmt.Sprintf("restored %s", record.System)
+		entry.Message = fmt.Sprintf("restored %s", link.System)
 		result.Entries = append(result.Entries, entry)
 	}
 
-	// Clear dotfile records from manifest (keep only failed ones).
+	// Clear link records from config (keep only failed ones).
 	if !opts.DryRun {
-		var remaining []manifest.DotfileRecord
-		for _, entry := range result.Entries {
-			if entry.Action == "failed" {
-				remaining = append(remaining, entry.Record)
+		reloadedCfg, err := wsconfig.Load(opts.ConfigPath)
+		if err != nil {
+			return result, fmt.Errorf("reloading config: %w", err)
+		}
+		failedSystems := make(map[string]struct{})
+		for _, e := range result.Entries {
+			if e.Action == "failed" {
+				failedSystems[e.Link.System] = struct{}{}
+			}
+		}
+		remaining := reloadedCfg.Links[:0:0]
+		for _, l := range reloadedCfg.Links {
+			if _, isFailed := failedSystems[l.System]; isFailed {
+				remaining = append(remaining, l)
 			}
 		}
 		if remaining == nil {
-			remaining = []manifest.DotfileRecord{}
+			remaining = []wsconfig.Link{}
 		}
-		m.Dotfiles = remaining
-		if err := manifest.Save(opts.ManifestPath, m); err != nil {
-			return result, fmt.Errorf("saving manifest: %w", err)
+		reloadedCfg.Links = remaining
+		if err := wsconfig.Save(opts.ConfigPath, reloadedCfg); err != nil {
+			return result, fmt.Errorf("saving config: %w", err)
 		}
 	}
 

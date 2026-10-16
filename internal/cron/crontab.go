@@ -71,17 +71,20 @@ func HasJob(name string) (bool, error) {
 
 // AddJob adds (or replaces) the named job's block in the crontab.
 //
+// Each block calls `<wsBin> cron run <name>` directly — no separate wrapper
+// script is needed. wsBin must be an absolute path since cron doesn't expand ~.
+//
 // The block written is:
 //
 //	# >>> ws:<name> >>>
 //	SHELL=/usr/bin/bash
-//	<schedule> <scriptPath>
-//	@reboot <scriptPath>
+//	<schedule> <wsBin> cron run <name>
+//	@reboot <wsBin> cron run <name>
 //	# <<< ws:<name> <<<
 //
-// The @reboot entry enables missed-run recovery on boot/resume: the wrapper
-// script checks its state file and skips if the last run was recent enough.
-func AddJob(job *BuiltinJob, scriptPath string) error {
+// The @reboot entry enables missed-run recovery on boot/resume: RunJob checks
+// its state file and skips if the last run was recent enough.
+func AddJob(job *BuiltinJob, wsBin string) error {
 	ct, err := ReadCrontab()
 	if err != nil {
 		return err
@@ -90,11 +93,12 @@ func AddJob(job *BuiltinJob, scriptPath string) error {
 	// Remove existing block for this job (idempotent replace).
 	ct = removeBlock(ct, job.Name)
 
+	runCmd := fmt.Sprintf("%s cron run %s", wsBin, job.Name)
 	block := fmt.Sprintf(
 		"%s\nSHELL=/usr/bin/bash\n%s %s\n@reboot %s\n%s\n",
 		CronMarkerStart(job.Name),
-		job.Schedule, scriptPath,
-		scriptPath,
+		job.Schedule, runCmd,
+		runCmd,
 		CronMarkerEnd(job.Name),
 	)
 
