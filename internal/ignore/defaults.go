@@ -69,10 +69,24 @@ var defaultExcludeRules = []Rule{
 	{Raw: "-g:*.parquet", Include: false, Glob: true, Pattern: "*.parquet"},
 }
 
-// defaultHarborRules are the built-in safe harbor include overrides.
-// These appear after all excludes in the megaignore evaluation order.
-// ws/ cannot be suppressed (tool metadata). Archive/ can be suppressed.
-var defaultHarborRules = []Rule{
-	{Raw: "+:ws", Include: true, Glob: false, Pattern: "ws"},
-	{Raw: "+g:ws/**", Include: true, Glob: true, Pattern: "ws/**"},
+// LayoutHarborBlocks are the layout blocks whose sync column is "all":
+// everything in them syncs, dot-files and .git included (phase-1 layout).
+// The other blocks (notes, experiments, references, scripts, agent) are
+// filtered by the default excludes.
+var LayoutHarborBlocks = []string{"artifacts", "configs", "secrets", "data", "archive"}
+
+// defaultHarborRules are the built-in safe harbor include overrides, one per
+// "all" block. They appear after all excludes, and MEGA evaluates rules
+// last-match-wins, so they win over them. Each is a path glob: MEGA treats a
+// pattern with a "/" as a path rule, and its "*" also matches "/", so
+// "+g:secrets/**" covers everything below secrets/. A name rule (+:secrets)
+// would match only items named secrets, not their contents.
+var defaultHarborRules = layoutHarborRules()
+
+func layoutHarborRules() []Rule {
+	rules := make([]Rule, 0, len(LayoutHarborBlocks))
+	for _, b := range LayoutHarborBlocks {
+		rules = append(rules, Rule{Raw: "+g:" + b + "/**", Include: true, Glob: true, Pattern: b + "/**"})
+	}
+	return rules
 }

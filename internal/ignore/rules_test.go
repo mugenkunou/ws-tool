@@ -58,20 +58,36 @@ func TestBuildEngineWithDefaults(t *testing.T) {
 		t.Fatal("expected .git/config to be excluded by defaults")
 	}
 
-	// ws/ paths that would otherwise be excluded should be safe harbors
-	// ws/ws-log/session.log would be excluded by -g:*.log but re-included by +g:ws/**
-	res = engine.Evaluate("ws/ws-log/session.log", false)
-	if !res.Included {
-		t.Fatal("expected ws/ws-log/session.log to be included (safe harbor)")
-	}
-	if !res.SafeHarbor {
-		t.Fatal("expected SafeHarbor=true for ws/ws-log/session.log")
+	// Files in an "all" block that the defaults would exclude are safe harbors.
+	for _, p := range []string{
+		"secrets/pass/.gpg-id",
+		"secrets/pass/.git/config",
+		"configs/dotfiles/.git/HEAD",
+		"artifacts/report.csv",
+		"data/ws-log/2026-07-14/stdout.log",
+		"archive/old.tar.gz",
+	} {
+		res = engine.Evaluate(p, false)
+		if !res.Included || !res.SafeHarbor {
+			t.Fatalf("expected %s included as safe harbor, got included=%v harbor=%v rule=%s", p, res.Included, res.SafeHarbor, res.Rule)
+		}
 	}
 
-	// ws/ paths not excluded by any rule are just included (not safe harbor)
-	res = engine.Evaluate("ws/config.json", false)
+	// Filtered blocks keep the default excludes, nested block names included.
+	for _, p := range []string{
+		"experiments/load.csv",
+		"notes/second-brain/.obsidian/app.json",
+		"experiments/tool/data/run.log",
+	} {
+		if res = engine.Evaluate(p, false); res.Included {
+			t.Fatalf("expected %s excluded, included by %s", p, res.Rule)
+		}
+	}
+
+	// Paths in an "all" block not excluded by any rule are just included.
+	res = engine.Evaluate("configs/ws.json", false)
 	if !res.Included {
-		t.Fatal("expected ws/config.json to be included")
+		t.Fatal("expected configs/ws.json to be included")
 	}
 
 	// Normal file should be included
@@ -123,10 +139,10 @@ func TestBuildEngineUserSafeHarbor(t *testing.T) {
 }
 
 func TestBuildEngineSuppressHarbor(t *testing.T) {
-	// ws/ harbor cannot be added as user safe harbor — rejected at API level.
-	_, err := AddUserSafeHarbor("/tmp/fake-ignore.json", "ws/**", "")
+	// A built-in layout harbor cannot be added as a user safe harbor.
+	_, err := AddUserSafeHarbor("/tmp/fake-ignore.json", "secrets/**", "")
 	if err == nil {
-		t.Fatal("expected error when trying to add ws/ as user safe harbor")
+		t.Fatal("expected error when trying to add secrets/** as user safe harbor")
 	}
 }
 
@@ -152,8 +168,8 @@ func TestGenerateMegaignore(t *testing.T) {
 	if !strings.Contains(content, "-:.*") {
 		t.Fatal("expected default exclude rules")
 	}
-	if !strings.Contains(content, "+:ws") {
-		t.Fatal("expected default safe harbor")
+	if !strings.Contains(content, "+g:secrets/**") || strings.Contains(content, "+:ws\n") {
+		t.Fatal("expected the layout safe harbors, not the old ws/ harbor")
 	}
 }
 
