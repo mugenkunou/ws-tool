@@ -528,3 +528,34 @@ func TestUnregisterKeepsCopyWhenLiveIsDir(t *testing.T) {
 		t.Fatalf("ws copy was removed: %v", err)
 	}
 }
+
+func TestRemoveWithMissingWorkspaceCopy(t *testing.T) {
+	workspaceRoot, configPath := setupWorkspace(t)
+
+	systemFile := filepath.Join(t.TempDir(), ".bashrc")
+	if err := os.WriteFile(systemFile, []byte("export TEST=1\n"), 0o644); err != nil {
+		t.Fatalf("write file failed: %v", err)
+	}
+	if _, err := Add(AddOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath, SystemPath: systemFile}); err != nil {
+		t.Fatalf("add failed: %v", err)
+	}
+
+	links, err := List(configPath)
+	if err != nil || len(links) != 1 {
+		t.Fatalf("list: %v, %d links", err, len(links))
+	}
+	target := filepath.Join(workspaceRoot, filepath.FromSlash(LinkDotfilePath(links[0])))
+	if err := os.Remove(target); err != nil {
+		t.Fatalf("remove workspace copy failed: %v", err)
+	}
+
+	if _, err := Remove(RemoveOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath, SystemPath: systemFile}); err != nil {
+		t.Fatalf("remove failed: %v", err)
+	}
+	if _, err := os.Lstat(systemFile); !os.IsNotExist(err) {
+		t.Fatalf("expected dangling symlink removed, got %v", err)
+	}
+	if links, _ := List(configPath); len(links) != 0 {
+		t.Fatalf("expected entry unregistered, got %d", len(links))
+	}
+}

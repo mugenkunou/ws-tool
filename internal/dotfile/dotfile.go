@@ -254,6 +254,37 @@ func Remove(opts RemoveOptions) (RemoveResult, error) {
 	targetAbs := filepath.Join(opts.WorkspacePath, filepath.FromSlash(LinkDotfilePath(link)))
 	result.Link = link
 
+	// The workspace copy is gone: nothing to restore, so only drop the dangling
+	// symlink (never a real file at the system path) and the registry entry.
+	if _, err := os.Lstat(targetAbs); os.IsNotExist(err) {
+		if opts.DryRun {
+			result.DryRun = true
+			result.Messages = append(result.Messages,
+				"Would remove dangling symlink: "+absSystem,
+				"Would unregister from ws.json (workspace copy is missing)",
+			)
+			return result, nil
+		}
+		if fi, err := os.Lstat(absSystem); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+			if link.Sudo {
+				err = sudoRemoveAll(absSystem)
+			} else {
+				err = os.Remove(absSystem)
+			}
+			if err != nil {
+				return result, err
+			}
+		}
+		if _, rmErr := wsconfig.RemoveLink(opts.ConfigPath, absSystem); rmErr != nil {
+			return result, rmErr
+		}
+		result.Messages = append(result.Messages,
+			"Workspace copy missing, nothing to restore: "+targetAbs,
+			"Unregistered: "+absSystem,
+		)
+		return result, nil
+	}
+
 	if opts.DryRun {
 		result.DryRun = true
 		result.Messages = append(result.Messages,
