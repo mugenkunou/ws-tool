@@ -56,7 +56,6 @@ RO commands never modify the workspace, config, manifest, or system state. They:
 | `ws log ls` | |
 | `ws scratch ls` | |
 | `ws scratch search` | Search scratch directories by tag/name/content |
-| `ws capture ls` | List configured capture locations |
 | `ws trash status` | |
 | `ws completions` | |
 
@@ -99,7 +98,6 @@ RW commands modify state. They:
 | `ws log prune` | Per-session actions |
 | `ws log rm` | Single action |
 | `ws scratch new` | Single action |
-| `ws scratch prune` | Per-directory actions |
 | `ws scratch rm` | Single action |
 | `ws scratch tag` | Per-tag actions (interactive or auto) |
 | `ws trash enable` | 2 actions: setup, record-provisions |
@@ -108,8 +106,6 @@ RW commands modify state. They:
 | `ws git-credential-helper disconnect` | Per-action: unset credential.helper from git config |
 | `ws completions install` | Single action |
 | `ws completions uninstall` | Single action |
-| `ws capture` | Single action (append to captures file, RW exemption: no plan/confirm — append-only, non-destructive) |
-| `ws capture -e` | Opens editor (inherently interactive) |
 
 #### Implementation Contract
 
@@ -199,8 +195,7 @@ Exit codes from `planResult.ExitCode()`:
   "scratch": {
     "root_dir": "~/Scratch",
     "editor_cmd": "code",
-    "name_suffix": "auto",
-    "prune_after_days": 90
+    "name_suffix": "auto"
   },
   "trash": {
     "root_dir": "~/.local/share/Trash",
@@ -243,11 +238,6 @@ Exit codes from `planResult.ExitCode()`:
     "poll_interval_min": 10,
     "push_interval_min": 5,
     "events": ["dotfile", "secret", "bloat", "storage"]
-  },
-  "capture": {
-    "max_attach_mb": 5,
-    "locations": {
-    }
   }
 }
 ```
@@ -355,9 +345,6 @@ Directory layout:
   ├── health.json         # ws-managed daemon scan results (runtime-only, excluded from sync)
   ├── notify.state        # ws-managed daemon lifecycle + dedup state
   ├── ws-log-index.md     # ws-managed log index/summary
-  ├── captures/            # ws-managed capture directory
-  │   ├── captures.md      # knowledge capture file (append-only)
-  │   └── assets/          # images, attachments saved by ws capture
   ├── dotfiles/            # ws-managed originals captured by ws dotfile add (also git repo when git versioning enabled)
   │   ├── bashrc
   │   ├── ssh/
@@ -380,8 +367,6 @@ Ownership and edit policy:
 - `notify.state`: runtime-only daemon lifecycle state. Excluded from MEGA sync.
 - `ws-log-index.md`: generated/updated by `ws log` commands.
 - `ws-log/`: created/rotated/pruned by `ws log start|ls|prune`.
-- `captures/captures.md`: append-only knowledge capture file managed by `ws capture`. Safe to hand-edit (add entries, delete entries, reformat). The file is the user's knowledge base.
-- `captures/assets/`: images and attachments saved by `ws capture`. Referenced by relative markdown links from `captures/captures.md`. Safe to delete individual assets if the corresponding entry is removed.
 
 Design intent:
 
@@ -539,7 +524,7 @@ Safety properties:
 
 ### Deletion Model: Soft Delete via a Shared XDG Trash
 
-`ws` deletes (`ws dotfile rm`, `ws scratch rm`/`prune`, `ws ignore fix` move-to-trash actions, and other prune operations) move the item into the trash unconditionally — no `ws trash setup` step is required for `ws`'s own deletions. Additionally, it helps configure the machine so external delete paths (a plain shell `rm`, VS Code's delete) are soft-delete by default too.
+`ws` deletes (`ws dotfile rm`, `ws scratch rm`, `ws ignore fix` move-to-trash actions, and other prune operations) move the item into the trash unconditionally — no `ws trash setup` step is required for `ws`'s own deletions. Additionally, it helps configure the machine so external delete paths (a plain shell `rm`, VS Code's delete) are soft-delete by default too.
 
 `trash.root_dir` defaults to `~/.local/share/Trash` — the standard per-user XDG trash directory (`$XDG_DATA_HOME/Trash`), using the standard on-disk layout: `files/` holds the moved items, `info/*.trashinfo` holds one sidecar per item recording its original path and deletion time (https://specifications.freedesktop.org/trash-spec). This is deliberate: it is the same directory the desktop file manager (Nautilus, Thunar, Nemo, …) already reads and writes, so everything `ws` deletes is immediately visible and restorable from the file manager's trash view, and `ws trash empty` / the file manager's "Empty Trash" clear the same content. There is no separate "file explorer integration" step to configure in the default case — it's automatic because both sides use the same directory.
 
@@ -732,97 +717,6 @@ This makes state helpful for speed and UX while keeping commands grounded in cur
 
 Read commands (`ws repo ls`, `ws repo scan`) are non-interactive and pipe-safe. Write commands (`ws repo pull`, `ws repo sync`, `ws repo run`) are interactive by default and support `--dry-run`.
 
-### Knowledge Capture: Clipboard-First, Append-Only
-
-`ws capture` is a frictionless knowledge capture tool. The problem it solves: valuable information flows past you constantly — Slack messages, wiki pages, terminal output, screenshots — and the clipboard is a single-slot buffer that forgets the moment you copy something else. `ws capture` pins clipboard content to a persistent, searchable markdown file before it's lost.
-
-**Core design principle:** The clipboard already has the content. The tool's job is to persist it, not to ask the user to retype it.
-
-**Capture file model:** One file — `<workspace>/ws/captures/captures.md`. Append-only. Every capture lands here as a markdown entry with a topic, timestamp, source type, and the content. The file is human-readable, editable, greppable, and renders in any markdown viewer. Images are embedded via standard markdown `![](path)` syntax. Assets (images, attachments) are stored in `<workspace>/ws/captures/assets/`.
-
-**Locations:** Additional capture destinations can be configured in `config.json` under `capture.locations`. Each location is a `name → directory path` mapping. The tool creates a `captures/` subdirectory within each location directory containing `captures.md` and `assets/`. The default location (`<workspace>/ws/`) is implicit and never appears in config.
-
-**Source detection:** `ws capture` has exactly two input sources — clipboard and stdin pipe. No file arguments, no URL fetching. The clipboard is the primary interface; stdin pipe is the secondary for programmatic use.
-
-| Invocation | Source | Behavior |
-| --- | --- | --- |
-| `ws capture` | Clipboard | Reads richest clipboard format (`text/html` > `text/plain` > `image/png`) |
-| `ws capture work` | Clipboard | Same, but targets the `work` location |
-| `ws capture -a` | Clipboard | Amends (appends to) the last entry |
-| `cmd \| ws capture` | stdin pipe | Reads piped input, appends as text entry |
-| `ws capture -e` | — | Opens captures file in editor |
-| `ws capture ls` | — | Lists configured locations |
-
-**Rich clipboard handling:** When the user copies content from a browser, Slack desktop, Confluence, or any Electron app, the clipboard contains multiple formats simultaneously (`text/plain`, `text/html`, `image/png`). `ws capture` reads the richest format available:
-
-1. `text/html` — preferred. Contains `<img>` tags with URLs pointing to inline images. `ws` parses the HTML, downloads referenced images to `assets/`, converts HTML to markdown with local `![](path)` references. Links, formatting, and structure are preserved.
-2. `text/plain` — fallback. Raw text appended as-is.
-3. `image/png` — screenshot. Saved to `assets/`, embedded in entry.
-
-Clipboard access uses `xclip` (X11) or `wl-paste` (Wayland) — same class of dependency as `script(1)` for `ws log`. Detection: try `wl-paste` first, fall back to `xclip`. If neither is available, print actionable error.
-
-**Active window title:** On capture, `ws` reads the active window title via `xdotool getactivewindow getwindowname` (X11) or equivalent. This provides free metadata (`"#general - Slack"`, `"Architecture - Confluence - Firefox"`, `"user@host:~"`) without touching the content. Stored in the entry metadata line. Falls back gracefully if unavailable.
-
-**Topic:** The entry topic is the `##` section heading. When the user runs `ws capture` interactively (TTY, not `--quiet`/`--json`), the tool prompts `Topic:` before pinning. The user types a short label — or presses Enter to auto-derive from content. For auto-derived: HTML uses extracted structure, text uses the first meaningful line, images use `[pinned image]`. The user can always edit the topic later — it's a text file.
-
-**Entry format:**
-
-```markdown
-## User-provided or auto-derived topic
-_2026-04-22 14:30 · clipboard-html_
-
-Content body — markdown, code blocks, embedded images.
-
----
-```
-
-- `## Topic` — enables editor outline/TOC navigation. `grep "^## " ws/captures/captures.md` lists all entries.
-- `_timestamp · source-type_` — italic metadata line. Human-readable. Source types: `clipboard-html`, `clipboard-text`, `clipboard-image`, `stdin-pipe`.
-- Free-form body — markdown. No schema. No required fields.
-- `---` — horizontal rule separator between entries.
-
-**Location as positional argument:** The location is the first positional argument: `ws capture work`. Tab-completion suggests configured location names. If omitted, defaults to the default location. If an unknown name is given, the command exits with an error: `unknown capture location "<name>" — use 'ws capture ls' to see configured locations`. No `-l` flag, no location prompt — the positional arg or its absence is the entire UX.
-
-**Amend (`--amend` / `-a`):** Appends content to the most recent entry instead of creating a new one. No topic prompt — reuses the existing entry's topic. Typical workflow: copy webpage text → `ws capture` → take screenshot → `ws capture -a`. The screenshot lands in the same entry as the text. Works with clipboard (any format) and stdin pipe. Fails with a clear error if no existing entry is found in the captures file.
-
-**Edit (`--edit` / `-e`):** Opens the captures file in an editor. Editor resolution: `scratch.editor_cmd` → `$EDITOR` → `$VISUAL` → `vi`. Combines with positional location: `ws capture work -e` opens the work location's file.
-
-**RW exemption:** `ws capture` does not use the Plan → Confirm → Execute pattern. Rationale: an append to a personal knowledge file is non-destructive (append-only, no existing data modified), low-stakes (worst case: a bad entry, trivially deleted by opening the file), and time-sensitive (the knowledge is in short-term memory right now). Adding a confirmation prompt contradicts the subsystem's reason to exist. `--dry-run` is still supported — shows the entry that would be appended without writing. Precedent: `ws log stop` is also an exemption.
-
-**Concurrent captures:** Append uses advisory file locking (`flock`). Two rapid captures won't corrupt the file.
-
-**Captures file externally modified:** `ws` does not enforce format. If you hand-edit the file (add entries, delete entries, reformat), subsequent `ws capture` appends work fine. Malformed sections are skipped by `ws capture ls` with a warning in `--verbose` mode.
-
-**Dependencies:**
-
-| Tool | Package | Purpose | Required |
-| --- | --- | --- | --- |
-| `xclip` | xclip | Clipboard access (X11) | One of xclip or wl-paste |
-| `wl-paste` | wl-clipboard | Clipboard access (Wayland) | One of xclip or wl-paste |
-| `xdotool` | xdotool | Active window title (X11) | Optional (graceful fallback) |
-
-**Config:**
-
-```json
-{
-  "capture": {
-    "max_attach_mb": 5,
-    "locations": {
-      "personal": "~/Personal"
-    }
-  }
-}
-```
-
-- `capture.max_attach_mb` — maximum attachment size in MB. Files exceeding this are rejected with a message. Default: 5.
-- `capture.locations` — flat `name → directory path` map. Each location directory gets its own `captures/` subdirectory containing `captures.md` and `assets/`, created on first capture. Empty by default. The `default` name is reserved and cannot be overridden — it always means `<workspace>/ws/`.
-
-**Integration with existing `ws` systems:**
-
-- `ws restore` — No action needed. `ws/captures/` is synced. Restore a machine → captures are already there.
-- `ws ignore` — `ws/captures/assets/` is inside the `ws/` suppress override, so attachments sync regardless of extension rules.
-- `ws completions` — `ws capture <TAB>` completes to configured location names.
-
 ---
 
 ## Prerequisites & External Dependencies
@@ -863,7 +757,7 @@ Present on most Linux desktop installations. `ws` checks availability at the mom
 | `vi` / `vim` | vim-minimal | Fallback editor when `$EDITOR` and `$VISUAL` are unset. The tool resolution order is `$EDITOR` → `$VISUAL` → `vi`. |
 | `tput` | ncurses-bin | Terminal capability queries: column width (`tput cols`), color support (`tput colors`). `ws` falls back to 80 columns / no color if unavailable. |
 | `pgrep` | procps | Terminal emulator detection by inspecting the process tree when `$TERM_PROGRAM` is unset. `pgrep -a` identifies running terminal emulators. |
-| `xclip` or `wl-paste` | xclip / wl-clipboard | **Clipboard access for `ws capture`.** `xclip -selection clipboard -t TARGETS -o` queries available clipboard formats; `-t text/html` reads rich HTML with embedded image references. `wl-paste` is the Wayland equivalent. `ws` tries `wl-paste` first, falls back to `xclip`. Required only for `ws capture` — all other commands work without it. |
+| `wl-copy`, `xclip` or `xsel` | wl-clipboard / xclip / xsel | Clipboard copy for mouse selection in `ws tui`. `ws` always emits OSC 52 and also pipes to `wl-copy` (Wayland) or `xclip`/`xsel` (X11) when present. Optional — copy still works through OSC 52 in terminals that support it. |
 
 ### Tier 3 — Optional (enhanced features)
 
@@ -876,7 +770,6 @@ Not required for any core functionality. `ws` detects availability and unlocks a
 | `dconf` | dconf-cli | Read/write GNOME Terminal and Tilix profiles (both use `dconf`, not config files). Required only for these two terminal emulators. Kitty, Alacritty, and Konsole use file-based configs and don't need this. |
 | `pass` | pass | Optional credential source for dotfile Git backup. `ws` reads credentials from password-store entries at runtime instead of config. |
 | `jq` | jq | Not called by `ws`. Recommended for processing `--json` output in user scripts. Referenced in documentation examples (`ws ignore scan --json \| jq '.data.violations[]'`). |
-| `xdotool` | xdotool | Active window title capture for `ws capture`. Provides free metadata (e.g., `"#general - Slack"`, `"Architecture - Confluence - Firefox"`) without touching content. Falls back gracefully — captures work without it, just without window title metadata. |
 
 ### Delegation Map
 
@@ -905,9 +798,7 @@ Summary of what `ws` builds natively vs what it offloads, and why.
 | Editor integration | **Offload** → `$EDITOR` / `$VISUAL` / `vi` | `ws ignore edit` | Standard editor resolution chain. |
 | Directory size calculation | **Offload** → `du -sh` | `ws scratch ls` | Faster than manual accumulation, handles filesystem edge cases. |
 | MEGA sync verification | **Offload** → `mega-ls` (optional) | `ws ignore check` | Ground-truth check that local rule parsing can't guarantee. |
-| Clipboard access | **Offload** → `xclip` / `wl-paste` | `ws capture` | Reads clipboard in multiple formats (text/html, text/plain, image/png). Rich HTML preserves links and inline images. |
-| Window title | **Offload** → `xdotool` (optional) | `ws capture` | Free metadata about where the content came from. Graceful fallback. |
-| HTML to Markdown | **Native** | `ws capture` | Converts clipboard `text/html` to markdown with local image references. Simple tag-based conversion — no full DOM parser needed. |
+| Clipboard copy | **Offload** → `wl-copy` / `xclip` / `xsel` (optional) | `ws tui` | Mouse-selection copy. OSC 52 is always emitted; the native tool is a fallback for terminals without OSC 52. |
 
 ### Build Dependencies
 
@@ -1030,7 +921,7 @@ bruno                                    ✗ basename standing in for a path
 4. **Cleaned, not resolved.** Paths go through `filepath.Clean` (no `.`/`..`/duplicate `/`, no trailing `/`), but symlinks are not resolved. The path shown is the path `ws` operated on.
 5. **One helper.** Rendering goes through a single helper (`style.AbsPath(workspace, p)`). Call sites never format paths ad hoc. Internal data may keep workspace-relative paths for rule matching; they are converted when rendered.
 
-**Not paths** (printed verbatim): ignore and `.megaignore` rule patterns (`node_modules/`, `dir/**`), config keys, git refs and remote URLs, and names that identify ws-managed items (scratch names, log tags, capture location names, cron job names). When a command acts on a file identified by such a name, the file's absolute path is printed too.
+**Not paths** (printed verbatim): ignore and `.megaignore` rule patterns (`node_modules/`, `dir/**`), config keys, git refs and remote URLs, and names that identify ws-managed items (scratch names, log tags, cron job names). When a command acts on a file identified by such a name, the file's absolute path is printed too.
 
 **Config documents:** `ws config defaults` prints the built-in defaults as a `config.json` document, in stored form (`~/Scratch`, `.`), so it can be redirected into a config file. Those are config values, not displayed file paths. `ws config view` prints the same values resolved to absolute paths.
 
@@ -1146,12 +1037,7 @@ ws scratch open [name]               Open an existing scratch directory in edito
 ws scratch ls                        List scratch directories with age, size, items
 ws scratch tag [name]                Add tags to a scratch directory
 ws scratch search [query]            Search scratch directories by tag, name, or content
-ws scratch prune                     Remove old scratch directories
 ws scratch rm [name]                 Delete a scratch directory by name
-
-ws capture                           Pin clipboard content to captures file
-ws capture -e                        Open captures file in editor
-ws capture ls                        List configured capture locations
 ```
 
 ---
@@ -2226,33 +2112,6 @@ Delete: CA-remove-CPU-limits.2026-04█
 Delete scratch /home/user/Scratch/CA-remove-CPU-limits.2026-04? [Y/n/a/q]
 ✔ Deleted  /home/user/Scratch/CA-remove-CPU-limits.2026-04
 ```
-
-#### `ws scratch prune`
-
-Remove old scratch directories interactively.
-
-```text
-ws scratch prune [flags]
-
---older-than <duration>   Only prune dirs older than this (e.g. 30d, 90d)
---all                     Prune all scratch directories
---name <pattern>          Prune dirs matching this name pattern
---dry-run                 Preview actions without applying
-```
-
-**Output:**
-
-```text
-ws scratch prune --older-than 90d
-
-Will remove:
-  /home/user/Scratch/cert-rotation.2026-01    94d   180 MB   8 files
-
-Confirm? [y/N]: y
-✔ Removed 180 MB from /home/user/Scratch
-```
-
-Deletion goes through `rm` (soft-delete if `ws trash setup` was run — Philosophy Factor IX).
 
 #### `ws scratch tag`
 
@@ -3797,8 +3656,7 @@ ws config view
   "scratch": {
     "root_dir": { "value": "/home/user/Scratch", "source": "config.json" },
     "editor_cmd": { "value": "code", "source": "default" },
-    "name_suffix": { "value": "auto", "source": "default" },
-    "prune_after_days": { "value": 90, "source": "default" }
+    "name_suffix": { "value": "auto", "source": "default" }
   },
   "trash": {
     "root_dir": { "value": "/home/user/.local/share/Trash", "source": "default" },
@@ -3893,8 +3751,7 @@ All paths are shown as absolute paths (tildes expanded, relative config values r
     "scratch": {
       "root_dir": { "value": "/home/user/Scratch", "source": "config.json" },
       "editor_cmd": { "value": "code", "source": "default" },
-      "name_suffix": { "value": "auto", "source": "default" },
-      "prune_after_days": { "value": 90, "source": "default" }
+      "name_suffix": { "value": "auto", "source": "default" }
     },
     "trash": {
       "root_dir": { "value": "/home/user/.local/share/Trash", "source": "default" },
@@ -3973,8 +3830,7 @@ ws config defaults
   "scratch": {
     "root_dir": "~/Scratch",
     "editor_cmd": "code",
-    "name_suffix": "auto",
-    "prune_after_days": 90
+    "name_suffix": "auto"
   },
   "trash": {
     "root_dir": "~/.local/share/Trash",
@@ -4200,196 +4056,6 @@ This function uses `ws scratch open --print-path` internally so the `cd` runs in
 
 ---
 
-### `ws capture`
-
-Pin clipboard content or piped input to a persistent knowledge capture file. Optimized for sub-5-second capture — the user should never leave their current context.
-
-```text
-ws capture [location] [flags]
-ws capture edit [location] [flags]
-ws capture ls [flags]
-
-Flags:
-  -a, --amend              Append to the last entry instead of creating a new one
-  -e, --edit               Open captures file in editor (deprecated: use `ws capture edit`)
-  --dry-run                Show entry that would be appended without writing
-  --quiet                  No prompts, no interactive output
-  --json                   Machine-readable output
-  --no-color               Disable colors and Unicode
-```
-
-**Source detection:**
-
-| Invocation | Source | Behavior |
-| --- | --- | --- |
-| `ws capture` | Clipboard | Reads richest clipboard format available |
-| `ws capture work` | Clipboard | Same, targets the `work` location |
-| `ws capture -a` | Clipboard | Amends last entry in default location |
-| `ws capture work -a` | Clipboard | Amends last entry in work location |
-| `cmd \| ws capture` | stdin pipe | Read stdin, append as text entry |
-| `cmd \| ws capture work` | stdin pipe | Read stdin, append to work location |
-
-**Clipboard format priority:** `text/html` > `text/plain` > `image/png`. Rich HTML is preferred because it preserves links, formatting, and inline images.
-
-**Interactive prompts (when stdin is TTY):**
-
-| Condition | Prompts shown |
-| --- | --- |
-| Normal capture | Topic only |
-| `--amend` | None |
-| `--quiet` or `--json` | None |
-| stdin is pipe | None |
-
-**Output:**
-
-```text
-ws capture
-
-✔ Pinned → /home/user/Workspace/ws/captures/captures.md  (clipboard-html, 14 lines, 1 image)
-```
-
-```text
-ws capture
-
-✔ Pinned → /home/user/Workspace/ws/captures/captures.md  (clipboard-text, 3 lines)
-```
-
-```text
-ws capture
-
-✔ Pinned → /home/user/Workspace/ws/captures/captures.md  (clipboard-image, saved to /home/user/Workspace/ws/captures/assets/2026-04-22-1430-1.png)
-```
-
-```text
-echo "test" | ws capture
-
-✔ Pinned → /home/user/Workspace/ws/captures/captures.md  (stdin-pipe, 1 line)
-```
-
-**Output — amend:**
-
-```text
-ws capture -a
-
-✔ Amended → /home/user/Workspace/ws/captures/captures.md
-```
-
-**Output — with location:**
-
-```text
-ws capture work
-
-✔ Pinned → /home/user/Work/captures/captures.md  (clipboard-html, 14 lines, 1 image)
-```
-
-**Output — dry-run:**
-
-```text
-ws capture --dry-run
-
---- DRY RUN ---
-Would append to: /home/user/Workspace/ws/captures/captures.md
-
-## ID card — deactivate if misplaced or lost
-_2026-04-22 14:30 · clipboard-html_
-
-Hi Vicknesh,
-Please ensure you inform us and deactivate your ID card...
-```
-
-**Output — JSON:**
-
-```json
-{
-  "ws_version": "0.1.0",
-  "schema": 2,
-  "command": "capture",
-  "data": {
-    "source": "clipboard-html",
-    "location": "default",
-    "file": "/home/user/Workspace/ws/captures/captures.md",
-    "topic": "ID card — deactivate if misplaced or lost",
-    "lines": 14,
-    "images": 1,
-    "window_title": "#general - Slack"
-  }
-}
-```
-
-**Exit codes:**
-
-| Code | Meaning |
-| --- | --- |
-| `0` | Entry appended successfully |
-| `1` | Error — clipboard empty, tool missing, write failed |
-
----
-
-#### `ws capture ls`
-
-List all configured capture locations with their paths and existence status. Read-only, pipe-safe.
-
-```text
-ws capture ls [flags]
-
-Flags:
-  --json                   Machine-readable output
-  --no-color               Disable colors and Unicode
-```
-
-**Output:**
-
-```text
-ws capture ls
-
-  default     /home/user/Workspace/ws/captures/captures.md
-  personal    /home/user/Personal/captures/captures.md
-```
-
-**Output — single location (no custom locations configured):**
-
-```text
-ws capture ls
-
-  default     /home/user/Workspace/ws/captures/captures.md
-```
-
-**Output — JSON:**
-
-```json
-{
-  "ws_version": "0.1.0",
-  "schema": 2,
-  "command": "capture.ls",
-  "data": {
-    "locations": [
-      {"name": "default", "path": "/home/user/Workspace/ws/captures/captures.md", "exists": true},
-      {"name": "personal", "path": "/home/user/Personal/captures/captures.md", "exists": false}
-    ]
-  }
-}
-```
-
-#### `ws capture edit`
-
-Open the captures file in an editor. Replaces the deprecated `-e`/`--edit` flag.
-
-```text
-ws capture edit [location] [flags]
-```
-
-Editor resolution: `scratch.editor_cmd` → `$EDITOR` → `$VISUAL` → `vi`.
-
-**With `--dry-run`:** Prints the resolved captures file path without opening an editor.
-
-**Deprecation note:** `-e`/`--edit` flag still works but prints:
-
-```
-note: -e/--edit is deprecated; use `ws capture edit`
-```
-
----
-
 ### `ws cron`
 
 Manage ws-scheduled cron jobs for workspace maintenance. Each job is a named, self-contained bash wrapper script installed under `~/.local/share/ws/cron-jobs/`. A crontab block with start/end markers is written per job so `ws` can reliably remove it later.
@@ -4416,13 +4082,12 @@ ws cron <add|rm|ls|status|log>
 | `secret-scan` | `0 * * * *` | Scan for exposed secrets; emit notification if violations found |
 | `ignore-scan` | `0 */6 * * *` | Scan workspace sync hygiene (bloat, depth, project-meta) every 6 hours |
 | `log-prune` | `0 2 * * *` | Evict old log sessions exceeding `log.cap_mb` (nightly at 02:00) |
-| `scratch-prune` | `0 3 * * 0` | Remove scratch dirs older than `scratch.prune_after_days` (weekly, Sunday 03:00) |
 
 #### Presets
 
 | Preset | Expands to |
 | --- | --- |
-| `maintenance` | `ignore-scan`, `log-prune`, `scratch-prune` |
+| `maintenance` | `ignore-scan`, `log-prune` |
 | `sync` | `mega-sync`, `dotfile-sync`, `repo-sync` |
 
 #### Runtime files
@@ -4553,10 +4218,9 @@ Available cron jobs:
   dotfile-sync    */30 * * * *    Commit and push dotfiles to remote git                               installed
   ignore-scan     0 */6 * * *     Scan workspace sync hygiene every 6 hours                            not installed
   log-prune       0 2 * * *       Evict old log sessions exceeding log.cap_mb (nightly at 02:00)       installed
-  maintenance     (preset)        installs: ignore-scan, log-prune, scratch-prune                      not installed
+  maintenance     (preset)        installs: ignore-scan, log-prune                                     not installed
   mega-sync       */30 * * * *    Restart megasync for a 5-minute sync window every 30 minutes         installed
   repo-sync       */30 * * * *    Sync workspace git fleet (pull behind, push ahead)                   not installed
-  scratch-prune   0 3 * * 0       Remove scratch dirs older than scratch.prune_after_days              installed
   secret-scan     0 * * * *       Scan for exposed secrets; notify if violations found                 not installed
   sync            (preset)        installs: mega-sync, dotfile-sync, repo-sync                         not installed
 
@@ -4564,7 +4228,6 @@ Last run:
   dotfile-sync    2026-05-08 10:00    exit 0
   log-prune       2026-05-08 02:00    exit 0
   mega-sync       2026-05-08 10:30    exit 0
-  scratch-prune   2026-05-04 03:00    exit 0
 ```
 
 ---

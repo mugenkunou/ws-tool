@@ -76,13 +76,3 @@ var logPruneJob = &BuiltinJob{
 		return fmt.Sprintf("%s --workspace %s log prune --quiet", wsBin, workspace)
 	},
 }
-
-var scratchPruneJob = &BuiltinJob{
-	Name:         "scratch-prune",
-	Schedule:     "0 3 * * 0",
-	IntervalSecs: 7 * 24 * 60 * 60,
-	Description:  "Remove scratch dirs older than scratch.prune_after_days (weekly, Sunday 03:00)",
-	scriptBody: func(wsBin, display, workspace string) string {
-		return fmt.Sprintf("%s --workspace %s scratch prune --quiet", wsBin, workspace)
-	},
-}

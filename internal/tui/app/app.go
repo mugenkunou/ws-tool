@@ -35,7 +35,6 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/format"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/capture"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/cron"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/dashboard"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/dotfiles"
@@ -131,7 +130,6 @@ func (m Model) withEnv(e env.Env, loadErr error) Model {
 		m.screens[nav.ScreenDotfiles] = dotfiles.New(e)
 		m.screens[nav.ScreenScratch] = scratch.New(e)
 		m.screens[nav.ScreenLogs] = logs.New(e)
-		m.screens[nav.ScreenCapture] = capture.New(e)
 		m.screens[nav.ScreenIgnore] = ignore.New(e)
 		m.screens[nav.ScreenSecrets] = secrets.New(e)
 		m.screens[nav.ScreenCron] = cron.New(e)

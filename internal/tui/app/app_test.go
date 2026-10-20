@@ -11,7 +11,6 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
-	wscapture "github.com/mugenkunou/ws-tool/internal/capture"
 	wscron "github.com/mugenkunou/ws-tool/internal/cron"
 	"github.com/mugenkunou/ws-tool/internal/dotfile"
 	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
@@ -23,7 +22,6 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/capture"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/cron"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/dotfiles"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
@@ -95,10 +93,6 @@ func fixtures() []tea.Msg {
 		logs.LoadedMsg{Sessions: []wslog.Session{
 			{Tag: "deploy-fix", StartedAt: time.Date(2026, 9, 30, 14, 5, 0, 0, time.UTC), Commands: 12, SizeBytes: 40960, Active: true},
 			{Tag: "rsync-backup", StartedAt: time.Date(2026, 9, 28, 9, 30, 0, 0, time.UTC), DurationSec: 1865, Commands: 7, SizeBytes: 8192},
-		}},
-		capture.LoadedMsg{Locations: []wscapture.Location{
-			{Name: "default", Path: ws + "/ws/captures/captures.md", Exists: true},
-			{Name: "work", Path: ws + "/Work/captures/captures.md"},
 		}},
 		ignore.LoadedMsg{Violations: []wsignore.Violation{
 			{Type: "bloat", Severity: "CRITICAL", Path: "Projects/web/dump.log", SizeBytes: 220 << 20},
@@ -214,9 +208,8 @@ func TestSnapshots(t *testing.T) {
 		keys []string
 	}{
 		{"dashboard", nil},
-		{"dashboard_grid_cursor", []string{"down", "down", "down", "down", "down", "down", "down", "down", "down", "down", "right", "down"}},
+		{"dashboard_grid_cursor", []string{"down", "down", "down", "down", "down", "down", "down", "down", "down", "right", "down"}},
 		{"dashboard_reset_checklist", []string{"R"}},
-		{"capture_preview_focus", []string{"6", "enter"}},
 		{"repos", []string{"2"}},
 		{"repos_detail", []string{"2", "down", "enter"}},
 		{"repos_pull_checklist", []string{"2", "p"}},
@@ -225,15 +218,13 @@ func TestSnapshots(t *testing.T) {
 		{"scratch", []string{"4"}},
 		{"scratch_new_prompt", []string{"4", "n", "d", "n"}},
 		{"scratch_tag_prompt", []string{"4", "t", "n"}},
-		{"scratch_prune_checklist", []string{"4", "P"}},
 		{"logs", []string{"5"}},
-		{"capture", []string{"6"}},
-		{"ignore", []string{"7"}},
-		{"ignore_harbors_shown", []string{"7", "H"}},
-		{"secrets", []string{"8"}},
-		{"cron", []string{"9"}},
-		{"trash", []string{"0"}},
-		{"trash_empty_checklist", []string{"0", "x"}},
+		{"ignore", []string{"6"}},
+		{"ignore_harbors_shown", []string{"6", "H"}},
+		{"secrets", []string{"7"}},
+		{"cron", []string{"8"}},
+		{"trash", []string{"9"}},
+		{"trash_empty_checklist", []string{"9", "x"}},
 		{"full_help", []string{"2", "?"}},
 	}
 	for _, c := range cases {
@@ -276,8 +267,8 @@ func TestSnapshotNotice(t *testing.T) {
 // including resizing a live model, and asserts nothing overflows.
 func TestResize(t *testing.T) {
 	sizes := [][2]int{{120, 40}, {80, 24}, {60, 15}, {40, 12}, {20, 6}, {1, 1}}
-	flows := [][]string{{"1"}, {"2"}, {"3"}, {"4"}, {"5"}, {"6"}, {"7"}, {"8"}, {"9"}, {"0"},
-		{"2", "enter"}, {"2", "p"}, {"4", "n"}, {"1", "R"}, {"1", "down", "down", "down", "down", "down", "down", "down", "down", "down", "right"}}
+	flows := [][]string{{"1"}, {"2"}, {"3"}, {"4"}, {"5"}, {"6"}, {"7"}, {"8"}, {"9"},
+		{"2", "enter"}, {"2", "p"}, {"4", "n"}, {"1", "R"}, {"1", "down", "down", "down", "down", "down", "down", "down", "down", "right"}}
 	for _, sz := range sizes {
 		for _, flow := range flows {
 			m := loaded(t, 100, 30)
@@ -295,7 +286,7 @@ func TestResize(t *testing.T) {
 }
 
 func TestResizeRestoresLayout(t *testing.T) {
-	for _, flow := range [][]string{nil, {"2", "p"}, {"9"}, {"0"}} {
+	for _, flow := range [][]string{nil, {"2", "p"}, {"8"}, {"9"}} {
 		m := loaded(t, 80, 24)
 		for _, k := range flow {
 			m = send(m, press(k))
@@ -445,10 +436,10 @@ func TestDashboardOpenFocusesProblem(t *testing.T) {
 // TestDashboardGrid: arrows move spatially between cards and never open a
 // screen; ↑ from the top row returns to the attention list; enter opens.
 func TestDashboardGrid(t *testing.T) {
-	m := loaded(t, 100, 30) // 3 columns: Repos Dotfiles Scratch / Logs Capture Ignore / Secrets Cron Trash
+	m := loaded(t, 100, 30) // 3 columns: Repos Dotfiles Scratch / Logs Ignore Secrets / Cron Trash
 	selected := func(m Model) string { return focusedCard(t, m) }
 	// Leave the attention list for the grid's first card.
-	for range 9 {
+	for range 8 {
 		m = send(m, press("down"))
 	}
 	if got := selected(m); got != "Repos" {
@@ -456,8 +447,8 @@ func TestDashboardGrid(t *testing.T) {
 	}
 	steps := []struct{ key, want string }{
 		{"right", "Dotfiles"}, {"right", "Scratch"}, {"right", "Scratch"}, // edge stops
-		{"down", "Ignore"}, {"left", "Capture"}, {"down", "Cron"}, {"down", "Cron"},
-		{"up", "Capture"}, {"up", "Dotfiles"}, {"left", "Repos"}, {"l", "Dotfiles"}, {"h", "Repos"},
+		{"down", "Secrets"}, {"left", "Ignore"}, {"down", "Trash"}, {"down", "Trash"},
+		{"up", "Ignore"}, {"up", "Dotfiles"}, {"left", "Repos"}, {"l", "Dotfiles"}, {"h", "Repos"},
 	}
 	for _, st := range steps {
 		m = send(m, press(st.key))
@@ -472,7 +463,7 @@ func TestDashboardGrid(t *testing.T) {
 	if !strings.Contains(tuitest.Plain(view(m)), "›") {
 		t.Fatal("↑ from the top row did not return to the attention list")
 	}
-	m = send(m, press("down"), press("right"), press("right"), press("down")) // → Ignore
+	m = send(m, press("down"), press("right"), press("down")) // → Ignore
 	m, cmd := sendRun(m, press("enter"))
 	m = apply(m, cmd)
 	if m.active != nav.ScreenIgnore {
@@ -491,21 +482,6 @@ func focusedCard(t *testing.T, m Model) string {
 		}
 	}
 	return ""
-}
-
-// TestCaptureEnterScrollsPreview: enter moves into the preview, esc back.
-func TestCaptureEnterScrollsPreview(t *testing.T) {
-	m := send(loaded(t, 100, 30), press("6"), press("enter"))
-	if !strings.Contains(tuitest.Plain(view(m)), "esc back to list") {
-		t.Fatalf("enter did not focus the preview:\n%s", tuitest.Plain(view(m)))
-	}
-	m = esc(m)
-	if m.active != nav.ScreenCapture || !strings.Contains(tuitest.Plain(view(m)), "enter to scroll") {
-		t.Fatalf("esc did not return to the list (active %v)", m.active.Title())
-	}
-	if m = esc(m); m.active != nav.ScreenDashboard {
-		t.Fatalf("esc from the list: active %v, want Dashboard", m.active.Title())
-	}
 }
 
 func TestEmojiOff(t *testing.T) {

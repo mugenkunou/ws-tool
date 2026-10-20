@@ -4,10 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
-func TestNewListPrune(t *testing.T) {
+func TestNewListDelete(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "Scratch")
 
 	res, err := New(NewOptions{RootDir: root, Name: "proxy-auth", SuffixMode: "auto"})
@@ -30,24 +29,16 @@ func TestNewListPrune(t *testing.T) {
 		t.Fatalf("expected one scratch entry, got %d", len(list))
 	}
 
-	prune, err := Prune(PruneOptions{RootDir: root, All: true})
+	del, err := Delete(DeleteOptions{RootDir: root, Name: "proxy-auth"})
 	if err != nil {
-		t.Fatalf("prune failed: %v", err)
+		t.Fatalf("delete failed: %v", err)
 	}
-	if len(prune.Removed) != 1 {
-		t.Fatalf("expected one removed, got %+v", prune)
+	if len(del.Removed) != 1 {
+		t.Fatalf("expected one removed, got %+v", del)
 	}
 }
 
-func TestParseOlderThanAndDryRun(t *testing.T) {
-	d, err := ParseOlderThan("30d")
-	if err != nil {
-		t.Fatalf("parse older-than failed: %v", err)
-	}
-	if d < 30*24*time.Hour {
-		t.Fatalf("unexpected duration: %s", d)
-	}
-
+func TestNewDryRun(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "Scratch")
 	res, err := New(NewOptions{RootDir: root, Name: "x", SuffixMode: "auto", DryRun: true})
 	if err != nil {

@@ -104,7 +104,7 @@ func TestGenerateScript_containsJobName(t *testing.T) {
 }
 
 func TestGenerateScript_wsBinEmbedded(t *testing.T) {
-	for _, job := range []*BuiltinJob{dotfileSyncJob, repoSyncJob, secretScanJob, ignoreScanJob, logPruneJob, scratchPruneJob} {
+	for _, job := range []*BuiltinJob{dotfileSyncJob, repoSyncJob, secretScanJob, ignoreScanJob, logPruneJob} {
 		script := GenerateScript(job, "/usr/local/bin/ws", "", "/home/user/Workspace",
 			"/tmp/cron.state", "/tmp/cron.log")
 		if !strings.Contains(script, "/usr/local/bin/ws") {

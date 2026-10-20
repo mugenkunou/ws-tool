@@ -85,14 +85,14 @@ func TestScratchCommandsFlow(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "scratch", "prune", "--all"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
-		t.Fatalf("scratch prune failed: code=%d stderr=%s", code, errOut.String())
+	if code := Execute([]string{"--workspace", workspace, "scratch", "rm", "demo-scratch"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("scratch rm failed: code=%d stderr=%s", code, errOut.String())
 	}
 
 	scratchRoot := filepath.Join(home, "Scratch")
 	entries, _ := os.ReadDir(scratchRoot)
 	if len(entries) != 0 {
-		t.Fatalf("expected scratch root to be pruned, found %d entries", len(entries))
+		t.Fatalf("expected scratch root to be empty, found %d entries", len(entries))
 	}
 }
 

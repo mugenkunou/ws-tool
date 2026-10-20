@@ -32,7 +32,6 @@ Your digital life is scattered:
 | **Scratch dirs** | Debug sessions and investigations scattered across `/tmp` | `ws scratch new` — named directory in `~/Scratch`, opens in VS Code instantly |
 | **Machine restore** | New laptop, two days of setup | `ws restore` — guided wizard, working machine in minutes |
 | **Soft delete** | `rm -rf` regrets | `ws trash setup` configures your shell, VS Code, and file explorer to soft-delete |
-| **Knowledge capture** | Valuable info from Slack, wikis, emails lost in clipboard | `ws capture` — pins clipboard (text, HTML, images) to a searchable markdown file |
 | **Cron jobs** | MEGA sync, dotfile push, repo sync, secret scan — all manual | `ws cron add mega-sync` installs a managed crontab job with logging, log-rotation, and missed-run recovery |
 
 ---
@@ -189,22 +188,7 @@ Your `.bashrc` now lives in the workspace (synced). The system path is a symlink
 | `ws scratch ls` | List scratch directories with age, size, items, and path |
 | `ws scratch tag [name]` | Add tags to a scratch directory; prints path on completion |
 | `ws scratch search [query]` | Search scratch directories by tag/name/content; shows path per result |
-| `ws scratch prune` | Remove old scratch directories |
 | `ws scratch rm <name>` | Delete a scratch directory by name |
-
-</details>
-
-<details>
-<summary><strong>📌 Knowledge Capture</strong></summary>
-
-| Command | What it does |
-| --- | --- |
-| `ws capture` | Pin clipboard content (text, HTML with images, screenshots) to captures file |
-| `ws capture <url>` | Fetch web page content + images, append to captures file |
-| `ws capture <file>` | Capture a file (image: embed, text: inline) |
-| `ws capture edit` | Open captures file in your editor |
-| `ws capture -e` | Open captures file in editor (deprecated: use `ws capture edit`) |
-| `ws capture ls` | List configured capture locations |
 
 </details>
 
@@ -219,9 +203,9 @@ Your `.bashrc` now lives in the workspace (synced). The system path is a symlink
 | `ws cron status [job]` | Last run, exit code, next scheduled run, recent log lines |
 | `ws cron log [job]` | Show recent entries from the shared cron log |
 
-Built-in jobs: `mega-sync`, `dotfile-sync`, `repo-sync`, `secret-scan`, `ignore-scan`, `log-prune`, `scratch-prune`
+Built-in jobs: `mega-sync`, `dotfile-sync`, `repo-sync`, `secret-scan`, `ignore-scan`, `log-prune`
 
-Presets: `sync` (mega-sync + dotfile-sync + repo-sync), `maintenance` (ignore-scan + log-prune + scratch-prune)
+Presets: `sync` (mega-sync + dotfile-sync + repo-sync), `maintenance` (ignore-scan + log-prune)
 
 </details>
 
@@ -230,7 +214,7 @@ Presets: `sync` (mega-sync + dotfile-sync + repo-sync), `maintenance` (ignore-sc
 
 | Command | What it does |
 | --- | --- |
-| `ws tui` | Interactive terminal UI for everything above — dashboard, repos, dotfiles, scratch, logs, capture, ignore, secrets, cron, trash |
+| `ws tui` | Interactive terminal UI for everything above — dashboard, repos, dotfiles, scratch, logs, ignore, secrets, cron, trash |
 | `ws version` | Binary version, schema versions, platform info |
 | `ws config` | Configuration commands (`view`, `defaults`) |
 | `ws completions <shell>` | Generate shell completions (bash/zsh/fish) |
@@ -305,7 +289,7 @@ Full philosophy: [PHILOSOPHY.md](PHILOSOPHY.md) — an eleven-factor methodology
 This is a core design constraint, not a nice-to-have. Every command is classified as **RO** (read-only) or **RW** (read-write):
 
 - **RO commands** (`ls`, `show`, `check`, `status`, `version`, `config view`, subsystem `scan`) are non-interactive and pipe-safe. They never prompt for input and produce deterministic output to stdout.
-- **RW commands** (`init`, `restore`, `dotfile add/rm/fix`, `ignore fix/generate`, `secret fix/setup`, `git-credential-helper setup/disconnect`, `repo pull/push/run`, `log start/stop/prune`, `scratch new/prune/rm`, `trash enable/disable/empty`, `completions install/uninstall`) use **per-action confirmation** (`git add -p` style). Each discrete mutation gets its own `y/n/a/q` prompt — never a single gate before N operations.
+- **RW commands** (`init`, `restore`, `dotfile add/rm/fix`, `ignore fix/generate`, `secret fix/setup`, `git-credential-helper setup/disconnect`, `repo pull/push/run`, `log start/stop/prune`, `scratch new/rm`, `trash enable/disable/empty`, `completions install/uninstall`) use **per-action confirmation** (`git add -p` style). Each discrete mutation gets its own `y/n/a/q` prompt — never a single gate before N operations.
 
 Prompt vocabulary for RW commands:
 
@@ -378,9 +362,6 @@ Scripts can branch on these without parsing output:
 │   │   ├── kubeconfig
 │   │   └── ...
 │   ├── dotfiles-git/            # optional git repo for dotfile backup
-│   ├── captures.md              # knowledge capture file (append-only)
-│   ├── captures/                # capture assets
-│   │   └── assets/              # images, attachments from ws capture
 │   ├── ws-log/                  # recorded terminal sessions
 │   │   └── <tag>/
 │   │       ├── stdin.log

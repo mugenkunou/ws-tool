@@ -17,7 +17,6 @@ const (
 	ScreenDotfiles
 	ScreenScratch
 	ScreenLogs
-	ScreenCapture
 	ScreenIgnore
 	ScreenSecrets
 	ScreenCron
@@ -48,8 +47,6 @@ func (s Screen) Icon() string {
 		return "🧪"
 	case ScreenLogs:
 		return "📼"
-	case ScreenCapture:
-		return "📌"
 	case ScreenIgnore:
 		return "🧹"
 	case ScreenSecrets:
@@ -76,8 +73,6 @@ func (s Screen) Title() string {
 		return "Scratch"
 	case ScreenLogs:
 		return "Logs"
-	case ScreenCapture:
-		return "Capture"
 	case ScreenIgnore:
 		return "Ignore"
 	case ScreenSecrets:

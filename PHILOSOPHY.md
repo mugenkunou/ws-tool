@@ -19,7 +19,8 @@ Inspired by the [Twelve-Factor App](https://12factor.net) methodology.
 | VII | [🧹 Sync Scripts, Quarantine State](#-vii-sync-scripts-quarantine-state) | Scripts are synced. Log dumps are not. |
 | VIII | [📏 Sync With Intent](#-viii-sync-with-intent) | Some files don't deserve sync. |
 | IX | [🗑️ Always Soft Delete](#️-ix-always-soft-delete) | Delete means recoverable move to Trash. |
-| X | [🎯 Per-Action Consent](#-x-per-action-consent) | Confirm each mutation, not the batch. || XI | [📌 Pin the Clipboard](#-xi-pin-the-clipboard) | The clipboard forgets. Your workspace shouldn't. |
+| X | [🎯 Per-Action Consent](#-x-per-action-consent) | Confirm each mutation, not the batch. |
+| XI | [📌 Pin the Clipboard](#-xi-pin-the-clipboard) | The clipboard forgets. Your workspace shouldn't. |
 ---
 
 ## 🏠 I. Single Source of Truth
@@ -347,15 +348,10 @@ Valuable information flows past you constantly: a Slack message with a deactivat
 
 The clipboard is a single-slot buffer. It is the universal choke point — every digital knowledge transfer passes through it. The problem isn't that you fail to *recognize* valuable information. The problem is that you fail to *persist* it before the next copy overwrites it.
 
-The capture model:
+So the fix is a habit, not a tool: the moment something is worth keeping, paste it into the workspace — a daily note in `Notes/`, a scratch file, a screenshot in `Screenshots/`. Factor II applies: the closest relevant file is the right file, and search finds it later.
 
-- **The content already exists.** The clipboard has it. A URL points to it. A file contains it. The tool's job is to grab it from the source, not ask the user to retype it.
-- **One file is the knowledge inbox.** `ws/captures.md` — append-only, searchable, synced. Open it in any editor, Ctrl+F finds anything, `grep` finds anything.
-- **The capture gesture must be instantaneous.** A hotkey or a two-word command. If the user needs to leave their current context (switch windows, open a terminal, think about where to put it), the system has failed.
-- **Auto-extract what's in the content. Ask only for what's in the user's head.** The topic is prompted once — a short label for the section heading. Timestamps, source type, and window title are captured automatically. If the user skips the topic prompt, it's auto-derived from content. Even that's optional.
-- **Images are first-class content, not a problem to solve.** Screenshots, diagrams, UI walkthroughs — stored as images with markdown embeds. The rich clipboard (`text/html`) preserves inline images from web content. No OCR needed.
-- **Search finds text. Context finds images.** Text captures are greppable. Image captures are findable by topic, timestamp, window title, and surrounding text. Together they cover retrieval.
+- **The content already exists.** The clipboard has it. A URL points to it. A file contains it. Grab it from the source; don't retype it.
+- **Persisting must be instantaneous.** If saving it means leaving your current context for long or deciding where it belongs, it won't happen.
+- **Images are first-class content.** Screenshots, diagrams, UI walkthroughs are valid records. Name or place them so they can be found again.
 
-This is not a note-taking app. It's a net for knowledge that would otherwise be lost to clipboard amnesia.
-
-⚠️ **Eyes open:** Capture is write-optimized. The file grows forever and is never automatically pruned. At ~5 captures/week, a 5-year career produces ~4000 lines — a small file. If the model breaks, it breaks at scale, and named locations absorb the overflow.
+This is not a note-taking system. It's a net for knowledge that would otherwise be lost to clipboard amnesia.

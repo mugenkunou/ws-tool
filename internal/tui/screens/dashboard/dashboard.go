@@ -21,7 +21,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -39,7 +38,6 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/modal"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/capture"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/cron"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/dotfiles"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
@@ -79,7 +77,7 @@ type area struct {
 // areas in grid order (row-major).
 var areas = []nav.Screen{
 	nav.ScreenRepos, nav.ScreenDotfiles, nav.ScreenScratch,
-	nav.ScreenLogs, nav.ScreenCapture, nav.ScreenIgnore,
+	nav.ScreenLogs, nav.ScreenIgnore,
 	nav.ScreenSecrets, nav.ScreenCron, nav.ScreenTrash,
 }
 
@@ -169,11 +167,9 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	case dotfiles.LoadedMsg:
 		m = m.set(nav.ScreenDotfiles, msg.Err, dotfilesArea(msg))
 	case scratch.LoadedMsg:
-		m = m.set(nav.ScreenScratch, msg.Err, scratchArea(msg, m.env.Config.Scratch.PruneAfterDays))
+		m = m.set(nav.ScreenScratch, msg.Err, scratchArea(msg))
 	case logs.LoadedMsg:
 		m = m.set(nav.ScreenLogs, msg.Err, logsArea(msg))
-	case capture.LoadedMsg:
-		m = m.set(nav.ScreenCapture, msg.Err, captureArea(msg))
 	case ignore.LoadedMsg:
 		m = m.set(nav.ScreenIgnore, msg.Err, ignoreArea(msg))
 	case secrets.LoadedMsg:
@@ -457,23 +453,10 @@ func dotfilesArea(msg dotfiles.LoadedMsg) area {
 	return a
 }
 
-func scratchArea(msg scratch.LoadedMsg, pruneDays int) area {
+func scratchArea(msg scratch.LoadedMsg) area {
 	a := area{lines: []string{fmt.Sprintf("%s · %s", format.Plural(len(msg.Entries), "dir"), style.HumanBytes(msg.TotalBytes()))}}
 	if len(msg.Entries) > 0 {
 		a.lines = append(a.lines, theme.Muted.Render("newest ")+msg.Entries[0].Name)
-	}
-	if pruneDays > 0 {
-		old := 0
-		for _, e := range msg.Entries {
-			if e.Age >= time.Duration(pruneDays)*24*time.Hour {
-				old++
-			}
-		}
-		if old > 0 {
-			a.issues = append(a.issues, issue{sev: sevInfo, screen: nav.ScreenScratch,
-				text:     fmt.Sprintf("%s older than %d days", format.Plural(old, "scratch dir"), pruneDays),
-				fixLabel: "prune", fix: scratch.RequestPruneMsg{}})
-		}
 	}
 	return a
 }
@@ -488,16 +471,6 @@ func logsArea(msg logs.LoadedMsg) area {
 	}
 	a.lines = append(a.lines, theme.Muted.Render("not recording"))
 	return a
-}
-
-func captureArea(msg capture.LoadedMsg) area {
-	existing := 0
-	for _, l := range msg.Locations {
-		if l.Exists {
-			existing++
-		}
-	}
-	return area{lines: []string{format.Plural(len(msg.Locations), "location"), theme.Muted.Render(fmt.Sprintf("%d with captures", existing))}}
 }
 
 func ignoreArea(msg ignore.LoadedMsg) area {

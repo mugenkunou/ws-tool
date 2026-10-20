@@ -23,7 +23,6 @@ const (
 // topLevelCommands is the authoritative list used by both __complete
 // and the generated shell scripts. Keep alphabetised.
 var topLevelCommands = []string{
-	"capture",
 	"completions",
 	"config",
 	"cron",
@@ -54,7 +53,6 @@ type completer struct {
 
 // completers is the data-driven dispatch table for all commands.
 var completers = map[string]completer{
-	"capture":               {subcommands: []string{"ls", "edit"}, resolve: completeCapture},
 	"completions":           {subcommands: []string{"bash", "zsh", "fish", "install", "uninstall"}},
 	"config":                {subcommands: []string{"view", "defaults"}},
 	"cron":                  {subcommands: []string{"add", "rm", "ls", "status", "log"}, resolve: completeCron},
@@ -63,7 +61,7 @@ var completers = map[string]completer{
 	"ignore":                {subcommands: []string{"check", "scan", "fix", "ls", "tree", "edit"}, resolve: completeIgnore},
 	"log":                   {subcommands: []string{"start", "stop", "ls", "prune", "rm"}, resolve: completeLog},
 	"repo":                  {subcommands: []string{"ls", "scan", "fetch", "pull", "sync", "run"}, resolve: completeRepo},
-	"scratch":               {subcommands: []string{"new", "open", "ls", "tag", "search", "prune", "rm"}, resolve: completeScratch},
+	"scratch":               {subcommands: []string{"new", "open", "ls", "tag", "search", "rm"}, resolve: completeScratch},
 	"secret":                {subcommands: []string{"scan", "fix", "setup", "status", "git"}, resolve: completeSecret},
 	"trash":                 {subcommands: []string{"enable", "disable", "empty", "status"}},
 }
@@ -71,14 +69,13 @@ var completers = map[string]completer{
 // completionCtx holds best-effort workspace state loaded once per
 // __complete invocation. Fields may be zero-valued if loading fails.
 type completionCtx struct {
-	workspace        string
-	scratchDir       string
-	logDir           string
-	dotfiles         []string // dotfile names from manifest
-	logTags          []string // session tag directory names
-	scratchIDs       []string // scratch directory names
-	captureLocations []string // configured capture location names
-	repoPaths        []string // discovered repo relative paths
+	workspace  string
+	scratchDir string
+	logDir     string
+	dotfiles   []string // dotfile names from manifest
+	logTags    []string // session tag directory names
+	scratchIDs []string // scratch directory names
+	repoPaths  []string // discovered repo relative paths
 }
 
 // globalFlagCompletions is the static list offered when the current word
@@ -280,8 +277,6 @@ func completeScratch(sub string, args []string, toComplete string, ctx completio
 		return filterPrefix(ctx.scratchIDs, toComplete), compDirectiveNoFileComp
 	case "ls":
 		return nil, compDirectiveNoFileComp
-	case "prune":
-		return nil, compDirectiveNoFileComp
 	default:
 		return nil, compDirectiveNoFileComp
 	}
@@ -295,25 +290,6 @@ func completeSecret(sub string, args []string, toComplete string, ctx completion
 		}
 		return nil, compDirectiveNoFileComp
 	default:
-		return nil, compDirectiveNoFileComp
-	}
-}
-
-func completeCapture(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
-	switch sub {
-	case "ls":
-		return nil, compDirectiveNoFileComp
-	case "edit":
-		// Complete configured location names as optional positional.
-		if len(args) == 0 {
-			return filterPrefix(ctx.captureLocations, toComplete), compDirectiveNoFileComp
-		}
-		return nil, compDirectiveNoFileComp
-	default:
-		// Pin mode — complete configured location names as first positional.
-		if len(args) == 0 {
-			return filterPrefix(ctx.captureLocations, toComplete), compDirectiveNoFileComp
-		}
 		return nil, compDirectiveNoFileComp
 	}
 }
@@ -346,7 +322,6 @@ func cronJobNames() []string {
 		"maintenance",
 		"mega-sync",
 		"repo-sync",
-		"scratch-prune",
 		"secret-scan",
 		"sync",
 	}
@@ -365,8 +340,6 @@ func commandFlags(command string, rest []string) []string {
 	dryRun := "--dry-run"
 
 	switch command {
-	case "capture":
-		return []string{"-a", "--amend", "--dry-run", "-e", "--edit"}
 	case "version":
 		return []string{"--short"}
 	case "cron":
@@ -386,8 +359,6 @@ func commandFlags(command string, rest []string) []string {
 			return []string{"--editor"}
 		case "ls":
 			return []string{"--sort"}
-		case "prune":
-			return []string{"--older-than", "--all", "--name", dryRun}
 		case "rm":
 			return []string{dryRun}
 		}

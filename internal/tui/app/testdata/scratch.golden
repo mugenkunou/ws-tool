@@ -1,4 +1,4 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Capture⁶  Ignore⁷  Secrets⁸  Cron⁹  Trash⁰
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  Name                                          Age    Size       Items  Tags
  dns-debug.2026-09                             3h     2.0 KB     4      dns, network
@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Capture⁶  Ignore⁷
 
 
 
-n new • enter open in editor • t tag • / search • d delete • P prune old • tab/⇧tab screens • ? help
+n new • enter open in editor • t tag • / search • d delete • tab/⇧tab screens • ? help • q quit

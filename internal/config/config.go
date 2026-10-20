@@ -67,14 +67,12 @@ type Config struct {
 	Search       Search  `json:"search"`
 	Dotfile      Dotfile `json:"dotfile"`
 	Repo         Repo    `json:"repo"`
-	Capture      Capture `json:"capture"`
 }
 
 type Scratch struct {
-	RootDir        string `json:"root_dir"`
-	EditorCmd      string `json:"editor_cmd"`
-	NameSuffix     string `json:"name_suffix"`
-	PruneAfterDays int    `json:"prune_after_days"`
+	RootDir    string `json:"root_dir"`
+	EditorCmd  string `json:"editor_cmd"`
+	NameSuffix string `json:"name_suffix"`
 }
 
 type Trash struct {
@@ -131,11 +129,6 @@ type Log struct {
 	MaxSessionMB int `json:"max_session_mb"`
 }
 
-type Capture struct {
-	MaxAttachMB int               `json:"max_attach_mb"`
-	Locations   map[string]string `json:"locations,omitempty"`
-}
-
 func Default() Config {
 	return Config{
 		ConfigSchema: CurrentSchema,
@@ -147,10 +140,9 @@ func Default() Config {
 		},
 		Secret: Secret{Enabled: true, PassNudge: true},
 		Scratch: Scratch{
-			RootDir:        "~/Scratch",
-			EditorCmd:      "code",
-			NameSuffix:     "auto",
-			PruneAfterDays: 90,
+			RootDir:    "~/Scratch",
+			EditorCmd:  "code",
+			NameSuffix: "auto",
 		},
 		Trash: Trash{
 			RootDir:    "~/.local/share/Trash",
@@ -176,9 +168,6 @@ func Default() Config {
 			ExcludeDirs:     []string{"ws", "node_modules", ".venv"},
 			MaxParallel:     8,
 			ReconcileOnRead: true,
-		},
-		Capture: Capture{
-			MaxAttachMB: 5,
 		},
 	}
 }
@@ -312,12 +301,6 @@ func WithAbsPaths(cfg Config, workspacePath string) Config {
 	out.Repo.Roots = absAll(cfg.Repo.Roots)
 	out.Repo.ExcludeDirs = absAll(cfg.Repo.ExcludeDirs)
 	out.Secret.SkipDirs = absAll(cfg.Secret.SkipDirs)
-	if cfg.Capture.Locations != nil {
-		out.Capture.Locations = make(map[string]string, len(cfg.Capture.Locations))
-		for name, dir := range cfg.Capture.Locations {
-			out.Capture.Locations[name] = abs(dir)
-		}
-	}
 	return out
 }
 

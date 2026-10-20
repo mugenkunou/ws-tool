@@ -1,6 +1,7 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Capture⁶  Ignore⁷  Secrets⁸  Cron⁹  Trash⁰
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-🚨 Needs attention (9)
+
+🚨 Needs attention (8)
   ✘ 2 dotfile links broken or overwritten                                  🔗 Dotfiles   x fix links
   ✘ 1 possible secret in workspace files                                                  🔐 Secrets
   ✘ Cron job repo-sync failing (exit 2)                                         ⏰ Cron   x view log
@@ -9,7 +10,6 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Capture⁶  Ignore⁷
   ! Pass store has no git remote — secrets live only on this machine                      🔐 Secrets
   ! Soft-delete is off for 1 of 3 integrations                                   🚮 Trash   x enable
   · 1 hygiene finding in 1 repo                                                             📦 Repos
-  · 1 scratch dir older than 90 days                                            🧪 Scratch   x prune
 
 📋 Overview
 ╭──────────────────────────────╮ ╭──────────────────────────────╮ ╭──────────────────────────────╮
@@ -18,13 +18,13 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Capture⁶  Ignore⁷
 │ ↑ 1 ahead · ↓ 1 behind       │ │ 2 links need fixing          │ │ newest dns-debug.2026-09     │
 ╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
 ╭──────────────────────────────╮ ╭──────────────────────────────╮ ╭──────────────────────────────╮
-│ 📼 Logs                    ✔ │ │ 📌 Capture                 ✔ │ │ 🧹 Ignore                  ! │
-│ 2 sessions                   │ │ 2 locations                  │ │ 2 violations                 │
-│ ● recording deploy-fix       │ │ 1 with captures              │ │ 1 in safe harbors            │
+│ 📼 Logs                    ✔ │ │ 🧹 Ignore                  ! │ │ 🔐 Secrets                 ✘ │
+│ 2 sessions                   │ │ 2 violations                 │ │ 1 finding                    │
+│ ● recording deploy-fix       │ │ 1 in safe harbors            │ │ pass: 42 entries             │
 ╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
-╭──────────────────────────────╮ ╭──────────────────────────────╮ ╭──────────────────────────────╮
-│ 🔐 Secrets                 ✘ │ │ ⏰ Cron                    ✘ │ │ 🚮 Trash                   ! │
-│ 1 finding                    │ │ 2 jobs installed             │ │ 3.0 MB · 12 files            │
-│ pass: 42 entries             │ │ 1 failing                    │ │ soft-delete off (1 of 3)     │
-╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
+╭──────────────────────────────╮ ╭──────────────────────────────╮
+│ ⏰ Cron                    ✘ │ │ 🚮 Trash                   ! │
+│ 2 jobs installed             │ │ 3.0 MB · 12 files            │
+│ 1 failing                    │ │ soft-delete off (1 of 3)     │
+╰──────────────────────────────╯ ╰──────────────────────────────╯
 ←→↑↓ move • enter open • x quick fix • r refresh all • tab/⇧tab screens • ? help • q quit

@@ -108,7 +108,6 @@ func TestWithAbsPaths(t *testing.T) {
 	cfg := Default()
 	cfg.Workspace = ws
 	cfg.Secret.SkipDirs = []string{"vendor/"}
-	cfg.Capture.Locations = map[string]string{"notes": "Notes/brain", "abs": "/srv/x"}
 
 	got := WithAbsPaths(cfg, ws)
 
@@ -127,11 +126,8 @@ func TestWithAbsPaths(t *testing.T) {
 	if got.Secret.SkipDirs[0] != "/w/Workspace/vendor" {
 		t.Errorf("skip dirs = %v", got.Secret.SkipDirs)
 	}
-	if got.Capture.Locations["notes"] != "/w/Workspace/Notes/brain" || got.Capture.Locations["abs"] != "/srv/x" {
-		t.Errorf("capture locations = %v", got.Capture.Locations)
-	}
 	// Original must be untouched.
-	if cfg.Repo.Roots[0] != "." || cfg.Capture.Locations["notes"] != "Notes/brain" {
+	if cfg.Repo.Roots[0] != "." {
 		t.Errorf("WithAbsPaths mutated its input: %+v", cfg)
 	}
 }

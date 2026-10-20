@@ -17,7 +17,7 @@ import (
 
 var tuiHelp = cmdHelp{
 	Usage:       "ws tui",
-	Description: "Open the interactive terminal UI: dashboard, repos, dotfiles, scratch,\nlogs, capture, ignore, secrets, cron, and trash.",
+	Description: "Open the interactive terminal UI: dashboard, repos, dotfiles, scratch,\nlogs, ignore, secrets, cron, and trash.",
 }
 
 func runTUI(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {

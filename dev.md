@@ -424,7 +424,6 @@ Every command is either **read-only (RO)** or **read-write (RW)**. If it writes 
 
 Some RW commands are exempt from the Plan → Confirm → Execute pattern because their writes are non-destructive and time-sensitive. These commands append-only and never modify existing data:
 
-- `ws capture` — appends to `captures.md`. Confirmation would contradict the sub-5-second capture goal. `--dry-run` is still supported.
 - `ws log stop` — stops a recording session. No meaningful "undo" to confirm.
 
 New exemptions require strong justification in the spec. Default is always to use the Action Plan pattern.
@@ -478,7 +477,7 @@ One Action per independently meaningful mutation. Ask: "would a user ever want t
 |---|---|
 | Per-file operations (init, dotfile add) | One action per file |
 | Fleet operations (repo pull/push/run) | One action per repo |
-| Cleanup operations (log prune, scratch prune) | One action per item removed |
+| Cleanup operations (log prune) | One action per item removed |
 | Single-mutation commands (log start) | One action total |
 
 ### Prompt vocabulary
@@ -595,7 +594,7 @@ The completion system (`cmd/complete.go`) is a **derived artifact** of the comma
 
 3. **`commandFlags()` must list every flag a subcommand actually registers.** Cross-reference against the `flag.NewFlagSet` + `fs.StringVar`/`fs.BoolVar` calls in the command handler. Ghost flags (suggesting `--all` when the command has `--rebase`) actively mislead. Missing flags (omitting `--path`, `--dirty`, etc.) silently degrade the experience.
 
-4. **Commands with dynamic positional arguments must have a `resolve` function.** If a subcommand accepts a repo name, a scratch ID, a dotfile name, a capture location, or any value that can be enumerated at tab-time, the `completers` entry needs a `resolve` function that loads the relevant data from `completionCtx`. A completer with `subcommands` but no `resolve` is only half-wired.
+4. **Commands with dynamic positional arguments must have a `resolve` function.** If a subcommand accepts a repo name, a scratch ID, a dotfile name, or any value that can be enumerated at tab-time, the `completers` entry needs a `resolve` function that loads the relevant data from `completionCtx`. A completer with `subcommands` but no `resolve` is only half-wired.
 
 5. **`completionCtx` must carry data for every dynamic completion.** When a new `resolve` function needs workspace state (repo list, tag list, etc.), add the field to `completionCtx` and load it in `loadCompletionCtx`. Do not inline filesystem calls inside resolvers — the context loader is the single best-effort loading point.
 
@@ -616,7 +615,7 @@ The authoritative rule is **Path Rules** in `spec.md`. This section is the contr
 **Rules:**
 
 1. **One helper.** Render every path through `style.AbsPath(workspace, p)`. It joins relative paths onto the workspace and runs `filepath.Clean`. It does not resolve symlinks and does not tilde-shorten. Call sites never format paths ad hoc.
-2. **One line per item.** Absolute paths are already `cd`-ready, so the old "short name + muted full path" two-line pattern is gone. Identifiers such as scratch names, log tags, capture locations and cron job names may still appear. When the command acts on the file behind that name, print the file's absolute path too.
+2. **One line per item.** Absolute paths are already `cd`-ready, so the old "short name + muted full path" two-line pattern is gone. Identifiers such as scratch names, log tags and cron job names may still appear. When the command acts on the file behind that name, print the file's absolute path too.
 3. **JSON is output too.** Path fields in `--json` data are absolute (envelope `schema: 2`). Internal structs may keep workspace-relative paths where rule matching needs them (ignore/secret violations, repo discovery). Convert at render/marshal time, never by changing what the matcher sees.
 4. **Not paths:** `.megaignore` rule patterns, config keys, git refs/URLs, and pass entry names (`git/<host>`). Print these verbatim.
 5. **Tree views** (`ws ignore tree`) print one absolute header. The rows beneath it are tree nodes, not paths.
@@ -673,7 +672,7 @@ Built on Charm v2: `charm.land/bubbletea/v2`, `charm.land/bubbles/v2`,
 | `internal/tui/app` | Root model. Owns screens, routes messages, handles global keys, lays out header / body / notice / footer, shows the setup screen when the workspace is not initialized. |
 | `internal/tui/nav` | Contract between app and screens: `Screen` enum, `Component` interface, `ResizeMsg`, `UpMsg`, `GotoMsg`, `RefreshMsg`, `ReloadEnvMsg`, `NoticeMsg`. |
 | `internal/tui/keys` | **Every key binding** (`keys.go`). App handles `Global`; each screen and dialog handles its own map. |
-| `internal/tui/screens/<name>` | One package per screen: dashboard, repos, dotfiles, scratch, logs, capture, ignore, secrets, cron, trash, setup. Unexported state; outputs are exported `LoadedMsg` types. |
+| `internal/tui/screens/<name>` | One package per screen: dashboard, repos, dotfiles, scratch, logs, ignore, secrets, cron, trash, setup. Unexported state; outputs are exported `LoadedMsg` types. |
 | `internal/tui/confirm` | The Action Plan checklist: review (toggle) → running (one `tea.Cmd` per action) → done. Emits `DoneMsg{Result}`. |
 | `internal/tui/prompt`, `choose` | Text input with ghost-panel suggestions (fixed list or async `Completer`); single-choice list. |
 | `internal/tui/modal` | Holds a screen's one open dialog, tagged with a typed step; `Match` routes the dialog's result back. |
@@ -720,7 +719,7 @@ CLI today: `init`, `restore`, `dotfile git setup`, `dotfile migrate`,
 **Key grammar** (identical on every screen; documented in `keys.go`):
 ←→↑↓/hjkl move within the page (lists use ↑↓, grids all four) · enter is the
 only key that opens/drills in · esc goes up one level · tab/shift+tab switch
-screens (also `]` `[`, and 1–9, 0 for the tenth) · r reloads · ? help · q
+screens (also `]` `[`, and 1–9) · r reloads · ? help · q
 quit. Global bindings never take arrows, hjkl, enter, esc or space —
 `TestGlobalKeysLeavePageKeysAlone` enforces it. The tab bar shows each jump
 key as a faint superscript (`Repos²`).

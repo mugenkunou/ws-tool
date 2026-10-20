@@ -42,18 +42,17 @@ type BuiltinJob struct {
 
 // Builtins is the registry of all built-in named cron jobs.
 var Builtins = map[string]*BuiltinJob{
-	"mega-sync":     megaSyncJob,
-	"dotfile-sync":  dotfileSyncJob,
-	"repo-sync":     repoSyncJob,
-	"secret-scan":   secretScanJob,
-	"ignore-scan":   ignoreScanJob,
-	"log-prune":     logPruneJob,
-	"scratch-prune": scratchPruneJob,
+	"mega-sync":    megaSyncJob,
+	"dotfile-sync": dotfileSyncJob,
+	"repo-sync":    repoSyncJob,
+	"secret-scan":  secretScanJob,
+	"ignore-scan":  ignoreScanJob,
+	"log-prune":    logPruneJob,
 }
 
 // Presets maps a composite name to the ordered list of job names it expands to.
 var Presets = map[string][]string{
-	"maintenance": {"ignore-scan", "log-prune", "scratch-prune"},
+	"maintenance": {"ignore-scan", "log-prune"},
 	"sync":        {"mega-sync", "dotfile-sync", "repo-sync"},
 }
 

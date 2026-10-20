@@ -13,20 +13,18 @@ import (
 
 	"github.com/mugenkunou/ws-tool/internal/scratch"
 	"github.com/mugenkunou/ws-tool/internal/style"
-	"github.com/mugenkunou/ws-tool/internal/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 var scratchHelp = cmdHelp{
-	Usage: "ws scratch <new|open|ls|tag|search|prune|rm>",
+	Usage: "ws scratch <new|open|ls|tag|search|rm>",
 	Subcommands: []string{
 		"  new [name]      Create a scratch directory",
 		"  open [name]     Open an existing scratch directory in editor",
 		"  ls              List scratch directories",
 		"  tag [name]      Add tags to a scratch directory",
 		"  search [query]  Search scratch directories by tag/name/content",
-		"  prune           Remove old/all scratch directories",
 		"  rm <name>       Delete a scratch directory by name",
 	},
 }
@@ -161,72 +159,6 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			fmt.Fprintf(out, "  %s\n", style.Mutedf(nc, "%s", e.Path))
 		}
 		return 0
-	case "prune":
-		fs := flag.NewFlagSet("scratch-prune", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		olderThan := fs.String("older-than", "", "duration (e.g. 30d, 720h)")
-		all := fs.Bool("all", false, "remove all scratch directories")
-		name := fs.String("name", "", "name contains filter")
-		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
-		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		d := time.Duration(0)
-		if strings.TrimSpace(*olderThan) != "" {
-			dur, err := scratch.ParseOlderThan(*olderThan)
-			if err != nil {
-				fmt.Fprintln(stderr, err.Error())
-				return 1
-			}
-			d = dur
-		} else if cfg.Scratch.PruneAfterDays > 0 && !*all {
-			d = time.Duration(cfg.Scratch.PruneAfterDays) * 24 * time.Hour
-		}
-
-		if *dryRun {
-			globals.dryRun = true
-		}
-		list, err := scratch.List(scratch.ListOptions{RootDir: rootDir, SortBy: "name"})
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		plan := Plan{Command: "scratch.prune"}
-		for _, e := range list {
-			remove := *all
-			if !remove && d > 0 {
-				remove = e.Age >= d
-			}
-			if remove && strings.TrimSpace(*name) != "" {
-				remove = strings.Contains(strings.ToLower(e.Name), strings.ToLower(*name))
-			}
-			if !remove {
-				continue
-			}
-			eName := e.Name
-			ePath := e.Path
-			plan.Actions = append(plan.Actions, Action{
-				ID:          "prune-" + eName,
-				Description: fmt.Sprintf("Remove %s (%s)", ePath, style.HumanBytes(e.SizeBytes)),
-				Execute: func() error {
-					return trash.SoftDelete(ePath)
-				},
-			})
-		}
-
-		planResult := RunPlan(plan, stdin, stdout, globals)
-		if globals.json {
-			return writeJSON(stdout, stderr, "scratch.prune", map[string]any{"actions": planResult.Actions})
-		}
-		out := textOut(globals, stdout)
-		if globals.dryRun {
-			fmt.Fprintf(out, "Would remove %d directory(s)\n", len(plan.Actions))
-		} else {
-			fmt.Fprintf(out, "Removed %d directory(s)\n", planResult.ExecutedCount())
-		}
-		return planResult.ExitCode()
 	case "rm":
 		fs := flag.NewFlagSet("scratch-rm", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)

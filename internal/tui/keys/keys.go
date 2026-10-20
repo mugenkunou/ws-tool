@@ -247,7 +247,6 @@ type ScratchMap struct {
 	AutoTag key.Binding
 	Search  key.Binding
 	Delete  key.Binding
-	Prune   key.Binding
 	Refresh key.Binding
 	Back    key.Binding
 }
@@ -262,7 +261,6 @@ func Scratch() ScratchMap {
 		AutoTag: key.NewBinding(key.WithKeys("T"), key.WithHelp("T", "auto-tag")),
 		Search:  key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
 		Delete:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
-		Prune:   key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "prune old")),
 		Refresh: refresh(),
 		Back:    back(),
 	}
@@ -270,7 +268,7 @@ func Scratch() ScratchMap {
 
 // ShortHelp implements help.KeyMap.
 func (k ScratchMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.New, k.Open, k.Tag, k.Search, k.Delete, k.Prune}
+	return []key.Binding{k.New, k.Open, k.Tag, k.Search, k.Delete}
 }
 
 // FullHelp implements help.KeyMap.
@@ -278,7 +276,7 @@ func (k ScratchMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
 		{k.New, k.Open, k.Search, k.Refresh},
-		{k.Tag, k.AutoTag, k.Delete, k.Prune},
+		{k.Tag, k.AutoTag, k.Delete},
 		{k.Back},
 	}
 }
@@ -341,49 +339,6 @@ func (k ViewerMap) ShortHelp() []key.Binding {
 // FullHelp implements help.KeyMap.
 func (k ViewerMap) FullHelp() [][]key.Binding {
 	return append(k.Detail.FullHelp(), []key.Binding{k.ToggleMode})
-}
-
-// CaptureMap is the binding set for the capture screen. enter moves into
-// the preview to scroll it; esc comes back to the list.
-type CaptureMap struct {
-	Table   table.KeyMap
-	Focus   key.Binding
-	Preview viewport.KeyMap
-	Pin     key.Binding
-	Amend   key.Binding
-	Note    key.Binding
-	Edit    key.Binding
-	Refresh key.Binding
-	Back    key.Binding
-}
-
-// Capture returns bindings for the capture screen.
-func Capture() CaptureMap {
-	return CaptureMap{
-		Table:   Table(),
-		Focus:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "scroll preview")),
-		Preview: Detail().Viewport,
-		Pin:     key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "pin clipboard")),
-		Amend:   key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "amend last")),
-		Note:    key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "write note")),
-		Edit:    key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit file")),
-		Refresh: refresh(),
-		Back:    back(),
-	}
-}
-
-// ShortHelp implements help.KeyMap.
-func (k CaptureMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Focus, k.Pin, k.Amend, k.Note, k.Edit, k.Refresh}
-}
-
-// FullHelp implements help.KeyMap.
-func (k CaptureMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{
-		{k.Table.LineUp, k.Table.LineDown, k.Focus},
-		{k.Pin, k.Amend, k.Note, k.Edit},
-		{k.Refresh, k.Back},
-	}
 }
 
 // IgnoreMap is the binding set for the sync-hygiene (ignore) screen.

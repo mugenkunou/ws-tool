@@ -78,13 +78,13 @@ func TestCompleteSubcommands(t *testing.T) {
 	}{
 		{
 			args:      []string{"scratch", ""},
-			wantSome:  []string{"new", "ls", "prune", "rm"},
+			wantSome:  []string{"new", "ls", "rm"},
 			directive: compDirectiveNoFileComp,
 		},
 		{
 			args:      []string{"scratch", "r"},
 			wantSome:  []string{"rm"},
-			wantNone:  []string{"new", "ls", "prune"},
+			wantNone:  []string{"new", "ls"},
 			directive: compDirectiveNoFileComp,
 		},
 		{
@@ -125,11 +125,6 @@ func TestCompleteSubcommands(t *testing.T) {
 		{
 			args:      []string{"trash", ""},
 			wantSome:  []string{"enable", "empty", "status"},
-			directive: compDirectiveNoFileComp,
-		},
-		{
-			args:      []string{"capture", ""},
-			wantSome:  []string{"ls"},
 			directive: compDirectiveNoFileComp,
 		},
 	}
@@ -173,10 +168,6 @@ func TestCompleteCommandFlags(t *testing.T) {
 		{
 			args:     []string{"ignore", "scan", "--"},
 			wantSome: []string{"--expand-harbors"},
-		},
-		{
-			args:     []string{"capture", "--"},
-			wantSome: []string{"--edit", "--amend", "--dry-run"},
 		},
 		{
 			args:     []string{"trash", "empty", "--"},
@@ -311,40 +302,6 @@ func TestCompleteDotfileRm(t *testing.T) {
 	}
 	if len(comps) != 4 {
 		t.Fatalf("expected 4 dotfile completions, got %v", comps)
-	}
-}
-
-func TestCompleteCaptureLocationPositional(t *testing.T) {
-	ctx := completionCtx{
-		captureLocations: []string{"personal", "work", "archive"},
-	}
-	// Simulate: ws capture <TAB> — offer configured location names
-	comps, dir := completeCapture("", []string{}, "", ctx)
-	if dir != compDirectiveNoFileComp {
-		t.Fatalf("expected NoFileComp, got %d", dir)
-	}
-	if len(comps) != 3 {
-		t.Fatalf("expected 3 location completions, got %v", comps)
-	}
-}
-
-func TestCompleteCaptureLocationPrefix(t *testing.T) {
-	ctx := completionCtx{
-		captureLocations: []string{"personal", "work", "archive"},
-	}
-	comps, _ := completeCapture("", []string{}, "p", ctx)
-	if len(comps) != 1 || comps[0] != "personal" {
-		t.Fatalf("expected [personal], got %v", comps)
-	}
-}
-
-func TestCaptureEditSubcommandCompletion(t *testing.T) {
-	// "edit" is now a subcommand; ws capture edit <TAB> should offer location names
-	// (no locations configured → empty list) with NoFileComp directive.
-	ctx := completionCtx{}
-	_, dir := completeCapture("edit", []string{}, "", ctx)
-	if dir != compDirectiveNoFileComp {
-		t.Fatalf("capture edit <TAB>: expected NoFileComp, got %d", dir)
 	}
 }
 

@@ -41,15 +41,7 @@ type ListOptions struct {
 	SortBy  string
 }
 
-type PruneOptions struct {
-	RootDir    string
-	OlderThan  time.Duration
-	All        bool
-	NameFilter string
-	DryRun     bool
-}
-
-type PruneResult struct {
+type DeleteResult struct {
 	Removed    []string `json:"removed"`
 	FreedBytes int64    `json:"freed_bytes"`
 	DryRun     bool     `json:"dry_run"`
@@ -134,65 +126,18 @@ func List(opts ListOptions) ([]Entry, error) {
 	return out, nil
 }
 
-func Prune(opts PruneOptions) (PruneResult, error) {
-	list, err := List(ListOptions{RootDir: opts.RootDir, SortBy: "name"})
-	if err != nil {
-		return PruneResult{}, err
-	}
-	res := PruneResult{Removed: []string{}, DryRun: opts.DryRun}
-	for _, e := range list {
-		remove := opts.All
-		if !remove && opts.OlderThan > 0 {
-			remove = e.Age >= opts.OlderThan
-		}
-		if remove && strings.TrimSpace(opts.NameFilter) != "" {
-			remove = strings.Contains(strings.ToLower(e.Name), strings.ToLower(opts.NameFilter))
-		}
-		if !remove {
-			continue
-		}
-		if !opts.DryRun {
-			if err := trash.SoftDelete(e.Path); err != nil {
-				return res, err
-			}
-		}
-		res.Removed = append(res.Removed, e.Name)
-		res.FreedBytes += e.SizeBytes
-	}
-	return res, nil
-}
-
-func ParseOlderThan(input string) (time.Duration, error) {
-	v := strings.TrimSpace(strings.ToLower(input))
-	if v == "" {
-		return 0, nil
-	}
-	if strings.HasSuffix(v, "d") {
-		n, err := strconv.Atoi(strings.TrimSuffix(v, "d"))
-		if err != nil {
-			return 0, fmt.Errorf("invalid duration: %s", input)
-		}
-		return time.Duration(n) * 24 * time.Hour, nil
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil {
-		return 0, fmt.Errorf("invalid duration: %s", input)
-	}
-	return d, nil
-}
-
-func Delete(opts DeleteOptions) (PruneResult, error) {
+func Delete(opts DeleteOptions) (DeleteResult, error) {
 	name := strings.TrimSpace(opts.Name)
 	if name == "" {
-		return PruneResult{}, errors.New("scratch name is required")
+		return DeleteResult{}, errors.New("scratch name is required")
 	}
 
 	list, err := List(ListOptions{RootDir: opts.RootDir, SortBy: "name"})
 	if err != nil {
-		return PruneResult{}, err
+		return DeleteResult{}, err
 	}
 
-	res := PruneResult{Removed: []string{}, DryRun: opts.DryRun}
+	res := DeleteResult{Removed: []string{}, DryRun: opts.DryRun}
 	for _, e := range list {
 		if e.Name != name && !strings.Contains(strings.ToLower(e.Name), strings.ToLower(name)) {
 			continue

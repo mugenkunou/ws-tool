@@ -1,5 +1,5 @@
 // Package scratch is the scratch-directory screen: list, create, open in the
-// editor, tag (manual and auto), search, delete, and prune.
+// editor, tag (manual and auto), search, and delete.
 //
 // Navigation levels: list → search results. esc in results returns to the
 // list; esc in the list asks the app to go up.
@@ -7,10 +7,8 @@ package scratch
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -51,9 +49,6 @@ func (m LoadedMsg) TotalBytes() int64 {
 	return n
 }
 
-// RequestPruneMsg asks the screen to open its prune checklist.
-type RequestPruneMsg struct{}
-
 type searchMsg struct {
 	query   string
 	results []wsscratch.SearchResult
@@ -87,7 +82,6 @@ const (
 	stepAutoTag
 	stepSearchQuery
 	stepDelete
-	stepPrune
 )
 
 type handoverTag int
@@ -208,12 +202,6 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		m.entries, m.tags = msg.Entries, msg.Tags
 		m.list = m.list.SetRows(rows(msg.Entries))
 		return m, nil
-	case RequestPruneMsg:
-		if m.modal.Open() {
-			return m, nil
-		}
-		m.level = levelList
-		return m.openPrune(), nil
 	case searchMsg:
 		if msg.err != nil {
 			m.results = m.results.SetError(msg.err)
@@ -321,8 +309,6 @@ func (m Model) updateList(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 		if e, ok := m.selected(); ok {
 			return m.openDelete(e), nil
 		}
-	case key.Matches(k, m.keys.Prune):
-		return m.openPrune(), nil
 	default:
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(k)
@@ -478,40 +464,6 @@ func (m Model) openDelete(e wsscratch.Entry) Model {
 		},
 	}}}
 	m.modal = m.modal.Confirm(stepDelete, confirm.New("Delete scratch directory", p))
-	return m
-}
-
-// openPrune lists every scratch dir; those older than scratch.prune_after_days
-// are pre-checked (the CLI's default), the rest can be ticked (its --all).
-func (m Model) openPrune() Model {
-	days := m.env.Config.Scratch.PruneAfterDays
-	threshold := time.Duration(days) * 24 * time.Hour
-	p := plan.Plan{Command: "scratch.prune"}
-	var old []bool
-	for _, e := range m.entries {
-		path := e.Path
-		p.Actions = append(p.Actions, plan.Action{
-			ID:          "prune-" + e.Name,
-			Description: fmt.Sprintf("Remove %s  %s, %s old", e.Name, style.HumanBytes(e.SizeBytes), format.Age(e.Age)),
-			Execute:     func() error { return os.RemoveAll(path) },
-		})
-		old = append(old, days > 0 && e.Age >= threshold)
-	}
-	note := "Nothing is older than the threshold; tick entries to remove them anyway."
-	n := 0
-	for _, o := range old {
-		if o {
-			n++
-		}
-	}
-	if days <= 0 {
-		note = "scratch.prune_after_days is 0; tick entries to remove."
-	} else if n > 0 {
-		note = fmt.Sprintf("%s older than %d days pre-selected.", format.Plural(n, "directory"), days)
-	}
-	c := confirm.New("Prune scratch directories", p).WithNote(note).
-		WithChecked(func(i int, _ plan.Action) bool { return old[i] })
-	m.modal = m.modal.Confirm(stepPrune, c)
 	return m
 }
 

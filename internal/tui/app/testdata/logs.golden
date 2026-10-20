@@ -1,4 +1,4 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Capture⁶  Ignore⁷  Secrets⁸  Cron⁹  Trash⁰
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  Tag                                       Started           Duration  Cmds  Size       State
  deploy-fix                                2026-09-30 14:05  —         12    40.0 KB    ● recording

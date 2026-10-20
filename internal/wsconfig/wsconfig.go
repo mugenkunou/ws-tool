@@ -35,23 +35,22 @@ const (
 // All fields are synced with the workspace. Machine-local state is stored
 // under ~/.local/state/ws-tool/ instead.
 type WsConfig struct {
-	Schema      int                  `json:"schema"`
-	Scratch     Scratch              `json:"scratch"`
-	Repo        Repo                 `json:"repo"`
-	Dotfile     Dotfile              `json:"dotfile"`
-	Secret      Secret               `json:"secret"`
-	Ignore      Ignore               `json:"ignore"`
-	IgnoreRules ignore.UserRules     `json:"ignore_rules"`
-	Log         Log                  `json:"log"`
-	Links       []Link               `json:"links"`
+	Schema      int              `json:"schema"`
+	Scratch     Scratch          `json:"scratch"`
+	Repo        Repo             `json:"repo"`
+	Dotfile     Dotfile          `json:"dotfile"`
+	Secret      Secret           `json:"secret"`
+	Ignore      Ignore           `json:"ignore"`
+	IgnoreRules ignore.UserRules `json:"ignore_rules"`
+	Log         Log              `json:"log"`
+	Links       []Link           `json:"links"`
 }
 
 // Scratch holds scratch-directory settings.
 type Scratch struct {
-	RootDir        string   `json:"root_dir"`
-	EditorCmd      string   `json:"editor_cmd"`
-	PruneAfterDays int      `json:"prune_after_days"`
-	Tags           []string `json:"tags,omitempty"`
+	RootDir   string   `json:"root_dir"`
+	EditorCmd string   `json:"editor_cmd"`
+	Tags      []string `json:"tags,omitempty"`
 }
 
 // Repo holds repository fleet settings.
@@ -94,17 +93,16 @@ type Log struct {
 	MaxSessionMB int `json:"max_session_mb"`
 }
 
-
 // Link is a single entry in the link registry.
 // It records a system path → workspace-relative original mapping.
 // When Dir is true, the system path is a directory link (e.g. ~/.password-store).
 // When Sudo is true, creating the symlink requires root.
 type Link struct {
-	System   string `json:"system"`            // absolute system path (symlink source)
-	Original string `json:"original"`          // workspace-relative path of the original
-	Dir      bool   `json:"dir,omitempty"`     // true if the system path is a directory link
-	Sudo     bool   `json:"sudo,omitempty"`    // true if the symlink needs sudo
-	Class    string `json:"class,omitempty"`   // "config" or "secret" (informational)
+	System   string `json:"system"`          // absolute system path (symlink source)
+	Original string `json:"original"`        // workspace-relative path of the original
+	Dir      bool   `json:"dir,omitempty"`   // true if the system path is a directory link
+	Sudo     bool   `json:"sudo,omitempty"`  // true if the symlink needs sudo
+	Class    string `json:"class,omitempty"` // "config" or "secret" (informational)
 }
 
 // Default returns the out-of-the-box WsConfig written by `ws init`.
@@ -112,9 +110,8 @@ func Default() WsConfig {
 	return WsConfig{
 		Schema: CurrentSchema,
 		Scratch: Scratch{
-			RootDir:        "~/Scratch",
-			EditorCmd:      "code",
-			PruneAfterDays: 90,
+			RootDir:   "~/Scratch",
+			EditorCmd: "code",
 		},
 		Repo: Repo{
 			Roots:       []string{"."},
