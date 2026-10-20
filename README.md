@@ -85,6 +85,7 @@ Your `.bashrc` now lives in the workspace (synced). The system path is a symlink
 | `ws trash setup` | Configure soft-delete for shell `rm`, VS Code, and file explorer |
 | `ws trash disable` | Remove soft-delete integrations |
 | `ws trash empty` | Empty trash contents if the trash root exists |
+| `ws trash purge --older-than <days>` | Permanently delete trash items deleted more than N days ago (age from the `.trashinfo` DeletionDate; supports `--dry-run`) |
 | `ws trash status` | Check integration status and trash size |
 
 </details>

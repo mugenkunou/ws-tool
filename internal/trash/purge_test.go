@@ -1,7 +1,6 @@
 package trash
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -71,5 +70,4 @@ func TestPurgeMissingRoot(t *testing.T) {
 	if err != nil || res.Exists || len(res.Matched) != 0 {
 		t.Fatalf("got %+v, %v", res, err)
 	}
-	_ = fmt.Sprint()
 }

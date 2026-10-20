@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/listview"
 	"github.com/mugenkunou/ws-tool/internal/tui/modal"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
+	"github.com/mugenkunou/ws-tool/internal/tui/prompt"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 )
 
@@ -62,6 +64,8 @@ type step int
 const (
 	stepChange step = iota
 	stepDeleteItem
+	stepPurgeDays
+	stepPurge
 )
 
 // Model is the trash screen state.
@@ -160,6 +164,9 @@ func (m Model) reload() (Model, tea.Cmd) {
 func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	if st, ok := m.modal.Match(msg); ok {
 		m.modal = m.modal.Close()
+		if st == stepPurgeDays {
+			return m.purgeDays(msg.(prompt.ResultMsg))
+		}
 		done := msg.(confirm.DoneMsg)
 		if done.Result.Aborted {
 			return m, nil
@@ -222,6 +229,12 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		return m.openDisable(), nil
 	case key.Matches(k, m.keys.Empty):
 		return m.openEmpty(), nil
+	case key.Matches(k, m.keys.Purge):
+		var cmd tea.Cmd
+		m.modal, cmd = m.modal.Prompt(stepPurgeDays, prompt.New("Purge items older than (days)",
+			prompt.WithHint("Permanently deletes trash items deleted more than this many days ago."),
+			prompt.WithValidate(parseDays)))
+		return m, cmd
 	case key.Matches(k, m.keys.DeleteItem):
 		if i := m.list.Cursor(); i >= 0 && i < len(m.state.Items) {
 			return m.openDeleteItem(m.state.Items[i]), nil
@@ -300,6 +313,66 @@ func (m Model) openDeleteItem(it Item) Model {
 	}}}
 	m.modal = m.modal.Confirm(stepDeleteItem, confirm.New("Delete trash item", pl))
 	return m
+}
+
+// parseDays validates the purge prompt: a positive whole number of days.
+func parseDays(v string) error {
+	if _, err := daysFrom(v); err != nil {
+		return err
+	}
+	return nil
+}
+
+func daysFrom(v string) (int, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("enter a positive whole number of days")
+	}
+	return n, nil
+}
+
+// purgeDays turns the submitted day count into the checklist: one action per
+// trashed item older than the cutoff, all pre-selected by the confirm view.
+func (m Model) purgeDays(r prompt.ResultMsg) (nav.Component, tea.Cmd) {
+	if r.Cancelled {
+		return m, nil
+	}
+	days, err := daysFrom(r.Value)
+	if err != nil {
+		return m, nav.Notify(nav.LevelWarn, err.Error())
+	}
+	rt := m.state.Status.RootDir
+	if rt == "" {
+		rt = root(m.env)
+	}
+	age := time.Duration(days) * 24 * time.Hour
+	res, err := wstrash.ListOlderThan(rt, age, m.env.Now())
+	if err != nil {
+		return m, nav.Notify(nav.LevelWarn, err.Error())
+	}
+	if len(res.Matched) == 0 {
+		return m, nav.Notify(nav.LevelInfo, fmt.Sprintf("Nothing older than %d days.", days))
+	}
+	now := m.env.Now()
+	pl := plan.Plan{Command: "trash.purge"}
+	for _, e := range res.Matched {
+		name := e.Name
+		desc := fmt.Sprintf("%s (%s, %s ago)", name, style.HumanBytes(e.SizeBytes), format.Age(now.Sub(e.DeletedAt)))
+		pl.Actions = append(pl.Actions, plan.Action{
+			ID:          "purge-" + name,
+			Description: "Permanently delete " + desc,
+			Execute: func() error {
+				if err := os.RemoveAll(filepath.Join(rt, "files", name)); err != nil {
+					return err
+				}
+				_ = os.Remove(filepath.Join(rt, "info", name+".trashinfo")) // best-effort
+				return nil
+			},
+		})
+	}
+	title := fmt.Sprintf("Purge trash older than %d days", days)
+	m.modal = m.modal.Confirm(stepPurge, confirm.New(title, pl))
+	return m, nil
 }
 
 func (m Model) openEmpty() Model {

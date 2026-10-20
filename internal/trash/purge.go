@@ -120,6 +120,7 @@ func readDeletionDate(path string) (time.Time, bool) {
 		t, err := time.ParseInLocation("2006-01-02T15:04:05", v, time.Local)
 		return t, err == nil
 	}
+	_ = sc.Err() // unreadable info is treated as "no date"
 	return time.Time{}, false
 }
 

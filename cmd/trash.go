@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/trash"
@@ -13,12 +14,13 @@ import (
 )
 
 var trashHelp = cmdHelp{
-	Usage: "ws trash <enable|setup|disable|empty|rm|status>",
+	Usage: "ws trash <enable|setup|disable|empty|purge|rm|status>",
 	Subcommands: []string{
 		"  enable   Configure soft-delete integrations",
 		"  setup    Alias for enable",
 		"  disable  Remove soft-delete integrations",
 		"  empty    Remove all entries from trash root",
+		"  purge    Permanently delete trash items older than N days (--older-than)",
 		"  rm       Permanently delete a single trash item by name",
 		"  status   Show integration status and trash size",
 	},
@@ -266,6 +268,78 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		}
 		return planResult.ExitCode()
 
+	case "purge":
+		fs := flag.NewFlagSet("trash-purge", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		rootDir := fs.String("root-dir", cfgTrashRoot, "trash root directory")
+		olderThan := fs.Int("older-than", 0, "delete items trashed more than this many days ago")
+		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
+		registerGlobalFlags(fs, &globals)
+		if err := fs.Parse(subArgs); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		if *olderThan <= 0 {
+			fmt.Fprintln(stderr, "usage: ws trash purge --older-than <days>  (days must be a positive integer; use `ws trash empty` to remove everything)")
+			return 1
+		}
+		if *dryRun {
+			globals.dryRun = true
+		}
+		age := time.Duration(*olderThan) * 24 * time.Hour
+		preview, err := trash.Purge(trash.PurgeOptions{RootDir: *rootDir, OlderThan: age, DryRun: true})
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		result := preview
+		plan := Plan{Command: "trash.purge"}
+		if len(preview.Matched) > 0 {
+			plan.Actions = append(plan.Actions, Action{
+				ID: "trash-purge",
+				Description: fmt.Sprintf("Permanently delete %s older than %d days (%s)",
+					pluralize(len(preview.Matched), "trash item"), *olderThan, style.HumanBytes(preview.SizeBytes)),
+				Execute: func() error {
+					r, err := trash.Purge(trash.PurgeOptions{RootDir: *rootDir, OlderThan: age})
+					if err != nil {
+						return err
+					}
+					result = r
+					return nil
+				},
+			})
+		}
+		planResult := RunPlan(plan, stdin, stdout, globals)
+		if globals.dryRun || !planResult.WasExecuted("trash-purge") {
+			result = preview
+		}
+		if globals.json {
+			return writeJSONDryRun(stdout, stderr, "trash.purge", globals.dryRun, map[string]any{
+				"result":  result,
+				"actions": planResult.Actions,
+			})
+		}
+		out := textOut(globals, stdout)
+		nc := globals.noColor
+		switch {
+		case len(preview.Matched) == 0:
+			fmt.Fprintln(out, style.ResultInfo(nc, "Nothing older than %d days.", *olderThan))
+		case globals.dryRun:
+			fmt.Fprintln(out, style.ResultInfo(nc, "Would purge %s older than %d days.", pluralize(len(result.Matched), "item"), *olderThan))
+			style.KV(out, "Files", fmt.Sprintf("%d", result.FileCount), nc)
+			style.KV(out, "Size", style.HumanBytes(result.SizeBytes), nc)
+			for _, e := range result.Matched {
+				fmt.Fprintf(out, "  %-40s %8s  %s ago\n", e.Name, style.HumanBytes(e.SizeBytes), formatAgeDays(e.DeletedAt))
+			}
+			style.KV(out, "Kept", fmt.Sprintf("%d (newer than %dd)", result.Kept, *olderThan), nc)
+			if result.Skipped > 0 {
+				style.KV(out, "Skipped", fmt.Sprintf("%d (no deletion date)", result.Skipped), nc)
+			}
+		case planResult.WasExecuted("trash-purge"):
+			fmt.Fprintln(out, style.ResultSuccess(nc, "Purged %s, freed %s.", pluralize(len(result.Matched), "item"), style.HumanBytes(result.SizeBytes)))
+		}
+		return planResult.ExitCode()
+
 	case "rm":
 		fs := flag.NewFlagSet("trash-rm", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -406,4 +480,15 @@ func statusBadge(v bool, noColor bool) string {
 		return style.Badge("ok", noColor)
 	}
 	return style.Badge("warning", noColor)
+}
+
+func pluralize(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+func formatAgeDays(t time.Time) string {
+	return fmt.Sprintf("%dd", int(time.Since(t).Hours()/24))
 }

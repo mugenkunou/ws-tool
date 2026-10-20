@@ -225,6 +225,7 @@ func TestSnapshots(t *testing.T) {
 		{"cron", []string{"8"}},
 		{"trash", []string{"9"}},
 		{"trash_empty_checklist", []string{"9", "x"}},
+		{"trash_purge_prompt", []string{"9", "p"}},
 		{"full_help", []string{"2", "?"}},
 	}
 	for _, c := range cases {

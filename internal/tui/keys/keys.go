@@ -504,6 +504,7 @@ type TrashMap struct {
 	Enable     key.Binding
 	Disable    key.Binding
 	Empty      key.Binding
+	Purge      key.Binding
 	DeleteItem key.Binding
 	Refresh    key.Binding
 	Back       key.Binding
@@ -516,6 +517,7 @@ func Trash() TrashMap {
 		Enable:     key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "enable soft-delete")),
 		Disable:    key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "disable")),
 		Empty:      key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "empty trash")),
+		Purge:      key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "purge older")),
 		DeleteItem: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete item")),
 		Refresh:    refresh(),
 		Back:       back(),
@@ -524,7 +526,7 @@ func Trash() TrashMap {
 
 // ShortHelp implements help.KeyMap.
 func (k TrashMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Enable, k.Disable, k.DeleteItem, k.Empty, k.Refresh}
+	return []key.Binding{k.Enable, k.Disable, k.DeleteItem, k.Purge, k.Empty, k.Refresh}
 }
 
 // FullHelp implements help.KeyMap.
@@ -532,7 +534,7 @@ func (k TrashMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown},
 		{k.Enable, k.Disable, k.Empty},
-		{k.DeleteItem, k.Refresh, k.Back},
+		{k.DeleteItem, k.Purge, k.Refresh, k.Back},
 	}
 }
 
