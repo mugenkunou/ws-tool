@@ -9,13 +9,13 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
-// TagCollection is the workspace-level tag vocabulary stored in configs/ws.json.
+// TagCollection is the workspace-level tag vocabulary stored in ws.json.
 type TagCollection struct {
 	Tags []string `json:"tags"`
 }
 
-// LoadTags reads the tag collection from configs/ws.json.
-// configPath is the path to configs/ws.json.
+// LoadTags reads the tag collection from ws.json.
+// configPath is the path to ws.json.
 // Returns an empty collection (no error) if the config does not exist.
 func LoadTags(configPath string) (TagCollection, error) {
 	cfg, err := wsconfig.Load(configPath)
@@ -29,7 +29,7 @@ func LoadTags(configPath string) (TagCollection, error) {
 	return TagCollection{Tags: tags}, nil
 }
 
-// SaveTags writes the tag collection into configs/ws.json.
+// SaveTags writes the tag collection into ws.json.
 func SaveTags(configPath string, tc TagCollection) error {
 	if tc.Tags == nil {
 		tc.Tags = []string{}

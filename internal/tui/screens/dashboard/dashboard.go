@@ -340,7 +340,7 @@ func (m Model) allLoaded() bool {
 }
 
 // openReset reverses `ws init`: resets dotfiles and trash, then removes
-// configs/ws.json. Nothing is pre-checked — this is destructive.
+// ws.json. Nothing is pre-checked — this is destructive.
 func (m Model) openReset() Model {
 	p := m.env.Paths
 	pl := plan.Plan{Command: "reset", Actions: []plan.Action{

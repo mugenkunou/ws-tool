@@ -5,7 +5,7 @@ Reverses `ws init`. Tick each step to undo (a selects all).
 
 › [ ] Reset dotfiles (restore originals, remove symlinks)
   [ ] Reset trash setup (remove script and aliases)
-  [ ] Remove /home/tester/Workspace/configs/ws.json
+  [ ] Remove /home/tester/Workspace/ws.json
 
 
 

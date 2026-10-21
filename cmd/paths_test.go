@@ -287,7 +287,7 @@ func TestPathRuleInitStoresAbsoluteWorkspace(t *testing.T) {
 	if payload.Data.WorkspacePath != want {
 		t.Fatalf("init workspace_path = %q, want absolute %q", payload.Data.WorkspacePath, want)
 	}
-	if _, err := os.Stat(filepath.Join(want, "configs", "ws.json")); err != nil {
-		t.Fatalf("expected configs/ws.json under %s: %v", want, err)
+	if _, err := os.Stat(filepath.Join(want, "ws.json")); err != nil {
+		t.Fatalf("expected ws.json under %s: %v", want, err)
 	}
 }

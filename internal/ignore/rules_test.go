@@ -85,9 +85,9 @@ func TestBuildEngineWithDefaults(t *testing.T) {
 	}
 
 	// Paths in an "all" block not excluded by any rule are just included.
-	res = engine.Evaluate("configs/ws.json", false)
+	res = engine.Evaluate("configs/dotfiles/profile", false)
 	if !res.Included {
-		t.Fatal("expected configs/ws.json to be included")
+		t.Fatal("expected configs/dotfiles/profile to be included")
 	}
 
 	// Normal file should be included

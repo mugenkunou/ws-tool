@@ -1,15 +1,15 @@
-// Package wsconfig defines and manages configs/ws.json — the single unified
-// workspace configuration file introduced in the phase-1 rearchitecture.
+// Package wsconfig defines and manages ws.json — the single unified
+// workspace configuration (state) file.
 //
-// configs/ws.json lives inside ~/Workspace/configs/ and syncs via MEGA.
-// It replaces both the old XDG ~/.config/ws-tool/config.json and the old
-// ws/manifest.json. Only runtime-only state that must stay machine-local
-// (cron.state, log-active.json, scratch .ws-meta.json) remains outside the
-// workspace.
+// ws.json lives at the workspace root (e.g. ~/Workspace/ws.json) and syncs
+// with the workspace. There is no separate machine-global config file; this
+// single file is the source of truth. Only runtime-only state that must stay
+// machine-local (cron.state, log-active.json, scratch .ws-meta.json) remains
+// outside the workspace.
 //
 // Path resolution order:
 //
-//	--config flag → $WS_CONFIG → <workspace>/configs/ws.json
+//	--config flag → $WS_CONFIG → <workspace>/ws.json
 package wsconfig
 
 import (
@@ -27,13 +27,13 @@ const (
 	// CurrentSchema is the ws.json schema version written by this build.
 	CurrentSchema = 1
 
-	// ConfigRelPath is the path of configs/ws.json relative to the workspace root.
-	ConfigRelPath = "configs/ws.json"
+	// ConfigRelPath is the path of ws.json relative to the workspace root.
+	ConfigRelPath = "ws.json"
 )
 
-// WsConfig is the single workspace configuration file (configs/ws.json).
-// All fields are synced with the workspace. Machine-local state is stored
-// under ~/.local/state/ws-tool/ instead.
+// WsConfig is the single workspace configuration file (ws.json at the
+// workspace root). All fields are synced with the workspace. Machine-local
+// state is stored under ~/.local/state/ws-tool/ instead.
 type WsConfig struct {
 	Schema      int              `json:"schema"`
 	Scratch     Scratch          `json:"scratch"`
@@ -142,7 +142,7 @@ func Default() WsConfig {
 	}
 }
 
-// LoadIgnoreRules loads only the ignore rules from configs/ws.json.
+// LoadIgnoreRules loads only the ignore rules from ws.json.
 // Returns default rules if the file is missing.
 func LoadIgnoreRules(configPath string) (ignore.UserRules, error) {
 	cfg, err := Load(configPath)
@@ -237,12 +237,12 @@ func AllowlistMap(cfg WsConfig) map[string]struct{} {
 	return allow
 }
 
-// ConfigPath returns the absolute path of configs/ws.json for a given workspace root.
+// ConfigPath returns the absolute path of ws.json for a given workspace root.
 func ConfigPath(workspaceRoot string) string {
 	return filepath.Join(workspaceRoot, filepath.FromSlash(ConfigRelPath))
 }
 
-// Load reads and parses configs/ws.json from the given path.
+// Load reads and parses ws.json from the given path.
 // Returns an error if the file is missing, invalid JSON, or from a newer schema.
 func Load(path string) (WsConfig, error) {
 	content, err := os.ReadFile(path)

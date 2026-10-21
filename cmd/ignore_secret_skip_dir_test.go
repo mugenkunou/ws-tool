@@ -36,7 +36,7 @@ func TestSecretScanSkipDirConfig(t *testing.T) {
 	}
 
 	// Add vendor to skip_dirs in config.
-	configPath := filepath.Join(workspace, "configs", "ws.json")
+	configPath := filepath.Join(workspace, "ws.json")
 	configBytes, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +134,7 @@ func TestSecretScanSkipDirMergesConfigAndFlag(t *testing.T) {
 	}
 
 	// Set skip_dirs in config.
-	configPath := filepath.Join(workspace, "configs", "ws.json")
+	configPath := filepath.Join(workspace, "ws.json")
 	configBytes, _ := os.ReadFile(configPath)
 	var cfg map[string]any
 	json.Unmarshal(configBytes, &cfg)

@@ -38,6 +38,10 @@ func TestResetRemovesConfigsDir(t *testing.T) {
 		t.Fatal("expected configs/ to be removed")
 	}
 
+	if _, err := os.Stat(filepath.Join(root, "ws.json")); !os.IsNotExist(err) {
+		t.Fatal("ws.json should be gone")
+	}
+
 	if _, err := os.Stat(filepath.Join(root, "configs")); !os.IsNotExist(err) {
 		t.Fatal("configs/ dir should be gone")
 	}

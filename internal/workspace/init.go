@@ -20,7 +20,6 @@ var layoutDirs = []string{
 	"scripts/lib",
 	"agent",
 	"agent/skills",
-	"configs",
 	"configs/dotfiles",
 	"secrets",
 	"secrets/dotfiles",
@@ -80,7 +79,7 @@ func Init(opts InitOptions) (InitResult, error) {
 		result.Created = append(result.Created, abs)
 	}
 
-	// Write configs/ws.json if missing.
+	// Write ws.json if missing.
 	if err := writeFileIfMissing(configPath, func() error {
 		return wsconfig.Save(configPath, wsconfig.Default())
 	}, &result); err != nil {

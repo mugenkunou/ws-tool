@@ -70,7 +70,7 @@ func (m Model) View() string {
 		theme.Muted.Render("Workspace  ") + m.env.Paths.Workspace,
 		theme.Muted.Render("Config     ") + m.env.Paths.Config,
 		"",
-		"Press " + theme.Bold.Render("i") + " to run the " + theme.Bold.Render("ws init") + " wizard. It creates configs/ws.json,",
+		"Press " + theme.Bold.Render("i") + " to run the " + theme.Bold.Render("ws init") + " wizard. It creates ws.json,",
 		".megaignore, and the config, and offers to set up soft-delete.",
 	}
 	if m.err != "" {

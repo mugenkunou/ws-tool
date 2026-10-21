@@ -193,7 +193,7 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 
 // runIgnoreFixInteractive walks through violations one by one, prompting
 // the user for an action on each. Actions vary by violation type.
-// Rules are added to configs/ws.json and .megaignore is regenerated.
+// Rules are added to ws.json and .megaignore is regenerated.
 func runIgnoreFixInteractive(violations []ignore.Violation, configPath, megaignorePath, workspacePath string, cfg wsconfig.WsConfig, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	out := textOut(globals, stdout)
 	nc := globals.noColor
@@ -323,7 +323,7 @@ func runIgnoreFixInteractive(violations []ignore.Violation, configPath, megaigno
 	}
 
 done:
-	// Regenerate .megaignore if any rules were added to configs/ws.json.
+	// Regenerate .megaignore if any rules were added to ws.json.
 	if needsRegen {
 		userRules, err := wsconfig.LoadIgnoreRules(configPath)
 		if err != nil {

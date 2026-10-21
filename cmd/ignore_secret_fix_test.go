@@ -38,7 +38,7 @@ func TestSecretFixAllowlistBatch(t *testing.T) {
 	}
 
 	// Verify the allowlist was updated in ws.json.
-	wsCfgBytes, err := os.ReadFile(filepath.Join(workspace, "configs", "ws.json"))
+	wsCfgBytes, err := os.ReadFile(filepath.Join(workspace, "ws.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

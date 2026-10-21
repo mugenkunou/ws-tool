@@ -50,7 +50,7 @@ func GitSync(opts GitSyncOptions) GitSyncResult {
 	}
 
 	// Copy ws.json into the dotfiles git repo for portable restore.
-	configSrc := filepath.Join(opts.WorkspacePath, "configs", "ws.json")
+	configSrc := filepath.Join(opts.WorkspacePath, "ws.json")
 	configDest := filepath.Join(opts.RepoPath, "ws.json")
 	if _, err := os.Stat(configSrc); err == nil {
 		data, err := os.ReadFile(configSrc)

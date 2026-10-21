@@ -506,7 +506,7 @@ func printHelpStyled(stdout io.Writer, noColor bool) {
 	fmt.Fprintln(stdout, style.Boldf(noColor, "Global Flags:"))
 	flags := []string{
 		"  -w, --workspace string   Path to workspace root (default: $WS_WORKSPACE or ~/Workspace)",
-		"  -c, --config string      Path to ws.json (default: <workspace>/configs/ws.json)",
+		"  -c, --config string      Path to ws.json (default: <workspace>/ws.json)",
 		"  -q, --quiet              Errors only (default: false)",
 		"      --verbose            Show internal decisions (default: false)",
 		"      --json               Machine-readable output (default: false)",

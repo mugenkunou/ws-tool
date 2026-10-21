@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"runtime"
 
 	"github.com/mugenkunou/ws-tool/internal/style"
@@ -104,6 +105,9 @@ func runInit(args []string, globals globalFlags, _ io.Reader, stdout, stderr io.
 		workspacePath = *workspaceShort
 	}
 	if workspacePath == "" {
+		workspacePath = os.Getenv("WS_WORKSPACE")
+	}
+	if workspacePath == "" {
 		workspacePath = "~/Workspace"
 	}
 
@@ -120,13 +124,13 @@ func runInit(args []string, globals globalFlags, _ io.Reader, stdout, stderr io.
 			return writeJSON(stdout, stderr, "init", map[string]any{
 				"already_initialized": true,
 				"workspace_path":      resolvedWorkspace,
-				"suggestion":          "remove configs/ws.json and re-run ws init",
+				"suggestion":          "remove ws.json and re-run ws init",
 			})
 		}
 		out := textOut(globals, stdout)
 		fmt.Fprintln(out, "Workspace already initialized at "+resolvedWorkspace)
 		fmt.Fprintln(out, "")
-		fmt.Fprintln(out, "To reinitialize, remove configs/ws.json and re-run ws init.")
+		fmt.Fprintln(out, "To reinitialize, remove ws.json and re-run ws init.")
 		return 0
 	}
 

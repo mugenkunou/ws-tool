@@ -494,7 +494,7 @@ func treeStatusIcon(status string, nc bool) string {
 	}
 }
 
-// runIgnoreEdit extracts ignore rules from configs/ws.json to a temp file,
+// runIgnoreEdit extracts ignore rules from ws.json to a temp file,
 // opens it in $EDITOR, validates on save, merges back, and regenerates
 // .megaignore.
 func runIgnoreEdit(configPath, megaignorePath string, currentRules ignore.UserRules, args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -553,7 +553,7 @@ func runIgnoreEdit(configPath, megaignorePath string, currentRules ignore.UserRu
 		return 1
 	}
 
-	// Save back to configs/ws.json.
+	// Save back to ws.json.
 	{
 		cfg, err := wsconfig.Load(configPath)
 		if err != nil {

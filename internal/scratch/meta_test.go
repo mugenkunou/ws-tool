@@ -55,7 +55,7 @@ func TestMetaSeededOnNew(t *testing.T) {
 }
 
 func TestTagsLoadSaveMerge(t *testing.T) {
-	wsDir := filepath.Join(t.TempDir(), "configs", "ws.json")
+	wsDir := filepath.Join(t.TempDir(), "ws.json")
 	tc, err := LoadTags(wsDir)
 	if err != nil {
 		t.Fatalf("load empty: %v", err)

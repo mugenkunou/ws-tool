@@ -15,11 +15,10 @@ import (
 func initWorkspace(t *testing.T) workspace.PathOverrides {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "Workspace")
-	configsDir := filepath.Join(root, "configs")
-	if err := os.MkdirAll(configsDir, 0o755); err != nil {
+	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cfgPath := filepath.Join(configsDir, "ws.json")
+	cfgPath := filepath.Join(root, "ws.json")
 	if err := wsconfig.Save(cfgPath, wsconfig.Default()); err != nil {
 		t.Fatal(err)
 	}

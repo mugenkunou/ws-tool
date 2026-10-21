@@ -36,9 +36,10 @@ type ResetResult struct {
 }
 
 // Reset tears down a workspace by delegating to subsystem resets
-// (dotfile, trash) and then removing the configs/ directory.
+// (dotfile, trash) and then removing ws.json (the state file at the
+// workspace root) plus the configs/dotfiles/ directory.
 //
-// Pre-condition: configs/ws.json must exist; callers should verify this
+// Pre-condition: ws.json must exist; callers should verify this
 // before calling Reset so they can render an appropriate error.
 func Reset(opts ResetOptions) (ResetResult, error) {
 	result := ResetResult{
@@ -52,10 +53,9 @@ func Reset(opts ResetOptions) (ResetResult, error) {
 	}
 
 	configPath := wsconfig.ConfigPath(opts.WorkspacePath)
-	configsDir := filepath.Join(opts.WorkspacePath, "configs")
 
-	if _, err := os.Stat(configsDir); err != nil {
-		return result, fmt.Errorf("workspace not initialized (no configs/ at %s)", opts.WorkspacePath)
+	if _, err := os.Stat(configPath); err != nil {
+		return result, fmt.Errorf("workspace not initialized (no ws.json at %s)", opts.WorkspacePath)
 	}
 
 	// --- Phase 1: dotfile reset ---
@@ -98,12 +98,20 @@ func Reset(opts ResetOptions) (ResetResult, error) {
 	}
 	result.Subsystems = append(result.Subsystems, sub)
 
-	// --- Phase 3: remove configs/ directory ---
+	// --- Phase 3: remove ws.json and the configs/ directory ---
 	if opts.DryRun {
 		result.WSRemoved = false
 		return result, nil
 	}
 
+	if _, err := os.Stat(configPath); err == nil {
+		if err := os.Remove(configPath); err != nil {
+			result.WSRemoved = false
+			result.Errors = append(result.Errors, fmt.Sprintf("failed to remove %s: %s", configPath, err))
+		}
+	}
+
+	configsDir := filepath.Join(opts.WorkspacePath, "configs")
 	if _, err := os.Stat(configsDir); err != nil {
 		result.WSRemoved = true
 	} else if err := os.RemoveAll(configsDir); err != nil {
