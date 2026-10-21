@@ -2509,7 +2509,7 @@ ws repo scan
    ▲ [identity] user.name not set (local or global)
    ▲ [identity] user.email not set (local or global)
 ⎇  /home/user/Workspace/notes/second-brain  main DIRTY ↑2 ↓0
-⎇  /home/user/.password-store  master CLEAN ↑2 ↓0
+⎇  /home/user/Workspace/notes/second-brain  main DIRTY ↑2 ↓0
 
 Hygiene: 2 warning(s) · 7 info hidden (--verbose to show)
 ```
@@ -2517,7 +2517,6 @@ Hygiene: 2 warning(s) · 7 info hidden (--verbose to show)
 With `--verbose`, info findings are shown muted with a `·` marker:
 
 ```text
-⎇  /home/user/.password-store  master CLEAN ↑2 ↓0
    · [default-branch] init.defaultBranch not set and origin/HEAD not resolved
    · [fetch-staleness] last fetch was 107 days ago (threshold: 14)
 ```

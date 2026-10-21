@@ -609,7 +609,6 @@ The authoritative rule is **Path Rules** in `spec.md`. This section is the contr
 ```
 ⎇  /home/user/Workspace/Data/bruno  main DIRTY
 ⎇  /home/user/Workspace/Experiments/ws-tool  master DIRTY
-⎇  /home/user/.password-store  master CLEAN ↑19 ↓0
 ```
 
 **Rules:**
@@ -657,7 +656,7 @@ A stale entry in `commandFlags()` or `completers` is not harmless dead code — 
 
 The TUI is the long-term front end. It and the CLI call the same `internal/`
 packages. Logic both need lives in `internal/`, not `cmd/`, so they cannot
-drift — e.g. `workspace.ResolvePaths`, `repo.SpecialRepos`/`DescribeSync`,
+drift — e.g. `workspace.ResolvePaths`, `repo.DescribeSync`,
 `dotfile.AutoSync`, `secret.ResolveGitToken` and the `secret fix` mutations,
 `cron.AddActions`/`RemoveActions`, `trash.Record*Provisions`, and the Action
 Plan types in `internal/plan`.

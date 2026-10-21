@@ -203,11 +203,7 @@ func New(e env.Env) Model {
 func (m Model) Init() tea.Cmd { return load(m.env, m.roots, m.gen, false) }
 
 func discover(e env.Env, roots []string) ([]repo.Repository, error) {
-	repos, err := repo.Discover(e.Paths.Workspace, roots, e.ExcludeDirs)
-	if err != nil {
-		return nil, err
-	}
-	return repo.AppendMissing(repos, repo.SpecialRepos(e.Paths.Workspace)), nil
+	return repo.Discover(e.Paths.Workspace, roots, e.ExcludeDirs)
 }
 
 // load discovers and scans the fleet; with fetch it runs `git fetch` first.

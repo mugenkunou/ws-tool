@@ -169,7 +169,6 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		repos = repo.AppendMissing(repos, repo.SpecialRepos(workspacePath))
 		repos = filterRepos(workspacePath, repos, filters)
 		{
 			var errMsg string
@@ -206,7 +205,6 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		repos = repo.AppendMissing(repos, repo.SpecialRepos(workspacePath))
 		{
 			var errMsg string
 			repos, errMsg = targetRepo(repos, fs.Args())
@@ -266,7 +264,6 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		repos = repo.AppendMissing(repos, repo.SpecialRepos(workspacePath))
 		repos = filterRepos(workspacePath, repos, filters)
 		{
 			var errMsg string
@@ -298,7 +295,6 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		repos = repo.AppendMissing(repos, repo.SpecialRepos(workspacePath))
 		repos = filterRepos(workspacePath, repos, filters)
 		{
 			var errMsg string
@@ -357,7 +353,6 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		repos = repo.AppendMissing(repos, repo.SpecialRepos(workspacePath))
 		{
 			var errMsg string
 			repos, errMsg = targetRepo(repos, fs.Args())
@@ -505,7 +500,6 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		repos = repo.AppendMissing(repos, repo.SpecialRepos(workspacePath))
 		repos = filterRepos(workspacePath, repos, filters)
 		if globals.dryRun {
 			if globals.json {

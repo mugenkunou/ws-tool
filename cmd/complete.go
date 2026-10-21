@@ -515,10 +515,9 @@ func loadCompletionCtx(globals globalFlags) completionCtx {
 				roots = append(roots, res)
 			}
 		}
-		// Absolute paths, including ws-managed repos, exactly as the repo
-		// commands list them (spec "Path Rules").
+		// Absolute paths, exactly as the repo commands list them (spec
+		// "Path Rules").
 		if repos, err := repo.Discover(resolved, roots, cfg.Repo.ExcludeDirs); err == nil {
-			repos = repo.AppendMissing(repos, repo.SpecialRepos(resolved))
 			for _, r := range repos {
 				ctx.repoPaths = append(ctx.repoPaths, r.Path)
 			}
