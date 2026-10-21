@@ -408,11 +408,14 @@ make build
 
 Requires Go ≥ 1.26. That's it. No `npm install`. No virtualenv. No cmake. One command.
 
-If your environment restricts executable temp dirs, use repo-local temp/cache dirs:
+If your environment restricts executable temp dirs (e.g. `/tmp` is `noexec`),
+the Makefile already uses home-directory temp/cache dirs and creates them if
+missing:
 
-```bash
-mkdir -p tmp .gocache
-TMPDIR=$PWD/tmp GOCACHE=$PWD/.gocache make build
+```
+~/tmp           # TMPDIR
+~/.gocache      # GOCACHE
+~/gotmp         # GOTMPDIR
 ```
 
 ---

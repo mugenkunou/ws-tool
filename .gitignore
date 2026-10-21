@@ -430,7 +430,6 @@ $RECYCLE.BIN/
 # End of https://www.toptal.com/developers/gitignore/api/linux,macos,windows,python,go,ssh,powershell,visualstudiocode,intellij,notepadpp,jupyternotebooks
 
 .tmp/
-tmp/
 .gocache/
 .gomodcache/
 .gotmp/

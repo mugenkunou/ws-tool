@@ -15,8 +15,9 @@ make test    # run all tests
 make fmt     # format code
 ```
 
-The Makefile sets `TMPDIR`, `GOCACHE`, and `GOTMPDIR` to repo-local directories
-(`tmp/`, `.gocache/`, `.gotmp/`) automatically. These directories are gitignored.
+The Makefile sets `TMPDIR`, `GOCACHE`, and `GOTMPDIR` to home-directory
+directories (`~/tmp`, `~/.gocache`, `~/gotmp`) automatically, creating them if
+needed. Nothing is written inside the repo.
 
 **NEVER run any of these directly:**
 
@@ -32,15 +33,16 @@ If you need flags beyond what `make test` provides (e.g. `-run TestFoo`, `-v`),
 set the env vars yourself:
 
 ```bash
-TMPDIR=$PWD/tmp GOCACHE=$PWD/.gocache GOTMPDIR=$PWD/.gotmp go test -v -run TestFoo ./cmd/...
+TMPDIR=$HOME/tmp GOCACHE=$HOME/.gocache GOTMPDIR=$HOME/gotmp go test -v -run TestFoo ./cmd/...
 ```
 
 ## Directory Hygiene
 
-- **Do NOT create temporary directories** outside the repo (`/tmp`, `~/.cache`,
-  random locations). All temp/cache directories are repo-local and gitignored.
-- **Do NOT create new top-level directories** without asking. The existing
-  `tmp/`, `.gocache/`, `.gotmp/` are sufficient.
+- **Do NOT create temporary directories** outside your home dir (`/tmp`,
+  random locations). All temp/cache directories live in `$HOME` and are created
+  by the Makefile as needed.
+- **Do NOT create new cache/temp directories** without asking. The existing
+  `~/tmp`, `~/.gocache`, `~/gotmp` are sufficient.
 - **Do NOT modify `.gitignore`** to add new directories you created. If you find
   yourself needing a new directory, you are doing something wrong.
 
@@ -81,7 +83,7 @@ credentials — just use `make test`.
 ## Testing Rules
 
 1. Use `make test` to run the full suite.
-2. For targeted tests: `TMPDIR=$PWD/tmp GOCACHE=$PWD/.gocache GOTMPDIR=$PWD/.gotmp go test -v -run TestName ./cmd/...`
+2. For targeted tests: `TMPDIR=$HOME/tmp GOCACHE=$HOME/.gocache GOTMPDIR=$HOME/gotmp go test -v -run TestName ./cmd/...`
 3. Tests are designed to be hermetic — they isolate XDG, HOME-equivalent paths,
    and git config. Do not "help" by setting up credentials, tokens, or configs.
 4. If a test fails because of missing credentials or network access, that is

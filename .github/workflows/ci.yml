@@ -17,9 +17,9 @@ jobs:
 
       - name: Format check
         run: |
-          mkdir -p tmp
-          gofmt -l . | tee tmp/fmt.out
-          test ! -s tmp/fmt.out
+          mkdir -p "$HOME/tmp"
+          gofmt -l . | tee "$HOME/tmp/fmt.out"
+          test ! -s "$HOME/tmp/fmt.out"
 
       - name: Vet
         run: go vet ./...

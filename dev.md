@@ -168,22 +168,21 @@ so Docker-in-Docker is unnecessary overhead.
 ### Targeted / verbose runs (host)
 
 ```bash
-TMPDIR=$PWD/tmp GOCACHE=$PWD/.gocache GOTMPDIR=$PWD/.gotmp go test -v -run TestFoo ./cmd/...
+TMPDIR=$HOME/tmp GOCACHE=$HOME/.gocache GOTMPDIR=$HOME/gotmp go test -v -run TestFoo ./cmd/...
 ```
 
 ### Coverage run (host)
 
 ```bash
-TMPDIR=$PWD/tmp GOCACHE=$PWD/.gocache GOTMPDIR=$PWD/.gotmp go test -cover ./...
+TMPDIR=$HOME/tmp GOCACHE=$HOME/.gocache GOTMPDIR=$HOME/gotmp go test -cover ./...
 ```
 
 > **Why the env vars?** This machine mounts `/tmp` with `noexec`. Go needs to
 > execute temp artifacts during compilation and testing. The Makefile sets
-> `TMPDIR`, `GOCACHE`, and `GOTMPDIR` to repo-local directories automatically.
+> `TMPDIR`, `GOCACHE`, and `GOTMPDIR` to home-directory directories
+> (`~/tmp`, `~/.gocache`, `~/gotmp`, created if missing) automatically.
 > When running `go test` directly (for extra flags), you **must** set these
-> yourself. The directories (`tmp/`, `.gocache/`, `.gotmp/`) are gitignored.
-> Inside Docker these dirs are writable bind-mounts, so the Go cache is warm
-> across container runs.
+> yourself. Nothing is written inside the repo.
 
 ### Docker image management
 
@@ -499,7 +498,7 @@ Tests pass `strings.NewReader("y\n")` as stdin. `promptChoice` returns the defau
 ### Unit + integration tests (fast, no crontab touched)
 
 ```bash
-TMPDIR=/home/siva-14414/tmp go test ./internal/cron/... ./cmd/... -run TestCron -v -count=1
+TMPDIR=$HOME/tmp go test ./internal/cron/... ./cmd/... -run TestCron -v -count=1
 ```
 
 ### Smoke-test the CLI
@@ -552,7 +551,8 @@ ws cron rm sync
   - Install Go 1.26+ via official tarball.
 - **Build/tests fail with `permission denied` or `exec format error`**
   - `/tmp` is mounted with `noexec`. Use `make build` / `make test` — the
-    Makefile sets `TMPDIR`, `GOCACHE`, `GOTMPDIR` to repo-local directories.
+    Makefile sets `TMPDIR`, `GOCACHE`, `GOTMPDIR` to home-directory dirs
+    (`~/tmp`, `~/.gocache`, `~/gotmp`).
   - Never run bare `go test ./...` or `go build .`.
 - **`ws` command not found**
   - Ensure `/usr/local/bin` is in `PATH`.
@@ -777,7 +777,7 @@ After:
 
 ```bash
 make test                                         # all tests, incl. TUI snapshots
-UPDATE_SNAPSHOTS=1 TMPDIR=$PWD/tmp GOCACHE=$PWD/.gocache GOTMPDIR=$PWD/.gotmp \
+UPDATE_SNAPSHOTS=1 TMPDIR=$HOME/tmp GOCACHE=$HOME/.gocache GOTMPDIR=$HOME/gotmp \
   go test ./internal/tui/...                      # accept intended snapshot changes
 git diff internal/tui/**/testdata                 # review them like code
 ```
