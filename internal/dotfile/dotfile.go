@@ -17,7 +17,10 @@ type AddOptions struct {
 	ConfigPath    string
 	SystemPath    string
 	Class         string // "config" or "secret"; empty = auto-detect
-	DryRun        bool
+	// Dir captures a directory whole, as one link (e.g. ~/.password-store),
+	// instead of requiring the caller to expand it into individual files.
+	Dir    bool
+	DryRun bool
 }
 
 // LinkOptions configures Link, which registers a system path → workspace
@@ -34,7 +37,7 @@ type LinkOptions struct {
 	// WorkspaceRelPath is the path within the workspace of the original file
 	// (e.g. "agent/AGENTS.md"). The file must already exist there.
 	WorkspaceRelPath string
-	// Class is "config", "secret", or "state"; defaults to "config" when empty.
+	// Class is "config" or "secret"; defaults to "config" when empty.
 	Class  string
 	DryRun bool
 }
@@ -115,6 +118,21 @@ func LinkDotfilePath(link wsconfig.Link) string {
 	return filepath.ToSlash(filepath.Clean(filepath.FromSlash(link.Original)))
 }
 
+// NormalizeClass validates a user-supplied class. It accepts "config" and
+// "secret", the plural directory spellings "configs" and "secrets", and ""
+// (auto-detect), and returns the canonical form.
+func NormalizeClass(class string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(class)) {
+	case "":
+		return "", nil
+	case ClassConfig, "configs":
+		return ClassConfig, nil
+	case ClassSecret, "secrets":
+		return ClassSecret, nil
+	}
+	return "", fmt.Errorf("unknown class %q: use config or secret", class)
+}
+
 // resolveClass picks the class: uses provided class if non-empty, otherwise
 // classifies the file at absPath. Returns "config" when unambiguous config,
 // "secret" when a secret is detected, or "config" as default.
@@ -141,11 +159,15 @@ func Add(opts AddOptions) (AddResult, error) {
 		return result, fmt.Errorf("dotfile path not found: %s", absSystem)
 	}
 
-	// Directories must not be added directly. Callers should expand to individual
-	// files first (e.g. via ExpandDir) so every tracked entry is a specific file.
+	// A directory is tracked file by file unless the caller asks for it whole
+	// (opts.Dir); callers expand it first (e.g. via ExpandDir).
 	realInfo, statErr := os.Stat(absSystem)
-	if statErr == nil && realInfo.IsDir() {
-		return result, fmt.Errorf("cannot add a directory directly: expand it with 'ws dotfile add <dir>' to select individual files interactively")
+	isDir := statErr == nil && realInfo.IsDir()
+	if isDir && !opts.Dir {
+		return result, fmt.Errorf("cannot add a directory as a single file: pass --dir to link it whole, or let 'ws dotfile add <dir>' select files")
+	}
+	if opts.Dir && !isDir {
+		return result, fmt.Errorf("not a directory: %s", absSystem)
 	}
 
 	cfg, err := wsconfig.Load(opts.ConfigPath)
@@ -175,6 +197,7 @@ func Add(opts AddOptions) (AddResult, error) {
 	link := wsconfig.Link{
 		System:   absSystem,
 		Original: filepath.ToSlash(wsRel),
+		Dir:      opts.Dir,
 		Sudo:     needsSudo,
 		Class:    class,
 	}
@@ -679,9 +702,11 @@ func Link(opts LinkOptions) (LinkResult, error) {
 		return result, errors.New("WorkspaceRelPath must not be empty")
 	}
 	workspaceAbs := filepath.Join(opts.WorkspacePath, filepath.FromSlash(opts.WorkspaceRelPath))
-	if _, err := os.Stat(workspaceAbs); err != nil {
+	origInfo, err := os.Stat(workspaceAbs)
+	if err != nil {
 		return result, fmt.Errorf("workspace original not found: %s", workspaceAbs)
 	}
+	isDir := origInfo.IsDir()
 
 	class := opts.Class
 	if class == "" {
@@ -697,6 +722,7 @@ func Link(opts LinkOptions) (LinkResult, error) {
 				link := wsconfig.Link{
 					System:   absSystem,
 					Original: opts.WorkspaceRelPath,
+					Dir:      isDir,
 					Class:    class,
 					Sudo:     NeedsSudo(absSystem),
 				}
@@ -716,6 +742,7 @@ func Link(opts LinkOptions) (LinkResult, error) {
 	link := wsconfig.Link{
 		System:   absSystem,
 		Original: opts.WorkspaceRelPath,
+		Dir:      isDir,
 		Class:    class,
 		Sudo:     NeedsSudo(absSystem),
 	}
@@ -758,7 +785,8 @@ func FindDirEntries(workspacePath, configPath string) ([]wsconfig.Link, error) {
 	for _, l := range cfg.Links {
 		wsPath := filepath.Join(workspacePath, filepath.FromSlash(LinkDotfilePath(l)))
 		info, err := os.Stat(wsPath)
-		if err == nil && info.IsDir() {
+		// A deliberate directory link (Dir) stays whole; only legacy ones migrate.
+		if err == nil && info.IsDir() && !l.Dir {
 			dirs = append(dirs, l)
 		}
 	}

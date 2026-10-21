@@ -143,3 +143,71 @@ func TestDotfileNoArgsShowsHelp(t *testing.T) {
 		t.Fatalf("expected empty stderr, got: %s", errOut.String())
 	}
 }
+
+func TestDotfileAddDirAsSecret(t *testing.T) {
+	testSetXDG(t)
+	workspace := filepath.Join(t.TempDir(), "Workspace")
+	var out, errOut bytes.Buffer
+	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
+	}
+
+	store := filepath.Join(t.TempDir(), ".password-store")
+	for _, f := range []string{".gpg-id", "a.gpg", "git/b.gpg", ".git/HEAD"} {
+		p := filepath.Join(store, f)
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatalf("mkdir failed: %v", err)
+		}
+		if err := os.WriteFile(p, []byte("x\n"), 0o600); err != nil {
+			t.Fatalf("write failed: %v", err)
+		}
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := Execute([]string{"--workspace", workspace, "dotfile", "add", "--class", "secrets", "--dir", store}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("dotfile add --dir failed: code=%d stderr=%s out=%s", code, errOut.String(), out.String())
+	}
+	if strings.Count(out.String(), "[y/n/a/q]") != 1 {
+		t.Fatalf("expected a single action for the whole directory, got: %s", out.String())
+	}
+	target, err := os.Readlink(store)
+	if err != nil {
+		t.Fatalf("store is not a symlink: %v", err)
+	}
+	if !strings.Contains(filepath.ToSlash(target), "secrets/dotfiles/") {
+		t.Fatalf("expected the store under secrets/dotfiles/, got %s", target)
+	}
+
+	errOut.Reset()
+	if code := Execute([]string{"--workspace", workspace, "dotfile", "add", "--class", "bogus", store}, strings.NewReader(""), &out, &errOut); code == 0 || !strings.Contains(errOut.String(), "unknown class") {
+		t.Fatalf("expected an unknown class to fail, code=%d stderr=%s", code, errOut.String())
+	}
+}
+
+func TestConfigFlagRejectsDirectory(t *testing.T) {
+	testSetXDG(t)
+	workspace := filepath.Join(t.TempDir(), "Workspace")
+	var out, errOut bytes.Buffer
+	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
+	}
+	errOut.Reset()
+	secrets := filepath.Join(workspace, "secrets")
+	code := Execute([]string{"--workspace", workspace, "dotfile", "add", "-c", secrets, secrets}, strings.NewReader(""), &out, &errOut)
+	if code == 0 || !strings.Contains(errOut.String(), "is a directory") {
+		t.Fatalf("expected -c <dir> to be rejected, code=%d stderr=%s", code, errOut.String())
+	}
+}
+
+func TestDotfileHelpListsAddFlags(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := Execute([]string{"dotfile", "add", "--help"}, strings.NewReader(""), &out, &errOut); code != 0 {
+		t.Fatalf("help failed: code=%d stderr=%s", code, errOut.String())
+	}
+	for _, want := range []string{"--class", "--dir"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("help is missing %s:\n%s", want, out.String())
+		}
+	}
+}

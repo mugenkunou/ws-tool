@@ -46,7 +46,7 @@ var secretBaseNames = map[string]bool{
 }
 
 // secretPattern matches file basenames that indicate a secret.
-var secretPattern = regexp.MustCompile(`(?i)(private[_\-]?key|_secret|_password|_token|_credential|\.pem$|\.key$|\.p12$|\.pfx$|\.asc$)`)
+var secretPattern = regexp.MustCompile(`(?i)(private[_\-]?key|_secret|_password|_token|_credential|\.pem$|\.key$|\.p12$|\.pfx$|\.asc$|\.gpg$)`)
 
 // statePattern matches directory or file names indicating app state or cache.
 // Anchored to the full basename to avoid false positives.

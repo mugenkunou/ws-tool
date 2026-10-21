@@ -15,7 +15,34 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
-var dotfileHelp = cmdHelp{Usage: "ws dotfile <add|link|rm|ls|scan|fix|sync|reset|migrate|git> [args]"}
+var dotfileHelp = cmdHelp{
+	Usage: "ws dotfile <add|link|rm|ls|scan|fix|sync|reset|migrate|git> [args]",
+	Subcommands: []string{
+		"  add [flags] <path>             Move a file or directory into the workspace and symlink it back",
+		"  link [flags] <path> <ws-path>  Symlink a system path to a file or directory already in the workspace",
+		"  rm <path>                      Restore the workspace copy to the system path and unregister it",
+		"  ls                             List registered dotfiles",
+		"  scan                           Check every registered symlink",
+		"  fix                            Repair broken or missing symlinks",
+		"  sync <path>                    Adopt the live file as the new workspace copy",
+		"  reset                          Restore every dotfile and unregister them all",
+		"  migrate                        Split legacy directory entries into file-level entries",
+		"  git <sub>                      Manage the dotfile git backup",
+	},
+	Flags: []string{
+		"      --class string   add, link: config or secret (default: auto-detect for add, config for link)",
+		"                       secrets go to secrets/dotfiles/, configs to configs/dotfiles/",
+		"      --dir            add: link a directory whole, as one entry (e.g. ~/.password-store)",
+		"                       without it, add lets you pick files from the directory",
+		"      --dry-run        Preview only",
+	},
+}
+
+// dotfileClassFlag registers --class. It has no -c shorthand: the root parser
+// takes -c as --config wherever it appears.
+func dotfileClassFlag(fs *flag.FlagSet) *string {
+	return fs.String("class", "", "")
+}
 
 func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	if hasHelpArg(args) {
@@ -40,13 +67,20 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 	case "add":
 		fs := flag.NewFlagSet("dotfile-add", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
+		classFlag := dotfileClassFlag(fs)
+		wholeDir := fs.Bool("dir", false, "")
 		registerGlobalFlags(fs, &globals)
 		if err := fs.Parse(subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
 		if len(fs.Args()) != 1 {
-			fmt.Fprintln(stderr, "usage: ws dotfile add <path>")
+			fmt.Fprintln(stderr, "usage: ws dotfile add [--class config|secret] [--dir] <path>")
+			return 1
+		}
+		class, err := dotfile.NormalizeClass(*classFlag)
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
 
@@ -67,10 +101,18 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			return 1
 		}
 
+		if *wholeDir && !info.IsDir() {
+			fmt.Fprintf(stderr, "--dir needs a directory: %s\n", absTarget)
+			return 1
+		}
+
 		var filesToAdd []string // absolute paths of files to track
 
-		if info.IsDir() {
+		if info.IsDir() && *wholeDir {
+			filesToAdd = []string{absTarget}
+		} else if info.IsDir() {
 			fmt.Fprintf(out, "Scanning %s ...\n", absTarget)
+			fmt.Fprintln(out, style.Mutedf(globals.noColor, "  (pass --dir to link the whole directory as one entry instead)"))
 			entries, expanded, expandErr := dotfile.ExpandDir(absTarget)
 			if expandErr != nil {
 				fmt.Fprintln(stderr, expandErr.Error())
@@ -97,8 +139,11 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			filesToAdd = []string{absTarget}
 		}
 
-		// Warn about secret files and let user opt out.
-		filesToAdd, _ = warnAndFilterSecrets(filesToAdd, stdin, stdout, globals, configPath)
+		// Warn about secret files and let user opt out. An explicit --class secret
+		// already says they are secrets, and a whole directory isn't sniffed.
+		if class != dotfile.ClassSecret && !*wholeDir {
+			filesToAdd, _ = warnAndFilterSecrets(filesToAdd, stdin, stdout, globals, configPath)
+		}
 		if len(filesToAdd) == 0 {
 			fmt.Fprintln(out, "Nothing to add.")
 			return 0
@@ -108,14 +153,23 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		plan := Plan{Command: "dotfile.add"}
 		for _, f := range filesToAdd {
 			f := f
+			desc := fmt.Sprintf("Add dotfile %s", f)
+			if *wholeDir {
+				desc = fmt.Sprintf("Add directory %s (whole)", f)
+			}
+			if class != "" {
+				desc += " as " + class
+			}
 			plan.Actions = append(plan.Actions, Action{
 				ID:          "dotfile-add-" + f,
-				Description: fmt.Sprintf("Add dotfile %s", f),
+				Description: desc,
 				Execute: func() error {
 					_, addErr := dotfile.Add(dotfile.AddOptions{
 						WorkspacePath: workspacePath,
 						ConfigPath:    configPath,
 						SystemPath:    f,
+						Class:         class,
+						Dir:           *wholeDir,
 						DryRun:        false,
 					})
 					return addErr
@@ -962,19 +1016,25 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 func runDotfileLink(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer, workspacePath, configPath string) int {
 	fs := flag.NewFlagSet("dotfile-link", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	class := fs.String("class", "", "class of the link (config, secret, state); default: config")
+	classFlag := dotfileClassFlag(fs)
 	dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 	registerGlobalFlags(fs, &globals)
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
+	normClass, err := dotfile.NormalizeClass(*classFlag)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	class := &normClass
 	if *dryRun {
 		globals.dryRun = true
 	}
 	remaining := fs.Args()
 	if len(remaining) != 2 {
-		fmt.Fprintln(stderr, "usage: ws dotfile link <system-path> <workspace-rel-path>")
+		fmt.Fprintln(stderr, "usage: ws dotfile link [--class config|secret] <system-path> <workspace-rel-path>")
 		fmt.Fprintln(stderr, "  system-path      — the system symlink to create (e.g. ~/.claude/CLAUDE.md)")
 		fmt.Fprintln(stderr, "  workspace-rel-path — path relative to workspace root (e.g. agent/AGENTS.md)")
 		return 1

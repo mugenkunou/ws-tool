@@ -90,6 +90,6 @@ func ResolvePaths(o PathOverrides) (Paths, error) {
 
 // ConfigExists reports whether the config file exists at path.
 func ConfigExists(configPath string) bool {
-	_, err := os.Stat(configPath)
-	return err == nil
+	info, err := os.Stat(configPath)
+	return err == nil && !info.IsDir()
 }

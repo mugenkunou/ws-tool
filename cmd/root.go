@@ -367,6 +367,9 @@ func requireWorkspaceInitialized(globals globalFlags, stderr ...io.Writer) (stri
 		verboseLog(globals, stderr[0], "workspace=%s config=%s", resolvedWorkspace, configPath)
 	}
 
+	if info, statErr := os.Stat(configPath); statErr == nil && info.IsDir() {
+		return "", "", "", fmt.Errorf("Error: --config %s is a directory, not a ws.json file.\n(-c is the global --config shorthand; ws dotfile add takes --class for the class.)", configPath)
+	}
 	if !workspace.ConfigExists(configPath) {
 		return "", "", "", errors.New("Error: workspace not initialized.\nRun `ws init` to set up this directory as a ws workspace.")
 	}

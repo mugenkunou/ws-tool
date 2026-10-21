@@ -559,3 +559,110 @@ func TestRemoveWithMissingWorkspaceCopy(t *testing.T) {
 		t.Fatalf("expected entry unregistered, got %d", len(links))
 	}
 }
+
+func TestAddDirWholeAsSecret(t *testing.T) {
+	workspaceRoot, configPath := setupWorkspace(t)
+	systemDir := filepath.Join(t.TempDir(), ".password-store")
+	if err := os.MkdirAll(filepath.Join(systemDir, ".git"), 0o700); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(systemDir, "site.gpg"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+
+	if _, err := Add(AddOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath, SystemPath: systemDir}); err == nil {
+		t.Fatal("expected a directory without Dir to be refused")
+	}
+
+	res, err := Add(AddOptions{
+		WorkspacePath: workspaceRoot,
+		ConfigPath:    configPath,
+		SystemPath:    systemDir,
+		Class:         ClassSecret,
+		Dir:           true,
+	})
+	if err != nil {
+		t.Fatalf("add --dir failed: %v", err)
+	}
+	if !res.Link.Dir || res.Link.Class != ClassSecret {
+		t.Fatalf("expected a secret dir link, got %+v", res.Link)
+	}
+	if !strings.HasPrefix(res.Link.Original, "secrets/dotfiles/") {
+		t.Fatalf("expected the copy under secrets/dotfiles/, got %s", res.Link.Original)
+	}
+	target, err := os.Readlink(systemDir)
+	if err != nil {
+		t.Fatalf("system path is not a symlink: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "site.gpg")); err != nil {
+		t.Fatalf("directory contents did not move: %v", err)
+	}
+
+	dirs, err := FindDirEntries(workspaceRoot, configPath)
+	if err != nil {
+		t.Fatalf("FindDirEntries failed: %v", err)
+	}
+	if len(dirs) != 0 {
+		t.Fatalf("migrate must leave whole-dir links alone, got %+v", dirs)
+	}
+
+	if _, err := Remove(RemoveOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath, SystemPath: systemDir}); err != nil {
+		t.Fatalf("remove failed: %v", err)
+	}
+	if fi, err := os.Lstat(systemDir); err != nil || !fi.IsDir() {
+		t.Fatalf("expected the directory restored, got %v", err)
+	}
+}
+
+func TestAddDirRefusesFile(t *testing.T) {
+	workspaceRoot, configPath := setupWorkspace(t)
+	systemFile := filepath.Join(t.TempDir(), ".vimrc")
+	if err := os.WriteFile(systemFile, []byte("set nu\n"), 0o644); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	if _, err := Add(AddOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath, SystemPath: systemFile, Dir: true}); err == nil {
+		t.Fatal("expected Dir on a regular file to be refused")
+	}
+}
+
+func TestLinkRecordsDir(t *testing.T) {
+	workspaceRoot, configPath := setupWorkspace(t)
+	if err := os.MkdirAll(filepath.Join(workspaceRoot, "secrets", "pass"), 0o700); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+	res, err := Link(LinkOptions{
+		WorkspacePath:    workspaceRoot,
+		ConfigPath:       configPath,
+		SystemPath:       filepath.Join(t.TempDir(), ".password-store"),
+		WorkspaceRelPath: "secrets/pass",
+		Class:            ClassSecret,
+	})
+	if err != nil {
+		t.Fatalf("link failed: %v", err)
+	}
+	if !res.Link.Dir {
+		t.Fatalf("expected a dir link, got %+v", res.Link)
+	}
+}
+
+func TestNormalizeClass(t *testing.T) {
+	for in, want := range map[string]string{"": "", "config": ClassConfig, "configs": ClassConfig, "secret": ClassSecret, "Secrets": ClassSecret} {
+		got, err := NormalizeClass(in)
+		if err != nil || got != want {
+			t.Fatalf("NormalizeClass(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	if _, err := NormalizeClass("state"); err == nil {
+		t.Fatal("expected an unknown class to be rejected")
+	}
+}
+
+func TestClassifyGPGAsSecret(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "site.gpg")
+	if err := os.WriteFile(f, []byte{0x85, 0x02, 0x0c, 0x00}, 0o600); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	if got := ClassifyFile(f); got != FileClassSecret {
+		t.Fatalf("expected a .gpg file to be a secret, got %s", got)
+	}
+}
