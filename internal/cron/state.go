@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -85,26 +86,28 @@ func parseLegacyLine(line string) (RunRecord, bool) {
 	return RunRecord{Job: parts[0], Time: t, ExitCode: code}, true
 }
 
-// LastRun returns the most recent run record for the named job.
-// Returns a zero-value RunRecord (Time.IsZero() == true) if no records exist.
+// LastRun returns the most recent run record for the named job, whatever name
+// the run was recorded under: a record under an old job name counts as the new
+// job's. Returns a zero-value RunRecord (Time.IsZero() == true) if none exists.
 func LastRun(statePath, jobName string) (RunRecord, error) {
 	records, err := ReadState(statePath)
 	if err != nil {
 		return RunRecord{}, err
 	}
+	want, _ := Canonical(jobName)
 	var last RunRecord
 	for _, r := range records {
-		if r.Job == jobName {
+		if got, _ := Canonical(r.Job); got == want && !r.Time.Before(last.Time) {
 			last = r
 		}
 	}
 	return last, nil
 }
 
-// ReadLog returns at most n lines from logPath filtered to entries containing
-// jobName in the log prefix. If jobName is empty, all lines are returned.
+// ReadLog returns at most n lines of the cron log for the named jobs, including
+// lines recorded under their old names, or for every job when none is named.
 // If n <= 0, all matching lines are returned.
-func ReadLog(logPath, jobName string, n int) ([]string, error) {
+func ReadLog(logPath string, jobs []string, n int) ([]string, error) {
 	f, err := os.Open(logPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -114,12 +117,19 @@ func ReadLog(logPath, jobName string, n int) ([]string, error) {
 	}
 	defer f.Close()
 
-	prefix := fmt.Sprintf("[%s]", jobName)
+	var prefixes []string
+	for _, j := range jobs {
+		canon, _ := Canonical(j)
+		for _, name := range Names(canon) {
+			prefixes = append(prefixes, fmt.Sprintf("[%s]", name))
+		}
+	}
 	var lines []string
 	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for sc.Scan() {
 		line := sc.Text()
-		if jobName == "" || strings.Contains(line, prefix) {
+		if len(prefixes) == 0 || slices.ContainsFunc(prefixes, func(p string) bool { return strings.Contains(line, p) }) {
 			lines = append(lines, line)
 		}
 	}

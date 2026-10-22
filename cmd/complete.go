@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/mugenkunou/ws-tool/internal/cron"
 	"github.com/mugenkunou/ws-tool/internal/repo"
 	"github.com/mugenkunou/ws-tool/internal/trash"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
@@ -275,18 +276,9 @@ func cronTargets(args []string, toComplete string, ctx completionCtx) ([]string,
 	return filterPrefix(notGiven(cronJobNames(), args), toComplete), compDirectiveNoFileComp
 }
 
-// cronJobNames returns the built-in job and preset names (never the retired
-// or renamed ones, which are hidden aliases).
-func cronJobNames() []string {
-	return []string{
-		"dotfile-backup",
-		"maintenance",
-		"mega-sync",
-		"pass-backup",
-		"session-prune",
-		"sync",
-	}
-}
+// cronJobNames returns the built-in job and preset names for completion, never an
+// old job name or a retired one (those are hidden).
+func cronJobNames() []string { return cron.AllNames() }
 
 // ── Flag-value completions ─────────────────────────────────────────
 

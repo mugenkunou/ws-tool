@@ -50,8 +50,7 @@ func TestCronLs(t *testing.T) {
 		t.Fatalf("cron ls: code=%d stderr=%s stdout=%s", code, errOut.String(), out.String())
 	}
 	// All built-in job names must appear.
-	for _, name := range []string{"mega-sync", "dotfile-sync", "repo-sync",
-		"secret-scan", "ignore-scan", "log-prune"} {
+	for _, name := range []string{"mega-sync", "dotfile-backup", "pass-backup", "session-prune"} {
 		if !strings.Contains(out.String(), name) {
 			t.Errorf("cron ls output missing job %q: %s", name, out.String())
 		}
@@ -106,7 +105,7 @@ func TestCronAddDryRun(t *testing.T) {
 	code := Execute([]string{
 		"--workspace", workspace,
 		"--dry-run",
-		"cron", "add", "log-prune",
+		"cron", "add", "session-prune",
 	}, strings.NewReader("y\n"), &out, &errOut)
 	// dry-run should exit 0.
 	if code != 0 {
@@ -117,30 +116,21 @@ func TestCronAddDryRun(t *testing.T) {
 	}
 }
 
-// TestCronStatusNoJobs prints a helpful message when no jobs are installed.
-func TestCronStatusNoJobs(t *testing.T) {
+// TestCronLsNothingInstalled: on a fresh machine every job reads "not installed".
+func TestCronLsNothingInstalled(t *testing.T) {
 	testSetXDG(t)
 	workspace := newTestWorkspace(t)
 	var out, errOut bytes.Buffer
-	code := Execute([]string{"--workspace", workspace, "cron", "status"},
+	code := Execute([]string{"--workspace", workspace, "cron", "ls"},
 		strings.NewReader(""), &out, &errOut)
 	if code != 0 {
-		t.Fatalf("cron status (no jobs): code=%d stderr=%s", code, errOut.String())
+		t.Fatalf("cron ls: code=%d stderr=%s", code, errOut.String())
 	}
-	if !strings.Contains(out.String(), "No ws-managed cron jobs installed") {
-		t.Errorf("expected no-jobs message, got: %s", out.String())
+	if strings.Contains(out.String(), " installed") && !strings.Contains(out.String(), "not installed") {
+		t.Errorf("nothing is installed: %s", out.String())
 	}
-}
-
-// TestCronStatusUnknownJob verifies error for unknown job name.
-func TestCronStatusUnknownJob(t *testing.T) {
-	testSetXDG(t)
-	workspace := newTestWorkspace(t)
-	var out, errOut bytes.Buffer
-	code := Execute([]string{"--workspace", workspace, "cron", "status", "no-such-job"},
-		strings.NewReader(""), &out, &errOut)
-	if code == 0 {
-		t.Fatal("expected non-zero for unknown job")
+	if strings.Contains(out.String(), "retired") {
+		t.Errorf("no retired row without a leftover block: %s", out.String())
 	}
 }
 
@@ -172,13 +162,13 @@ func TestCronLogJobFilter(t *testing.T) {
 	// Pre-create a log file in the expected location.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	logDir := filepath.Join(home, ".local", "state", "ws-tool")
+	logDir := filepath.Join(os.Getenv("XDG_STATE_HOME"), "ws-tool")
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	logFile := filepath.Join(logDir, "cron.log")
 	logContent := "2026-05-08T10:00:00Z [mega-sync] Starting\n" +
-		"2026-05-08T10:05:00Z [log-prune] Starting\n" +
+		"2026-05-08T10:05:00Z [session-prune] Starting\n" +
 		"2026-05-08T10:05:01Z [mega-sync] Done (exit 0)\n"
 	if err := os.WriteFile(logFile, []byte(logContent), 0o644); err != nil {
 		t.Fatal(err)
@@ -193,8 +183,8 @@ func TestCronLogJobFilter(t *testing.T) {
 	if !strings.Contains(out.String(), "mega-sync") {
 		t.Errorf("expected mega-sync entries in log output: %s", out.String())
 	}
-	if strings.Contains(out.String(), "log-prune") {
-		t.Errorf("log output should not contain log-prune entries: %s", out.String())
+	if strings.Contains(out.String(), "session-prune") {
+		t.Errorf("log output should not contain session-prune entries: %s", out.String())
 	}
 }
 
@@ -239,9 +229,10 @@ func TestCronAddPreflightAccessDenied(t *testing.T) {
 		t.Fatalf("write shim: %v", err)
 	}
 	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("WS_CRONTAB_FILE", "") // the real preflight, against the shim
 
 	var out, errOut bytes.Buffer
-	code := Execute([]string{"--workspace", workspace, "cron", "add", "log-prune"},
+	code := Execute([]string{"--workspace", workspace, "cron", "add", "session-prune"},
 		strings.NewReader(""), &out, &errOut)
 	if code == 0 {
 		t.Fatal("expected non-zero exit when crontab access is denied")

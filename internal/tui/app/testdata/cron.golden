@@ -1,10 +1,10 @@
 ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 2 jobs installed · 1 failing
- Job             Schedule      State          Last run          Description
- dotfile-push    0 * * * *     ✔ installed    2h ago            commit + push dotfiles
- repo-sync       */30 * * * *  ✔ installed    40m ago (exit 2)  sync repo fleet
- all             preset        not installed                    installs: dotfile-push, repo-sync
+ Job             Schedule      State           Last run          Next run   Description
+ dotfile-push    0 * * * *     ✔               2h ago            overdue    commit + push dotfiles
+ repo-sync       */30 * * * *  ✔               40m ago (exit 2)  overdue    sync repo fleet
+ all             preset                                                     installs: dotfile-push…
 
 
 

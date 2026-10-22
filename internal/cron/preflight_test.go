@@ -81,3 +81,14 @@ func TestPreflightBinaryMissing(t *testing.T) {
 		t.Errorf("expected Kind=binary_missing, got %q", pe.Kind)
 	}
 }
+
+// TestPreflightUsesTheTestCrontab: with WS_CRONTAB_FILE set, the file stands in
+// for the user's crontab, so nothing is checked and tests stay hermetic where there
+// is no crontab binary.
+func TestPreflightUsesTheTestCrontab(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("WS_CRONTAB_FILE", filepath.Join(t.TempDir(), "crontab"))
+	if err := cron.Preflight(); err != nil {
+		t.Fatalf("a test crontab file needs no crontab binary: %v", err)
+	}
+}

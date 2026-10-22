@@ -1,23 +1,25 @@
-// Package cron manages ws-scheduled cron jobs for workspace maintenance.
+// Package cron manages ws-scheduled jobs (spec §5 cron).
 //
-// Each built-in job is a named, self-contained bash wrapper script installed
-// under ~/.local/share/ws-tool/cron-jobs/. A crontab block with start/end
-// markers is written for each job so ws can reliably remove it later.
+// A row is a built-in job or a preset. Its state comes from three places: the
+// live user crontab (crontab -l), the declared crontab <workspace>/configs/crontab
+// (synced with the workspace), and the run history in $XDG_STATE_HOME/ws-tool/
+// (cron.state and cron.log, machine-local). ws owns every block between
+// `# >>> ws:<name> >>>` and `# <<< ws:<name> <<<` and never changes a line
+// outside the markers.
 //
-// Three shortcomings of vanilla crontab are addressed:
-//   - Missed-run recovery: an @reboot entry checks elapsed time since the
-//     last run; if more than half the job's interval has passed, the job
-//     runs immediately (equivalent to systemd Persistent=true).
-//   - Structured logging: all output is directed to a shared log file
-//     (~/.local/share/ws-tool/cron.log) with timestamps and job-name prefixes.
-//     The log is size-capped (default 5 MB) to prevent unbounded growth.
-//   - Status inspection: ws cron status reads the state file and last log
-//     lines — equivalent to systemctl --user status.
+// Three shortcomings of a plain crontab are addressed:
+//   - Missed-run recovery: both crontab lines pass --if-due, and an @reboot line
+//     catches up on slots missed while the machine was off.
+//   - Structured logging: a job's output goes to cron.log with a timestamp and a
+//     job-name prefix, size-capped at 5 MB.
+//   - Declared state: add and rm write configs/crontab too, and apply installs it
+//     on a new machine.
 package cron
 
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
@@ -29,34 +31,49 @@ type BuiltinJob struct {
 	Name string
 	// Schedule is the cron expression for the scheduled entry.
 	Schedule string
-	// IntervalSecs is the expected interval between runs in seconds.
-	// Used by the @reboot entry to decide whether a missed run needs catching up.
+	// IntervalSecs is the expected interval between runs in seconds. A job is
+	// due when its last run is older than half of it.
 	IntervalSecs int
 	// Description is a one-line human-readable summary.
 	Description string
-	// scriptBody returns the job-specific shell commands embedded in the
-	// wrapper script body. wsBin is the absolute ws binary path, display is
-	// the X11 DISPLAY value (may be empty), workspace is the workspace root.
+	// NeedsDisplay is true for jobs that run a GUI program: their crontab lines
+	// carry --display.
+	NeedsDisplay bool
+	// scriptBody returns the shell commands the job runs. wsBin is the absolute
+	// ws binary path, display the X11 DISPLAY value, workspace the workspace root.
 	scriptBody func(wsBin, display, workspace string) string
 }
 
 // Builtins is the registry of all built-in named cron jobs.
 var Builtins = map[string]*BuiltinJob{
-	"mega-sync":    megaSyncJob,
-	"dotfile-sync": dotfileSyncJob,
-	"repo-sync":    repoSyncJob,
-	"secret-scan":  secretScanJob,
-	"ignore-scan":  ignoreScanJob,
-	"log-prune":    logPruneJob,
+	"mega-sync":      megaSyncJob,
+	"dotfile-backup": dotfileBackupJob,
+	"pass-backup":    passBackupJob,
+	"session-prune":  sessionPruneJob,
 }
 
 // Presets maps a composite name to the ordered list of job names it expands to.
 var Presets = map[string][]string{
-	"maintenance": {"ignore-scan", "log-prune"},
-	"sync":        {"mega-sync", "dotfile-sync", "repo-sync"},
+	"maintenance": {"session-prune"},
+	"sync":        {"mega-sync", "dotfile-backup", "pass-backup"},
 }
 
-// AllNames returns all valid job names and preset names, sorted alphabetically.
+// Aliases maps an old job name to the job that replaced it. Old crontab lines
+// keep working (`cron run` takes the old name silently), and a block, a state
+// record or a log line under the old name counts as the new job's, so history and
+// missed-run checks carry over.
+var Aliases = map[string]string{
+	"dotfile-sync": "dotfile-backup",
+	"log-prune":    "session-prune",
+}
+
+// Retired are jobs that no longer exist. `cron add` rejects them, `cron rm` still
+// removes their blocks, and `cron run` logs a skip and exits 0, so old crontab
+// lines do not fail. Nothing commits your work unattended, so repo-sync is gone.
+var Retired = []string{"secret-scan", "ignore-scan", "repo-sync"}
+
+// AllNames returns every job and preset name, sorted. It holds neither aliases
+// nor retired names: those are hidden.
 func AllNames() []string {
 	var names []string
 	for k := range Builtins {
@@ -69,33 +86,71 @@ func AllNames() []string {
 	return names
 }
 
-// Resolve expands a name (single job or preset) to one or more BuiltinJobs.
-// Returns an error if the name is not known.
-func Resolve(name string) ([]*BuiltinJob, error) {
+// JobNames returns the built-in job names, sorted.
+func JobNames() []string {
+	var names []string
+	for k := range Builtins {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// IsRetired reports whether name is a retired job.
+func IsRetired(name string) bool { return slices.Contains(Retired, name) }
+
+// Canonical maps an old job name to its current one. aliased is true when name
+// was an old name.
+func Canonical(name string) (job string, aliased bool) {
+	if c, ok := Aliases[name]; ok {
+		return c, true
+	}
+	return name, false
+}
+
+// Names returns a job's current name followed by its old names.
+func Names(job string) []string {
+	out := []string{job}
+	for old, cur := range Aliases {
+		if cur == job {
+			out = append(out, old)
+		}
+	}
+	sort.Strings(out[1:])
+	return out
+}
+
+// Resolve expands a name (a job, an old job name, or a preset) to its
+// BuiltinJobs. aliased is true when name was an old job name. A retired name is an
+// error that says so, and so is an unknown one.
+func Resolve(name string) (jobs []*BuiltinJob, aliased bool, err error) {
 	if preset, ok := Presets[name]; ok {
-		jobs := make([]*BuiltinJob, 0, len(preset))
+		jobs = make([]*BuiltinJob, 0, len(preset))
 		for _, n := range preset {
 			j, ok := Builtins[n]
 			if !ok {
-				return nil, fmt.Errorf("internal: preset %q references unknown job %q", name, n)
+				return nil, false, fmt.Errorf("internal: preset %q references unknown job %q", name, n)
 			}
 			jobs = append(jobs, j)
 		}
-		return jobs, nil
+		return jobs, false, nil
 	}
-	j, ok := Builtins[name]
-	if !ok {
-		return nil, fmt.Errorf("unknown cron job %q — run `ws cron ls` to see available jobs", name)
+	canon, aliased := Canonical(name)
+	if j, ok := Builtins[canon]; ok {
+		return []*BuiltinJob{j}, aliased, nil
 	}
-	return []*BuiltinJob{j}, nil
+	if IsRetired(name) {
+		return nil, false, fmt.Errorf("cron job %q was removed", name)
+	}
+	return nil, false, fmt.Errorf("unknown cron job %q — run `ws cron ls` to see available jobs", name)
 }
 
-// DataDir returns the ws cron data directory (~/.local/share/ws-tool).
+// DataDir returns the machine-local state directory ($XDG_STATE_HOME/ws-tool).
 func DataDir() (string, error) {
 	return wsconfig.StateDir()
 }
 
-// JobsDir returns the directory where wrapper scripts are written.
+// JobsDir returns the directory where legacy wrapper scripts were written.
 func JobsDir() (string, error) {
 	d, err := DataDir()
 	if err != nil {
@@ -122,11 +177,17 @@ func LogFilePath() (string, error) {
 	return filepath.Join(d, "cron.log"), nil
 }
 
-// ScriptPath returns the absolute path for a job's wrapper script.
+// ScriptPath returns the absolute path of a job's legacy wrapper script, which
+// `cron rm` still deletes if one is there.
 func ScriptPath(name string) (string, error) {
 	dir, err := JobsDir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, name+".sh"), nil
+}
+
+// DeclaredPath is <workspace>/configs/crontab, the declared crontab.
+func DeclaredPath(workspace string) string {
+	return filepath.Join(workspace, "configs", "crontab")
 }

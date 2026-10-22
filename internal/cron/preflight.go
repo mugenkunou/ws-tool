@@ -48,6 +48,10 @@ func (e *PreflightError) Remediation() string {
 // Returns *PreflightError on access denial or missing binary; nil on success.
 // "no crontab for user" (empty crontab) is treated as success.
 func Preflight() error {
+	// A test crontab file stands in for the user's crontab: nothing to check.
+	if os.Getenv("WS_CRONTAB_FILE") != "" {
+		return nil
+	}
 	if _, err := exec.LookPath("crontab"); err != nil {
 		return &PreflightError{Kind: "binary_missing"}
 	}

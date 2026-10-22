@@ -39,6 +39,7 @@ var aliasLive = map[string]bool{
 	"log":     true,
 	"scratch": true,
 	"trash":   true,
+	"cron":    true,
 }
 
 // aliases is every row of spec §3.5.

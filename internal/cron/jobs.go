@@ -6,7 +6,8 @@ var megaSyncJob = &BuiltinJob{
 	Name:         "mega-sync",
 	Schedule:     "*/30 * * * *",
 	IntervalSecs: 30 * 60,
-	Description:  "Restart megasync for a 5-minute sync window every 30 minutes",
+	Description:  "Restart megasync for a 5-minute sync window",
+	NeedsDisplay: true,
 	scriptBody: func(wsBin, display, workspace string) string {
 		if display == "" {
 			display = ":1"
@@ -27,52 +28,32 @@ pkill megasync || true`,
 	},
 }
 
-var dotfileSyncJob = &BuiltinJob{
-	Name:         "dotfile-sync",
+var dotfileBackupJob = &BuiltinJob{
+	Name:         "dotfile-backup",
 	Schedule:     "*/30 * * * *",
 	IntervalSecs: 30 * 60,
-	Description:  "Commit and push dotfiles to remote git (requires dotfile.git.enabled=true)",
+	Description:  "Commit and push the dotfile backup (needs ws dotfile backup enable)",
 	scriptBody: func(wsBin, display, workspace string) string {
-		return fmt.Sprintf("%s --workspace %s dotfile git push --quiet", wsBin, workspace)
+		return fmt.Sprintf("%s --workspace %s dotfile backup push --quiet", wsBin, workspace)
 	},
 }
 
-var repoSyncJob = &BuiltinJob{
-	Name:         "repo-sync",
+var passBackupJob = &BuiltinJob{
+	Name:         "pass-backup",
 	Schedule:     "*/30 * * * *",
 	IntervalSecs: 30 * 60,
-	Description:  "Sync workspace git fleet (pull behind, push ahead)",
+	Description:  "Push the pass store backup (needs ws pass backup enable)",
 	scriptBody: func(wsBin, display, workspace string) string {
-		return fmt.Sprintf("%s --workspace %s repo sync --quiet", wsBin, workspace)
+		return fmt.Sprintf("%s --workspace %s pass backup push --quiet", wsBin, workspace)
 	},
 }
 
-var secretScanJob = &BuiltinJob{
-	Name:         "secret-scan",
-	Schedule:     "0 * * * *",
-	IntervalSecs: 60 * 60,
-	Description:  "Scan for exposed secrets; notify if violations found",
-	scriptBody: func(wsBin, display, workspace string) string {
-		return fmt.Sprintf("%s --workspace %s secret scan --quiet", wsBin, workspace)
-	},
-}
-
-var ignoreScanJob = &BuiltinJob{
-	Name:         "ignore-scan",
-	Schedule:     "0 */6 * * *",
-	IntervalSecs: 6 * 60 * 60,
-	Description:  "Scan workspace sync hygiene (bloat, depth, project-meta) every 6 hours",
-	scriptBody: func(wsBin, display, workspace string) string {
-		return fmt.Sprintf("%s --workspace %s ignore scan --quiet", wsBin, workspace)
-	},
-}
-
-var logPruneJob = &BuiltinJob{
-	Name:         "log-prune",
+var sessionPruneJob = &BuiltinJob{
+	Name:         "session-prune",
 	Schedule:     "0 2 * * *",
 	IntervalSecs: 24 * 60 * 60,
-	Description:  "Evict old log sessions that exceed log.cap_mb (nightly at 02:00)",
+	Description:  "Prune sessions over the size cap (nightly at 02:00)",
 	scriptBody: func(wsBin, display, workspace string) string {
-		return fmt.Sprintf("%s --workspace %s log prune --quiet", wsBin, workspace)
+		return fmt.Sprintf("%s --workspace %s session prune --quiet", wsBin, workspace)
 	},
 }

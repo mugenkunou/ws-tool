@@ -4,524 +4,386 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
-	"time"
 
 	"github.com/mugenkunou/ws-tool/internal/cron"
 	"github.com/mugenkunou/ws-tool/internal/resource"
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
 
-var cronHelp = cmdHelp{
-	Usage: "ws cron <add|rm|remove|run|apply|ls|list|status|log>",
-	Subcommands: []string{
-		"  add <job>      Install a managed cron job (or preset)",
-		"  rm <job>       Remove a managed cron job (or preset)",
-		"  remove <job>   Alias for rm",
-		"  run <job>      Run a job immediately (used by crontab entries)",
-		"  apply          Install configs/crontab into the live user crontab",
-		"  ls             List available jobs and their install status",
-		"  list           Alias for ls",
-		"  status [job]   Show last run, exit code, and next scheduled run",
-		"  log [job]      Show recent log entries",
-	},
-	Flags: append([]string{
-		"      --display string   X11 DISPLAY for mega-sync (default: $DISPLAY then :1)",
-		"      --lines int        Lines of log to show for 'log' subcommand (default: 20)",
-		"      --dry-run          Preview only (add/rm/apply)",
-	}, listFlagHelp("ls", cron.Schema(resource.CLIView()).Keys())...),
-}
-
+// runCron dispatches `ws cron <verb>` (spec §5 cron).
 func runCron(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	if hasHelpArg(args) {
-		return printCmdHelp(stdout, cronHelp)
-	}
 	if len(args) == 0 {
-		return printCmdHelp(stdout, cronHelp)
+		fmt.Fprintln(stderr, "usage: ws cron <ls|add|rm|run|log|apply> …")
+		return 1
 	}
-
-	sub := args[0]
-	subArgs := args[1:]
-	switch sub {
+	verb, rest := args[0], args[1:]
+	switch verb {
+	case "ls":
+		return cronLs(rest, globals, stdout, stderr)
 	case "add":
-		return runCronAdd(subArgs, globals, stdin, stdout, stderr)
-	case "rm", "remove":
-		return runCronRm(subArgs, globals, stdin, stdout, stderr)
+		return cronAdd(rest, globals, stdin, stdout, stderr)
+	case "rm":
+		return cronRm(rest, globals, stdin, stdout, stderr)
 	case "run":
-		return runCronRun(subArgs, globals, stdout, stderr)
-	case "apply":
-		return runCronApply(subArgs, globals, stdin, stdout, stderr)
-	case "ls", "list":
-		return runCronLs(subArgs, globals, stdout, stderr)
-	case "status":
-		return runCronStatus(subArgs, globals, stdout, stderr)
+		return cronRun(rest, globals, stdout, stderr)
 	case "log":
-		return runCronLog(subArgs, globals, stdout, stderr)
-	default:
-		fmt.Fprintf(stderr, "unknown cron subcommand: %s\n", sub)
-		return printUsageError(stderr, cronHelp)
+		return cronLog(rest, globals, stdout, stderr)
+	case "apply":
+		return cronApply(rest, globals, stdin, stdout, stderr)
+	}
+	fmt.Fprintf(stderr, "unknown command: cron %s\n", verb)
+	fmt.Fprintln(stderr, "usage: ws cron <ls|add|rm|run|log|apply> …")
+	return 1
+}
+
+// cronPlanOptions says where `cron add`, `rm` and `apply` read and write: this
+// binary, this workspace, and its configs/crontab.
+func cronPlanOptions(globals globalFlags, display string) (cron.PlanOptions, error) {
+	workspacePath, _, err := resolveWorkspacePaths(globals)
+	if err != nil {
+		return cron.PlanOptions{}, err
+	}
+	if display == "" {
+		display = cron.DefaultDisplay()
+	}
+	return cron.PlanOptions{Bin: cron.WSBinary(), Workspace: workspacePath, Display: display, Declared: cron.DeclaredPath(workspacePath)}, nil
+}
+
+// aliasNote prints the old-name rename line for a job name, as a typed alias
+// would (spec §3.5): `cron add`, `rm` and `log` do; `cron run` is plumbing and
+// stays silent.
+func aliasNote(globals globalFlags, stderr io.Writer, name string) {
+	if canon, old := cron.Canonical(name); old && !globals.quiet && !globals.json {
+		fmt.Fprintf(stderr, "ws: %q is now %q\n", name, canon)
 	}
 }
 
-// ── add ──────────────────────────────────────────────────────────────────────
+// preflight checks crontab access before any read or write of the live crontab.
+func preflight(stderr io.Writer) bool {
+	if err := cron.Preflight(); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return false
+	}
+	return true
+}
 
-func runCronAdd(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+// ── ls ─────────────────────────────────────────────────────────────
+
+func cronLs(args []string, globals globalFlags, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("cron-ls", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	lf := registerListFlags(fs, "")
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	workspacePath, _, _ := resolveWorkspacePaths(globals)
+	// An unreadable crontab is not an error: the rows show "crontab n/a" and
+	// stderr gets one line with the reason.
+	jobs, crontabErr := cron.Jobs(workspacePath)
+	if crontabErr != nil {
+		fmt.Fprintln(stderr, "crontab n/a: "+strings.SplitN(crontabErr.Error(), "\n", 2)[0])
+	}
+	return renderList(globals, "cron.ls", cron.Schema(resource.CLIView()), jobs, lf, "No cron jobs.", stdout, stderr)
+}
+
+// ── add ────────────────────────────────────────────────────────────
+
+// resolveJobs expands job and preset names to built-in jobs, each once. An old
+// job name prints the rename line. An unknown or retired name is an error.
+func resolveJobs(names []string, globals globalFlags, stderr io.Writer) ([]*cron.BuiltinJob, error) {
+	var jobs []*cron.BuiltinJob
+	for _, name := range names {
+		resolved, aliased, err := cron.Resolve(name)
+		if err != nil {
+			return nil, err
+		}
+		if aliased {
+			aliasNote(globals, stderr, name)
+		}
+		for _, j := range resolved {
+			if !slices.ContainsFunc(jobs, func(x *cron.BuiltinJob) bool { return x.Name == j.Name }) {
+				jobs = append(jobs, j)
+			}
+		}
+	}
+	return jobs, nil
+}
+
+func cronAdd(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("cron-add", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	display := fs.String("display", "", "X11 DISPLAY for mega-sync")
-	dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
+	display := fs.String("display", "", "")
 	registerGlobalFlags(fs, &globals)
 	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	if *dryRun {
-		globals.dryRun = true
-	}
-
-	remaining := fs.Args()
-	if len(remaining) == 0 {
-		fmt.Fprintln(stderr, "usage: ws cron add <job>")
-		fmt.Fprintln(stderr, "Run `ws cron ls` to see available jobs.")
+	if len(fs.Args()) == 0 {
+		fmt.Fprintln(stderr, "usage: ws cron add <job|preset…> [--display <d>]")
 		return 1
 	}
-	jobName := remaining[0]
-
-	// Validate the job name before any system checks so the user gets a clear
-	// "unknown job" error rather than a misleading "install cron" message.
-	jobs, err := cron.Resolve(jobName)
+	jobs, err := resolveJobs(fs.Args(), globals, stderr)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if !preflight(stderr) {
+		return 1
+	}
+	opts, err := cronPlanOptions(globals, *display)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	actions, already, err := cron.AddActions(jobs, opts)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
 
-	if !globals.dryRun {
-		if err := cron.Preflight(); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
+	out := quietOut(globals, stdout)
+	for _, name := range already {
+		fmt.Fprintf(out, "  %s %s is already installed\n", style.Mutedf(globals.noColor, "–"), name)
 	}
-
-	workspacePath, _, err := requireWorkspaceInitialized(globals, stderr)
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-
-	dispVal := *display
-	if dispVal == "" {
-		dispVal = cron.DefaultDisplay()
-	}
-	actions, err := cron.AddActions(jobs, cron.WSBinary(), dispVal, workspacePath)
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	nc := globals.noColor
-	out := textOut(globals, stdout)
-	plan := Plan{Command: "cron.add", Actions: actions}
-	planResult := RunPlan(plan, stdin, stdout, globals)
-
-	if globals.dryRun {
-		return 0
-	}
-
+	planResult := RunPlan(Plan{Command: "cron.add", Actions: actions}, stdin, stdout, globals)
 	if globals.json {
-		type jobResult struct {
+		type jobInfo struct {
 			Name     string `json:"name"`
 			Schedule string `json:"schedule"`
 		}
-		var results []jobResult
+		infos := []jobInfo{}
 		for _, j := range jobs {
-			results = append(results, jobResult{Name: j.Name, Schedule: j.Schedule})
+			infos = append(infos, jobInfo{Name: j.Name, Schedule: j.Schedule})
 		}
-		return writeJSON(stdout, stderr, "cron.add", map[string]any{"jobs": results})
+		return writeJSONDryRun(stdout, stderr, "cron.add", globals.dryRun, map[string]any{"jobs": infos, "actions": planResult.Actions})
 	}
-
-	if !planResult.HasFailures() && planResult.ExecutedCount() > 0 {
-		fmt.Fprintln(out, style.ResultSuccess(nc, "Cron job(s) installed. Run `ws cron status` to verify."))
+	if n := planResult.ExecutedCount(); n > 0 && !globals.dryRun {
+		fmt.Fprintln(out, style.ResultSuccess(globals.noColor, "%s installed.", pluralize(n, "cron job")))
 	}
 	return planResult.ExitCode()
 }
 
-// ── rm ───────────────────────────────────────────────────────────────────────
+// ── rm ─────────────────────────────────────────────────────────────
 
-func runCronRm(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+func cronRm(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("cron-rm", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 	registerGlobalFlags(fs, &globals)
 	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	if *dryRun {
-		globals.dryRun = true
-	}
-
-	remaining := fs.Args()
-	if len(remaining) == 0 {
-		fmt.Fprintln(stderr, "usage: ws cron rm <job>")
+	if len(fs.Args()) == 0 {
+		fmt.Fprintln(stderr, "usage: ws cron rm <job|preset…>")
 		return 1
 	}
-	jobName := remaining[0]
-
-	if !globals.dryRun {
-		if err := cron.Preflight(); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
+	// rm takes built-in jobs, presets (their members), old job names and retired
+	// jobs, whose blocks it still removes.
+	var names []string
+	for _, name := range fs.Args() {
+		if members, ok := cron.Presets[name]; ok {
+			names = append(names, members...)
+			continue
 		}
+		if _, known := cron.Builtins[name]; !known && !cron.IsRetired(name) {
+			if _, old := cron.Canonical(name); !old {
+				fmt.Fprintf(stderr, "unknown cron job %q — run `ws cron ls` to see available jobs\n", name)
+				return 1
+			}
+			aliasNote(globals, stderr, name)
+		}
+		names = append(names, name)
 	}
-
-	if _, _, err := requireWorkspaceInitialized(globals, stderr); err != nil {
-		fmt.Fprintln(stderr, err.Error())
+	if !preflight(stderr) {
 		return 1
 	}
-
-	jobs, err := cron.Resolve(jobName)
+	opts, err := cronPlanOptions(globals, "")
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-
-	nc := globals.noColor
-	out := textOut(globals, stdout)
-
-	plan := Plan{Command: "cron.rm", Actions: cron.RemoveActions(jobs)}
-	planResult := RunPlan(plan, stdin, stdout, globals)
-
-	if globals.json {
-		var removed []string
-		for _, j := range jobs {
-			removed = append(removed, j.Name)
-		}
-		return writeJSON(stdout, stderr, "cron.rm", map[string]any{"removed": removed})
+	actions, notInstalled, err := cron.RemoveActions(names, opts)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
 	}
-
-	if !planResult.HasFailures() && planResult.ExecutedCount() > 0 {
-		fmt.Fprintln(out, style.ResultSuccess(nc, "Removed."))
+	out := quietOut(globals, stdout)
+	for _, name := range notInstalled {
+		fmt.Fprintf(out, "  %s %s is not installed\n", style.Mutedf(globals.noColor, "–"), name)
+	}
+	planResult := RunPlan(Plan{Command: "cron.rm", Actions: actions}, stdin, stdout, globals)
+	if globals.json {
+		removed := []string{}
+		for _, a := range planResult.Actions {
+			if a.Status == "executed" {
+				removed = append(removed, strings.TrimPrefix(a.ID, "cron-rm-"))
+			}
+		}
+		return writeJSONDryRun(stdout, stderr, "cron.rm", globals.dryRun, map[string]any{"removed": removed, "actions": planResult.Actions})
 	}
 	return planResult.ExitCode()
 }
 
-// ── ls ───────────────────────────────────────────────────────────────────────
+// ── run ────────────────────────────────────────────────────────────
 
-func runCronLs(args []string, globals globalFlags, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("cron-ls", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	lf := registerListFlags(fs, "")
-	registerGlobalFlags(fs, &globals)
-	if err := parseInterspersed(fs, args); err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	jobs, _ := cron.Jobs() // an unreadable crontab shows as "crontab n/a"
-	return renderListIn(globals, "cron.ls", "jobs", cron.Schema(resource.CLIView()), jobs, lf, "No cron jobs.", stdout, stderr)
-}
-
-// ── status ───────────────────────────────────────────────────────────────────
-
-func runCronStatus(args []string, globals globalFlags, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("cron-status", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	registerGlobalFlags(fs, &globals)
-	if err := parseInterspersed(fs, args); err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-
-	jobFilter := ""
-	if remaining := fs.Args(); len(remaining) > 0 {
-		jobFilter = remaining[0]
-	}
-
-	nc := globals.noColor
-	statePath, _ := cron.StateFilePath()
-	logPath, _ := cron.LogFilePath()
-
-	// Determine which jobs to show.
-	var targetJobs []*cron.BuiltinJob
-	if jobFilter == "" {
-		// Show all installed jobs.
-		for _, name := range cron.AllNames() {
-			job, isJob := cron.Builtins[name]
-			if !isJob {
-				continue
-			}
-			if ok, _ := cron.HasJob(name); ok {
-				targetJobs = append(targetJobs, job)
-			}
-		}
-		if len(targetJobs) == 0 {
-			fmt.Fprintln(stdout, "No ws-managed cron jobs installed. Run `ws cron add <job>`.")
-			return 0
-		}
-	} else {
-		jobs, err := cron.Resolve(jobFilter)
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		targetJobs = jobs
-	}
-
-	if globals.json {
-		type jobStatus struct {
-			Name         string `json:"name"`
-			Schedule     string `json:"schedule"`
-			Installed    bool   `json:"installed"`
-			LastRunTime  string `json:"last_run,omitempty"`
-			LastExitCode int    `json:"last_exit"`
-			NextRunTime  string `json:"next_run,omitempty"`
-		}
-		var statuses []jobStatus
-		for _, job := range targetJobs {
-			installed, _ := cron.HasJob(job.Name)
-			r, _ := cron.LastRun(statePath, job.Name)
-			js := jobStatus{
-				Name:      job.Name,
-				Schedule:  job.Schedule,
-				Installed: installed,
-			}
-			if !r.Time.IsZero() {
-				js.LastRunTime = r.Time.UTC().Format(time.RFC3339)
-				js.LastExitCode = r.ExitCode
-				next := r.Time.Add(time.Duration(job.IntervalSecs) * time.Second)
-				js.NextRunTime = next.UTC().Format(time.RFC3339)
-			}
-			statuses = append(statuses, js)
-		}
-		return writeJSON(stdout, stderr, "cron.status", map[string]any{"jobs": statuses})
-	}
-
-	sep := strings.Repeat("─", 54)
-	for i, job := range targetJobs {
-		if i > 0 {
-			fmt.Fprintln(stdout)
-		}
-		r, _ := cron.LastRun(statePath, job.Name)
-		installed, _ := cron.HasJob(job.Name)
-
-		fmt.Fprintln(stdout, style.Boldf(nc, "%s", job.Name))
-		fmt.Fprintln(stdout, style.Mutedf(nc, "%s", sep))
-
-		if installed {
-			fmt.Fprintf(stdout, "  Status      %s\n",
-				style.Successf(nc, "installed  (%s + @reboot)", job.Schedule))
-		} else {
-			fmt.Fprintf(stdout, "  Status      %s\n", style.Warningf(nc, "not installed"))
-		}
-
-		if r.Time.IsZero() {
-			fmt.Fprintln(stdout, "  Last run    never")
-		} else {
-			ago := time.Since(r.Time).Truncate(time.Second)
-			exitStr := style.Successf(nc, "exit 0")
-			if r.ExitCode != 0 {
-				exitStr = style.ResultError(nc, "exit %d", r.ExitCode)
-			}
-			fmt.Fprintf(stdout, "  Last run    %s  (%s ago)  %s\n",
-				r.Time.Local().Format("2006-01-02 15:04:05"), ago, exitStr)
-
-			next := r.Time.Add(time.Duration(job.IntervalSecs) * time.Second)
-			if time.Now().After(next) {
-				fmt.Fprintln(stdout, "  Next run    "+style.Warningf(nc, "overdue — check crontab"))
-			} else {
-				fmt.Fprintf(stdout, "  Next run    ~%s\n", next.Local().Format("2006-01-02 15:04"))
-			}
-		}
-
-		// Show last 5 log lines for this job.
-		logLines, _ := cron.ReadLog(logPath, job.Name, 5)
-		if len(logLines) > 0 {
-			fmt.Fprintln(stdout, "  Recent log:")
-			for _, l := range logLines {
-				fmt.Fprintf(stdout, "    %s\n", style.Mutedf(nc, "%s", l))
-			}
-		}
-	}
-
-	return 0
-}
-
-// ── run ──────────────────────────────────────────────────────────────────────
-
-// runCronRun implements `ws cron run <job>`. It runs the job body directly,
-// recording the result in the cron state file and log. Crontab entries call
-// `ws cron run <job>` instead of a separate wrapper script.
-func runCronRun(args []string, globals globalFlags, stdout, stderr io.Writer) int {
+// cronRun runs one job now. Crontab lines call it, so it never prompts and an old
+// job name runs silently (it is plumbing, not a typed alias).
+func cronRun(args []string, globals globalFlags, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("cron-run", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	display := fs.String("display", "", "X11 DISPLAY for mega-sync")
+	ifDue := fs.Bool("if-due", false, "")
+	display := fs.String("display", "", "")
 	registerGlobalFlags(fs, &globals)
 	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-
-	remaining := fs.Args()
-	if len(remaining) == 0 {
-		fmt.Fprintln(stderr, "usage: ws cron run <job>")
+	if len(fs.Args()) != 1 {
+		fmt.Fprintln(stderr, "usage: ws cron run <job> [--if-due] [--display <d>]")
 		return 1
 	}
-	jobName := remaining[0]
-
-	workspacePath, _, err := requireWorkspaceInitialized(globals, stderr)
+	workspacePath, _, err := resolveWorkspacePaths(globals)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-
-	dispVal := *display
-	if dispVal == "" {
-		dispVal = cron.DefaultDisplay()
+	// The job's output also goes to ws's own stdout and stderr, unless --json.
+	var jobOut, jobErr io.Writer = stdout, stderr
+	if globals.json || globals.quiet {
+		jobOut, jobErr = nil, nil
 	}
-
-	result, runErr := cron.RunJob(jobName, cron.RunOptions{
-		WorkspacePath: workspacePath,
-		Display:       dispVal,
+	res, err := cron.RunJob(fs.Args()[0], cron.RunOptions{
+		WorkspacePath: workspacePath, Display: *display, IfDue: *ifDue,
+		Stdout: jobOut, Stderr: jobErr, DryRun: globals.dryRun,
 	})
-	if runErr != nil {
-		fmt.Fprintln(stderr, runErr.Error())
-		return 1
-	}
-
-	if globals.json {
-		return writeJSON(stdout, stderr, "cron.run", map[string]any{
-			"job":       result.Job,
-			"exit_code": result.ExitCode,
-		})
-	}
-
-	return result.ExitCode
-}
-
-// ── apply ─────────────────────────────────────────────────────────────────────
-
-// runCronApply implements `ws cron apply`. It reads configs/crontab from the
-// workspace and installs every ws-managed block into the live user crontab,
-// preserving non-ws lines.
-func runCronApply(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("cron-apply", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
-	registerGlobalFlags(fs, &globals)
-	if err := parseInterspersed(fs, args); err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	if *dryRun {
-		globals.dryRun = true
-	}
-
-	workspacePath, _, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-
-	// The workspace crontab lives at configs/crontab.
-	crontabFile := workspacePath + "/configs/crontab" //nolint:gocritic — simple join, filepath not imported here
-
-	if !globals.dryRun {
-		if err := cron.Preflight(); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-	}
-
-	result, applyErr := cron.ApplyCrontab(cron.ApplyOptions{
-		CrontabFilePath: crontabFile,
-		DryRun:          globals.dryRun,
-	})
-	if applyErr != nil {
-		fmt.Fprintln(stderr, applyErr.Error())
-		return 1
-	}
-
-	nc := globals.noColor
-	out := textOut(globals, stdout)
-
-	if globals.json {
-		return writeJSON(stdout, stderr, "cron.apply", map[string]any{
-			"added":        result.AddedBlocks,
-			"skipped":      result.SkippedBlocks,
-			"non_ws_lines": result.NonWSLines,
-			"dry_run":      result.DryRun,
-		})
-	}
-
-	if globals.dryRun {
-		fmt.Fprintln(out, style.Mutedf(nc, "[dry-run] would apply configs/crontab"))
-	}
-
-	if len(result.AddedBlocks) == 0 && len(result.SkippedBlocks) == 0 {
-		fmt.Fprintln(out, style.Mutedf(nc, "No ws blocks found in configs/crontab — nothing to apply."))
+	if globals.dryRun && !globals.json {
+		fmt.Fprintf(stdout, "Would run %s:\n%s\n", res.Job, res.Command)
 		return 0
 	}
-
-	for _, name := range result.AddedBlocks {
-		fmt.Fprintf(out, "  %s %s\n", style.IconCheck(nc), name)
+	if globals.json {
+		// The job's own code is data.exit_code; the command's exit is 0 or 1.
+		code := 0
+		if res.ExitCode != 0 {
+			code = 1
+		}
+		writeJSON(stdout, stderr, "cron.run", map[string]any{"job": res.Job, "exit_code": res.ExitCode, "skipped": res.Skipped})
+		return code
 	}
-	for _, name := range result.SkippedBlocks {
-		fmt.Fprintf(out, "  %s %s (unchanged)\n", style.Mutedf(nc, "·"), name)
+	if res.ExitCode != 0 {
+		return 1
 	}
-
-	if !globals.dryRun && len(result.AddedBlocks) > 0 {
-		fmt.Fprintln(out, style.ResultSuccess(nc, "Crontab applied."))
-	}
-
-	_ = stdin // consumed only for plan confirm prompts; apply has none
 	return 0
 }
 
-// ── log ──────────────────────────────────────────────────────────────────────
+// ── log ────────────────────────────────────────────────────────────
 
-func runCronLog(args []string, globals globalFlags, stdout, stderr io.Writer) int {
+func cronLog(args []string, globals globalFlags, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("cron-log", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	lines := fs.Int("lines", 20, "number of log lines to show")
+	lines := fs.Int("lines", 20, "")
 	registerGlobalFlags(fs, &globals)
 	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-
-	jobName := ""
-	if remaining := fs.Args(); len(remaining) > 0 {
-		jobName = remaining[0]
+	// A preset stands for its members; an old name for its job.
+	var jobs []string
+	for _, name := range fs.Args() {
+		switch {
+		case cron.Presets[name] != nil:
+			jobs = append(jobs, cron.Presets[name]...)
+		case cron.IsRetired(name):
+			jobs = append(jobs, name)
+		default:
+			if _, _, err := cron.Resolve(name); err != nil {
+				fmt.Fprintln(stderr, err.Error())
+				return 1
+			}
+			aliasNote(globals, stderr, name)
+			jobs = append(jobs, name)
+		}
 	}
-
 	logPath, err := cron.LogFilePath()
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-
-	logLines, err := cron.ReadLog(logPath, jobName, *lines)
+	entries, err := cron.ReadLog(logPath, jobs, *lines)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-
 	if globals.json {
-		return writeJSON(stdout, stderr, "cron.log", map[string]any{
-			"job":   jobName,
-			"lines": logLines,
-		})
-	}
-
-	if len(logLines) == 0 {
-		if jobName != "" {
-			fmt.Fprintf(stdout, "No log entries for job %q.\n", jobName)
-		} else {
-			fmt.Fprintln(stdout, "No cron log entries found.")
+		if jobs == nil {
+			jobs = []string{}
 		}
+		if entries == nil {
+			entries = []string{}
+		}
+		return writeJSON(stdout, stderr, "cron.log", map[string]any{"jobs": jobs, "lines": entries})
+	}
+	out := textOut(globals, stdout)
+	if len(entries) == 0 {
+		fmt.Fprintln(out, "No cron log entries.")
 		return 0
 	}
-
-	for _, l := range logLines {
-		fmt.Fprintln(stdout, l)
+	for _, l := range entries {
+		fmt.Fprintln(out, l)
 	}
 	return 0
+}
+
+// ── apply ──────────────────────────────────────────────────────────
+
+func cronApply(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("cron-apply", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if !preflight(stderr) {
+		return 1
+	}
+	opts, err := cronPlanOptions(globals, "")
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	actions, res, err := cron.ApplyActions(opts)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	out := quietOut(globals, stdout)
+	for _, name := range res.Skipped {
+		fmt.Fprintf(out, "  %s skipped %s: not a ws job\n", style.Mutedf(globals.noColor, "–"), name)
+	}
+	if len(actions) == 0 && !globals.json {
+		fmt.Fprintf(out, "The crontab already matches %s.\n", opts.Declared)
+		return 0
+	}
+	planResult := RunPlan(Plan{Command: "cron.apply", Actions: actions}, stdin, stdout, globals)
+	if globals.json {
+		nonNilS := func(s []string) []string {
+			if s == nil {
+				return []string{}
+			}
+			return s
+		}
+		return writeJSONDryRun(stdout, stderr, "cron.apply", globals.dryRun, map[string]any{
+			"installed": nonNilS(res.Installed), "removed": nonNilS(res.Removed), "unchanged": nonNilS(res.Unchanged),
+			"skipped": nonNilS(res.Skipped), "lines_added": res.LinesAdded, "actions": planResult.Actions,
+		})
+	}
+	return planResult.ExitCode()
 }

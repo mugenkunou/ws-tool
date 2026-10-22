@@ -127,9 +127,9 @@ func New(e env.Env) Model {
 				}
 				return t
 			}},
-			{Key: "installed", Min: 13, Style: func(j Job, t string) string {
+			{Key: "state", Min: 14, Style: func(j Job, t string) string {
 				switch {
-				case !j.CrontabOK:
+				case !j.CrontabOK, j.State == wscron.StateOutdated, j.State == wscron.StateNotApplied, j.State == wscron.StateUndeclared:
 					return theme.Warn.Render(t)
 				case j.Installed:
 					return theme.OK.Render("✔ " + t)
@@ -142,6 +142,7 @@ func New(e env.Env) Model {
 				}
 				return t
 			}},
+			{Key: "next_run", Min: 9},
 			{Key: "description", Min: 12, Weight: 1},
 		}, "No cron jobs available.").Declare(reslist.Decls(actions)),
 	}
@@ -150,7 +151,7 @@ func New(e env.Env) Model {
 // Load gathers cron job state.
 func Load(e env.Env) tea.Cmd {
 	return func() tea.Msg {
-		jobs, err := wscron.Jobs()
+		jobs, err := wscron.Jobs(e.Paths.Workspace)
 		return LoadedMsg{Jobs: jobs, CronErr: err}
 	}
 }
@@ -161,7 +162,7 @@ func loadLog(job string) tea.Cmd {
 		if err != nil {
 			return logMsg{job: job, text: theme.Error.Render(err.Error())}
 		}
-		lines, err := wscron.ReadLog(logPath, job, logLines)
+		lines, err := wscron.ReadLog(logPath, []string{job}, logLines)
 		if err != nil {
 			return logMsg{job: job, text: theme.Error.Render(err.Error())}
 		}
@@ -322,7 +323,7 @@ func (m Model) openChange(names []string, remove bool) (Model, tea.Cmd) {
 	var jobs []*wscron.BuiltinJob
 	seen := map[string]bool{}
 	for _, name := range names {
-		resolved, err := wscron.Resolve(name)
+		resolved, _, err := wscron.Resolve(name)
 		if err != nil {
 			return m, nav.Notify(nav.LevelError, err.Error())
 		}
@@ -334,14 +335,23 @@ func (m Model) openChange(names []string, remove bool) (Model, tea.Cmd) {
 		}
 	}
 	p := m.env.Paths
+	opts := wscron.PlanOptions{Bin: wscron.WSBinary(), Workspace: p.Workspace, Display: wscron.DefaultDisplay()}
 	pl := plan.Plan{Command: "cron.add"}
 	what := strings.Join(names, ", ")
 	title := "Install cron job " + what
 	if remove {
-		pl = plan.Plan{Command: "cron.rm", Actions: wscron.RemoveActions(jobs)}
+		var jobNames []string
+		for _, j := range jobs {
+			jobNames = append(jobNames, j.Name)
+		}
+		actions, _, err := wscron.RemoveActions(jobNames, opts)
+		if err != nil {
+			return m, nav.Notify(nav.LevelError, err.Error())
+		}
+		pl = plan.Plan{Command: "cron.rm", Actions: actions}
 		title = "Remove cron job " + what
 	} else {
-		actions, err := wscron.AddActions(jobs, wscron.WSBinary(), wscron.DefaultDisplay(), p.Workspace)
+		actions, _, err := wscron.AddActions(jobs, opts)
 		if err != nil {
 			return m, nav.Notify(nav.LevelError, err.Error())
 		}
