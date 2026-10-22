@@ -5,18 +5,15 @@ package trash
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
-	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/mugenkunou/ws-tool/internal/age"
 	"github.com/mugenkunou/ws-tool/internal/plan"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	wstrash "github.com/mugenkunou/ws-tool/internal/trash"
@@ -37,9 +34,8 @@ type Item = wstrash.Item
 // LoadedMsg carries trash state. Other components (the dashboard) may
 // observe it.
 type LoadedMsg struct {
-	Status wstrash.Status
-	Scan   wstrash.ScanResult
-	Items  []Item // newest first
+	Status wstrash.Status // integrations, location and totals
+	Items  []Item         // newest first
 	Err    error
 }
 
@@ -87,24 +83,22 @@ func New(e env.Env) Model {
 	}
 }
 
-func root(e env.Env) string {
-	// The new layout does not have a Trash field in wsconfig;
-	// use the standard XDG trash location unconditionally.
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "share", "Trash")
+// root is the trash directory (always the XDG trash).
+func root(env.Env) string {
+	r, _ := wstrash.Root()
+	return r
 }
 
 // Load reads trash status, size, and the trashed items (under the trash
 // root's files/ subdirectory — see internal/trash for the on-disk layout).
 func Load(e env.Env) tea.Cmd {
 	return func() tea.Msg {
-		st, err := wstrash.GetStatus(root(e))
+		st, err := wstrash.GetStatus()
 		if err != nil {
 			return LoadedMsg{Err: err}
 		}
 		msg := LoadedMsg{Status: st}
-		msg.Scan, _ = wstrash.Scan(wstrash.ScanOptions{RootDir: st.RootDir, WarnSizeMB: 1024})
-		msg.Items, err = wstrash.Items(st.RootDir)
+		msg.Items, err = wstrash.Items()
 		if err != nil {
 			msg.Err = err
 		}
@@ -232,69 +226,40 @@ func (m Model) names(rows []Item) map[string]bool {
 
 func (m Model) promptPurge(rows []Item) (Model, tea.Cmd) {
 	m.purge = m.names(rows)
-	title := "Purge items older than (days)"
+	title := "Prune items older than (age)"
 	if m.purge != nil {
-		title = "Purge " + format.Plural(len(rows), "item") + " older than (days)"
+		title = "Prune " + format.Plural(len(rows), "item") + " older than (age)"
 	}
 	var cmd tea.Cmd
 	m.modal, cmd = m.modal.Prompt(stepPurgeDays, prompt.New(title,
-		prompt.WithHint("Permanently deletes trash items deleted more than this many days ago."),
-		prompt.WithValidate(parseDays)))
+		prompt.WithHint("An age such as 30d, 12h or 2w (a bare number is days). Permanently deletes items trashed longer ago."),
+		prompt.WithValidate(parseAge)))
 	return m, cmd
 }
 
-// openEnable mirrors `ws trash enable` with all integrations (use the CLI's
-// --no-… flags for a subset: the state file records one combination).
+// openEnable mirrors `ws trash enable` with every integration that is off (use
+// the CLI's --no-… flags for a subset).
 func (m Model) openEnable() Model {
-	r, mp := root(m.env), m.env.Paths.Config
-	pl := plan.Plan{Command: "trash.enable", Actions: []plan.Action{
-		{
-			ID:          "trash-setup",
-			Description: "Enable soft-delete: shell rm, VS Code, file explorer → " + r,
-			Execute: func() error {
-				_, err := wstrash.Setup(wstrash.SetupOptions{RootDir: r, ShellRM: true, VSCodeDelete: true, FileExplorer: true})
-				return err
-			},
-		},
-		{
-			ID:          "trash-record-provisions",
-			Description: "Record trash provisions (so `ws reset` can undo them)",
-			Execute: func() error {
-				if err := wstrash.RecordShellProvisions(mp); err != nil {
-					return err
-				}
-				return wstrash.RecordExplorerProvision(mp, r)
-			},
-		},
-	}}
+	actions, err := wstrash.EnableActions(wstrash.EnableOptions{})
+	if err != nil {
+		return m
+	}
+	pl := plan.Plan{Command: "trash.enable", Actions: actions}
 	c := confirm.New("Enable soft-delete", pl).WithNote("For a subset of integrations use `ws trash enable --no-shell-rm|--no-vscode|--no-file-explorer`.")
 	m.modal = m.modal.Confirm(stepChange, c)
 	return m
 }
 
 func (m Model) openDisable() Model {
-	p := m.env.Paths
-	pl := plan.Plan{Command: "trash.reset", Actions: []plan.Action{{
-		ID:          "trash-reset",
-		Description: "Remove soft-delete integrations (script, aliases, symlink)",
-		Execute: func() error {
-			_, err := wstrash.Reset(wstrash.ResetOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config})
-			return err
-		},
-	}}}
+	pl := plan.Plan{Command: "trash.disable", Actions: wstrash.DisableActions()}
 	m.modal = m.modal.Confirm(stepChange, confirm.New("Disable soft-delete", pl))
 	return m
 }
 
 func (m Model) openDeleteItems(items []Item) Model {
-	r := m.state.Status.RootDir
-	if r == "" {
-		r = root(m.env)
-	}
 	pl := plan.Plan{Command: "trash.rm"}
 	for _, it := range items {
-		itemPath := filepath.Join(r, "files", it.Name)
-		infoPath := filepath.Join(r, "info", it.Name+".trashinfo")
+		it := it
 		desc := it.Name
 		if it.SizeBytes > 0 {
 			desc += " (" + style.HumanBytes(it.SizeBytes) + ")"
@@ -302,81 +267,55 @@ func (m Model) openDeleteItems(items []Item) Model {
 		pl.Actions = append(pl.Actions, plan.Action{
 			ID:          "trash-rm-" + it.Name,
 			Description: "Permanently delete " + desc,
-			Execute: func() error {
-				if err := os.RemoveAll(itemPath); err != nil {
-					return err
-				}
-				_ = os.Remove(infoPath) // best-effort: remove .trashinfo
-				return nil
-			},
+			Execute:     func() error { return wstrash.Delete(it) },
 		})
 	}
 	m.modal = m.modal.Confirm(stepDeleteItem, confirm.New("Delete "+format.Plural(len(items), "trash item"), pl))
 	return m
 }
 
-// parseDays validates the purge prompt: a positive whole number of days.
-func parseDays(v string) error {
-	if _, err := daysFrom(v); err != nil {
-		return err
-	}
-	return nil
+// parseAge validates the prune prompt: an age in the shared format.
+func parseAge(v string) error {
+	_, err := age.Parse(v)
+	return err
 }
 
-func daysFrom(v string) (int, error) {
-	n, err := strconv.Atoi(strings.TrimSpace(v))
-	if err != nil || n <= 0 {
-		return 0, fmt.Errorf("enter a positive whole number of days")
-	}
-	return n, nil
-}
-
-// purgeDays turns the submitted day count into the checklist: one action per
-// trashed item older than the cutoff, all pre-selected by the confirm view.
+// purgeDays turns the submitted age into the checklist: one action per trashed
+// item older than the cutoff, all pre-selected by the confirm view.
 func (m Model) purgeDays(r prompt.ResultMsg) (nav.Component, tea.Cmd) {
 	if r.Cancelled {
 		return m, nil
 	}
-	days, err := daysFrom(r.Value)
+	d, err := age.Parse(r.Value)
 	if err != nil {
 		return m, nav.Notify(nav.LevelWarn, err.Error())
 	}
-	rt := m.state.Status.RootDir
-	if rt == "" {
-		rt = root(m.env)
-	}
-	age := time.Duration(days) * 24 * time.Hour
-	res, err := wstrash.ListOlderThan(rt, age, m.env.Now())
+	res, matched, err := wstrash.SelectOlderThan(d, m.env.Now())
 	if err != nil {
 		return m, nav.Notify(nav.LevelWarn, err.Error())
 	}
-	if len(res.Matched) == 0 {
-		return m, nav.Notify(nav.LevelInfo, fmt.Sprintf("Nothing older than %d days.", days))
+	if len(matched) == 0 {
+		return m, nav.Notify(nav.LevelInfo, fmt.Sprintf("Nothing older than %s.", strings.TrimSpace(r.Value)))
 	}
 	if m.purge != nil {
-		res.Matched = slices.DeleteFunc(res.Matched, func(e wstrash.Entry) bool { return !m.purge[e.Name] })
-		if len(res.Matched) == 0 {
-			return m, nav.Notify(nav.LevelInfo, fmt.Sprintf("None of the %d items is older than %d days.", len(m.purge), days))
+		matched = slices.DeleteFunc(matched, func(it wstrash.Item) bool { return !m.purge[it.Name] })
+		if len(matched) == 0 {
+			return m, nav.Notify(nav.LevelInfo, fmt.Sprintf("None of the %d items is older than %s.", len(m.purge), strings.TrimSpace(r.Value)))
 		}
 	}
+	_ = res
 	now := m.env.Now()
-	pl := plan.Plan{Command: "trash.purge"}
-	for _, e := range res.Matched {
-		name := e.Name
-		desc := fmt.Sprintf("%s (%s, %s ago)", name, style.HumanBytes(e.SizeBytes), format.Age(now.Sub(e.DeletedAt)))
+	pl := plan.Plan{Command: "trash.prune"}
+	for _, it := range matched {
+		it := it
+		desc := fmt.Sprintf("%s (%s, %s ago)", it.Name, style.HumanBytes(it.SizeBytes), format.Age(now.Sub(it.DeletedAt)))
 		pl.Actions = append(pl.Actions, plan.Action{
-			ID:          "purge-" + name,
+			ID:          "prune-" + it.Name,
 			Description: "Permanently delete " + desc,
-			Execute: func() error {
-				if err := os.RemoveAll(filepath.Join(rt, "files", name)); err != nil {
-					return err
-				}
-				_ = os.Remove(filepath.Join(rt, "info", name+".trashinfo")) // best-effort
-				return nil
-			},
+			Execute:     func() error { return wstrash.Delete(it) },
 		})
 	}
-	title := fmt.Sprintf("Purge trash older than %d days", days)
+	title := fmt.Sprintf("Prune trash older than %s", strings.TrimSpace(r.Value))
 	m.modal = m.modal.Confirm(stepPurge, confirm.New(title, pl))
 	return m, nil
 }
@@ -387,20 +326,13 @@ func (m Model) openEmpty(rows []Item) Model {
 	if m.names(rows) != nil {
 		return m.openDeleteItems(rows)
 	}
-	r := m.state.Status.RootDir
-	if r == "" {
-		r = root(m.env)
-	}
-	sc := m.state.Scan
+	st := m.state.Status
 	pl := plan.Plan{Command: "trash.empty"}
-	if sc.FileCount > 0 || len(m.state.Items) > 0 {
+	if st.Items > 0 {
 		pl.Actions = []plan.Action{{
 			ID:          "trash-empty",
-			Description: fmt.Sprintf("Permanently delete %s (%s) in %s", format.Plural(sc.FileCount, "file"), style.HumanBytes(sc.SizeBytes), r),
-			Execute: func() error {
-				_, err := wstrash.Empty(wstrash.EmptyOptions{RootDir: r})
-				return err
-			},
+			Description: fmt.Sprintf("Permanently delete %s (%s) in %s", format.Plural(st.Items, "item"), style.HumanBytes(st.SizeBytes), st.Root),
+			Execute:     wstrash.Empty,
 		}}
 	}
 	m.modal = m.modal.Confirm(stepChange, confirm.New("Empty trash", pl))
@@ -411,13 +343,13 @@ func (m Model) header() []string {
 	if !m.loaded {
 		return []string{theme.Muted.Render("Reading trash…"), "", "", "", ""}
 	}
-	st, sc := m.state.Status, m.state.Scan
-	size := style.HumanBytes(sc.SizeBytes) + " · " + format.Plural(sc.FileCount, "file")
-	if sc.WarnSizeMB > 0 {
-		size += theme.Muted.Render(fmt.Sprintf(" (warns at %d MB)", sc.WarnSizeMB))
+	st := m.state.Status
+	size := style.HumanBytes(st.SizeBytes) + " · " + format.Plural(st.Files, "file")
+	if st.WarnSizeBytes > 0 {
+		size += theme.Muted.Render(fmt.Sprintf(" (warns at %s)", style.HumanBytes(st.WarnSizeBytes)))
 	}
-	if sc.OverLimit {
-		size = theme.Warn.Render(style.HumanBytes(sc.SizeBytes)+" — over the limit") + " · " + format.Plural(sc.FileCount, "file")
+	if st.OverLimit {
+		size = theme.Warn.Render(style.HumanBytes(st.SizeBytes)+" — over the limit") + " · " + format.Plural(st.Files, "file")
 	}
 	on := func(ok bool, label, detail string) string {
 		label = fmt.Sprintf("%-15s", label)
@@ -427,11 +359,11 @@ func (m Model) header() []string {
 		return "  " + theme.Muted.Render("✘ "+label+detail)
 	}
 	return []string{
-		theme.Bold.Render(theme.Icon(nav.ScreenTrash.Icon())+m.env.Rel(st.RootDir)) + "  " + size,
+		theme.Bold.Render(theme.Icon(nav.ScreenTrash.Icon())+m.env.Rel(st.Root)) + "  " + size,
 		"",
-		on(st.ShellRMConfigured, "shell rm", "rm moves files here"),
-		on(st.VSCodeConfigured, "VS Code", "editor deletes go here"),
-		on(st.FileExplorerConfigured, "file explorer", "desktop trash points here"),
+		on(st.Enabled(wstrash.ShellRM), "shell rm", "rm moves files here"),
+		on(st.Enabled(wstrash.VSCode), "VS Code", "editor deletes go here"),
+		on(st.Enabled(wstrash.FileExplorer), "file explorer", "desktop trash points here"),
 	}
 }
 

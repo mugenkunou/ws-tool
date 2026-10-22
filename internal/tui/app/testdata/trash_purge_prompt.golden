@@ -1,7 +1,7 @@
 ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Purge items older than (days)
-Permanently deletes trash items deleted more than this many days ago.
+Prune items older than (age)
+An age such as 30d, 12h or 2w (a bare number is days). Permanently deletes items trashed longer ago.
 
 ›
 

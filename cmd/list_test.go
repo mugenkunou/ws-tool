@@ -51,6 +51,7 @@ func assertKeys(t *testing.T, rec map[string]any, want []string) {
 func TestTrashLs(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
 	workspace := initWorkspace(t)
 
 	trashRoot := filepath.Join(home, ".local", "share", "Trash")

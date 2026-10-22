@@ -23,13 +23,14 @@ func TestMain(m *testing.M) {
 		defer os.RemoveAll(shimDir)
 	}
 
-	// Redirect XDG config and state to a temp dir so tests don't use the real
-	// ~/.config or ~/.local/state (cron state, trash state). XDG_DATA_HOME
-	// stays unset: trash tests set HOME and expect the trash under it.
+	// Redirect XDG config, state and data to a temp dir so tests never use the
+	// real ~/.config, ~/.local/state or ~/.local/share/Trash (a host test run once
+	// deleted real trash state). Tests that need their own machine set these again.
 	xdgDir, err := os.MkdirTemp("", "ws-tool-test-xdg-")
 	if err == nil {
 		_ = os.Setenv("XDG_CONFIG_HOME", xdgDir)
 		_ = os.Setenv("XDG_STATE_HOME", xdgDir)
+		_ = os.Setenv("XDG_DATA_HOME", xdgDir)
 		defer os.RemoveAll(xdgDir)
 	}
 

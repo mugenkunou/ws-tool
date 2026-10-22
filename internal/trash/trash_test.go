@@ -1,473 +1,611 @@
 package trash
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
-func TestSetupAndStatus(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	res, err := Setup(SetupOptions{
-		RootDir:      "", // default: XDG trash dir
-		ShellRM:      true,
-		VSCodeDelete: true,
-		FileExplorer: false,
-	})
+// TestMain points the XDG trash at a temp directory for the whole package: the
+// tests here move, restore and empty things, and a host test run once deleted real
+// trash state. Tests that want the HOME-derived default clear XDG_DATA_HOME.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "ws-tool-trash-test-")
 	if err != nil {
-		t.Fatalf("setup failed: %v", err)
+		panic(err)
 	}
-	if res.DryRun {
-		t.Fatal("expected non-dry-run result")
-	}
-	wantRoot := filepath.Join(home, ".local", "share", "Trash")
-	if res.RootDir != wantRoot {
-		t.Fatalf("root dir: want %s, got %s", wantRoot, res.RootDir)
-	}
-	if _, err := os.Stat(filepath.Join(wantRoot, "files")); err != nil {
-		t.Fatalf("expected files/ dir to exist: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(wantRoot, "info")); err != nil {
-		t.Fatalf("expected info/ dir to exist: %v", err)
-	}
-
-	status, err := GetStatus("")
-	if err != nil {
-		t.Fatalf("status failed: %v", err)
-	}
-	if !status.ShellRMConfigured || !status.VSCodeConfigured || status.FileExplorerConfigured {
-		t.Fatalf("unexpected status: %+v", status)
-	}
-	if status.WarningCount() != 1 {
-		t.Fatalf("expected warning count 1, got %d", status.WarningCount())
-	}
+	_ = os.Setenv("XDG_DATA_HOME", dir)
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
 }
 
-func TestSetupDryRunDoesNotWriteState(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	res, err := Setup(SetupOptions{
-		RootDir:      "",
-		ShellRM:      true,
-		VSCodeDelete: true,
-		FileExplorer: true,
-		DryRun:       true,
-	})
-	if err != nil {
-		t.Fatalf("dry-run setup failed: %v", err)
-	}
-	if !res.DryRun {
-		t.Fatal("expected dry-run result")
-	}
-
-	statePath := filepath.Join(home, ".local", "state", "ws-tool", "trash-setup.json")
-	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
-		t.Fatalf("state file should not exist on dry-run, got err=%v", err)
-	}
+// machine is one isolated user: a home, the XDG trash under it, a config dir and
+// a state dir.
+type machine struct {
+	home, root string
 }
 
-func TestDefaultRootIsXDGTrashDir(t *testing.T) {
+func newMachine(t *testing.T) machine {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
+	t.Setenv("SHELL", "/bin/bash")
+	return machine{home: home, root: filepath.Join(home, ".local", "share", "Trash")}
+}
 
-	status, err := GetStatus("")
-	if err != nil {
-		t.Fatalf("status failed: %v", err)
+func write(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	want := filepath.Join(home, ".local", "share", "Trash")
-	if status.RootDir != want {
-		t.Fatalf("root dir: want %s, got %s", want, status.RootDir)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func read(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func exists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
+}
+
+// trashed puts an item straight into the trash with a .trashinfo, as the shell
+// integration or the file manager would.
+func (m machine) trashed(t *testing.T, name, original, content string, deleted time.Time) {
+	t.Helper()
+	write(t, filepath.Join(m.root, "files", name), content)
+	info := "[Trash Info]\nPath=" + original + "\n"
+	if !deleted.IsZero() {
+		info += "DeletionDate=" + deleted.Format("2006-01-02T15:04:05") + "\n"
+	}
+	write(t, filepath.Join(m.root, "info", name+".trashinfo"), info)
+}
+
+// ── Root and SoftDelete ────────────────────────────────────────────
+
+func TestRootFollowsXDGDataHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", "")
+	if got, _ := Root(); got != filepath.Join(home, ".local", "share", "Trash") {
+		t.Fatalf("default root = %s", got)
+	}
+	data := filepath.Join(t.TempDir(), "data")
+	t.Setenv("XDG_DATA_HOME", data)
+	if got, _ := Root(); got != filepath.Join(data, "Trash") {
+		t.Fatalf("root with XDG_DATA_HOME = %s", got)
 	}
 }
 
 func TestSoftDeleteMovesIntoFilesWithTrashInfo(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	src := filepath.Join(home, "doomed.txt")
-	if err := os.WriteFile(src, []byte("bye"), 0o644); err != nil {
-		t.Fatalf("write failed: %v", err)
-	}
-
+	m := newMachine(t)
+	src := filepath.Join(m.home, "doomed.txt")
+	write(t, src, "bye")
 	if err := SoftDelete(src); err != nil {
 		t.Fatalf("SoftDelete failed: %v", err)
 	}
-
-	if _, err := os.Stat(src); !os.IsNotExist(err) {
-		t.Fatalf("expected original path to be gone, err=%v", err)
+	if exists(src) {
+		t.Fatal("expected original path to be gone")
 	}
-
-	trashedPath := filepath.Join(home, ".local", "share", "Trash", "files", "doomed.txt")
-	data, err := os.ReadFile(trashedPath)
-	if err != nil {
-		t.Fatalf("expected trashed file at %s: %v", trashedPath, err)
+	if got := read(t, filepath.Join(m.root, "files", "doomed.txt")); got != "bye" {
+		t.Fatalf("trashed content = %q", got)
 	}
-	if string(data) != "bye" {
-		t.Fatalf("trashed content mismatch: %q", data)
-	}
-
-	infoPath := filepath.Join(home, ".local", "share", "Trash", "info", "doomed.txt.trashinfo")
-	info, err := os.ReadFile(infoPath)
-	if err != nil {
-		t.Fatalf("expected .trashinfo at %s: %v", infoPath, err)
-	}
-	if !containsAll(string(info), "[Trash Info]", "Path=", "DeletionDate=", src) {
-		t.Fatalf("trashinfo content missing expected fields: %s", info)
+	info := read(t, filepath.Join(m.root, "info", "doomed.txt.trashinfo"))
+	for _, want := range []string{"[Trash Info]", "Path=", "DeletionDate=", src} {
+		if !strings.Contains(info, want) {
+			t.Fatalf("trashinfo lacks %q: %s", want, info)
+		}
 	}
 }
 
 func TestSoftDeleteCollisionGetsUniqueName(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	filesDirPath := filepath.Join(home, ".local", "share", "Trash", "files")
-	if err := os.MkdirAll(filesDirPath, 0o755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(filesDirPath, "dup.txt"), []byte("first"), 0o644); err != nil {
-		t.Fatalf("write failed: %v", err)
-	}
-
-	src := filepath.Join(home, "dup.txt")
-	if err := os.WriteFile(src, []byte("second"), 0o644); err != nil {
-		t.Fatalf("write failed: %v", err)
-	}
-
+	m := newMachine(t)
+	write(t, filepath.Join(m.root, "files", "dup.txt"), "first")
+	src := filepath.Join(m.home, "dup.txt")
+	write(t, src, "second")
 	if err := SoftDelete(src); err != nil {
-		t.Fatalf("SoftDelete failed: %v", err)
+		t.Fatal(err)
 	}
-
-	if _, err := os.Stat(filepath.Join(filesDirPath, "dup.txt.2")); err != nil {
-		t.Fatalf("expected collision-renamed entry dup.txt.2: %v", err)
+	if got := read(t, filepath.Join(m.root, "files", "dup.txt.2")); got != "second" {
+		t.Fatalf("collision-renamed entry = %q", got)
 	}
 }
 
-func containsAll(s string, substrs ...string) bool {
-	for _, sub := range substrs {
-		if !strings.Contains(s, sub) {
-			return false
+// TestSoftDeleteNeverDeletesForGood: SoftDelete used to fall back to os.RemoveAll
+// when it could not find the trash, a silent permanent delete.
+func TestSoftDeleteNeverDeletesForGood(t *testing.T) {
+	newMachine(t)
+	src := filepath.Join(t.TempDir(), "precious.txt")
+	write(t, src, "keep me")
+	// With no home and no XDG_DATA_HOME the trash cannot be located.
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	if err := SoftDelete(src); err == nil {
+		t.Fatal("SoftDelete must fail when the trash cannot be found")
+	}
+	if read(t, src) != "keep me" {
+		t.Fatal("the file must still be there")
+	}
+}
+
+// ── Items and Resolve ──────────────────────────────────────────────
+
+func TestItemsReadsTrashInfo(t *testing.T) {
+	m := newMachine(t)
+	now := time.Now().Add(-3 * time.Hour).Truncate(time.Second)
+	m.trashed(t, "old-notes.md", "/home/u/notes/old%20notes.md", "hello", now)
+	m.trashed(t, "relative", "projects/x", "r", now.Add(-time.Hour))
+	write(t, filepath.Join(m.root, "files", "orphan.txt"), "no info")
+
+	items, err := Items()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]Item{}
+	for _, it := range items {
+		byName[it.Name] = it
+	}
+	if len(items) != 3 {
+		t.Fatalf("items = %+v", items)
+	}
+	if got := byName["old-notes.md"]; got.OriginalPath != "/home/u/notes/old notes.md" || !got.HasDate || !got.DeletedAt.Equal(now) || got.SizeBytes != 5 || got.Files != 1 {
+		t.Fatalf("old-notes.md = %+v", got)
+	}
+	// A relative Path= is resolved against the directory that holds the trash directory.
+	if got := byName["relative"].OriginalPath; got != filepath.Join(filepath.Dir(m.root), "projects", "x") {
+		t.Fatalf("relative Path= resolved to %s", got)
+	}
+	// No .trashinfo: no original path, and the date falls back to the mtime.
+	if got := byName["orphan.txt"]; got.OriginalPath != "" || got.HasDate || got.DeletedAt.IsZero() {
+		t.Fatalf("orphan = %+v", got)
+	}
+	// Newest first.
+	if items[0].Name == "relative" {
+		t.Fatalf("the newest item comes first, got %s", items[0].Name)
+	}
+}
+
+func TestItemsMissingTrashIsEmpty(t *testing.T) {
+	newMachine(t)
+	items, err := Items()
+	if err != nil || len(items) != 0 {
+		t.Fatalf("items = %v, %v", items, err)
+	}
+}
+
+func TestResolveNamesAndPaths(t *testing.T) {
+	m := newMachine(t)
+	old := time.Now().Add(-48 * time.Hour)
+	recent := time.Now().Add(-time.Hour)
+	m.trashed(t, "a.txt", filepath.Join(m.home, "work", "a.txt"), "old", old)
+	m.trashed(t, "a.txt.2", filepath.Join(m.home, "work", "a.txt"), "new", recent) // the same file deleted twice
+	m.trashed(t, "b", filepath.Join(m.home, "b"), "b", recent)
+
+	got, err := Resolve([]string{"b", "a.txt"})
+	if err != nil || len(got) != 2 || got[0].Name != "b" || got[1].Name != "a.txt" {
+		t.Fatalf("by name: %+v %v", got, err)
+	}
+	// A path matches the most recently deleted item with that original path.
+	got, err = Resolve([]string{filepath.Join(m.home, "work", "a.txt")})
+	if err != nil || len(got) != 1 || got[0].Name != "a.txt.2" {
+		t.Fatalf("by path: %+v %v", got, err)
+	}
+	// ~ expands, and the same item named twice counts once.
+	got, err = Resolve([]string{"~/b", "b"})
+	if err != nil || len(got) != 1 || got[0].Name != "b" {
+		t.Fatalf("by ~ path and name: %+v %v", got, err)
+	}
+	// A relative path (it has a /) is relative to the current directory.
+	if err := os.MkdirAll(filepath.Join(m.home, "work"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(filepath.Join(m.home, "work"))
+	if got, err = Resolve([]string{"./a.txt"}); err != nil || len(got) != 1 || got[0].Name != "a.txt.2" {
+		t.Fatalf("by relative path: %+v %v", got, err)
+	}
+
+	// An argument that matches nothing aborts, naming every one.
+	if _, err = Resolve([]string{"b", "ghost", "~/nothing"}); err == nil || !strings.Contains(err.Error(), "ghost") || !strings.Contains(err.Error(), "~/nothing") {
+		t.Fatalf("missing items: %v", err)
+	}
+}
+
+// ── Restore ────────────────────────────────────────────────────────
+
+func TestRestoreRoundTripAndCleanup(t *testing.T) {
+	m := newMachine(t)
+	orig := filepath.Join(m.home, "work", "old-notes.md")
+	m.trashed(t, "old-notes.md", orig, "notes", time.Now())
+	// directorysizes: another item's line stays, this one's goes.
+	write(t, filepath.Join(m.root, "directorysizes"), "12 1700000000 old-notes.md\n34 1700000001 other\n")
+
+	items, _ := Items()
+	actions, skipped := RestorePlan(items)
+	if len(skipped) != 0 || len(actions) != 1 {
+		t.Fatalf("actions=%d skipped=%v", len(actions), skipped)
+	}
+	if !strings.Contains(actions[0].Description, "Restore old-notes.md to "+orig) || !strings.Contains(actions[0].Description, "creates "+filepath.Join(m.home, "work")) {
+		t.Fatalf("description %q must name the parent it creates", actions[0].Description)
+	}
+	if err := actions[0].Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, orig) != "notes" {
+		t.Fatal("the file must be back")
+	}
+	if exists(filepath.Join(m.root, "files", "old-notes.md")) || exists(filepath.Join(m.root, "info", "old-notes.md.trashinfo")) {
+		t.Fatal("the item and its .trashinfo must be gone from the trash")
+	}
+	if got := read(t, filepath.Join(m.root, "directorysizes")); got != "34 1700000001 other\n" {
+		t.Fatalf("directorysizes = %q", got)
+	}
+}
+
+func TestRestoreNeverOverwrites(t *testing.T) {
+	m := newMachine(t)
+	here := filepath.Join(m.home, "here.txt")
+	write(t, here, "current")
+	dangling := filepath.Join(m.home, "dangling")
+	if err := os.Symlink("/nonexistent", dangling); err != nil {
+		t.Fatal(err)
+	}
+	m.trashed(t, "here.txt", here, "trashed", time.Now())
+	m.trashed(t, "dangling", dangling, "trashed", time.Now())
+	m.trashed(t, "x1", filepath.Join(m.home, "same"), "1", time.Now())
+	m.trashed(t, "x2", filepath.Join(m.home, "same"), "2", time.Now())
+	write(t, filepath.Join(m.root, "files", "noinfo"), "orphan")
+
+	// Two targets that share an original path: the first one named wins.
+	var targets []Item
+	for _, n := range []string{"here.txt", "dangling", "x1", "x2", "noinfo"} {
+		it, err := Resolve([]string{n})
+		if err != nil {
+			t.Fatal(err)
+		}
+		targets = append(targets, it...)
+	}
+	actions, skipped := RestorePlan(targets)
+	if len(actions) != 1 || actions[0].ID != "trash-restore-x1" {
+		t.Fatalf("only x1 can be restored: %+v", actions)
+	}
+	reasons := map[string]string{}
+	for _, s := range skipped {
+		reasons[s.Name] = s.Reason
+	}
+	if !strings.Contains(reasons["here.txt"], "already exists") || !strings.Contains(reasons["dangling"], "already exists") ||
+		!strings.Contains(reasons["x2"], "restored by x1") || !strings.Contains(reasons["noinfo"], "no original path") {
+		t.Fatalf("skips = %v", reasons)
+	}
+	if read(t, here) != "current" {
+		t.Fatal("an existing file is never overwritten")
+	}
+
+	// Something appears between the plan and the action: still no overwrite.
+	write(t, filepath.Join(m.home, "same"), "appeared")
+	if err := actions[0].Execute(); err == nil {
+		t.Fatal("the action must re-check and refuse to overwrite")
+	}
+	if !exists(filepath.Join(m.root, "files", "x1")) {
+		t.Fatal("a failed restore leaves the item in the trash")
+	}
+}
+
+// ── Delete, Empty, Prune ───────────────────────────────────────────
+
+func TestDeleteForgetsEverythingAboutTheItem(t *testing.T) {
+	m := newMachine(t)
+	m.trashed(t, "gone", "/x/gone", "bye", time.Now())
+	m.trashed(t, "stays", "/x/stays", "ok", time.Now())
+	write(t, filepath.Join(m.root, "directorysizes"), "1 1 gone\n2 2 stays\n")
+	items, _ := Resolve([]string{"gone"})
+	if err := Delete(items[0]); err != nil {
+		t.Fatal(err)
+	}
+	if exists(filepath.Join(m.root, "files", "gone")) || exists(filepath.Join(m.root, "info", "gone.trashinfo")) {
+		t.Fatal("files/<name> and its .trashinfo must go")
+	}
+	if got := read(t, filepath.Join(m.root, "directorysizes")); got != "2 2 stays\n" {
+		t.Fatalf("directorysizes = %q", got)
+	}
+	if !exists(filepath.Join(m.root, "files", "stays")) {
+		t.Fatal("other items stay")
+	}
+}
+
+func TestEmptyKeepsDirectoriesAndLeavesOthersAlone(t *testing.T) {
+	m := newMachine(t)
+	m.trashed(t, "a", "/x/a", "a", time.Now())
+	write(t, filepath.Join(m.root, "files", "dir", "nested", "b"), "b")
+	write(t, filepath.Join(m.root, "info", "orphan.trashinfo"), "[Trash Info]\n")
+	write(t, filepath.Join(m.root, "directorysizes"), "1 1 dir\n")
+	write(t, filepath.Join(m.root, "expunged", "keep"), "k")
+
+	sum, err := Summarize()
+	if err != nil || sum.Items != 2 || sum.Files != 2 || sum.SizeBytes != 2 {
+		t.Fatalf("summary = %+v, %v", sum, err)
+	}
+	if err := Empty(); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"files", "info"} {
+		entries, err := os.ReadDir(filepath.Join(m.root, d))
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("%s must be kept and empty: %v %v", d, entries, err)
 		}
 	}
-	return true
-}
-
-func TestScanEmptyTrashDir(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	trashDir := filepath.Join(home, ".Trash")
-	if err := os.MkdirAll(filesDir(trashDir), 0o755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
+	if exists(filepath.Join(m.root, "directorysizes")) {
+		t.Fatal("directorysizes must go")
 	}
-
-	res, err := Scan(ScanOptions{RootDir: trashDir, WarnSizeMB: 100})
-	if err != nil {
-		t.Fatalf("scan failed: %v", err)
+	if !exists(filepath.Join(m.root, "expunged", "keep")) {
+		t.Fatal("expunged/ is not ours to touch")
 	}
-	if !res.Exists {
-		t.Fatal("expected Exists=true")
-	}
-	if res.FileCount != 0 || res.SizeBytes != 0 {
-		t.Fatalf("expected empty trash, got files=%d size=%d", res.FileCount, res.SizeBytes)
-	}
-	if res.OverLimit {
-		t.Fatal("expected OverLimit=false for empty trash")
+	if err := Empty(); err != nil {
+		t.Fatalf("emptying an empty trash is a no-op: %v", err)
 	}
 }
 
-func TestScanNonExistentTrashDir(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	res, err := Scan(ScanOptions{RootDir: filepath.Join(home, "no-such-trash"), WarnSizeMB: 100})
-	if err != nil {
-		t.Fatalf("scan failed: %v", err)
+func TestEmptyMissingTrashIsANoOp(t *testing.T) {
+	newMachine(t)
+	if err := Empty(); err != nil {
+		t.Fatal(err)
 	}
-	if res.Exists {
-		t.Fatal("expected Exists=false")
+	if sum, err := Summarize(); err != nil || sum.Items != 0 {
+		t.Fatalf("summary = %+v, %v", sum, err)
 	}
 }
 
-func TestScanOverLimit(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	trashDir := filepath.Join(home, ".Trash")
-	if err := os.MkdirAll(filesDir(trashDir), 0o755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
+func TestSelectOlderThan(t *testing.T) {
+	m := newMachine(t)
+	now := time.Now()
+	m.trashed(t, "old", "/x/old", "aaaa", now.Add(-40*24*time.Hour))
+	m.trashed(t, "older", "/x/older", "bb", now.Add(-60*24*time.Hour))
+	m.trashed(t, "fresh", "/x/fresh", "c", now.Add(-24*time.Hour))
+	// No DeletionDate: never pruned, whatever its mtime says.
+	m.trashed(t, "undated", "/x/undated", "d", time.Time{})
+	if err := os.Chtimes(filepath.Join(m.root, "files", "undated"), now.Add(-365*24*time.Hour), now.Add(-365*24*time.Hour)); err != nil {
+		t.Fatal(err)
 	}
 
-	// Create a 2MB file to exceed a 1MB threshold.
-	big := make([]byte, 2*1024*1024)
-	if err := os.WriteFile(filepath.Join(filesDir(trashDir), "big.bin"), big, 0o644); err != nil {
-		t.Fatalf("write failed: %v", err)
-	}
-
-	res, err := Scan(ScanOptions{RootDir: trashDir, WarnSizeMB: 1})
+	res, matched, err := SelectOlderThan(30*24*time.Hour, now)
 	if err != nil {
-		t.Fatalf("scan failed: %v", err)
+		t.Fatal(err)
 	}
-	if !res.OverLimit {
-		t.Fatal("expected OverLimit=true")
+	if len(matched) != 2 || matched[0].Name != "older" || matched[1].Name != "old" {
+		t.Fatalf("matched = %+v (oldest first)", res.Matched)
 	}
-	if res.FileCount != 1 {
-		t.Fatalf("expected 1 file, got %d", res.FileCount)
+	if res.Kept != 1 || res.Skipped != 1 || res.SizeBytes != 6 || len(res.Matched) != 2 {
+		t.Fatalf("result = %+v", res)
 	}
 }
 
-func TestScanUnderLimit(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+// ── Integrations ───────────────────────────────────────────────────
 
-	trashDir := filepath.Join(home, ".Trash")
-	if err := os.MkdirAll(filesDir(trashDir), 0o755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(filesDir(trashDir), "small.txt"), []byte("hello"), 0o644); err != nil {
-		t.Fatalf("write failed: %v", err)
-	}
-
-	res, err := Scan(ScanOptions{RootDir: trashDir, WarnSizeMB: 100})
+func enabledNames(t *testing.T, opts EnableOptions) []string {
+	t.Helper()
+	actions, err := EnableActions(opts)
 	if err != nil {
-		t.Fatalf("scan failed: %v", err)
+		t.Fatal(err)
 	}
-	if res.OverLimit {
-		t.Fatal("expected OverLimit=false")
+	var out []string
+	for _, a := range actions {
+		out = append(out, strings.TrimPrefix(a.ID, "trash-enable-"))
 	}
-	if res.FileCount != 1 {
-		t.Fatalf("expected 1 file, got %d", res.FileCount)
-	}
+	return out
 }
 
-func TestFileExplorerIntegrationSetupAndStatus(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	// A custom root (different from the default XDG trash dir) still uses
-	// the symlink-redirect mechanism.
-	rootDir := filepath.Join(home, ".Trash")
-
-	_, err := Setup(SetupOptions{
-		RootDir:      rootDir,
-		ShellRM:      false,
-		VSCodeDelete: false,
-		FileExplorer: true,
-		DryRun:       false,
-	})
+func runAll(t *testing.T, opts EnableOptions) {
+	t.Helper()
+	actions, err := EnableActions(opts)
 	if err != nil {
-		t.Fatalf("setup failed: %v", err)
+		t.Fatal(err)
 	}
-
-	// XDG symlink should point to the trash root.
-	symlinkPath := filepath.Join(home, ".local", "share", "Trash")
-	info, err := os.Lstat(symlinkPath)
-	if err != nil {
-		t.Fatalf("expected symlink at %s: %v", symlinkPath, err)
-	}
-	if info.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("expected symlink, got %v", info.Mode())
-	}
-	target, err := os.Readlink(symlinkPath)
-	if err != nil {
-		t.Fatalf("readlink failed: %v", err)
-	}
-	if target != rootDir {
-		t.Fatalf("symlink target: want %s, got %s", rootDir, target)
-	}
-
-	// Status should report file explorer as configured.
-	status, err := GetStatus(rootDir)
-	if err != nil {
-		t.Fatalf("status failed: %v", err)
-	}
-	if !status.FileExplorerConfigured {
-		t.Fatal("expected FileExplorerConfigured=true")
-	}
-}
-
-func TestFileExplorerIntegrationAutomaticWithDefaultRoot(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	// The default root IS the XDG trash dir, so FileExplorer integration
-	// needs no symlink — Setup's own mkdir of files/+info/ is sufficient.
-	_, err := Setup(SetupOptions{
-		RootDir:      "",
-		FileExplorer: true,
-	})
-	if err != nil {
-		t.Fatalf("setup failed: %v", err)
-	}
-
-	symlinkPath := filepath.Join(home, ".local", "share", "Trash")
-	if info, err := os.Lstat(symlinkPath); err != nil || info.Mode()&os.ModeSymlink != 0 {
-		t.Fatalf("expected a real directory (not a symlink) at %s", symlinkPath)
-	}
-
-	status, err := GetStatus("")
-	if err != nil {
-		t.Fatalf("status failed: %v", err)
-	}
-	if !status.FileExplorerConfigured {
-		t.Fatal("expected FileExplorerConfigured=true with default root")
-	}
-}
-
-func TestFileExplorerIntegrationIdempotent(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	rootDir := filepath.Join(home, ".Trash")
-
-	for i := 0; i < 2; i++ {
-		if err := ensureFileExplorerIntegration(rootDir); err != nil {
-			t.Fatalf("call %d: ensureFileExplorerIntegration failed: %v", i+1, err)
+	for _, a := range actions {
+		if err := a.Execute(); err != nil {
+			t.Fatalf("%s: %v", a.Description, err)
 		}
 	}
+}
 
-	if !fileExplorerConfigured(rootDir) {
-		t.Fatal("expected fileExplorerConfigured=true after two calls")
+func TestStatusReadsTheLiveSystem(t *testing.T) {
+	m := newMachine(t)
+	st, err := GetStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Root != m.root || st.WarnSizeBytes != 1<<30 || st.OverLimit {
+		t.Fatalf("status = %+v", st)
+	}
+	// Nothing configured on a fresh machine: shell-rm and file-explorer are off,
+	// VS Code is on (it deletes to the trash unless explicitly turned off).
+	if st.Enabled(ShellRM) || !st.Enabled(VSCode) || st.Enabled(FileExplorer) || st.WarningCount() != 2 {
+		t.Fatalf("integrations = %+v", st.Integrations)
+	}
+	if !strings.Contains(st.Integrations[2].Detail, filepath.Join(m.root, "files")) || !strings.Contains(st.Integrations[2].Detail, "ws trash enable") {
+		t.Fatalf("file-explorer detail = %q", st.Integrations[2].Detail)
+	}
+
+	// An explicit false turns VS Code off.
+	write(t, filepath.Join(m.home, ".config", "Code", "User", "settings.json"), "{\n  // keep\n  \"files.enableTrash\": false\n}\n")
+	if st, _ = GetStatus(); st.Enabled(VSCode) {
+		t.Fatal("files.enableTrash false means VS Code is off")
 	}
 }
 
-func TestFileExplorerIntegrationRealDirNotOverwritten(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+func TestEnableShellRM(t *testing.T) {
+	m := newMachine(t)
+	write(t, filepath.Join(m.home, ".bashrc"), "export A=1\n")
+	write(t, filepath.Join(m.home, ".zshrc"), "export B=2")
 
-	// Create a real directory at the XDG trash path before setup.
-	symlinkPath := filepath.Join(home, ".local", "share", "Trash")
-	if err := os.MkdirAll(symlinkPath, 0o755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
+	runAll(t, EnableOptions{NoVSCode: true, NoFileExplorer: true})
+	const guarded = "command -v ws-trash-rm >/dev/null 2>&1 && alias rm='ws-trash-rm'"
+	for _, rc := range []string{".bashrc", ".zshrc"} {
+		got := read(t, filepath.Join(m.home, rc))
+		if strings.Count(got, guarded) != 1 {
+			t.Fatalf("%s must hold the guarded alias once:\n%s", rc, got)
+		}
 	}
-	existingFile := filepath.Join(symlinkPath, "existing.txt")
-	if err := os.WriteFile(existingFile, []byte("data"), 0o644); err != nil {
-		t.Fatalf("write failed: %v", err)
+	if !strings.HasPrefix(read(t, filepath.Join(m.home, ".zshrc")), "export B=2\n") {
+		t.Fatal("existing content stays, and a missing final newline is added")
+	}
+	script := filepath.Join(m.home, ".local", "bin", "ws-trash-rm")
+	fi, err := os.Stat(script)
+	if err != nil || fi.Mode()&0o111 == 0 || !strings.Contains(read(t, script), m.root) {
+		t.Fatalf("the script is executable and names the trash: %v", err)
+	}
+	if st, _ := GetStatus(); !st.Enabled(ShellRM) || !strings.Contains(st.Integrations[0].Detail, ".bashrc") {
+		t.Fatalf("status after enable: %+v", st.Integrations)
 	}
 
-	rootDir := filepath.Join(home, ".Trash")
-	err := ensureFileExplorerIntegration(rootDir)
-	if !errors.Is(err, ErrXDGTrashDirExists) {
-		t.Fatalf("expected ErrXDGTrashDirExists, got: %v", err)
+	// Enabling twice adds nothing.
+	if names := enabledNames(t, EnableOptions{NoVSCode: true, NoFileExplorer: true}); len(names) != 0 {
+		t.Fatalf("already on, got actions for %v", names)
 	}
-
-	// Real directory must not have been replaced.
-	if _, err := os.Stat(existingFile); err != nil {
-		t.Fatalf("existing file was removed: %v", err)
+	runAll(t, EnableOptions{NoVSCode: true, NoFileExplorer: true})
+	if strings.Count(read(t, filepath.Join(m.home, ".bashrc")), guarded) != 1 {
+		t.Fatal("the alias must not be added twice")
 	}
 }
 
-func TestFileExplorerNotConfiguredWhenSymlinkAbsent(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	rootDir := filepath.Join(home, ".Trash")
-	if fileExplorerConfigured(rootDir) {
-		t.Fatal("expected fileExplorerConfigured=false when no symlink exists")
+func TestEnableCreatesTheRCFileOfTheShell(t *testing.T) {
+	m := newMachine(t)
+	t.Setenv("SHELL", "/usr/bin/zsh")
+	runAll(t, EnableOptions{NoVSCode: true, NoFileExplorer: true})
+	if !exists(filepath.Join(m.home, ".zshrc")) || exists(filepath.Join(m.home, ".bashrc")) {
+		t.Fatal("with no rc file, the rc file of $SHELL is created, and only that one")
 	}
 }
 
-func TestEmptyNonExistentTrashDir(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+func TestEnableReplacesTheLegacyAliasAndFollowsSymlinkedRC(t *testing.T) {
+	m := newMachine(t)
+	// ~/.bashrc is a dotfile: a symlink into the workspace. The alias goes into the
+	// file it points at, through the link.
+	real := filepath.Join(m.home, "Workspace", "configs", "dotfiles", "bashrc")
+	write(t, real, "export A=1\nalias rm='ws-trash-rm'\n")
+	if err := os.Symlink(real, filepath.Join(m.home, ".bashrc")); err != nil {
+		t.Fatal(err)
+	}
+	// The legacy unguarded alias counts as on.
+	write(t, filepath.Join(m.home, ".local", "bin", "ws-trash-rm"), "#!/bin/sh\n")
+	if err := os.Chmod(filepath.Join(m.home, ".local", "bin", "ws-trash-rm"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := GetStatus(); !st.Enabled(ShellRM) {
+		t.Fatal("the legacy alias line still counts as enabled")
+	}
 
-	res, err := Empty(EmptyOptions{RootDir: filepath.Join(home, "no-such-trash")})
-	if err != nil {
-		t.Fatalf("empty failed: %v", err)
+	// A fresh script (and the upgrade to the guarded line) is written when enabling anyway.
+	if err := enableShellRM(m.root); err != nil {
+		t.Fatal(err)
 	}
-	if res.Exists {
-		t.Fatal("expected Exists=false")
+	got := read(t, real)
+	if strings.Contains(got, "\nalias rm='ws-trash-rm'\n") || !strings.Contains(got, "command -v ws-trash-rm") {
+		t.Fatalf("the legacy line is upgraded to the guarded one:\n%s", got)
 	}
-	if res.EntryCount != 0 || res.FileCount != 0 || res.SizeBytes != 0 {
-		t.Fatalf("expected zeroed result for missing trash dir, got %+v", res)
+	if !isSymlink(filepath.Join(m.home, ".bashrc")) {
+		t.Fatal("the symlink must survive")
 	}
 }
 
-func TestEmptyRemovesContentsButKeepsRootDir(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+func isSymlink(p string) bool {
+	fi, err := os.Lstat(p)
+	return err == nil && fi.Mode()&os.ModeSymlink != 0
+}
 
-	trashDir := filepath.Join(home, ".Trash")
-	if err := os.MkdirAll(filepath.Join(filesDir(trashDir), "nested"), 0o755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
+func TestEnableVSCodeEditsOnlyTheValue(t *testing.T) {
+	m := newMachine(t)
+	settings := filepath.Join(m.home, ".config", "Code", "User", "settings.json")
+	orig := "{\n  // my settings\n  \"editor.fontSize\": 14,\n  \"files.enableTrash\":  false,  // off\n  \"x\": [1, 2]\n}\n"
+	write(t, settings, orig)
+	runAll(t, EnableOptions{NoShellRM: true, NoFileExplorer: true})
+	want := strings.Replace(orig, "false", "true", 1)
+	if got := read(t, settings); got != want {
+		t.Fatalf("only the value changes; comments and layout stay:\n%s\nwant\n%s", got, want)
 	}
-	if err := os.MkdirAll(infoDir(trashDir), 0o755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
+	if st, _ := GetStatus(); !st.Enabled(VSCode) {
+		t.Fatal("VS Code is on after enable")
 	}
-	if err := os.WriteFile(filepath.Join(filesDir(trashDir), "a.txt"), []byte("a"), 0o644); err != nil {
-		t.Fatalf("write failed: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(filesDir(trashDir), "nested", "b.txt"), []byte("b"), 0o644); err != nil {
-		t.Fatalf("write failed: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(infoDir(trashDir), "a.txt.trashinfo"), []byte("x"), 0o644); err != nil {
-		t.Fatalf("write failed: %v", err)
-	}
-
-	res, err := Empty(EmptyOptions{RootDir: trashDir})
-	if err != nil {
-		t.Fatalf("empty failed: %v", err)
-	}
-	if !res.Exists {
-		t.Fatal("expected Exists=true")
-	}
-	if res.EntryCount != 2 {
-		t.Fatalf("expected 2 top-level files/ entries, got %d", res.EntryCount)
-	}
-	if res.FileCount != 2 {
-		t.Fatalf("expected 2 files removed, got %d", res.FileCount)
-	}
-
-	filesEntries, err := os.ReadDir(filesDir(trashDir))
-	if err != nil {
-		t.Fatalf("readdir failed: %v", err)
-	}
-	if len(filesEntries) != 0 {
-		t.Fatalf("expected files/ to be empty, found %d entries", len(filesEntries))
-	}
-	infoEntries, err := os.ReadDir(infoDir(trashDir))
-	if err != nil {
-		t.Fatalf("readdir failed: %v", err)
-	}
-	if len(infoEntries) != 0 {
-		t.Fatalf("expected info/ to be empty, found %d entries", len(infoEntries))
-	}
-	// Root dir (and files/, info/ subdirs) must still exist.
-	if _, err := os.Stat(trashDir); err != nil {
-		t.Fatalf("expected trash root to still exist: %v", err)
+	// A missing file or key means it is on already: nothing to do.
+	if names := enabledNames(t, EnableOptions{NoShellRM: true, NoFileExplorer: true}); len(names) != 0 {
+		t.Fatalf("got actions for %v", names)
 	}
 }
 
-func TestEmptyDryRunDoesNotRemoveFiles(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+func TestEnableFileExplorerCreatesDirectories(t *testing.T) {
+	m := newMachine(t)
+	runAll(t, EnableOptions{NoShellRM: true, NoVSCode: true})
+	for _, d := range []string{"files", "info"} {
+		fi, err := os.Stat(filepath.Join(m.root, d))
+		if err != nil || fi.Mode().Perm() != 0o700 {
+			t.Fatalf("%s: %v %v", d, fi, err)
+		}
+	}
+	if st, _ := GetStatus(); !st.Enabled(FileExplorer) {
+		t.Fatal("file-explorer is on after enable")
+	}
+}
 
-	trashDir := filepath.Join(home, ".Trash")
-	if err := os.MkdirAll(filesDir(trashDir), 0o755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
+func TestEnableLeavesOutWhatTheFlagsSay(t *testing.T) {
+	newMachine(t)
+	got := enabledNames(t, EnableOptions{NoShellRM: true})
+	if strings.Join(got, ",") != FileExplorer {
+		t.Fatalf("--no-shell-rm leaves it out; vscode is already on: %v", got)
 	}
-	filePath := filepath.Join(filesDir(trashDir), "keep.txt")
-	if err := os.WriteFile(filePath, []byte("keep"), 0o644); err != nil {
-		t.Fatalf("write failed: %v", err)
+	if got := enabledNames(t, EnableOptions{NoShellRM: true, NoFileExplorer: true}); len(got) != 0 {
+		t.Fatalf("got %v", got)
 	}
+}
 
-	res, err := Empty(EmptyOptions{RootDir: trashDir, DryRun: true})
-	if err != nil {
-		t.Fatalf("dry-run empty failed: %v", err)
+// TestDisableRemovesTheShellIntegration: disable used to delete only a state file,
+// so the script and the rc alias stayed (plan 0002 trash bugs).
+func TestDisableRemovesTheShellIntegration(t *testing.T) {
+	m := newMachine(t)
+	write(t, filepath.Join(m.home, ".bashrc"), "export A=1\nalias rm='ws-trash-rm'\n")
+	write(t, filepath.Join(m.home, ".zshrc"), "export B=1\n")
+	runAll(t, EnableOptions{NoVSCode: true, NoFileExplorer: true})
+	write(t, filepath.Join(m.home, ".local", "state", "ws-tool", "trash-setup.json"), "{}")
+	write(t, filepath.Join(m.root, "files", "keep"), "k")
+	settings := filepath.Join(m.home, ".config", "Code", "User", "settings.json")
+	write(t, settings, "{\"files.enableTrash\": false}")
+
+	actions := DisableActions()
+	if len(actions) != 2 {
+		t.Fatalf("one action for the shell integration and one for the legacy state file, got %d", len(actions))
 	}
-	if !res.DryRun {
-		t.Fatal("expected dry-run result")
+	if _, err := Disable(); err != nil {
+		t.Fatal(err)
 	}
-	if res.EntryCount != 1 || res.FileCount != 1 {
-		t.Fatalf("unexpected dry-run counts: %+v", res)
+	for _, rc := range []string{".bashrc", ".zshrc"} {
+		if got := read(t, filepath.Join(m.home, rc)); strings.Contains(got, "ws-trash-rm") {
+			t.Fatalf("%s still has the alias:\n%s", rc, got)
+		}
 	}
-	if _, err := os.Stat(filePath); err != nil {
-		t.Fatalf("expected file to still exist after dry-run: %v", err)
+	if !strings.Contains(read(t, filepath.Join(m.home, ".bashrc")), "export A=1") {
+		t.Fatal("other lines stay")
+	}
+	if exists(filepath.Join(m.home, ".local", "bin", "ws-trash-rm")) || exists(filepath.Join(m.home, ".local", "state", "ws-tool", "trash-setup.json")) {
+		t.Fatal("the script and the legacy state file go")
+	}
+	if !exists(filepath.Join(m.root, "files", "keep")) || !strings.Contains(read(t, settings), "false") {
+		t.Fatal("the trash and VS Code's setting are left alone")
+	}
+	if st, _ := GetStatus(); st.Enabled(ShellRM) {
+		t.Fatal("shell-rm is off after disable")
+	}
+	if got := DisableActions(); len(got) != 0 {
+		t.Fatalf("nothing left to disable: %d actions", len(got))
 	}
 }

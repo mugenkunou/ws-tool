@@ -78,23 +78,20 @@ func Reset(opts ResetOptions) (ResetResult, error) {
 	}
 	result.Subsystems = append(result.Subsystems, sub)
 
-	// --- Phase 2: trash reset ---
-	trashResult, err := trash.Reset(trash.ResetOptions{
-		WorkspacePath: opts.WorkspacePath,
-		ConfigPath:    configPath,
-		DryRun:        opts.DryRun,
-	})
-	sub = SubResetResult{Subsystem: "trash", Messages: trashResult.Messages}
-	if err != nil {
-		sub.Errors = append(sub.Errors, err.Error())
-		result.Errors = append(result.Errors, "trash: "+err.Error())
-	} else {
-		for _, e := range trashResult.Entries {
-			if e.Action == "failed" {
-				sub.Errors = append(sub.Errors, e.Message)
-				result.Errors = append(result.Errors, "trash: "+e.Message)
-			}
+	// --- Phase 2: trash reset (turn off the shell rm integration) ---
+	var trashMessages []string
+	var trashErr error
+	if opts.DryRun {
+		for _, a := range trash.DisableActions() {
+			trashMessages = append(trashMessages, "Would: "+a.Description)
 		}
+	} else {
+		trashMessages, trashErr = trash.Disable()
+	}
+	sub = SubResetResult{Subsystem: "trash", Messages: trashMessages}
+	if trashErr != nil {
+		sub.Errors = append(sub.Errors, trashErr.Error())
+		result.Errors = append(result.Errors, "trash: "+trashErr.Error())
 	}
 	result.Subsystems = append(result.Subsystems, sub)
 

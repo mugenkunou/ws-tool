@@ -4,499 +4,372 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/mugenkunou/ws-tool/internal/age"
 	"github.com/mugenkunou/ws-tool/internal/resource"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/trash"
-	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
-var trashHelp = cmdHelp{
-	Usage: "ws trash <enable|setup|disable|ls|empty|purge|rm|status>",
-	Subcommands: []string{
-		"  enable   Configure soft-delete integrations",
-		"  setup    Alias for enable",
-		"  disable  Remove soft-delete integrations",
-		"  ls       List trashed items, newest first",
-		"  empty    Remove all entries from trash root",
-		"  purge    Permanently delete trash items older than N days (--older-than)",
-		"  rm       Permanently delete a single trash item by name",
-		"  status   Show integration status and trash size",
-	},
-	SetupFlags: []string{
-		"      --root-dir string      Trash root directory (default: config.trash.root_dir)",
-		"      --no-shell-rm          Skip shell rm integration (default: false)",
-		"      --no-vscode            Skip VS Code delete integration (default: false)",
-		"      --no-file-explorer     Skip file explorer integration (default: false)",
-		"      --dry-run              Preview only (default: false)",
-	},
-	Flags: listFlagHelp("ls", trash.Schema(resource.CLIView()).Keys()),
-}
-
+// runTrash dispatches `ws trash <verb>` (spec §5 trash). None of these commands
+// needs an initialized workspace: the trash belongs to the machine.
 func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	if hasHelpArg(args) {
-		return printCmdHelp(stdout, trashHelp)
-	}
 	if len(args) == 0 {
-		return printCmdHelp(stdout, trashHelp)
-	}
-
-	workspacePath, configPath, err := requireWorkspaceInitialized(globals, stderr)
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
+		fmt.Fprintln(stderr, "usage: ws trash <ls|restore|rm|empty|prune|enable|disable|status> …")
 		return 1
 	}
-	// In the phase-1 layout, trash.root_dir is not in ws.json; use the XDG default.
-	cfgTrashRoot, err := wsconfig.ExpandUserPath("~/.local/share/Trash")
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	// Keep a sentinel for the WarnSizeMB field (not in ws.json yet).
-	const trashWarnSizeMB = 1024
-
-	sub := args[0]
-	subArgs := args[1:]
-	switch sub {
-	case "enable", "setup":
-		fs := flag.NewFlagSet("trash-enable", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		rootDir := fs.String("root-dir", cfgTrashRoot, "trash root directory")
-		noShell := fs.Bool("no-shell-rm", false, "skip shell rm configuration")
-		noVSCode := fs.Bool("no-vscode", false, "skip vscode delete configuration")
-		noExplorer := fs.Bool("no-file-explorer", false, "skip file explorer delete configuration")
-		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if *rootDir != "" { // empty: trash package applies its default
-			resolvedRoot, err := wsconfig.ExpandUserPath(*rootDir)
-			if err != nil {
-				fmt.Fprintf(stderr, "invalid --root-dir: %s\n", err.Error())
-				return 1
-			}
-			*rootDir = resolvedRoot
-		}
-		if *dryRun {
-			globals.dryRun = true
-		}
-
-		plan := Plan{Command: "trash.enable"}
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "trash-setup",
-			Description: "Enable soft-delete integrations",
-			Execute: func() error {
-				_, err := trash.Setup(trash.SetupOptions{
-					RootDir:      *rootDir,
-					ShellRM:      !*noShell,
-					VSCodeDelete: !*noVSCode,
-					FileExplorer: !*noExplorer,
-					DryRun:       false,
-				})
-				return err
-			},
-		})
-
-		if !*noShell {
-			plan.Actions = append(plan.Actions, Action{
-				ID:          "trash-record-provisions",
-				Description: "Record trash provisions",
-				Execute: func() error {
-					return trash.RecordShellProvisions(configPath)
-				},
-			})
-		}
-
-		if !*noExplorer {
-			plan.Actions = append(plan.Actions, Action{
-				ID:          "trash-record-explorer-provision",
-				Description: "Record file-explorer trash symlink provision",
-				Execute: func() error {
-					return trash.RecordExplorerProvision(configPath, *rootDir)
-				},
-			})
-		}
-
-		planResult := RunPlan(plan, stdin, stdout, globals)
-
-		if globals.json {
-			result, _ := trash.Setup(trash.SetupOptions{
-				RootDir:      *rootDir,
-				ShellRM:      !*noShell,
-				VSCodeDelete: !*noVSCode,
-				FileExplorer: !*noExplorer,
-				DryRun:       true,
-			})
-			return writeJSON(stdout, stderr, "trash.enable", map[string]any{
-				"result":  result,
-				"actions": planResult.Actions,
-			})
-		}
-
-		out := textOut(globals, stdout)
-		nc := globals.noColor
-		if globals.dryRun {
-			fmt.Fprintln(out, style.ResultInfo(nc, "Would configure soft-delete integrations."))
-			style.KV(out, "Trash root", *rootDir, nc)
-		} else if planResult.ExecutedCount() > 0 {
-			fmt.Fprintln(out, style.ResultSuccess(nc, "Trash enabled."))
-		}
-		return planResult.ExitCode()
-
-	case "disable":
-		fs := flag.NewFlagSet("trash-reset", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if *dryRun {
-			globals.dryRun = true
-		}
-
-		plan := Plan{Command: "trash.reset"}
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "trash-reset",
-			Description: "Reset trash setup (remove script and aliases)",
-			Execute: func() error {
-				_, err := trash.Reset(trash.ResetOptions{
-					WorkspacePath: workspacePath,
-					DryRun:        false,
-				})
-				return err
-			},
-		})
-
-		planResult := RunPlan(plan, stdin, stdout, globals)
-		if globals.json {
-			return writeJSONDryRun(stdout, stderr, "trash.reset", globals.dryRun, map[string]any{
-				"actions": planResult.Actions,
-			})
-		}
-		out := textOut(globals, stdout)
-		nc := globals.noColor
-		if globals.dryRun {
-			fmt.Fprintln(out, style.ResultInfo(nc, "Dry run complete. No changes made."))
-		} else if planResult.ExecutedCount() > 0 {
-			fmt.Fprintln(out, style.ResultSuccess(nc, "Trash reset."))
-		}
-		return planResult.ExitCode()
-
-	case "empty":
-		fs := flag.NewFlagSet("trash-empty", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		rootDir := fs.String("root-dir", cfgTrashRoot, "trash root directory")
-		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if *rootDir != "" { // empty: trash package applies its default
-			resolvedRoot, err := wsconfig.ExpandUserPath(*rootDir)
-			if err != nil {
-				fmt.Fprintf(stderr, "invalid --root-dir: %s\n", err.Error())
-				return 1
-			}
-			*rootDir = resolvedRoot
-		}
-		if *dryRun {
-			globals.dryRun = true
-		}
-
-		preview, err := trash.Empty(trash.EmptyOptions{RootDir: *rootDir, DryRun: true})
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-
-		result := preview
-		plan := Plan{Command: "trash.empty"}
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "trash-empty",
-			Description: "Empty trash directory",
-			Execute: func() error {
-				execResult, err := trash.Empty(trash.EmptyOptions{RootDir: *rootDir, DryRun: false})
-				if err != nil {
-					return err
-				}
-				result = execResult
-				return nil
-			},
-		})
-
-		planResult := RunPlan(plan, stdin, stdout, globals)
-		if globals.dryRun || !planResult.WasExecuted("trash-empty") {
-			result = preview
-		}
-
-		if globals.json {
-			return writeJSON(stdout, stderr, "trash.empty", map[string]any{
-				"result":  result,
-				"actions": planResult.Actions,
-			})
-		}
-
-		out := textOut(globals, stdout)
-		nc := globals.noColor
-		if globals.dryRun {
-			if !result.Exists {
-				fmt.Fprintln(out, style.ResultInfo(nc, "Trash directory does not exist. Nothing to empty."))
-			} else if result.EntryCount == 0 {
-				fmt.Fprintln(out, style.ResultInfo(nc, "Trash is already empty."))
-			} else {
-				fmt.Fprintln(out, style.ResultInfo(nc, "Would empty trash."))
-				style.KV(out, "Entries", fmt.Sprintf("%d", result.EntryCount), nc)
-				style.KV(out, "Files", fmt.Sprintf("%d", result.FileCount), nc)
-				style.KV(out, "Size", style.HumanBytes(result.SizeBytes), nc)
-			}
-		} else if planResult.WasExecuted("trash-empty") {
-			if !result.Exists {
-				fmt.Fprintln(out, style.ResultInfo(nc, "Trash directory does not exist. Nothing to empty."))
-			} else if result.EntryCount == 0 {
-				fmt.Fprintln(out, style.ResultInfo(nc, "Trash is already empty."))
-			} else {
-				fmt.Fprintln(out, style.ResultSuccess(nc, "Trash emptied."))
-				style.KV(out, "Entries removed", fmt.Sprintf("%d", result.EntryCount), nc)
-				style.KV(out, "Files removed", fmt.Sprintf("%d", result.FileCount), nc)
-				style.KV(out, "Freed", style.HumanBytes(result.SizeBytes), nc)
-			}
-		}
-		return planResult.ExitCode()
-
-	case "purge":
-		fs := flag.NewFlagSet("trash-purge", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		rootDir := fs.String("root-dir", cfgTrashRoot, "trash root directory")
-		olderThan := fs.Int("older-than", 0, "delete items trashed more than this many days ago")
-		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if *olderThan <= 0 {
-			fmt.Fprintln(stderr, "usage: ws trash purge --older-than <days>  (days must be a positive integer; use `ws trash empty` to remove everything)")
-			return 1
-		}
-		if *dryRun {
-			globals.dryRun = true
-		}
-		age := time.Duration(*olderThan) * 24 * time.Hour
-		preview, err := trash.Purge(trash.PurgeOptions{RootDir: *rootDir, OlderThan: age, DryRun: true})
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		result := preview
-		plan := Plan{Command: "trash.purge"}
-		if len(preview.Matched) > 0 {
-			plan.Actions = append(plan.Actions, Action{
-				ID: "trash-purge",
-				Description: fmt.Sprintf("Permanently delete %s older than %d days (%s)",
-					pluralize(len(preview.Matched), "trash item"), *olderThan, style.HumanBytes(preview.SizeBytes)),
-				Execute: func() error {
-					r, err := trash.Purge(trash.PurgeOptions{RootDir: *rootDir, OlderThan: age})
-					if err != nil {
-						return err
-					}
-					result = r
-					return nil
-				},
-			})
-		}
-		planResult := RunPlan(plan, stdin, stdout, globals)
-		if globals.dryRun || !planResult.WasExecuted("trash-purge") {
-			result = preview
-		}
-		if globals.json {
-			return writeJSONDryRun(stdout, stderr, "trash.purge", globals.dryRun, map[string]any{
-				"result":  result,
-				"actions": planResult.Actions,
-			})
-		}
-		out := textOut(globals, stdout)
-		nc := globals.noColor
-		switch {
-		case len(preview.Matched) == 0:
-			fmt.Fprintln(out, style.ResultInfo(nc, "Nothing older than %d days.", *olderThan))
-		case globals.dryRun:
-			fmt.Fprintln(out, style.ResultInfo(nc, "Would purge %s older than %d days.", pluralize(len(result.Matched), "item"), *olderThan))
-			style.KV(out, "Files", fmt.Sprintf("%d", result.FileCount), nc)
-			style.KV(out, "Size", style.HumanBytes(result.SizeBytes), nc)
-			for _, e := range result.Matched {
-				fmt.Fprintf(out, "  %-40s %8s  %s ago\n", e.Name, style.HumanBytes(e.SizeBytes), formatAgeDays(e.DeletedAt))
-			}
-			style.KV(out, "Kept", fmt.Sprintf("%d (newer than %dd)", result.Kept, *olderThan), nc)
-			if result.Skipped > 0 {
-				style.KV(out, "Skipped", fmt.Sprintf("%d (no deletion date)", result.Skipped), nc)
-			}
-		case planResult.WasExecuted("trash-purge"):
-			fmt.Fprintln(out, style.ResultSuccess(nc, "Purged %s, freed %s.", pluralize(len(result.Matched), "item"), style.HumanBytes(result.SizeBytes)))
-		}
-		return planResult.ExitCode()
-
-	case "rm":
-		fs := flag.NewFlagSet("trash-rm", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		rootDir := fs.String("root-dir", cfgTrashRoot, "trash root directory")
-		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if *dryRun {
-			globals.dryRun = true
-		}
-		if len(fs.Args()) != 1 {
-			fmt.Fprintln(stderr, "usage: ws trash rm <item-name>")
-			return 1
-		}
-		itemName := fs.Args()[0]
-		// Reject path separators to prevent directory traversal.
-		if strings.ContainsAny(itemName, "/\\") {
-			fmt.Fprintln(stderr, "item name must not contain path separators; pass just the name shown by `ws trash ls`")
-			return 1
-		}
-		resolvedRoot := *rootDir
-		itemPath := resolvedRoot + "/files/" + itemName
-		infoPath := resolvedRoot + "/info/" + itemName + ".trashinfo"
-
-		plan := Plan{Command: "trash.rm"}
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "trash-rm-item",
-			Description: "Permanently delete " + itemName + " from trash",
-			Execute: func() error {
-				if err := os.RemoveAll(itemPath); err != nil {
-					return err
-				}
-				_ = os.Remove(infoPath) // best-effort
-				return nil
-			},
-		})
-		planResult := RunPlan(plan, stdin, stdout, globals)
-		if globals.json {
-			return writeJSONDryRun(stdout, stderr, "trash.rm", globals.dryRun, map[string]any{
-				"item":    itemName,
-				"actions": planResult.Actions,
-			})
-		}
-		out := textOut(globals, stdout)
-		nc := globals.noColor
-		if !globals.dryRun && planResult.WasExecuted("trash-rm-item") {
-			fmt.Fprintln(out, style.ResultSuccess(nc, "Deleted %s from trash.", itemName))
-		}
-		return planResult.ExitCode()
-
+	verb, rest := args[0], args[1:]
+	switch verb {
 	case "ls":
-		fs := flag.NewFlagSet("trash-ls", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		rootDir := fs.String("root-dir", cfgTrashRoot, "trash root directory")
-		lf := registerListFlags(fs, "")
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		items, err := trash.Items(*rootDir)
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		return renderList(globals, "trash.ls", trash.Schema(resource.CLIView()), items, lf, "Trash is empty.", stdout, stderr)
-
+		return trashLs(rest, globals, stdout, stderr)
+	case "restore":
+		return trashRestore(rest, globals, stdin, stdout, stderr)
+	case "rm":
+		return trashRm(rest, globals, stdin, stdout, stderr)
+	case "empty":
+		return trashEmpty(rest, globals, stdin, stdout, stderr)
+	case "prune":
+		return trashPrune(rest, globals, stdin, stdout, stderr)
+	case "enable":
+		return trashEnable(rest, globals, stdin, stdout, stderr)
+	case "disable":
+		return trashDisable(rest, globals, stdin, stdout, stderr)
 	case "status":
-		fs := flag.NewFlagSet("trash-status", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		status, err := trash.GetStatus(cfgTrashRoot)
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		scanResult, err := trash.Scan(trash.ScanOptions{
-			RootDir:    cfgTrashRoot,
-			WarnSizeMB: trashWarnSizeMB,
-		})
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
+		return trashStatus(rest, globals, stdout, stderr)
+	}
+	fmt.Fprintf(stderr, "unknown command: trash %s\n", verb)
+	fmt.Fprintln(stderr, "usage: ws trash <ls|restore|rm|empty|prune|enable|disable|status> …")
+	return 1
+}
 
-		if globals.json {
-			return writeJSON(stdout, stderr, "trash.status", map[string]any{
-				"integrations": status,
-				"scan":         scanResult,
-			})
-		}
+// quietOut is where informational text goes: nowhere with --json (stdout is the
+// envelope) or --quiet.
+func quietOut(globals globalFlags, stdout io.Writer) io.Writer {
+	if globals.json {
+		return io.Discard
+	}
+	return textOut(globals, stdout)
+}
 
-		out := textOut(globals, stdout)
-		nc := globals.noColor
-		style.KV(out, "Trash root", style.Infof(nc, "%s", status.RootDir), nc)
-		fmt.Fprintln(out)
-		fmt.Fprintf(out, "  %s  shell-rm\n", statusBadge(status.ShellRMConfigured, nc))
-		fmt.Fprintf(out, "  %s  vscode-delete\n", statusBadge(status.VSCodeConfigured, nc))
-		fmt.Fprintf(out, "  %s  file-explorer\n", statusBadge(status.FileExplorerConfigured, nc))
-		if !status.FileExplorerConfigured && status.FileExplorerUnconfiguredReason != "" {
-			fmt.Fprintf(out, "     %s\n", style.Mutedf(nc, "↳ %s", status.FileExplorerUnconfiguredReason))
-		}
+// itemLabel is an item's name as ls shows it: a directory ends in /.
+func itemLabel(it trash.Item) string {
+	if it.Dir {
+		return it.Name + "/"
+	}
+	return it.Name
+}
 
-		if scanResult.Exists {
-			fmt.Fprintln(out)
-			style.KV(out, "Files", fmt.Sprintf("%d", scanResult.FileCount), nc)
-			style.KV(out, "Size", style.HumanBytes(scanResult.SizeBytes), nc)
-			style.KV(out, "Threshold", style.HumanBytes(int64(scanResult.WarnSizeMB)*1024*1024), nc)
-			if scanResult.OverLimit {
-				fmt.Fprintln(out)
-				fmt.Fprintln(out, style.Warningf(nc, "Trash size exceeds threshold (%s > %s)", style.HumanBytes(scanResult.SizeBytes), style.HumanBytes(int64(scanResult.WarnSizeMB)*1024*1024)))
-			}
-		}
-
-		return 0
-	default:
-		fmt.Fprintf(stderr, "unknown trash subcommand: %s\n", sub)
+func trashLs(args []string, globals globalFlags, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("trash-ls", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	lf := registerListFlags(fs, "")
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
+	items, err := trash.Items()
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	return renderList(globals, "trash.ls", trash.Schema(resource.CLIView()), items, lf, "Trash is empty.", stdout, stderr)
 }
 
-func boolWord(v bool) string {
-	if v {
-		return "configured"
+// resolveItems resolves the item arguments of restore and rm. At least one is
+// required, and an argument that matches nothing stops the command.
+func resolveItems(verb string, args []string, stderr io.Writer) ([]trash.Item, bool) {
+	if len(args) == 0 {
+		fmt.Fprintf(stderr, "usage: ws trash %s <item…>\n", verb)
+		return nil, false
 	}
-	return "skipped"
+	items, err := trash.Resolve(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return nil, false
+	}
+	return items, true
 }
 
-func boolBadge(v bool, noColor bool) string {
-	if v {
-		return style.Badge("configured", noColor)
+func trashRestore(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("trash-restore", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
 	}
-	return style.Badge("skipped", noColor)
+	items, ok := resolveItems("restore", fs.Args(), stderr)
+	if !ok {
+		return 1
+	}
+	actions, skipped := trash.RestorePlan(items)
+
+	out := quietOut(globals, stdout)
+	for _, s := range skipped {
+		fmt.Fprintf(out, "  ! %s: %s; skipped\n", s.Name, s.Reason)
+	}
+
+	p := Plan{Command: "trash.restore", Actions: actions}
+	planResult := RunPlan(p, stdin, stdout, globals)
+
+	// What was restored: the executed actions, named by their item.
+	type restored struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	}
+	done := []restored{}
+	for _, a := range planResult.Actions {
+		if a.Status != "executed" {
+			continue
+		}
+		for _, it := range items {
+			if a.ID == "trash-restore-"+it.Name {
+				done = append(done, restored{Name: it.Name, Path: it.OriginalPath})
+			}
+		}
+	}
+	if skipped == nil {
+		skipped = []trash.Skip{}
+	}
+
+	// 0 when every target was restored; 3 when some were and others were skipped
+	// or failed; 1 when none was.
+	code := planResult.ExitCode()
+	if bad := len(skipped) + planResult.FailedCount(); bad > 0 && code == 0 {
+		code = 1
+		if planResult.ExecutedCount() > 0 {
+			code = 3
+		}
+	}
+	if globals.json {
+		writeJSONDryRun(stdout, stderr, "trash.restore", globals.dryRun, map[string]any{
+			"restored": done, "skipped": skipped, "actions": planResult.Actions,
+		})
+	}
+	return code
 }
 
-func statusWord(v bool) string {
-	if v {
-		return "OK"
+func trashRm(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("trash-rm", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
 	}
-	return "WARNING"
+	items, ok := resolveItems("rm", fs.Args(), stderr)
+	if !ok {
+		return 1
+	}
+	p := Plan{Command: "trash.rm"}
+	removed := []string{}
+	for _, it := range items {
+		it := it
+		desc := fmt.Sprintf("Permanently delete %s (%s)", itemLabel(it), style.HumanBytes(it.SizeBytes))
+		if it.OriginalPath != "" {
+			desc += ", deleted from " + it.OriginalPath
+		}
+		p.Actions = append(p.Actions, Action{
+			ID:          "trash-rm-" + it.Name,
+			Description: desc,
+			Execute: func() error {
+				if err := trash.Delete(it); err != nil {
+					return err
+				}
+				removed = append(removed, it.Name)
+				return nil
+			},
+		})
+	}
+	planResult := RunPlan(p, stdin, stdout, globals)
+	if globals.json {
+		return writeJSONDryRun(stdout, stderr, "trash.rm", globals.dryRun, map[string]any{"removed": removed, "actions": planResult.Actions})
+	}
+	return planResult.ExitCode()
 }
 
-func statusBadge(v bool, noColor bool) string {
-	if v {
-		return style.Badge("ok", noColor)
+func trashEmpty(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("trash-empty", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
 	}
-	return style.Badge("warning", noColor)
+	if len(fs.Args()) > 0 {
+		fmt.Fprintln(stderr, "ws trash empty takes no targets; use ws trash rm <item…> to delete some")
+		return 1
+	}
+	sum, err := trash.Summarize()
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	p := Plan{Command: "trash.empty"}
+	if sum.Items > 0 {
+		p.Actions = append(p.Actions, Action{
+			ID:          "trash-empty",
+			Description: fmt.Sprintf("Permanently delete %s (%s) in %s", pluralize(sum.Items, "item"), style.HumanBytes(sum.SizeBytes), sum.Root),
+			Execute:     trash.Empty,
+		})
+	}
+	if len(p.Actions) == 0 && !globals.json {
+		fmt.Fprintln(textOut(globals, stdout), "Trash is empty.")
+		return 0
+	}
+	planResult := RunPlan(p, stdin, stdout, globals)
+	if globals.json {
+		return writeJSONDryRun(stdout, stderr, "trash.empty", globals.dryRun, map[string]any{
+			"items": sum.Items, "files": sum.Files, "size_bytes": sum.SizeBytes, "actions": planResult.Actions,
+		})
+	}
+	return planResult.ExitCode()
+}
+
+func trashPrune(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("trash-prune", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	olderThan := fs.String("older-than", "", "")
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if strings.TrimSpace(*olderThan) == "" {
+		fmt.Fprintln(stderr, "usage: ws trash prune --older-than <age>  (the trash has no size cap, so an age is required)")
+		return 1
+	}
+	d, err := age.Parse(*olderThan)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	res, matched, err := trash.SelectOlderThan(d, time.Now())
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+
+	now := time.Now()
+	p := Plan{Command: "trash.prune"}
+	for _, it := range matched {
+		it := it
+		p.Actions = append(p.Actions, Action{
+			ID: "trash-prune-" + it.Name,
+			Description: fmt.Sprintf("Permanently delete %s (%s, deleted %s ago)",
+				itemLabel(it), style.HumanBytes(it.SizeBytes), style.Age(now.Sub(it.DeletedAt))),
+			Execute: func() error { return trash.Delete(it) },
+		})
+	}
+	out := quietOut(globals, stdout)
+	if res.Skipped > 0 {
+		fmt.Fprintf(out, "  %d item(s) have no deletion date and are never pruned\n", res.Skipped)
+	}
+	if len(p.Actions) == 0 && !globals.json {
+		fmt.Fprintf(out, "Nothing to prune: no item was deleted more than %s ago.\n", *olderThan)
+		return 0
+	}
+	planResult := RunPlan(p, stdin, stdout, globals)
+	if globals.json {
+		if res.Matched == nil {
+			res.Matched = []trash.Entry{}
+		}
+		return writeJSONDryRun(stdout, stderr, "trash.prune", globals.dryRun, map[string]any{
+			"matched": res.Matched, "kept": res.Kept, "skipped": res.Skipped, "size_bytes": res.SizeBytes, "actions": planResult.Actions,
+		})
+	}
+	return planResult.ExitCode()
+}
+
+func trashEnable(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("trash-enable", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	noShell := fs.Bool("no-shell-rm", false, "")
+	noVSCode := fs.Bool("no-vscode", false, "")
+	noExplorer := fs.Bool("no-file-explorer", false, "")
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	actions, err := trash.EnableActions(trash.EnableOptions{NoShellRM: *noShell, NoVSCode: *noVSCode, NoFileExplorer: *noExplorer})
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if len(actions) == 0 && !globals.json {
+		fmt.Fprintln(textOut(globals, stdout), "Soft-delete is already on.")
+		return 0
+	}
+	planResult := RunPlan(Plan{Command: "trash.enable", Actions: actions}, stdin, stdout, globals)
+	if globals.json {
+		enabled := []string{}
+		for _, a := range planResult.Actions {
+			if a.Status == "executed" {
+				enabled = append(enabled, strings.TrimPrefix(a.ID, "trash-enable-"))
+			}
+		}
+		return writeJSONDryRun(stdout, stderr, "trash.enable", globals.dryRun, map[string]any{"enabled": enabled, "actions": planResult.Actions})
+	}
+	return planResult.ExitCode()
+}
+
+func trashDisable(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("trash-disable", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	actions := trash.DisableActions()
+	if len(actions) == 0 && !globals.json {
+		fmt.Fprintln(textOut(globals, stdout), "The shell rm integration is not enabled.")
+		return 0
+	}
+	planResult := RunPlan(Plan{Command: "trash.disable", Actions: actions}, stdin, stdout, globals)
+	if globals.json {
+		return writeJSONDryRun(stdout, stderr, "trash.disable", globals.dryRun, map[string]any{"actions": planResult.Actions})
+	}
+	return planResult.ExitCode()
+}
+
+func trashStatus(args []string, globals globalFlags, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("trash-status", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	st, err := trash.GetStatus()
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if globals.json {
+		return writeJSON(stdout, stderr, "trash.status", st)
+	}
+
+	out := textOut(globals, stdout)
+	nc := globals.noColor
+	fmt.Fprintf(out, "  %-11s %s\n\n", "Trash root", st.Root)
+	for _, in := range st.Integrations {
+		icon := style.IconCross(nc)
+		if in.Enabled {
+			icon = style.IconCheck(nc)
+		}
+		fmt.Fprintf(out, "  %s %-14s %s\n", icon, in.Name, in.Detail)
+	}
+	fmt.Fprintf(out, "\n  Items %d · Files %d · Size %s · Warns at %s\n", st.Items, st.Files,
+		style.HumanBytes(st.SizeBytes), style.HumanBytes(st.WarnSizeBytes))
+	if st.OverLimit {
+		fmt.Fprintln(out, style.ResultWarning(nc, "The trash is over the limit; ws trash prune --older-than <age> shrinks it."))
+	}
+	return 0
 }
 
 func pluralize(n int, noun string) string {
@@ -504,8 +377,4 @@ func pluralize(n int, noun string) string {
 		return fmt.Sprintf("%d %s", n, noun)
 	}
 	return fmt.Sprintf("%d %ss", n, noun)
-}
-
-func formatAgeDays(t time.Time) string {
-	return fmt.Sprintf("%dd", int(time.Since(t).Hours()/24))
 }

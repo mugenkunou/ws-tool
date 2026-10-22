@@ -356,7 +356,7 @@ func (m Model) openReset() Model {
 			ID:          "reset-trash",
 			Description: "Reset trash setup (remove script and aliases)",
 			Execute: func() error {
-				_, err := wstrash.Reset(wstrash.ResetOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config})
+				_, err := wstrash.Disable()
 				return err
 			},
 		},
@@ -530,7 +530,7 @@ func cronArea(msg cron.LoadedMsg) area {
 
 func trashArea(msg trash.LoadedMsg) area {
 	off := msg.Status.WarningCount()
-	a := area{lines: []string{fmt.Sprintf("%s · %s", style.HumanBytes(msg.Scan.SizeBytes), format.Plural(msg.Scan.FileCount, "file"))}}
+	a := area{lines: []string{fmt.Sprintf("%s · %s", style.HumanBytes(msg.Status.SizeBytes), format.Plural(msg.Status.Files, "file"))}}
 	if off == 0 {
 		a.lines = append(a.lines, theme.OK.Render("soft-delete on"))
 	} else {
@@ -539,9 +539,9 @@ func trashArea(msg trash.LoadedMsg) area {
 			text:     fmt.Sprintf("Soft-delete is off for %d of 3 integrations", off),
 			fixLabel: "enable", fix: trash.RequestEnableMsg{}})
 	}
-	if msg.Scan.OverLimit {
+	if msg.Status.OverLimit {
 		a.issues = append(a.issues, issue{sev: sevWarn, screen: nav.ScreenTrash,
-			text:     fmt.Sprintf("Trash holds %s (over %d MB)", style.HumanBytes(msg.Scan.SizeBytes), msg.Scan.WarnSizeMB),
+			text:     fmt.Sprintf("Trash holds %s (over %s)", style.HumanBytes(msg.Status.SizeBytes), style.HumanBytes(msg.Status.WarnSizeBytes)),
 			fixLabel: "empty", fix: trash.RequestEmptyMsg{}})
 	}
 	return a

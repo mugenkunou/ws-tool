@@ -18,17 +18,21 @@ import (
 type Item struct {
 	Name         string    // entry name under files/ (what `ws trash rm` takes)
 	Path         string    // absolute path of the entry under files/
-	OriginalPath string    // where it was deleted from (.trashinfo Path), if recorded
+	OriginalPath string    // where it was deleted from (.trashinfo Path, absolute), if recorded
 	Dir          bool      // the entry is a directory
 	Files        int       // files inside (a file counts as 1)
 	SizeBytes    int64     // total size
 	DeletedAt    time.Time // .trashinfo DeletionDate, else the entry's mtime
+	// HasDate is true when DeletedAt came from the .trashinfo, not the mtime.
+	HasDate bool
 }
 
-// Items lists every trashed entry, newest first. A missing trash root has
-// no items.
-func Items(rootHint string) ([]Item, error) {
-	root, err := resolveRoot(rootHint)
+// Items lists every trashed entry, newest first. A missing trash directory has
+// no items. An entry without a .trashinfo has no original path, and its date
+// falls back to the file's mtime. A relative Path= is resolved against the
+// directory that holds the trash directory, as the freedesktop spec says.
+func Items() ([]Item, error) {
+	root, err := Root()
 	if err != nil {
 		return nil, err
 	}
@@ -45,6 +49,10 @@ func Items(rootHint string) ([]Item, error) {
 		it := Item{Name: de.Name(), Path: path, Dir: de.IsDir()}
 		info := readTrashInfo(filepath.Join(infoDir(root), de.Name()+".trashinfo"))
 		it.OriginalPath, it.DeletedAt = info.path, info.deleted
+		if it.OriginalPath != "" && !filepath.IsAbs(it.OriginalPath) {
+			it.OriginalPath = filepath.Join(filepath.Dir(root), it.OriginalPath)
+		}
+		it.HasDate = !it.DeletedAt.IsZero()
 		if it.DeletedAt.IsZero() {
 			if fi, err := de.Info(); err == nil {
 				it.DeletedAt = fi.ModTime()

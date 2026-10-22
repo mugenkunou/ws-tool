@@ -110,8 +110,12 @@ func fixtures() []tea.Msg {
 			{Name: "all", Preset: true, CrontabOK: true, Description: "installs: dotfile-push, repo-sync"},
 		}},
 		trash.LoadedMsg{
-			Status: wstrash.Status{RootDir: "/home/tester/.Trash", ShellRMConfigured: true, VSCodeConfigured: true},
-			Scan:   wstrash.ScanResult{SizeBytes: 3 << 20, FileCount: 12, WarnSizeMB: 1024},
+			Status: wstrash.Status{
+				Root: "/home/tester/.Trash", Items: 2, Files: 12, SizeBytes: 3 << 20, WarnSizeBytes: 1 << 30,
+				Integrations: []wstrash.Integration{
+					{Name: wstrash.ShellRM, Enabled: true}, {Name: wstrash.VSCode, Enabled: true}, {Name: wstrash.FileExplorer},
+				},
+			},
 			Items: []trash.Item{
 				{Name: "old-notes.md", OriginalPath: ws + "/Notes/old-notes.md", SizeBytes: 2048, Files: 1, DeletedAt: fixedClock().Add(-3 * time.Hour)},
 				{Name: "build", SizeBytes: 3 << 20, Files: 40, DeletedAt: fixedClock().Add(-50 * time.Hour), Dir: true},

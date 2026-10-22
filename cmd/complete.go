@@ -357,7 +357,7 @@ func loadCompletionCtx(globals globalFlags) completionCtx {
 	}
 
 	// Trashed item names.
-	if items, err := trash.Items(""); err == nil {
+	if items, err := trash.Items(); err == nil {
 		for _, it := range items {
 			ctx.trashItems = append(ctx.trashItems, it.Name)
 		}
