@@ -36,6 +36,11 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	rest, code, removed := resolveAlias(rest, &globals, stderr)
+	if removed {
+		return code
+	}
+
 	if code, handled := handleHelp(rest, globals.noColor, stdout, stderr); handled {
 		return code
 	}
