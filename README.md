@@ -2,7 +2,7 @@
 
 **One binary. One workspace. Zero scattered files.**
 
-`ws` is a workspace management CLI for Linux. It manages your dotfiles, scans for sync hygiene violations, records terminal sessions, herds your Git repos, and makes sure you can restore a fresh machine from a single synced folder.
+`ws` is a workspace manager for Linux, with a CLI and a full-screen TUI. It manages your dotfiles, keeps junk out of your cloud sync, records terminal sessions, herds your Git repos, and lets you rebuild a fresh machine from a single synced folder.
 
 ---
 
@@ -21,18 +21,19 @@ Your digital life is scattered:
 
 ## What It Does
 
-| Area | Problem | `ws` solution |
+| Area | Problem | `ws` |
 | --- | --- | --- |
-| **Dotfiles** | Configs scattered across `~/`, `/etc/`, `~/.config/` | `ws dotfile add ~/.bashrc` — moves the original into workspace, symlinks back |
-| **Sync hygiene** | 200 MB log dumps and `node_modules/` bloating your cloud | `ws ignore scan` finds bloat; `ws ignore fix` quarantines it |
-| **Secrets** | Accidentally syncing `password=hunter2` to the cloud | `ws secret scan` catches it; `ws secret fix` lets you add to `.megaignore` or allowlist |
-| **Git credentials** | Managing HTTPS tokens across multiple git hosts | `ws git-credential-helper setup` configures git to use `pass` as credential helper |
-| **Terminal sessions** | "What was that command I ran last Tuesday?" | `ws log start` records everything via PTY. Search it later with `ws log search` |
-| **Git repos** | 6 repos, 3 need push, 1 is on a detached HEAD | `ws repo scan` shows fleet status; `ws repo sync` pulls/pushes per state in one shot |
-| **Scratch dirs** | Debug sessions and investigations scattered across `/tmp` | `ws scratch new` — named directory in `~/Scratch`, opens in VS Code instantly |
-| **Machine restore** | New laptop, two days of setup | `ws restore` — guided wizard, working machine in minutes |
-| **Soft delete** | `rm -rf` regrets | `ws trash setup` configures your shell, VS Code, and file explorer to soft-delete |
-| **Cron jobs** | MEGA sync, dotfile push, repo sync, secret scan — all manual | `ws cron add mega-sync` installs a managed crontab job with logging, log-rotation, and missed-run recovery |
+| **Dotfiles** | Configs scattered across `~/`, `/etc/`, `~/.config/` | `ws dotfile add ~/.bashrc` moves the original into the workspace and symlinks it back. On a new machine, `ws dotfile link` puts every link back. |
+| **Sync hygiene** | 200 MB log dumps and `node_modules/` eating your cloud quota | `ws ignore lint` warns about what shouldn't sync. `ws ignore add` stops syncing it, and `ws ignore mute` silences a warning you mean to keep. |
+| **Secrets** | `password=hunter2` about to sync to the cloud | `ws secret ls` finds it. `ws secret store` moves the value into `pass`, and `ws secret allow` marks a false positive. |
+| **Git credentials** | HTTPS tokens for several git hosts | `ws credential enable` makes git read them from `pass` |
+| **Terminal sessions** | "What was that command I ran last Tuesday?" | `ws session record` records a shell. Find it later with `ws session grep`. |
+| **Git repos** | 6 repos: 3 need a push, 1 is on a detached HEAD | `ws repo ls` shows the fleet. `ws repo save` commits, pulls and pushes in one go (and asks before rebasing or merging). `ws repo configure` fixes missing name, email and upstream. |
+| **Scratch dirs** | Debug sessions littered across `/tmp` | `ws scratch new` makes a named directory in `~/Scratch` and opens it in your editor |
+| **Soft delete** | `rm -rf` regrets | everything ws deletes goes to the trash. `ws trash enable` makes your shell's `rm` and VS Code do the same, and `ws trash restore` puts things back. |
+| **Cron jobs** | MEGA sync and dotfile and pass backups, all by hand | `ws cron add sync` installs managed jobs with logging and missed-run recovery |
+
+Everything is also in a full-screen TUI: `ws tui`.
 
 ---
 
@@ -58,296 +59,295 @@ sudo cp ws /usr/local/bin/
 ws init
 ```
 
-This creates `ws/manifest.json` and `.megaignore` in your workspace root, and `config.json` at `~/.config/ws-tool/config.json`. It also walks you through configuring soft-delete on your machine.
+This creates the workspace layout, `ws.json` (ws's state, synced with the workspace) and
+`.megaignore`. Running it again only adds what's missing, including any `ws.json` keys an older version
+left out.
 
-### Capture Your First Dotfile
+### Manage your first dotfile
 
 ```bash
 ws dotfile add ~/.bashrc
-# ✔ Moved    /home/user/.bashrc → /home/user/Workspace/ws/dotfiles/bashrc
-# ✔ Linked   /home/user/.bashrc → /home/user/Workspace/ws/dotfiles/bashrc
+# Add /home/user/.bashrc → /home/user/Workspace/configs/dotfiles/bashrc [y/n/a/q] y
+#   ✔ Add /home/user/.bashrc → /home/user/Workspace/configs/dotfiles/bashrc
 ```
 
-Your `.bashrc` now lives in the workspace (synced). The system path is a symlink pointing back. Edit either one — they're the same file.
+Your `.bashrc` now lives in the workspace and syncs. The system path is a symlink to it,
+so editing either one edits the same file.
 
 ---
 
 ## Commands at a Glance
 
+Every command is `ws <noun> <verb>`, and each verb means the same thing everywhere
+(`ls` lists, `add` brings something under ws, `rm` deletes, `mute` silences warnings,
+`prune --older-than 30d` clears old rows). Without targets, a command acts on every row.
+The full grammar is in [spec.md](spec.md) Part 3.
+
 <details>
-<summary><strong>🏗️ Setup & Restore</strong></summary>
+<summary><strong>📦 Repos</strong></summary>
 
 | Command | What it does |
 | --- | --- |
-| `ws init` | Scaffold a workspace (creates `ws/`, `.megaignore`, configures trash) |
-| `ws reset` | Reverse `ws init` — undo all provisions and remove `ws/` |
-| `ws restore` | Guided full-machine restore wizard (requires initialized workspace) |
-| `ws trash setup` | Configure soft-delete for shell `rm`, VS Code, and file explorer |
-| `ws trash disable` | Remove soft-delete integrations |
-| `ws trash empty` | Empty trash contents if the trash root exists |
-| `ws trash purge --older-than <days>` | Permanently delete trash items deleted more than N days ago (age from the `.trashinfo` DeletionDate; supports `--dry-run`) |
-| `ws trash ls` | List trashed items with where they came from, size, and age |
-| `ws trash status` | Check integration status and trash size |
+| `ws repo ls [--fetch]` | Every repo: branch, dirty, ahead/behind, hygiene findings |
+| `ws repo show <repo>` | One repo in full |
+| `ws repo fetch [repo…]` | Fetch |
+| `ws repo pull [repo…]` | Pull: fast-forward, or the rebase or merge you choose for a diverged repo |
+| `ws repo push [repo…]` | Push, nothing else |
+| `ws repo save [repo…]` | Commit everything with a timestamped message, pull, push: for repos you edit in one place |
+| `ws repo configure [repo…]` | Asks for a missing name, email, upstream or default branch, and can set up `ws credential` |
+| `ws repo run -- <cmd>` | Run a command in each repo |
+| `ws repo root add \| ls \| rm` | Manage the directories searched for repos |
 
 </details>
 
 <details>
-<summary><strong> Dotfiles</strong></summary>
+<summary><strong>🔗 Dotfiles</strong></summary>
 
 | Command | What it does |
 | --- | --- |
-| `ws dotfile add <path>` | Capture a system file into `ws/dotfiles/`, symlink back |
-| `ws dotfile rm <path>` | Restore file to system path, unregister |
-| `ws dotfile sync <path>` | Adopt live file content into the ws copy, re-symlink |
-| `ws dotfile ls` | List all managed dotfiles |
-| `ws dotfile scan` | Verify all symlinks are intact |
-| `ws dotfile fix` | Recreate broken/missing symlinks (the restore command) |
-| `ws dotfile reset` | Reset dotfile subsystem provisions |
-| `ws dotfile git remote <url>` | Set/show git remote URL |
-| `ws dotfile git push` | Commit pending changes + push to remote |
-| `ws dotfile git log` | Show dotfile commit history |
-| `ws dotfile git status` | Show dotfile Git backup health |
-| `ws dotfile git setup` | Guided walk-through (init → remote → auto-push) |
-| `ws dotfile git disconnect` | Remove dotfile Git remote/config from ws |
+| `ws dotfile ls` | Managed dotfiles and their link health |
+| `ws dotfile add <path>` | Move a file into the workspace and symlink it back. On a managed path that something overwrote, keep the live file instead. |
+| `ws dotfile link [path…]` | Point paths back at their workspace copies: repairs broken links, and is the new-machine step |
+| `ws dotfile link <path> --to <ws-path>` | Symlink a system path to a file already in the workspace |
+| `ws dotfile unlink <path> \| --all` | Put the real file back and stop managing it |
+| `ws dotfile edit <path>` | Edit the workspace copy |
+| `ws dotfile backup enable \| disable \| status \| push` | Versioned backup to a private git remote |
 
 </details>
 
 <details>
-<summary><strong>📼 Session Recording</strong></summary>
+<summary><strong>🧪 Scratch</strong></summary>
 
 | Command | What it does |
 | --- | --- |
-| `ws log start` | Start a PTY-recorded session (● ws:log prompt indicator) |
-| `ws log stop` | End the current recording |
-| `ws log ls` | List all sessions with size, duration, command count |
-| `ws log search <query>` | Search across all recorded sessions |
-| `ws log scan` | Log subsystem health (storage, cap pressure) |
-| `ws log prune` | Delete old sessions |
-| `ws log rm <tag>` | Delete one recorded session by tag |
+| `ws scratch ls` | Scratch directories with age, size, items, tags |
+| `ws scratch new [name]` | Create one and open it in your editor |
+| `ws scratch add <path>` | Move an existing file or directory into scratch |
+| `ws scratch open <name>` | Open one (`wsopen` also `cd`s into it) |
+| `ws scratch tag <name> [tag…]` | Label one (`--rm` removes a tag) |
+| `ws scratch rm <name>` | Delete (to trash) |
 
 </details>
 
 <details>
-<summary><strong>📦 Git Fleet</strong></summary>
+<summary><strong>📼 Sessions</strong></summary>
 
 | Command | What it does |
 | --- | --- |
-| `ws repo ls` | Discover Git repos under workspace |
-| `ws repo scan` | Fleet status with fetch-first (dirty, ahead/behind, detached) plus inline hygiene findings (identity, upstream, default-branch, fetch-staleness) |
-| `ws repo fetch` | `git fetch --all --prune` across the fleet |
-| `ws repo pull` | Interactive fleet pull (ff-only or rebase) |
-| `ws repo sync` | Interactive fleet sync (pull/push per repo state) |
-| `ws repo run -- <cmd>` | Run any command in each repo root |
-| `ws repo add-root <path>` | Add a repo discovery root to config (`repo.roots`) |
-| `ws repo ls-roots` | List configured repo discovery roots |
+| `ws session record [tag]` | Record a shell session (`● ws:rec` in the prompt) |
+| `ws session stop` | Stop the recording |
+| `ws session ls` | Sessions with duration, size, command count |
+| `ws session show <tag> [--commands]` | Print a transcript, or just its commands |
+| `ws session grep <text>` | Search every transcript |
+| `ws session rm <tag>` | Delete a session |
+| `ws session prune [--older-than 30d]` | Delete old sessions, or enforce the size cap |
 
 </details>
 
 <details>
-<summary><strong>🛡️ Sync Hygiene</strong></summary>
+<summary><strong>🧹 Sync hygiene</strong></summary>
 
 | Command | What it does |
 | --- | --- |
-| `ws ignore check <path>` | Will this file sync? Shows the matching rule |
-| `ws ignore ls` | List all .megaignored files (pipe-safe, greppable) |
-| `ws ignore tree` | Visual directory tree with sync/ignored status |
-| `ws ignore scan` | Find bloat, excessive depth, and build artifacts |
-| `ws ignore fix` | Fix violations: move to scratch, add rules, delete build output |
-| `ws ignore generate` | Create or merge `.megaignore` from the built-in template |
-| `ws ignore edit` | Open `.megaignore` in your editor with syntax validation |
+| `ws ignore lint` | Warn about synced files that shouldn't be: bloat, excessive depth, build artifacts |
+| `ws ignore ls` | Every path that doesn't sync, and the rule that keeps it out |
+| `ws ignore ls --muted` | The warnings you muted |
+| `ws ignore add \| rm <path>` | Stop syncing a path; sync it again |
+| `ws ignore mute \| unmute <path>` | Hide or show a path's warnings (it keeps syncing) |
+| `ws ignore check <path>` | Will this path sync, and which rule decides? |
+| `ws ignore tree [dir]` | The tree with sync status |
+| `ws ignore edit` | Edit the rules |
 
 </details>
 
 <details>
-<summary><strong>🔒 Secrets</strong></summary>
+<summary><strong>🔐 Secrets, pass, credentials</strong></summary>
 
 | Command | What it does |
 | --- | --- |
-| `ws secret scan` | Find exposed secrets (`password=`, `API_KEY=`, private keys) |
-| `ws secret fix` | View context, add to .megaignore, or allowlist false positives |
-| `ws secret setup` | Setup/check Unix Password Store (`pass`) prerequisites |
-| `ws secret status` | Show pass health, git state, and actionable warnings |
-| `ws secret git push` | Push pass store commits to remote |
-| `ws secret git log` | Show pass store commit history |
-| `ws secret git remote` | Show pass store git remote URL |
-| `ws secret git status` | Show pass store git status summary |
-| `ws git-credential-helper setup` | Connect credential helper and create missing pass entries |
-| `ws git-credential-helper status` | Check credential helper config and pass entry coverage |
-| `ws git-credential-helper disconnect` | Remove ws credential helper from git config |
-| `ws git-credential-helper get` | Look up credentials from pass (git plumbing — called by git) |
-| `ws git-credential-helper store` | No-op (git plumbing — pass is managed separately) |
-| `ws git-credential-helper erase` | No-op (git plumbing — pass is managed separately) |
+| `ws secret ls` | Possible secrets in workspace files |
+| `ws secret show <file:line>` | A finding in context |
+| `ws secret allow <file:line>` | Mark a false positive |
+| `ws secret store <file:line> [entry]` | Copy the value into `pass` |
+| `ws secret mute \| unmute <dir>` | Stop or resume scanning a directory |
+| `ws pass init \| status \| audit` | Create the pass store; its health; entries with problems |
+| `ws pass backup enable \| disable \| status \| push` | The store's private git backup, like `dotfile backup` |
+| `ws credential enable \| disable \| status` | ws (backed by `pass`) as git's credential helper |
 
 </details>
 
 <details>
-<summary><strong>⚡ Scratch</strong></summary>
+<summary><strong>⏰ Cron</strong></summary>
 
 | Command | What it does |
 | --- | --- |
-| `ws scratch new [name]` | Create a named scratch directory, open in VS Code; prints the path |
-| `ws scratch open [name]` | Open an existing scratch directory in VS Code (use `wsopen` to also cd into it) |
-| `ws scratch ls` | List scratch directories with age, size, items, and tags (`--wide` adds the path) |
-| `ws scratch tag [name]` | Add tags to a scratch directory; prints path on completion |
-| `ws scratch search [query]` | Search scratch directories by tag/name/content; shows path per result |
-| `ws scratch rm <name>` | Delete a scratch directory by name |
+| `ws cron ls` | Jobs with schedule, last run, exit code, next run |
+| `ws cron add \| rm <job>` | Install or uninstall jobs and presets |
+| `ws cron run <job>` | Run a job now (crontab lines call this too) |
+| `ws cron log <job>` | Its recent output |
+| `ws cron apply` | Install `configs/crontab` into your live crontab |
+
+Built-in jobs: `mega-sync`, `dotfile-backup`, `pass-backup`, `session-prune`.
+Presets: `sync` (mega-sync, dotfile-backup, pass-backup) and `maintenance` (session-prune).
 
 </details>
 
 <details>
-<summary><strong>⏰ Cron Jobs</strong></summary>
+<summary><strong>🚮 Trash</strong></summary>
 
 | Command | What it does |
 | --- | --- |
-| `ws cron add <job>` | Install a managed cron job (writes wrapper script + crontab block) |
-| `ws cron rm <job>` | Remove a managed cron job (cleans crontab block + script) |
-| `ws cron ls` | List available jobs and presets with schedule and install status |
-| `ws cron status [job]` | Last run, exit code, next scheduled run, recent log lines |
-| `ws cron log [job]` | Show recent entries from the shared cron log |
-
-Built-in jobs: `mega-sync`, `dotfile-sync`, `repo-sync`, `secret-scan`, `ignore-scan`, `log-prune`
-
-Presets: `sync` (mega-sync + dotfile-sync + repo-sync), `maintenance` (ignore-scan + log-prune)
+| `ws trash ls` | Trashed items, where they came from, size, age |
+| `ws trash restore <item>` | Put an item back |
+| `ws trash rm <item>` | Delete an item forever |
+| `ws trash empty` | Delete everything forever |
+| `ws trash prune --older-than 30d` | Delete items trashed before then |
+| `ws trash enable \| disable \| status` | Soft-delete for shell `rm`, VS Code and the file explorer |
 
 </details>
 
 <details>
-<summary><strong>⚙️ Config & Meta</strong></summary>
+<summary><strong>⚙️ Workspace</strong></summary>
 
 | Command | What it does |
 | --- | --- |
-| `ws tui` | Interactive terminal UI for everything above — dashboard, repos, dotfiles, scratch, logs, ignore, secrets, cron, trash |
-| `ws version` | Binary version, schema versions, platform info |
-| `ws config` | Configuration commands (`view`, `defaults`) |
-| `ws completions <shell>` | Generate shell completions (bash/zsh/fish) |
-| `ws completions install/uninstall` | Install or remove completions in shell rc/config files |
+| `ws init` | Create the workspace layout, `ws.json` and `.megaignore` |
+| `ws tui` | The full-screen interface |
+| `ws config show [--defaults] \| edit` | The resolved config; edit `ws.json` |
+| `ws completion bash \| zsh \| fish \| enable \| disable` | Shell completion |
+| `ws version`, `ws help` | |
 
 </details>
+
+---
+
+## The TUI
+
+`ws tui` has one screen per noun (Repos, Dotfiles, Scratch, Sessions, Ignore, Secrets,
+Cron, Trash), plus a Dashboard that lists what needs attention. It follows k9s:
+
+| Key | Does |
+| --- | --- |
+| `enter` · `esc` | open · back (clears a filter or marks first) |
+| `:` | command bar, using the CLI's words: `:backup push`, `:root rm ~/old`, `:dot` jumps to Dotfiles |
+| `/` · `>` `<` | filter (`status!=ok`) · sort |
+| `d` · `y` | describe the row · the row as JSON (what `--json` prints) |
+| `a` · `e` · `ctrl+d` | add · edit · delete (always through a checklist) |
+| `space` · `ctrl+space` · `ctrl+a` · `ctrl+\` | mark · mark a range · mark all · clear marks |
+| `ctrl+r` · `?` · `q` | refresh · help · quit |
+
+Each screen adds a few lowercase keys named after their verbs: `f` fetch, `p` pull, `s` save
+on Repos; `l` link, `b` back up on Dotfiles. Keys act on the marked rows. Without marks, a
+fleet action (fetch, pull, save, link…) takes every row the filter shows, and any other key
+takes the cursor row. Nothing changes without a checklist you
+confirm.
 
 ---
 
 ## How Dotfile Management Works
 
-Most dotfile managers make you maintain a git repo with a weird bare-repo trick or GNU Stow. `ws` keeps it simpler:
-
 ```text
-┌──── ORIGINALS (in ~/Workspace/ws/dotfiles/) ────────────────┐
-│                                                              │
-│  ssh/       bashrc       daemon.json       kubeconfig        │
-│  vscode-settings.json    megaignore                          │
-│                                                              │
-└───────────────┬──────────────────────┬───────────────────────┘
-                │       SYMLINKS       │
-                ▼                      ▼
-   ~/.ssh/ → ws/dotfiles/ssh    ~/.bashrc → ws/dotfiles/bashrc
-   ~/.kube/config               /etc/docker/daemon.json  (sudo)
+┌──── ORIGINALS (in ~/Workspace/configs/dotfiles/ and secrets/dotfiles/) ┐
+│  bashrc     gitconfig     ssh/config     kubeconfig     daemon.json     │
+└───────────────┬──────────────────────────────┬─────────────────────────┘
+                │           SYMLINKS           │
+                ▼                              ▼
+   ~/.bashrc → configs/dotfiles/bashrc     /etc/docker/daemon.json  (sudo)
 ```
 
-**Originals live in the workspace.** System paths are symlinks pointing back. The workspace syncs via MEGA. You get automatic cloud backup of every config file, and `ws dotfile fix` recreates all symlinks on a fresh machine.
+**Originals live in the workspace**, and the system paths are symlinks to them. The
+workspace syncs through MEGA, so every config file is backed up, and on a fresh machine
+`ws dotfile link` recreates every link. Files that look like secrets go to
+`secrets/dotfiles/`.
 
-Optional: enable `dotfile.git.enabled` for versioned backup with auto-commit and optional auto-push.
+Optional: `ws dotfile backup enable` adds versioned backup to a **private** git remote,
+committing and pushing after each change. ws refuses public remotes.
 
 ---
 
 ## The Sync Firewall: `.megaignore`
 
-MEGA uses `.megaignore` to decide what syncs. `ws` ships a battle-tested template with 50+ rules that block the usual suspects:
-
-- **Build artifacts** — `node_modules/`, `__pycache__/`, `.venv/`, `*.class`, `*.pyc`
-- **Archives & packages** — `*.tar.gz`, `*.deb`, `*.zip`, `*.jar`, `*.whl`
-- **Large datasets** — `*.csv`, `*.parquet`, `*.orc`
-- **Logs & crash dumps** — `*.log`, `hs_err_pid*`
-- **Lock files** — `package-lock.json`, `yarn.lock`, `poetry.lock`, `go.sum`
-- **Hidden dirs** — `.git/`, `.obsidian/`, `.venv/` (caught by `-:.*`)
-
-**Suppress overrides** override everything above. `ws/` always syncs (your metadata, dotfiles, session logs). Generate it with:
+MEGA reads `.megaignore` to decide what syncs. ws generates it from a built-in template,
+which blocks build artifacts, archives, large datasets, logs and lock files, plus your
+own rules from `ws ignore add`. Directories you `ws ignore mute` keep syncing and stop
+producing warnings.
 
 ```bash
-ws ignore generate          # fresh template
-ws ignore generate --merge  # keep your custom rules, add missing template rules
+ws ignore lint                    # what probably shouldn't sync
+ws ignore add ~/Workspace/experiments/model.bin
+ws ignore check ~/Workspace/experiments/model.bin
 ```
 
 ---
 
 ## Design Principles
 
-`ws` is opinionated. Here's why:
-
 | Principle | What it means |
 | --- | --- |
-| **Single binary** | No Python, no Node, no runtime deps. Copy it to any Linux box and go. |
-| **Minimal dependencies** | Core and CLI are pure Go stdlib. The TUI (`ws tui`) uses Charm's [Bubble Tea](https://github.com/charmbracelet/bubbletea), Bubbles, and Lip Gloss — nothing else. |
-| **Offload, don't reimplement** | `ln`, `grep`, `find`, `diff`, `script(1)`, `git` — `ws` orchestrates battle-tested tools |
-| **Read/write separation** | Read commands are non-interactive and pipe-safe. Write commands are always interactive with `--dry-run`. |
-| **`--json` everywhere** | Every command supports `--json` for scripting. Stable schema envelope with version. |
-| **One list, two front ends** | Every list (`dotfile ls`, `trash ls`, `cron ls`, `scratch ls`, `log ls`, and the scans) shows the same fields in the CLI and the TUI, with the same `--filter key=text` / `--sort field` (`/` and `>` in the TUI). `--wide` shows every field. In the TUI, mark rows k9s-style (`space`, `ctrl+space` for a range, `ctrl+\` to clear) and actions apply to the marked rows. |
-| **Colored & accessible** | ANSI colors + Unicode icons for scannable output. `--no-color` and `NO_COLOR` env for accessibility. |
-| **Soft-delete first** | `rm` is the delete primitive. `ws trash setup` makes it route to Trash. |
-| **Workspace-sourced metadata** | Manifest lives inside the workspace; config is machine-local at the XDG path. Sync the folder, get the tool state too. |
+| **Single binary** | No Python, no Node. Copy it to any Linux box. |
+| **Minimal dependencies** | The core and the CLI are pure Go stdlib. The TUI uses Charm's Bubble Tea, Bubbles and Lip Gloss. |
+| **Offload, don't reimplement** | `git`, `script(1)`, `pass`, `crontab`: ws orchestrates them |
+| **One grammar** | `ws <noun> <verb>`, one meaning per verb, the same nouns and verbs in the TUI |
+| **Read/write separation** | Read commands never prompt and are pipe-safe. Write commands confirm each action and support `--dry-run`. |
+| **`--json` everywhere** | A stable, versioned envelope |
+| **One list, two front ends** | `ws <noun> ls` and its TUI screen show the same rows, fields, `--filter` and `--sort` |
+| **Soft-delete first** | Everything ws deletes can be restored from the trash |
+| **The workspace carries the state** | `ws.json` syncs with the workspace. Sync the folder, and the tool's state comes along. |
 
-Full philosophy: [PHILOSOPHY.md](PHILOSOPHY.md) — an eleven-factor methodology for workspace management, inspired by the Twelve-Factor App.
+Full philosophy: [PHILOSOPHY.md](PHILOSOPHY.md).
 
 ### Read/Write Separation
 
-This is a core design constraint, not a nice-to-have. Every command is classified as **RO** (read-only) or **RW** (read-write):
+Every command is **RO** (read-only) or **RW** (read-write), as listed in [spec.md](spec.md) §3.4.
 
-- **RO commands** (`ls`, `show`, `check`, `status`, `version`, `config view`, subsystem `scan`) are non-interactive and pipe-safe. They never prompt for input and produce deterministic output to stdout.
-- **RW commands** (`init`, `restore`, `dotfile add/rm/fix`, `ignore fix/generate`, `secret fix/setup`, `git-credential-helper setup/disconnect`, `repo pull/push/run`, `log start/stop/prune`, `scratch new/rm`, `trash enable/disable/empty`, `completions install/uninstall`) use **per-action confirmation** (`git add -p` style). Each discrete mutation gets its own `y/n/a/q` prompt — never a single gate before N operations.
-
-Prompt vocabulary for RW commands:
+- **RO** (`ls`, `show`, `status`, `check`, `tree`, `grep`, `log`, `audit`) never prompt and
+  produce deterministic output.
+- **RW** commands build a plan of discrete actions and confirm each one (`git add -p` style):
 
 | Key | Effect |
 | --- | --- |
-| `y` (default, Enter) | Execute this action |
-| `n` | Skip this action, continue to next |
-| `a` | Accept all remaining actions |
-| `q` | Quit, skip all remaining actions |
+| `y` (default, Enter) | Do this action |
+| `n` | Skip it, continue |
+| `a` | Accept all the rest |
+| `q` | Skip all the rest |
 
-Flags that interact with this:
-
-| Flag | Effect |
-| --- | --- |
-| `--dry-run` | Print the plan without executing any action. |
-| `--quiet` | Auto-accept all actions (for scripted use). |
-| `--json` | Auto-accept all actions (JSON mode is non-interactive). |
-
-There is **no `--force` flag**. The only way to bypass prompts is `--quiet` or `--json`.
-
-**For contributors:** When adding a new command, classify it as RO or RW. RW commands must use the **Action Plan pattern** (`cmd/plan.go`): build a `Plan` of `Action`s, call `RunPlan()`, use `planResult.ExitCode()`. See [spec.md](spec.md) § Read/Write Separation and [dev.md](dev.md) § Adding new commands for the full contract.
+`--dry-run` prints the plan. `--quiet` and `--json` accept every action. There is no `--force`.
 
 ---
 
 ## Exit Codes
 
-Scripts can branch on these without parsing output:
-
 | Code | Meaning |
 | --- | --- |
-| `0` | Success — no issues |
-| `1` | Error — bad input, crash, permission denied |
-| `2` | Violations found — workspace is not clean |
-| `3` | Partial success — some items succeeded, some failed |
+| `0` | Success, including "nothing to do" |
+| `1` | Error: bad input, missing workspace, permission denied |
+| `3` | Partial: some actions succeeded, some failed |
+| `130` | A prompt was cancelled with Ctrl-C |
+
+Listing problems is not an error: `ws <noun> ls` and `ws ignore lint` exit 0.
 
 ---
 
 ## Global Flags
 
 ```text
---workspace, -w   Path to workspace root     (default: $WS_WORKSPACE or ~/Workspace)
---config, -c      Path to config file        (default: ~/.config/ws-tool/config.json)
---quiet, -q       Errors only
+--workspace, -w   Workspace root       (default: $WS_WORKSPACE, then ~/Workspace)
+--config, -c      State file           (default: $WS_CONFIG, then <workspace>/ws.json)
+--quiet, -q       Errors only; accept every action
 --verbose         Show internal decisions
 --json            Machine-readable output
---dry-run         Preview actions, no changes
---no-color        Disable colors and Unicode (also: NO_COLOR env var)
+--dry-run         Preview actions, change nothing
+--no-color        No colors or Unicode (also: NO_COLOR)
 ```
 
 ### Environment Variables
 
 | Variable | Description |
 | --- | --- |
-| `WS_WORKSPACE` | Override the default workspace path (`~/Workspace`). The `--workspace` flag takes precedence. |
-| `NO_COLOR` | Disable colors and Unicode icons (see [no-color.org](https://no-color.org)). |
+| `WS_WORKSPACE` | Workspace root (`--workspace` wins) |
+| `WS_CONFIG` | State file (`--config` wins) |
+| `NO_COLOR` | No colors or icons ([no-color.org](https://no-color.org)) |
+| `WS_NO_MOUSE`, `WS_NO_EMOJI` | TUI: leave the mouse to the terminal; no emoji |
 
 ---
 
@@ -355,48 +355,45 @@ Scripts can branch on these without parsing output:
 
 ```text
 ~/Workspace/
-├── .megaignore                  # sync firewall (MEGA ignore rules)
-├── ws/                          # ws metadata (always synced)
-│   ├── config.json              # your settings (edit by hand)
-│   ├── manifest.json            # ws-managed registry (don't hand-edit)
-│   ├── dotfiles/                # dotfile originals (symlinked from system paths)
-│   │   ├── bashrc
-│   │   ├── ssh/
-│   │   ├── kubeconfig
-│   │   └── ...
-│   ├── dotfiles-git/            # optional git repo for dotfile backup
-│   ├── ws-log/                  # recorded terminal sessions
-│   │   └── <tag>/
-│   │       ├── stdin.log
-│   │       └── stdout.log
-│   └── ws-log-index.md          # session index/summary
-├── Artifacts/                   # presentations, certs, documents
-├── Experiments/                 # scripts, side projects, investigations
-├── Notes/                       # daily notes, second brain, knowledge base
-└── Data/                        # API collections, app data, datasets
+├── ws.json              # ws state (synced)
+├── .megaignore          # generated sync rules
+├── notes/  experiments/  artifacts/  references/  archive/
+├── scripts/lib/
+├── agent/skills/
+├── configs/
+│   ├── dotfiles/        # dotfile originals; also the backup git repo
+│   └── crontab          # declared cron jobs (ws cron apply)
+├── secrets/
+│   ├── dotfiles/        # dotfile originals that look like secrets
+│   └── pass/
+└── data/
+    └── ws-log/          # recorded sessions
 ```
+
+Machine-local state (cron run state, trash integration) lives in `~/.local/state/ws-tool/`,
+scratch directories in `~/Scratch`, and the trash in `~/.local/share/Trash`. None of these
+sync.
 
 ---
 
 ## Restore a Machine in 5 Minutes
 
-The whole point. You lost your laptop (or got a new one). Here's the play:
+You lost your laptop, or got a new one:
 
-1. **Install MEGA** → sign in → sync `~/Workspace`
-2. **Install `ws`** → copy the binary to `/usr/local/bin/`
-3. **Initialize** (if not already synced):
-
-```bash
-ws init
-```
-
-4. **Run the wizard:**
+1. **Install MEGA**, sign in, and sync `~/Workspace`.
+2. **Install `ws`**: copy the binary to `/usr/local/bin/`.
+3. **Put it back together:**
 
 ```bash
-ws restore
+ws init              # adds anything missing, including ws.json keys; keeps your values
+ws dotfile link      # every dotfile link
+ws trash enable      # soft-delete for rm, VS Code, the file explorer
+ws credential enable # git reads tokens from pass
+ws cron apply        # your declared cron jobs
 ```
 
-It walks you through: trash setup → dotfile symlinks → scan → fix. Your SSH keys, bash config, Kubernetes context, VS Code settings — all back where they belong.
+Your SSH config, bash setup, Kubernetes context and VS Code settings are back where they
+belong.
 
 ---
 
@@ -426,8 +423,10 @@ missing:
 
 | Document | What's in it |
 | --- | --- |
-| [spec.md](spec.md) | The authoritative spec — design decisions, full CLI reference, output examples, config schemas |
-| [PHILOSOPHY.md](PHILOSOPHY.md) | The Workspace Factors — a nine-factor methodology for workspace management |
+| [spec.md](spec.md) | The authoritative spec: the command grammar, every command, the TUI, the state file |
+| [dev.md](dev.md) | Building, testing, and the rules for adding commands and TUI screens |
+| [PHILOSOPHY.md](PHILOSOPHY.md) | The Workspace Factors, a methodology for workspace management |
+| [docs/adr/](docs/adr/) | Architecture decisions |
 
 ---
 

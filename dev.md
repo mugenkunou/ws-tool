@@ -412,6 +412,25 @@ Every push to `main` and every PR triggers `.github/workflows/ci.yml`, which run
 
 ## 9) Adding new commands
 
+### Naming: the command grammar
+
+Every command is `ws <noun> <verb> [targets…]`. spec.md Part 3 has the rules, the nouns,
+the closed verb glossary (§3.3), and every command (§3.4). Before you add or rename one:
+
+1. **Use a glossary verb with exactly its meaning**, or a domain word its users already
+   know (git's `fetch`, the trash's `restore`). If neither fits, extend the glossary in
+   spec.md in the same change, and say why in the commit.
+2. **No umbrella verbs:** never `scan`, `fix`, `reset`, `setup`, `manage`, `do`. Name what
+   changes.
+3. **`ls` lists the noun's rows** (its TUI screen, its `fields.go`). Listing is not a
+   verdict: it exits 0.
+4. **Targets are arguments.** No targets means every row, unless the command needs one.
+5. **Renames keep the old name as a hidden alias**, kept in the alias table in `cmd/`. A
+   hidden alias is absent from help and completion. It prints the rename hint on stderr
+   when a person types it, and stays silent when called as plumbing.
+6. **Give the command a TUI home in the same change:** a screen key named after the verb,
+   or a `:` command (spec.md §6.5), plus its entry in `internal/tui/app/coverage.go`.
+
 ### RO vs RW classification
 
 Every command is either **read-only (RO)** or **read-write (RW)**. If it writes to disk, config, manifest, or system state → RW.
@@ -423,7 +442,13 @@ Every command is either **read-only (RO)** or **read-write (RW)**. If it writes 
 
 Some RW commands are exempt from the Plan → Confirm → Execute pattern because their writes are non-destructive and time-sensitive. These commands append-only and never modify existing data:
 
-- `ws log stop` — stops a recording session. No meaningful "undo" to confirm.
+- `ws session record`: hands the terminal to a recorded shell, and leaving the shell ends it.
+- `ws session stop`: stops a recording. There is nothing meaningful to confirm.
+- `ws repo fetch` and `ws repo ls --fetch`: they change only remote-tracking refs, never a
+  branch or the working tree.
+- `ws cron run`: crontab lines call it, so the command is the confirmation.
+- The `edit` commands (`dotfile edit`, `ignore edit`, `config edit`): the editor is the
+  confirmation, and `ignore edit` and `config edit` validate before saving.
 
 New exemptions require strong justification in the spec. Default is always to use the Action Plan pattern.
 
@@ -474,10 +499,10 @@ One Action per independently meaningful mutation. Ask: "would a user ever want t
 
 | Command type | Granularity |
 |---|---|
-| Per-file operations (init, dotfile add) | One action per file |
-| Fleet operations (repo pull/push/run) | One action per repo |
-| Cleanup operations (log prune) | One action per item removed |
-| Single-mutation commands (log start) | One action total |
+| Per-file operations (init, dotfile add, dotfile unlink) | One action per file |
+| Fleet operations (repo fetch/pull/push/save/run) | One action per repo |
+| Cleanup operations (session prune, trash prune) | One action per item removed |
+| Single-mutation commands (repo root add) | One action total |
 
 ### Prompt vocabulary
 
@@ -503,45 +528,39 @@ TMPDIR=$HOME/tmp go test ./internal/cron/... ./cmd/... -run TestCron -v -count=1
 
 ### Smoke-test the CLI
 
+Use a throwaway crontab: `export WS_CRONTAB_FILE=$HOME/tmp/crontab.test`. Never test
+against your real crontab.
+
 ```bash
-# 1. List all built-in jobs and presets
+# 1. Jobs and presets, with schedule, installed, last run, exit code, next run
 ws cron ls
 
-# 2. Preview what "add" would do — dry-run writes nothing
+# 2. Preview an install (writes nothing)
 ws cron add mega-sync --dry-run
 
-# 3. Actually install a job (writes script + crontab entry)
+# 3. Install a job (a `ws cron run <job>` line plus an @reboot line, in a ws block)
 ws cron add mega-sync
 
-# 4. Confirm the entry is in your crontab
-crontab -l | grep -A5 "ws:mega-sync"
-
-# 5. Check job status (last run, next estimated run)
-ws cron status mega-sync
-
-# 6. View recent log lines for the job
+# 4. Run it now, then read its output
+ws cron run mega-sync
 ws cron log mega-sync
 
-# 7. Install a whole preset at once
-ws cron add sync --dry-run   # preview
-ws cron add sync             # install mega-sync + dotfile-sync + repo-sync
+# 5. Presets
+ws cron add sync --dry-run   # mega-sync + dotfile-backup + pass-backup
 
-# 8. Remove a single job
+# 6. Uninstall
 ws cron rm mega-sync
-
-# 9. Remove a preset (removes all jobs in it)
-ws cron rm sync
 ```
 
 ### What to verify
 
 | Check | Expected |
 | --- | --- |
-| `ws cron ls` | Table with 7 jobs; installed column shows `yes`/`no` |
-| `ws cron add <job> --dry-run` | Prints plan with two actions (write script, install crontab); crontab unchanged |
-| `ws cron add <job>` | Script written to `~/.local/share/ws/cron/<job>.sh`; two crontab lines added (schedule + `@reboot`) |
-| `ws cron status` | Shows "no managed jobs installed" when none are installed |
-| `ws cron rm <job>` | Crontab block removed; script file deleted |
+| `ws cron ls` | the built-in jobs (mega-sync, dotfile-backup, pass-backup, session-prune) and presets; `installed` is yes/no |
+| `ws cron add <job> --dry-run` | the plan; the crontab is unchanged |
+| `ws cron add <job>` | a `# >>> ws` block with the schedule line and the `@reboot` line, and `configs/crontab` updated to match |
+| `ws cron run dotfile-sync` | still runs (old job name, from existing crontab lines), silently |
+| `ws cron rm <job>` | the block is gone from the crontab and from `configs/crontab` |
 
 ---
 
@@ -560,9 +579,9 @@ ws cron rm sync
   - Run `make fmt` before commit.
 - **Credential helper points to wrong binary after tests**
   - This should no longer happen — `TestMain` isolates `GIT_CONFIG_GLOBAL`.
-  - If it does happen: `ws git-credential-helper setup` (from `/usr/local/bin/ws`).
-  - Never run `./ws git-credential-helper setup` — it points the config at the
-    repo-local dev binary instead of the system-installed one.
+  - If it does happen: `ws credential enable` (from the installed `ws`).
+  - Never run `./ws credential enable`: it points git at the repo-local dev binary
+    instead of the installed one.
 
 ---
 
@@ -598,7 +617,7 @@ The completion system (`cmd/complete.go`) is a **derived artifact** of the comma
 
 5. **`completionCtx` must carry data for every dynamic completion.** When a new `resolve` function needs workspace state (repo list, tag list, etc.), add the field to `completionCtx` and load it in `loadCompletionCtx`. Do not inline filesystem calls inside resolvers — the context loader is the single best-effort loading point.
 
-**Enforcement:** There is no automated check yet. The developer adding or renaming a command is responsible. When in doubt, run `ws completions install && exec bash` and test every subcommand + flag with Tab.
+**Enforcement:** `TestCompletersOfferEverySubcommand` checks that completion offers every subcommand the help lists, and that it never offers a hidden alias. Flags are still checked by hand: run `ws completion enable && exec bash` and tab through every subcommand and flag you touched.
 
 ### 12.2) Path display and input: absolute out, cwd-relative in
 
@@ -615,7 +634,7 @@ The authoritative rule is **Path Rules** in `spec.md`. This section is the contr
 
 1. **One helper.** Render every path through `style.AbsPath(workspace, p)`. It joins relative paths onto the workspace and runs `filepath.Clean`. It does not resolve symlinks and does not tilde-shorten. Call sites never format paths ad hoc.
 2. **One line per item.** Absolute paths are already `cd`-ready, so the old "short name + muted full path" two-line pattern is gone. Identifiers such as scratch names, log tags and cron job names may still appear. When the command acts on the file behind that name, print the file's absolute path too.
-3. **JSON is output too.** Path fields in `--json` data are absolute (envelope `schema: 2`). Internal structs may keep workspace-relative paths where rule matching needs them (ignore/secret violations, repo discovery). Convert at render/marshal time, never by changing what the matcher sees.
+3. **JSON is output too.** Path fields in `--json` data are absolute (envelope `schema: 3`). Internal structs may keep workspace-relative paths where rule matching needs them (ignore/secret violations, repo discovery). Convert at render/marshal time, never by changing what the matcher sees.
 4. **Not paths:** `.megaignore` rule patterns, config keys, git refs/URLs, and pass entry names (`git/<host>`). Print these verbatim.
 5. **Tree views** (`ws ignore tree`) print one absolute header. The rows beneath it are tree nodes, not paths.
 
@@ -624,21 +643,21 @@ The authoritative rule is **Path Rules** in `spec.md`. This section is the contr
 1. **No workspace-relative fallback for CLI input.** If a command today "tries cwd, then tries the workspace", delete the second branch.
 2. **Prefix filters match whole components.** `--path /ws/Da` must not match `/ws/Data`.
 3. **Round-trip test.** Any path copied from `ws` output must be accepted by any `ws` command, from any directory. Add a test when you touch a command that both prints and accepts paths.
-4. **Config values are different.** Relative paths in `config.json` resolve against `<workspace>`. When writing CLI input into config, resolve it with the input rule first. Then store it workspace-relative if it is inside the workspace, absolute otherwise.
+4. **Config values are different.** Relative paths in `ws.json` resolve against `<workspace>`. When writing CLI input into config, resolve it with the input rule first. Then store it workspace-relative if it is inside the workspace, absolute otherwise.
 
 ### 12.3) Positional targeting: fleet commands should support single-item operation
 
-Fleet commands (`ws repo sync`, `ws repo fetch`, `ws repo pull`) operate on all discovered repos by default. This is correct for the common case. But the user frequently wants to act on a single repo — especially after `ws repo scan` shows one repo that needs attention.
+Fleet commands (`ws repo fetch|pull|push|save|run`, `ws dotfile link`) operate on every row by default. But people often want to act on one, especially after `ws repo ls` shows the one repo that needs attention.
 
 **Rules:**
 
-1. **Fleet commands should accept an optional positional repo path** as a filter. It is resolved like any path argument (absolute, `~`, or relative to the cwd) and matched against discovered repos as an absolute path. Pasting the path from `ws repo scan` output always works. `ws repo sync Data/bruno` works only when run from the workspace root.
+1. **Every command that acts on rows accepts positional targets** (spec.md §3.1 rule 5). A path target is resolved like any path argument (absolute, `~`, or relative to the cwd), and matched as an absolute path. Pasting a path from `ws repo ls` output always works. `ws repo save data/bruno` works only when run from the workspace root.
 
-2. **Positional targeting and `--path` filtering are complementary, not redundant.** `--path` is a prefix filter (all repos under a directory, whole-component match). A positional arg is an exact match (one specific repo). Both can coexist.
+2. **Positional targets and `--path` are complementary.** `--path` is a prefix filter (every repo under a directory, matching whole components). A positional target is an exact match. Both can be used together.
 
-3. **Tab completion for positional repo args** must offer the absolute paths of discovered repos, including `ws/dotfiles` and the pass store. This is what makes the feature ergonomic: the user types `ws repo sync /home/user/Workspace/D<TAB>` and gets `/home/user/Workspace/Data/bruno`.
+3. **Tab completion for positional targets** offers the absolute paths of the rows (discovered repos, dotfile system paths), or their names (scratch, sessions, cron jobs, trash items). Typing `ws repo save /home/user/Workspace/d<TAB>` gives `/home/user/Workspace/data/bruno`.
 
-4. **This pattern may extend to other fleet-style commands** in the future (e.g. `ws dotfile fix <path>`). The same principle applies: if a command operates on a list and the user commonly wants to target one item, accept a positional filter.
+4. **The TUI passes its rows the same way.** A key acts on the marked rows, else on the cursor row or the filtered rows (by its scope, §13). The CLI command with those rows as targets does the same thing.
 
 ### 12.4) Global flag registration: every subcommand must parse global flags
 
@@ -650,6 +669,23 @@ Global flags (`--json`, `--quiet`, `--verbose`, `--no-color`, `--dry-run`) are p
 
 A stale entry in `commandFlags()` or `completers` is not harmless dead code — it is a user-facing lie. The shell will suggest a flag or subcommand that does not exist, or fail to suggest one that does. Treat stale completion entries with the same severity as a broken command handler.
 
+### 12.6) One grammar: help, completion, aliases
+
+The grammar (spec.md Part 3, and §9 above) is enforced by tests, not review:
+
+1. **Every subcommand has its own help.** `ws <noun> <verb> --help` prints that command's
+   usage, arguments, own flags, and (for `ls`) its field names. `ws <noun> --help` lists the
+   verbs with one line each. A group help that only prints `<a|b|c>` is a bug.
+2. **Help, completion, the alias table and the TUI coverage table agree.** Tests read the
+   help's verbs and check: each verb is in the glossary; completion offers exactly those
+   verbs; no hidden alias appears in help or completion; every verb has a coverage entry.
+3. **Hidden aliases are data, in one table.** Each entry maps an old command line prefix to
+   the new one, and is marked as either *typed* (it prints the rename hint) or *plumbing*
+   (silent: crontab lines, git, shell hooks). A test runs every alias and checks it reaches
+   the same handler as its target.
+4. **JSON command names are `<noun>.<verb>`** (`dotfile.backup.push`), and they match the
+   command the user typed after alias resolution.
+
 ---
 
 ## 13) TUI (`ws tui`)
@@ -657,7 +693,7 @@ A stale entry in `commandFlags()` or `completers` is not harmless dead code — 
 The TUI is the long-term front end. It and the CLI call the same `internal/`
 packages. Logic both need lives in `internal/`, not `cmd/`, so they cannot
 drift — e.g. `workspace.ResolvePaths`, `repo.DescribeSync`,
-`dotfile.AutoSync`, `secret.ResolveGitToken` and the `secret fix` mutations,
+`dotfile.AutoSync`, `secret.ResolveGitToken` and the `secret allow|store` mutations,
 `cron.AddActions`/`RemoveActions`, `trash.Record*Provisions`, and the Action
 Plan types in `internal/plan`.
 
@@ -671,13 +707,14 @@ Built on Charm v2: `charm.land/bubbletea/v2`, `charm.land/bubbles/v2`,
 | `internal/tui/app` | Root model. Owns screens, routes messages, handles global keys, lays out header / body / notice / footer, shows the setup screen when the workspace is not initialized. |
 | `internal/tui/nav` | Contract between app and screens: `Screen` enum, `Component` interface, `ResizeMsg`, `UpMsg`, `GotoMsg`, `RefreshMsg`, `ReloadEnvMsg`, `NoticeMsg`. |
 | `internal/tui/keys` | **Every key binding** (`keys.go`). App handles `Global`; each screen and dialog handles its own map. |
-| `internal/tui/screens/<name>` | One package per screen: dashboard, repos, dotfiles, scratch, logs, ignore, secrets, cron, trash, setup. Unexported state; outputs are exported `LoadedMsg` types. |
+| `internal/tui/screens/<name>` | One package per screen: dashboard, repos, dotfiles, scratch, sessions, ignore, secrets, cron, trash, setup. Unexported state; outputs are exported `LoadedMsg` types. |
+| `internal/tui/cmdbar` | The `:` command bar: a one-line input drawn in place of the footer, with inline completion from the active screen's commands, the screen names, and the global commands. It emits `nav.CommandMsg`. |
 | `internal/tui/confirm` | The Action Plan checklist: review (toggle) → running (one `tea.Cmd` per action) → done. Emits `DoneMsg{Result}`. |
 | `internal/tui/prompt`, `choose` | Text input with ghost-panel suggestions (fixed list or async `Completer`); single-choice list. |
 | `internal/tui/modal` | Holds a screen's one open dialog, tagged with a typed step; `Match` routes the dialog's result back. |
 | `internal/tui/handover` | Suspends the TUI to give a program the terminal (`Run`), launches GUI programs (`Launch`), runs CLI wizards (`WS` + `Pause`/`Paged`), opens editors (`Editor`). |
 | `internal/tui/selection`, `clip` | Mouse drag selection over the rendered frame; clipboard copy (OSC 52 + native tool). |
-| `internal/tui/reslist` | The list every list screen is: a `listview` over typed items described by a `resource.Schema`, with filter (`/`), sort (`>` `<`), k9s-style marks (space, `ctrl+space` range, `ctrl+\` clear, `A` all/none), and an all-fields pane (`i`) built in. Screens declare their actions with a `Scope`; `reslist.Run` hands each one its rows. |
+| `internal/tui/reslist` | The list every list screen is: a `listview` over typed items described by a `resource.Schema`, with filter (`/`), sort (`>` `<`), k9s-style marks (space, `ctrl+space` range, `ctrl+\` clear, `ctrl+a` all/none), describe (`d`), the row as JSON (`y`), and a status line reserved at the bottom built in. Screens declare their actions with a `Scope`, and their `:` commands. `reslist.Run` hands each one its rows. |
 | `internal/tui/listview`, `layout`, `theme`, `format`, `complete` | Load-state-aware table; column sizing from width; lipgloss styles (16-color, matches `internal/style`); cell formatting; path completion. |
 | `internal/tui/env` | Workspace context resolved at startup (paths, config, dirs). Reloaded via `nav.ReloadEnvMsg` after init/reset. |
 | `internal/tui/tuitest` | Snapshot (golden file) and fits-in-terminal assertions. |
@@ -702,31 +739,48 @@ See docs/adr/0001-tui-list-screens-from-shared-resource-descriptions.md.
 
 | Scope | Rows | Use for |
 | --- | --- | --- |
-| `Global` | none | add, new, setup, wizards |
-| `Cursor` | the cursor row | open, view, a prompt about one row |
-| `Selected` | marked rows, else the cursor row | remove, delete, tag, exclude |
-| `All` | marked rows, else every row shown (filtered) | fetch, pull, run, fix, reset, empty, purge |
+| `Global` | none | `a` add/new, wizards, prompts not about a row, prune (all rows, like the CLI) |
+| `Cursor` | the cursor row | `enter`, `e`, a prompt about one row (`m` on Secrets, `s` store) |
+| `Selected` | marked rows, else the cursor row | `ctrl+d`, `t` tag, `i` ignore, `m` mute, `a` allow, `r` restore |
+| `All` | marked rows, else every row shown (filtered) | fetch, pull, save, run, link |
 
 An `All` action that receives every row may use the whole-subsystem
-operation (`dotfile.Reset`, `trash.Empty`); otherwise it acts on just the
-rows. The status line names the keys that will act on the marks or filter.
+operation (`dotfile.Reset` for `unlink --all`, `trash.Empty`); otherwise it
+acts on just the rows. The status line names the keys that will act on the
+marks or the filter, with their labels.
+
+**`:` commands are actions too.** Each screen declares its `commands` (the CLI
+words after the noun, such as `backup push` or `root rm`), each with a scope and a
+`Do` that also receives the typed arguments. The command bar completes from
+them, and `?` lists them. A key and a command for the same verb share one `Do`.
 
 Parity is tested, not reviewed:
 
-- `cmd` `TestCLICoverage`: every CLI subcommand (read from its help's
-  `Usage`) has an entry in `internal/tui/app/coverage.go` — a TUI key, the
-  screen's list, or a stated reason it is CLI-only. A new command fails
-  until that is decided.
-- `app` `TestCoverageKeysExist`: each entry's key is one its screen offers.
+- `cmd` `TestCLICoverage`: every CLI subcommand (read from its help) has an
+  entry in `internal/tui/app/coverage.go`: a screen key, a `:` command, the
+  screen's list, or a stated reason it is CLI-only. A new command fails until
+  that is decided.
+- `app` `TestCoverageKeysExist`: each entry's key or `:` command is one its
+  screen offers.
 - `app` `TestListScreensShareListKeys`: every list screen is a `reslist`, and
-  none binds the shared list keys (`/ > < space A i`) to its own actions.
+  none binds the global keys (`enter esc : / ? q ctrl+r d y e a ctrl+d space
+  ctrl+space ctrl+\ ctrl+a > <` and movement) to another verb. Secrets' `a`
+  allow is the one listed exception.
+- `app` `TestNoShiftLetterActions`: no binding on any screen or dialog uses an
+  uppercase letter, except `G` for movement.
+- `app` `TestNoKeyTwiceOnAScreen`: no key appears in two bindings of one
+  screen, movement included. That catches a `g` push hiding `g` top.
 - `app` `TestEveryListKeyDeclaresItsRows`: every key on a list screen
   (except movement, back, refresh) is declared with a scope.
-- `app` `TestFooterShowsMarkKeys`: list footers show the mark keys when
-  there is room; the global keys (`? help`, `q quit`) are never truncated —
-  only the screen's own part of the footer is cut, with an ellipsis.
+- `app` `TestMarkingMovesNoRow`: marking, filtering and sorting never change
+  the screen line a row is drawn on, because the status line is always
+  reserved.
+- `app` `TestFooterFits`: at 100×30, every screen's footer shows all of its
+  own keys without an ellipsis, and the global part is never cut.
+- `app` `TestNoKeyNamesInText`: no string literal outside `keys.go` names a
+  key ("press G"). Messages take the key from the binding's help.
 - `cmd` `TestCompletersOfferEverySubcommand`: shell completion offers every
-  subcommand the help lists.
+  subcommand the help lists, and no hidden alias.
 
 ### Rules
 
@@ -744,41 +798,58 @@ summarizes the others (it observes their `LoadedMsg`).
 
 **Write actions.** Every mutation goes through a `plan.Plan` shown in the
 `confirm` checklist — one action per independently meaningful mutation
-(§9). Pre-check what the CLI would do by default (`WithChecked`); start
-destructive plans (reset) unchecked. After `DoneMsg`, notify with
-`confirm.Summary` and reload.
+(§9). Pre-check what the CLI would do by default (`WithChecked`), and start
+destructive plans (`dotfile unlink --all`, `trash empty`) unchecked. A choice
+ws must not make for the user (rebase or merge for a diverged repo) is asked
+in a `choose` dialog before the checklist, never guessed and never a second
+key. After `DoneMsg`, notify with `confirm.Summary` and reload.
 
 **Dialogs.** A screen keeps one `modal.Model`. Open a dialog with a typed
 `step` constant; in `Update`, first `if st, ok := m.modal.Match(msg)` to
 handle results, then forward to the modal while `Open()`. Results carry the
 dialog's ID, so stale results are ignored.
 
-**Handover.** Interactive programs (`ws log start`'s recorded shell,
+**Handover.** Interactive programs (`ws session record`'s recorded shell,
 terminal editors) and the CLI's multi-step wizards run via `handover`, with a
 typed tag so the owning screen refreshes on `handover.DoneMsg`. Handed to the
-CLI today: `init`, `restore`, `dotfile git setup`, `dotfile migrate`,
-`secret setup`, `git-credential-helper setup|status|disconnect`,
-`ignore tree|ls|edit`, `config view`, `log start`.
+CLI: `init` (setup screen), `repo configure`, `dotfile backup enable`, `pass init`,
+`pass backup enable`, `credential enable|disable`. Paged: `ignore tree`,
+`credential status`, `config show`. sudo dotfile actions run in the terminal. Editors: `ignore
+edit`, `dotfile edit`, `config edit`. Everything else is native (spec.md §6.8).
 
-**Key grammar** (identical on every screen; documented in `keys.go`):
-←→↑↓/hjkl move within the page (lists use ↑↓, grids all four) · enter is the
-only key that opens/drills in · esc goes up one level · tab/shift+tab switch
-screens (also `]` `[`, and 1–9) · r reloads · ? help · q
-quit. Global bindings never take arrows, hjkl, enter, esc or space —
-`TestGlobalKeysLeavePageKeysAlone` enforces it. The tab bar shows each jump
-key as a faint superscript (`Repos²`).
+**Key grammar** (spec.md §6.3 and §6.5; every binding is declared in `keys.go`):
+
+- **Global keys** mean the same on every screen: `enter` open · `esc` up one level ·
+  `:` command bar · `/` filter · `?` help · `q`/`ctrl+c` quit · `tab`/`shift+tab`, `]`/`[`,
+  `1`–`9` screens · `ctrl+r` refresh · `d` describe · `y` JSON · `e` edit · `a` add/new ·
+  `ctrl+d` delete/remove (always through the checklist) · `space`/`ctrl+space`/`ctrl+\`/`ctrl+a`
+  marks · `>`/`<` sort · `↑↓ j k g G pgup pgdn ctrl+b ctrl+f` movement.
+- **Screen keys** are lowercase and mnemonic: usually the first letter of the verb the
+  footer shows (`f` fetch, `i` ignore, `b` back up). A letter keeps one meaning on a
+  screen, but may mean different verbs on different screens (`r`: run, record, restore).
+- **No shift+letter actions** (only `G`, for movement). **No second key for a variant**: ask
+  in a chooser (rebase or merge) or use a `:` command.
+- **Rare actions and wizards are `:` commands**, never letters.
+- **Text never names a key.** Empty states, notices and help take the key from the
+  binding (`k.Add.Help().Key`), so a remap can't leave a stale "press G" behind.
+- Global bindings never take arrows, hjkl, enter, esc or space:
+  `TestGlobalKeysLeavePageKeysAlone` enforces it. The tab bar shows each jump key as a
+  faint superscript (`Repos²`).
+
+**Layout never shifts.** A list's status line (filter input, filter summary, sort,
+marks) is always reserved at the bottom of the list's area, so typing a filter or marking
+a row moves no row. The command bar replaces the footer line while it is open, and
+toasts draw over the footer's last line.
 
 **Dashboard.** The workspace's home. A "Needs attention" list (errors, then
 warnings, then info; ↑↓) above an overview grid with one card per area (all
 four arrows; ↑ from the top row returns to the list). It derives everything
-from other screens' `LoadedMsg`. To act on another screen it sends that
-screen's exported messages alongside `nav.Goto`: `Select*Msg` positions the
-screen at the problem (enter); `Request*Msg` opens the screen's own checklist
-(the `x` quick fix). Workspace-wide operations live here: `c` config view,
-`O` restore wizard (both handed to the CLI), `R` reset (checklist, then
-`nav.ReloadEnvMsg`). Add an attention item by extending the area's
-derivation function in `screens/dashboard` and, if it needs one, a request
-message in the target screen.
+from other screens' `LoadedMsg`. It has no actions of its own: `enter` on a
+problem sends the target screen a `Focus*Msg` carrying a filter expression
+(Dotfiles: `status!=ok`) or a row to select, alongside `nav.Goto`, and the user
+acts there with that screen's key. Add an attention item by extending the
+area's derivation function in `screens/dashboard`, with the filter that shows
+exactly its rows.
 
 **Mouse.** The app captures the mouse (cell-motion mode) so a drag selects
 text and release copies it: `selection` extracts the dragged cells from the
@@ -798,10 +869,16 @@ exact. Animations read `nav.FrameMsg`, which the app broadcasts every 150 ms;
 never read the clock in `View` — use `env.Now()` in `Update`.
 
 **Navigation.** Screens are `nav.Screen` constants, never strings. `esc`
-always moves one level up: a dialog closes first; a screen with nested levels
-(repos list → detail) handles esc itself; at its top level it returns
-`nav.Up` and the app goes to the dashboard. At the dashboard, esc does
-nothing (`q` / `ctrl+c` quit).
+always moves one level up: a dialog closes first, then an active filter is
+cleared, then the marks. A screen with nested levels (repos list → detail)
+handles esc itself. At its top level it returns `nav.Up`, and the app goes to
+the dashboard. At the dashboard, esc does nothing (`q` / `ctrl+c` quit).
+
+**Command bar.** `:` is a global key handled by the app. The bar resolves `:<screen>`
+(a unique prefix of the noun or the title), `:<noun> <verb…>` (switch, then run), and
+`:<verb…>` (the active screen's command). It sends the screen a `nav.CommandMsg{Words,
+Args}`, and the screen runs the matching command through `reslist.Run`, so its rows
+and scope rules are the same as for keys.
 
 **Layout.** No absolute coordinates. The app sends each screen a
 `nav.ResizeMsg` with the body's size on every resize; screens and dialogs

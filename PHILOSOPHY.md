@@ -29,7 +29,7 @@ Inspired by the [Twelve-Factor App](https://12factor.net) methodology.
 
 Config files represent **accumulated state**: SSH proxy jump rules that took a week to figure out, Docker daemon settings tuned for a specific network, Kubernetes cluster configs with custom contexts. Small in size. Enormous in reconstruction cost. Every config gets synced. No exceptions for "I haven't used this in months." The cost of syncing a 2 KB file is zero. The cost of recreating it from memory is unbounded.
 
-The `~/Workspace` avoids the "scattered files" problem: `~/.ssh/config` in one place, `~/.bashrc` in another, screenshots in `~/Pictures/`, scripts in `/tmp/`. All consolidated into one tree that syncs as a unit. Dotfiles are managed under `ws/dotfiles/` with symlinks pointing from system paths back in. It holds every config, script, note, artifact, and reference you care about.
+The `~/Workspace` avoids the "scattered files" problem: `~/.ssh/config` in one place, `~/.bashrc` in another, screenshots in `~/Pictures/`, scripts in `/tmp/`. All consolidated into one tree that syncs as a unit. Dotfiles are managed under `configs/dotfiles/` with symlinks pointing from system paths back in. It holds every config, script, note, artifact, and reference you care about.
 
 The directory is structured in a way a fresh Linux machine can be restored to working state with minimal steps. It is designed for the day you lose everything.
 
@@ -72,7 +72,7 @@ Search tools — `grep`, Obsidian search, IDE find-in-files, even `find -name` �
 
 *The real file lives in the sync folder. Anywhere else gets a pointer.*
 
-Config files that the OS expects at specific paths (`~/.ssh/config`, `~/.bashrc`, `/etc/docker/daemon.json`) have their **originals** stored inside `~/Workspace/ws/dotfiles/`. The system paths are symlinks pointing back in. The `ws dotfile add` command handles this: it moves the original into `ws/dotfiles/` and replaces the system path with a symlink.
+Config files that the OS expects at specific paths (`~/.ssh/config`, `~/.bashrc`, `/etc/docker/daemon.json`) have their **originals** stored inside `~/Workspace/configs/dotfiles/` (or `secrets/dotfiles/` for secrets). The system paths are symlinks pointing back in. The `ws dotfile add` command handles this: it moves the original into the workspace and replaces the system path with a symlink.
 
 Never the reverse. Never store a symlink inside the sync directory. Why? If you keep the original at `~/.bashrc` and symlink it into sync, you're trusting a non-synced location as the source. One bad `apt upgrade` replaces the real file, and sync now points at a dangling link — or worse, a default-overwritten config.
 
@@ -80,35 +80,35 @@ Never the reverse. Never store a symlink inside the sync directory. Why? If you 
 
 Directory symlinks are seductive — one symlink captures everything — but they trade clarity for convenience. The user loses sight of what is tracked, secrets and machine-specific state get swept in silently, and a restore can clobber unrelated files in the same directory (e.g. `~/.kube/` might contain per-cluster tokens from another machine).
 
-`ws` mirrors the original path structure inside its state: `~/.ssh/config` becomes `ws/dotfiles/ssh/config`, `~/.config/Code/User/settings.json` becomes `ws/dotfiles/config/Code/User/settings.json`. The directory hierarchy is preserved and navigable. But every tracked path is an explicit, individual decision.
+`ws` mirrors the original path structure inside its state: `~/.ssh/config` becomes `configs/dotfiles/ssh/config`, `~/.config/Code/User/settings.json` becomes `configs/dotfiles/config/Code/User/settings.json`. The directory hierarchy is preserved and navigable. But every tracked path is an explicit, individual decision.
 
-Pointing `add` at a directory is a shortcut for "show me the files inside so I can choose" — not a shortcut for "track them all blindly". `ws` expands the directory, classifies each entry (config / likely state / secret), and asks which ones to track. The `ws dotfile migrate` command converts existing directory-level entries to file-level ones.
+Pointing `add` at a directory is a shortcut for "show me the files inside so I can choose" — not a shortcut for "track them all blindly". `ws` expands the directory, classifies each entry (config / likely state / secret), and asks which ones to track.
 
 **Secrets may be tracked.** Private keys and credential files sometimes need to follow you across machines. The tool warns once and trusts the user. Rotation and access control are the user's responsibility. What `ws` enforces is that pushing dotfiles to a remote always targets a **private** repository — never a public one.
 
 ```text
-┌─────────── ORIGINALS (in ~/Workspace/ws/dotfiles/) ────────────────────────┐
+┌─────────── ORIGINALS (in ~/Workspace/configs/dotfiles/) ───────────────────┐
 │                                                                            │
-│  ws/dotfiles/ssh/config      ws/dotfiles/bashrc                            │
-│  ws/dotfiles/ssh/known_hosts ws/dotfiles/gitconfig                         │
-│  ws/dotfiles/config/Code/User/settings.json                                │
+│  configs/dotfiles/ssh/config      configs/dotfiles/bashrc                  │
+│  configs/dotfiles/ssh/known_hosts configs/dotfiles/gitconfig               │
+│  configs/dotfiles/config/Code/User/settings.json                           │
 │                                                                            │
 └──────────────────────┬──────────────────────┬──────────────────────────────┘
                        │     SYMLINKS          │
                        ▼                       ▼
-          ~/.ssh/config                  ~/.bashrc → ws/dotfiles/bashrc
+          ~/.ssh/config                  ~/.bashrc → configs/dotfiles/bashrc
           ~/.ssh/known_hosts             ~/.gitconfig
           ~/.config/Code/User/settings.json
 ```
 
-⚠️ **Eyes open:** Any changes to the symlinked files affect the originals in sync. Version-control important configs to prevent accidental overwrites (enable `dotfile.git.enabled` in `ws/config.json`).
+⚠️ **Eyes open:** Any changes to the symlinked files affect the originals in sync. Version-control important configs to prevent accidental overwrites (`ws dotfile backup enable`).
 
 ⚠️ **Hard rule:** When dotfile Git versioning pushes to a remote, the remote **must** be a private repository. This is enforced by `ws`, not left to user discipline. Dotfiles contain secrets by nature — SSH proxy-jump configs, Kubernetes cluster credentials, API tokens embedded in shell profiles. Pushing these to a public repo is an irreversible leak. `ws` verifies repository visibility on connect and before every push. There is no override.
 
 ---
 
 
-⚠️ **Eyes open:** Any changes to the symlinks affects the original file in sync as well. Version control important configs to prevent accidental overwrites (enable `dotfile.git.enabled` in `ws/config.json`).
+⚠️ **Eyes open:** Any changes to the symlinks affects the original file in sync as well. Version control important configs to prevent accidental overwrites (`ws dotfile backup enable`).
 
 ⚠️ **Hard rule:** When dotfile Git versioning pushes to a remote, the remote **must** be a private repository. This is enforced by `ws`, not left to user discipline. Dotfiles contain secrets by nature — SSH private keys, proxy-jump configs, Kubernetes cluster credentials, API tokens embedded in shell profiles. Pushing these to a public repo is an irreversible leak. `ws` verifies repository visibility on connect and before every push. There is no override.
 
@@ -126,7 +126,7 @@ Use separation only when it gives real operational value (compliance export, han
 
 Decision rules:
 
-- **Default to top-level placement.** If you are unsure, place it in the nearest top-level domain (`Artifacts/`, `Experiments/`, `Notes/`, `Data/`). Dotfiles are managed separately under `ws/dotfiles/`.
+- **Default to top-level placement.** If you are unsure, place it in the nearest top-level domain (`Artifacts/`, `Experiments/`, `Notes/`, `Data/`). Dotfiles are managed separately under `configs/dotfiles/`.
 - **Delay taxonomy.** Create a new subfolder only after repeated pressure, not in anticipation.
 - **Optimize for future search, not present neatness.** A slightly messy flat tree is better than a perfectly nested tree nobody can navigate quickly.
 - **Separate only for real boundaries.** Compliance, access control, handoff packaging, or large-volume isolation are valid reasons; aesthetics alone is not.
@@ -336,7 +336,7 @@ Why per-action, not per-batch:
 - **Partial success.** If action 3 of 5 fails, actions 1–2 are already done and actions 4–5 still get offered. No all-or-nothing rollback needed.
 - **Muscle memory.** The `y/n/a/q` vocabulary is identical to `git add -p`, reducing cognitive load.
 
-Granularity rule: **one Action per independently meaningful mutation**. For `ws init`, that's one action per file created. For `ws repo pull`, one per repository. For `ws log prune`, one per session removed. The test is: "would a user ever want to say yes to this but no to the next?" If so, they're separate actions.
+Granularity rule: **one Action per independently meaningful mutation**. For `ws init`, that's one action per file created. For `ws repo pull`, one per repository. For `ws session prune`, one per session removed. The test is: "would a user ever want to say yes to this but no to the next?" If so, they're separate actions.
 
 ---
 
