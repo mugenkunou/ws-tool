@@ -8,17 +8,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mugenkunou/ws-tool/internal/resource"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/trash"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 var trashHelp = cmdHelp{
-	Usage: "ws trash <enable|setup|disable|empty|purge|rm|status>",
+	Usage: "ws trash <enable|setup|disable|ls|empty|purge|rm|status>",
 	Subcommands: []string{
 		"  enable   Configure soft-delete integrations",
 		"  setup    Alias for enable",
 		"  disable  Remove soft-delete integrations",
+		"  ls       List trashed items, newest first",
 		"  empty    Remove all entries from trash root",
 		"  purge    Permanently delete trash items older than N days (--older-than)",
 		"  rm       Permanently delete a single trash item by name",
@@ -31,6 +33,7 @@ var trashHelp = cmdHelp{
 		"      --no-file-explorer     Skip file explorer integration (default: false)",
 		"      --dry-run              Preview only (default: false)",
 	},
+	Flags: listFlagHelp("ls", trash.Schema(resource.CLIView()).Keys()),
 }
 
 func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -360,7 +363,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		itemName := fs.Args()[0]
 		// Reject path separators to prevent directory traversal.
 		if strings.ContainsAny(itemName, "/\\") {
-			fmt.Fprintln(stderr, "item name must not contain path separators; pass just the filename shown in `ws trash status`")
+			fmt.Fprintln(stderr, "item name must not contain path separators; pass just the name shown by `ws trash ls`")
 			return 1
 		}
 		resolvedRoot := *rootDir
@@ -392,6 +395,23 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 			fmt.Fprintln(out, style.ResultSuccess(nc, "Deleted %s from trash.", itemName))
 		}
 		return planResult.ExitCode()
+
+	case "ls":
+		fs := flag.NewFlagSet("trash-ls", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		rootDir := fs.String("root-dir", cfgTrashRoot, "trash root directory")
+		lf := registerListFlags(fs, "")
+		registerGlobalFlags(fs, &globals)
+		if err := fs.Parse(subArgs); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		items, err := trash.Items(*rootDir)
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+		return renderList(globals, "trash.ls", trash.Schema(resource.CLIView()), items, lf, "Trash is empty.", stdout, stderr)
 
 	case "status":
 		fs := flag.NewFlagSet("trash-status", flag.ContinueOnError)

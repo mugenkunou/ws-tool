@@ -1,6 +1,8 @@
 // Package repos is the git fleet screen: status of every discovered repo,
 // a per-repo detail level with hygiene findings, and fleet actions (fetch,
-// pull, sync, run, add root) confirmed through the plan checklist.
+// pull, sync, run, add root) confirmed through the plan checklist. Every key
+// is declared in actions with the rows it covers: fetch, pull, sync and run
+// cover the marked repos, else every repo the filter shows.
 //
 // Navigation levels: list → detail | output. esc in detail/output returns to
 // the list; esc in the list asks the app to go up. While a dialog is open
@@ -11,13 +13,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
+	"slices"
 	"strings"
 	"sync"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -28,21 +29,17 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/format"
-	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
-	"github.com/mugenkunou/ws-tool/internal/tui/layout"
-	"github.com/mugenkunou/ws-tool/internal/tui/listview"
 	"github.com/mugenkunou/ws-tool/internal/tui/modal"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/prompt"
+	"github.com/mugenkunou/ws-tool/internal/tui/reslist"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // Entry is one repo's status plus its hygiene findings.
-type Entry struct {
-	Status   repo.RepoStatus
-	Findings []repo.Finding
-}
+type Entry = repo.Entry
 
 // Summary aggregates fleet state for display.
 type Summary struct {
@@ -93,6 +90,7 @@ type syncPreparedMsg struct {
 	plans    []repo.SyncPlan
 	warnings []string
 	rebase   bool
+	only     map[string]bool // repo paths to cover, fixed when s was pressed; nil = all
 	err      error
 }
 
@@ -155,19 +153,20 @@ type Model struct {
 	keys       keys.ReposMap
 	detailKeys keys.DetailMap
 
-	list     listview.Model
+	list     reslist.Model[Entry]
 	detail   viewport.Model
 	level    level
 	activity activity
 	modal    modal.Model
 
-	entries     []Entry
 	summary     Summary
 	fetchErrors []string
-	selected    int // entry shown at levelDetail
+	selected    string // path of the entry shown at levelDetail
 
 	runCommand string
+	runRows    []Entry // the repos the run prompt is for
 	running    *runOutputs
+	fetching   int    // repos being fetched
 	output     string // rendered run output shown at levelOutput
 
 	gen    int // incremented per load; stale results are dropped
@@ -188,26 +187,27 @@ func New(e env.Env) Model {
 		detailKeys: dk,
 		detail:     vp,
 		activity:   activityScanning,
-		list: listview.New([]layout.Col{
-			{Title: "Repo", Min: 18, Weight: 3},
-			{Title: "State", Min: 11},
-			{Title: "↑", Min: 3},
-			{Title: "↓", Min: 3},
-			{Title: "Issues", Min: 6},
-			{Title: "Branch", Min: 10, Weight: 1},
-		}, theme.Icon("📦")+"No git repositories found. Press a to add a repo root."),
+		list: reslist.New(repo.Schema(e.View()), []reslist.Col[Entry]{
+			{Key: "path", Min: 18, Weight: 3},
+			{Key: "state", Min: 11, Style: func(e Entry, _ string) string { return stateLabel(e) }},
+			{Key: "ahead", Min: 3, Style: countCell},
+			{Key: "behind", Min: 3, Style: countCell},
+			{Key: "issues", Min: 6, Style: func(_ Entry, t string) string { return theme.Warn.Render(t) }},
+			{Key: "branch", Min: 10, Weight: 1},
+		}, theme.Icon("📦")+"No git repositories found. Press a to add a repo root.").Declare(reslist.Decls(actions)),
 	}
 }
 
 // Init starts the first scan.
-func (m Model) Init() tea.Cmd { return load(m.env, m.roots, m.gen, false) }
+func (m Model) Init() tea.Cmd { return load(m.env, m.roots, m.gen, nil) }
 
 func discover(e env.Env, roots []string) ([]repo.Repository, error) {
 	return repo.Discover(e.Paths.Workspace, roots, e.ExcludeDirs)
 }
 
-// load discovers and scans the fleet; with fetch it runs `git fetch` first.
-func load(e env.Env, roots []string, gen int, fetch bool) tea.Cmd {
+// load discovers and scans the fleet, first running `git fetch` in the repos
+// whose paths are in fetch (nil fetches none).
+func load(e env.Env, roots []string, gen int, fetch map[string]bool) tea.Cmd {
 	return func() tea.Msg {
 		repos, err := discover(e, roots)
 		if err != nil {
@@ -215,8 +215,14 @@ func load(e env.Env, roots []string, gen int, fetch bool) tea.Cmd {
 		}
 
 		var fetchErrors []string
-		if fetch {
-			for _, r := range repo.FetchAll(e.Paths.Workspace, repos) {
+		if fetch != nil {
+			var targets []repo.Repository
+			for _, r := range repos {
+				if fetch[r.Path] {
+					targets = append(targets, r)
+				}
+			}
+			for _, r := range repo.FetchAll(e.Paths.Workspace, targets) {
 				if !r.Success {
 					fetchErrors = append(fetchErrors, fmt.Sprintf("%s: %s", e.Rel(r.Path), r.Error))
 				}
@@ -234,19 +240,22 @@ func load(e env.Env, roots []string, gen int, fetch bool) tea.Cmd {
 }
 
 // prepareSync fetches (workspace repos only, as the CLI does), rescans, and
-// plans a sync per repo.
-func prepareSync(e env.Env, roots []string, gen int, rebase bool) tea.Cmd {
+// plans a sync per repo — only the repos in only, unless it is nil.
+func prepareSync(e env.Env, roots []string, gen int, rebase bool, only map[string]bool) tea.Cmd {
 	return func() tea.Msg {
 		repos, err := discover(e, roots)
 		if err != nil {
 			return syncPreparedMsg{gen: gen, err: err}
+		}
+		if only != nil {
+			repos = slices.DeleteFunc(repos, func(r repo.Repository) bool { return !only[r.Path] })
 		}
 		for _, r := range repos {
 			if repo.IsWithin(r.Path, e.Paths.Workspace) {
 				repo.FetchOne(e.Paths.Workspace, r)
 			}
 		}
-		msg := syncPreparedMsg{gen: gen, rebase: rebase}
+		msg := syncPreparedMsg{gen: gen, rebase: rebase, only: only}
 		for _, st := range repo.Scan(e.Paths.Workspace, repos) {
 			sp := repo.PlanSync(st)
 			if sp.Strategy == repo.SyncSkip {
@@ -261,19 +270,118 @@ func prepareSync(e env.Env, roots []string, gen int, rebase bool) tea.Cmd {
 	}
 }
 
-// startLoad begins a scan (or fetch+scan), superseding any in flight.
-func (m Model) startLoad(fetch bool) (Model, tea.Cmd) {
+// startLoad begins a scan, superseding any in flight. Repos whose paths are
+// in fetch are fetched first.
+func (m Model) startLoad(fetch map[string]bool) (Model, tea.Cmd) {
 	m.gen++
 	m.activity = activityScanning
-	if fetch {
-		m.activity = activityFetching
+	if fetch != nil {
+		m.activity, m.fetching = activityFetching, len(fetch)
 	}
 	m.list = m.list.SetLoading()
 	return m, load(m.env, m.roots, m.gen, fetch)
 }
 
+// actions is every repos key and the rows it acts on.
+var actions = func() []reslist.Action[Model, Entry] {
+	k := keys.Repos()
+	pull := func(rebase bool) func(Model, []Entry) (Model, tea.Cmd) {
+		return func(m Model, rows []Entry) (Model, tea.Cmd) {
+			if m.activity != activityIdle {
+				return m, nil
+			}
+			return m.openPull(rows, rebase), nil
+		}
+	}
+	sync := func(rebase bool) func(Model, []Entry) (Model, tea.Cmd) {
+		return func(m Model, rows []Entry) (Model, tea.Cmd) {
+			if m.activity != activityIdle {
+				return m, nil
+			}
+			m.gen++
+			m.activity = activityPreparingSync
+			return m, prepareSync(m.env, m.roots, m.gen, rebase, m.subset(rows))
+		}
+	}
+	return []reslist.Action[Model, Entry]{
+		{Key: k.Open, Scope: reslist.Cursor, Do: Model.openDetail},
+		{Key: k.Fetch, Scope: reslist.All, Do: func(m Model, rows []Entry) (Model, tea.Cmd) {
+			return m.startLoad(paths(rows))
+		}},
+		{Key: k.Pull, Scope: reslist.All, Do: pull(false)},
+		{Key: k.PullRebase, Scope: reslist.All, Do: pull(true)},
+		{Key: k.Sync, Scope: reslist.All, Do: sync(false)},
+		{Key: k.SyncRebase, Scope: reslist.All, Do: sync(true)},
+		{Key: k.Run, Scope: reslist.All, Do: Model.promptRun},
+		{Key: k.AddRoot, Scope: reslist.Global, Do: Model.promptAddRoot},
+	}
+}()
+
+func paths(rows []Entry) map[string]bool {
+	out := make(map[string]bool, len(rows))
+	for _, e := range rows {
+		out[e.Status.Path] = true
+	}
+	return out
+}
+
+// subset is rows as a path set, or nil when rows is every repo.
+func (m Model) subset(rows []Entry) map[string]bool {
+	if len(rows) == len(m.list.Items()) {
+		return nil
+	}
+	return paths(rows)
+}
+
+func (m Model) openDetail(rows []Entry) (Model, tea.Cmd) {
+	m.selected = rows[0].Status.Path
+	m.level = levelDetail
+	m = m.refreshDetail()
+	m.detail.GotoTop()
+	return m, nil
+}
+
+func (m Model) promptRun(rows []Entry) (Model, tea.Cmd) {
+	if m.activity != activityIdle {
+		return m, nil
+	}
+	m.runRows = rows
+	title := "Run a command in every repo"
+	if m.subset(rows) != nil {
+		title = "Run a command in " + format.Plural(len(rows), "repo")
+	}
+	var cmd tea.Cmd
+	m.modal, cmd = m.modal.Prompt(stepRunCommand, prompt.New(title,
+		prompt.WithHint("Runs with sh -c in each repo root. You can untick repos next."),
+		prompt.WithPlaceholder("git status --short"),
+		prompt.WithValue(m.runCommand)))
+	return m, cmd
+}
+
+func (m Model) promptAddRoot([]Entry) (Model, tea.Cmd) {
+	var cmd tea.Cmd
+	m.modal, cmd = m.modal.Prompt(stepAddRootPath, prompt.New("Add a repo discovery root",
+		prompt.WithHint(m.rootsHint()),
+		prompt.WithValue(m.env.Paths.Workspace+"/"),
+		prompt.WithCompleter(complete.Dirs)))
+	return m, cmd
+}
+
+// Declared lists the screen's actions and their scopes.
+func (m Model) Declared() []reslist.Decl { return m.list.Declared() }
+
 // CapturesKeys implements nav.Component.
-func (m Model) CapturesKeys() bool { return m.modal.Open() }
+func (m Model) CapturesKeys() bool { return m.modal.Open() || m.list.Editing() }
+
+// entry returns the entry for path.
+func (m Model) entry(path string) (Entry, bool) {
+	for _, e := range m.list.Items() {
+		if e.Status.Path == path {
+			return e, true
+		}
+	}
+	return Entry{}, false
+}
 
 // Update implements nav.Component.
 func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
@@ -291,7 +399,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		m.modal = m.modal.SetSize(msg.Width, msg.Height)
 		return m.refreshDetail(), nil
 	case nav.RefreshMsg:
-		return m.startLoad(false)
+		return m.startLoad(nil)
 	case LoadedMsg:
 		if msg.gen != m.gen {
 			return m, nil
@@ -301,20 +409,17 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 			m.list = m.list.SetError(msg.Err)
 			return m, nil
 		}
-		m.entries = msg.Entries
 		m.summary = msg.Summarize()
 		m.fetchErrors = msg.FetchErrors
-		m.list = m.list.SetRows(m.rows())
-		if m.selected >= len(m.entries) && m.level == levelDetail {
+		m.list = m.list.SetItems(msg.Entries)
+		if _, ok := m.entry(m.selected); !ok && m.level == levelDetail {
 			m.level = levelList
 		}
 		return m.refreshDetail(), nil
 	case SelectMsg:
-		for i, e := range m.entries {
-			if e.Status.Path == msg.Path {
-				m.level = levelList
-				m.list = m.list.SetCursor(i)
-			}
+		var found bool
+		if m.list, found = m.list.Select(func(e Entry) bool { return e.Status.Path == msg.Path }); found {
+			m.level = levelList
 		}
 		return m, nil
 	case RequestSyncMsg:
@@ -324,7 +429,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		m.level = levelList
 		m.gen++
 		m.activity = activityPreparingSync
-		return m, prepareSync(m.env, m.roots, m.gen, false)
+		return m, prepareSync(m.env, m.roots, m.gen, false, nil)
 	case syncPreparedMsg:
 		if msg.gen != m.gen {
 			return m, nil
@@ -353,51 +458,18 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 }
 
 func (m Model) updateList(msg tea.KeyPressMsg) (nav.Component, tea.Cmd) {
-	busy := m.activity != activityIdle
+	if l, cmd, ok := m.list.HandleKey(msg); ok {
+		m.list = l
+		return m, cmd
+	}
+	if next, cmd, ok := reslist.Run(m, m.list, actions, msg); ok {
+		return next, cmd
+	}
 	switch {
 	case key.Matches(msg, m.keys.Back):
 		return m, nav.Up
 	case key.Matches(msg, m.keys.Refresh):
-		return m.startLoad(false)
-	case key.Matches(msg, m.keys.Fetch):
-		return m.startLoad(true)
-	case key.Matches(msg, m.keys.Open):
-		if i := m.list.Cursor(); i >= 0 && i < len(m.entries) {
-			m.selected = i
-			m.level = levelDetail
-			m = m.refreshDetail()
-			m.detail.GotoTop()
-		}
-		return m, nil
-	case key.Matches(msg, m.keys.Pull), key.Matches(msg, m.keys.PullRebase):
-		if busy || len(m.entries) == 0 {
-			return m, nil
-		}
-		return m.openPull(key.Matches(msg, m.keys.PullRebase)), nil
-	case key.Matches(msg, m.keys.Sync), key.Matches(msg, m.keys.SyncRebase):
-		if busy {
-			return m, nil
-		}
-		m.gen++
-		m.activity = activityPreparingSync
-		return m, prepareSync(m.env, m.roots, m.gen, key.Matches(msg, m.keys.SyncRebase))
-	case key.Matches(msg, m.keys.Run):
-		if busy || len(m.entries) == 0 {
-			return m, nil
-		}
-		var cmd tea.Cmd
-		m.modal, cmd = m.modal.Prompt(stepRunCommand, prompt.New("Run a command in every repo",
-			prompt.WithHint("Runs with sh -c in each repo root. You can untick repos next."),
-			prompt.WithPlaceholder("git status --short"),
-			prompt.WithValue(m.runCommand)))
-		return m, cmd
-	case key.Matches(msg, m.keys.AddRoot):
-		var cmd tea.Cmd
-		m.modal, cmd = m.modal.Prompt(stepAddRootPath, prompt.New("Add a repo discovery root",
-			prompt.WithHint(m.rootsHint()),
-			prompt.WithValue(m.env.Paths.Workspace+"/"),
-			prompt.WithCompleter(complete.Dirs)))
-		return m, cmd
+		return m.startLoad(nil)
 	}
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
@@ -423,7 +495,7 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 			return m, nil
 		}
 		m.runCommand = r.Value
-		return m.openRun(r.Value), nil
+		return m.openRun(r.Value, m.runRows), nil
 	case stepAddRootPath:
 		r := msg.(prompt.ResultMsg)
 		if r.Cancelled {
@@ -439,6 +511,7 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 		}
 		return m, nil
 	}
+	m.list = m.list.ClearMarks() // the marks were for this action
 	level := nav.LevelSuccess
 	if done.Result.HasFailures() {
 		level = nav.LevelWarn
@@ -455,18 +528,18 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 		m.detail.SetContent(m.output)
 		m.detail.GotoTop()
 	}
-	m, load := m.startLoad(false)
+	m, load := m.startLoad(nil)
 	return m, tea.Batch(notice, load)
 }
 
-func (m Model) openPull(rebase bool) Model {
+func (m Model) openPull(rows []Entry, rebase bool) Model {
 	mode := "ff-only"
 	if rebase {
 		mode = "rebase"
 	}
 	ws := m.env.Paths.Workspace
 	p := plan.Plan{Command: "repo.pull"}
-	for _, e := range m.entries {
+	for _, e := range rows {
 		r := repo.Repository{Path: e.Status.Path}
 		p.Actions = append(p.Actions, plan.Action{
 			ID:          "pull-" + r.Path,
@@ -489,6 +562,9 @@ func (m Model) openSync(msg syncPreparedMsg) Model {
 	opts := repo.SyncOptions{Rebase: msg.rebase}
 	p := plan.Plan{Command: "repo.sync"}
 	for _, sp := range msg.plans {
+		if msg.only != nil && !msg.only[sp.Path] {
+			continue
+		}
 		p.Actions = append(p.Actions, plan.Action{
 			ID:          "sync-" + sp.Path,
 			Description: repo.DescribeSync(sp, m.env.Rel(sp.Path), msg.rebase),
@@ -512,12 +588,12 @@ func (m Model) openSync(msg syncPreparedMsg) Model {
 	return m
 }
 
-func (m Model) openRun(command string) Model {
+func (m Model) openRun(command string, rows []Entry) Model {
 	ws := m.env.Paths.Workspace
 	out := &runOutputs{out: map[string]string{}}
 	argv := []string{"sh", "-c", command}
 	p := plan.Plan{Command: "repo.run"}
-	for _, e := range m.entries {
+	for _, e := range rows {
 		r := repo.Repository{Path: e.Status.Path}
 		p.Actions = append(p.Actions, plan.Action{
 			ID:          "run-" + r.Path,
@@ -598,7 +674,7 @@ func (m Model) rootsHint() string {
 func (m Model) renderOutput(outputs map[string]string, res plan.PlanResult) string {
 	var b strings.Builder
 	b.WriteString(theme.Title.Render("Output of `"+m.runCommand+"`") + "\n")
-	for _, e := range m.entries {
+	for _, e := range m.list.Items() {
 		path := e.Status.Path
 		status := ""
 		for _, a := range res.Actions {
@@ -627,62 +703,42 @@ func (m Model) refreshDetail() Model {
 	case levelOutput:
 		m.detail.SetContent(m.output)
 	default:
-		if m.selected >= 0 && m.selected < len(m.entries) {
-			m.detail.SetContent(m.detailContent(m.entries[m.selected]))
+		if e, ok := m.entry(m.selected); ok {
+			m.detail.SetContent(m.detailContent(e))
 		}
 	}
 	return m
 }
 
-func (m Model) rows() []table.Row {
-	out := make([]table.Row, 0, len(m.entries))
-	for _, e := range m.entries {
-		st := e.Status
-		branch := st.Branch
-		if st.Detached {
-			branch = "(detached)"
-		}
-		issues := ""
-		if n := len(e.Findings); n > 0 {
-			issues = theme.Warn.Render(strconv.Itoa(n))
-		}
-		out = append(out, table.Row{
-			m.env.Rel(st.Path),
-			stateLabel(st),
-			countCell(st.Ahead),
-			countCell(st.Behind),
-			issues,
-			branch,
-		})
-	}
-	return out
-}
-
-func stateLabel(st repo.RepoStatus) string {
-	switch {
-	case st.Error != "":
-		return theme.Error.Render("✘ error")
-	case st.Dirty:
-		return theme.Warn.Render("● dirty")
-	case !st.HasUpstream:
-		return theme.Muted.Render("no upstream")
+func stateLabel(e Entry) string {
+	switch s := e.State(); s {
+	case "error":
+		return theme.Error.Render("✘ " + s)
+	case "dirty":
+		return theme.Warn.Render("● " + s)
+	case "no upstream":
+		return theme.Muted.Render(s)
 	default:
-		return theme.OK.Render("✔ clean")
+		return theme.OK.Render("✔ " + s)
 	}
 }
 
-func countCell(n int) string {
-	if n == 0 {
+func countCell(_ Entry, t string) string {
+	if t == "0" {
 		return theme.Muted.Render("·")
 	}
-	return strconv.Itoa(n)
+	return t
 }
 
 func (m Model) statusLine() string {
 	var s string
 	switch m.activity {
 	case activityFetching:
-		s = theme.Muted.Render("Fetching all remotes…")
+		if m.fetching == len(m.list.Items()) {
+			s = theme.Muted.Render("Fetching all remotes…")
+		} else {
+			s = theme.Muted.Render("Fetching " + format.Plural(m.fetching, "repo") + "…")
+		}
 	case activityPreparingSync:
 		s = theme.Muted.Render("Fetching and planning sync…")
 	case activityScanning:
@@ -724,7 +780,7 @@ func (m Model) detailContent(e Entry) string {
 	}
 	field("Path", st.Path)
 	field("Branch", branch)
-	field("State", stateLabel(st))
+	field("State", stateLabel(e))
 	if st.HasUpstream {
 		field("Upstream", fmt.Sprintf("↑%d ↓%d", st.Ahead, st.Behind))
 	} else {
@@ -777,5 +833,5 @@ func (m Model) KeyMap() help.KeyMap {
 	case m.level == levelDetail, m.level == levelOutput:
 		return m.detailKeys
 	}
-	return m.keys
+	return m.list.Help(m.keys)
 }

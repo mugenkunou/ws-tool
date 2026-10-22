@@ -3,10 +3,14 @@ package dotfiles
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/mugenkunou/ws-tool/internal/dotfile"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
+	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
@@ -70,5 +74,20 @@ func TestLoadMissingConfig(t *testing.T) {
 	e := env.Env{Paths: workspace.Paths{Workspace: t.TempDir(), Config: filepath.Join(t.TempDir(), "nope.json")}}
 	if msg := Load(e)().(LoadedMsg); msg.Err == nil {
 		t.Fatal("expected an error for a missing config")
+	}
+}
+
+func TestListShowsClass(t *testing.T) {
+	e := env.Env{Paths: workspace.Paths{Workspace: "/ws"}}
+	c, _ := New(e).Update(nav.ResizeMsg{Width: 100, Height: 10})
+	c, _ = c.Update(LoadedMsg{Entries: []Entry{
+		{Link: wsconfig.Link{System: "/a", Class: dotfile.ClassSecret}},
+		{Link: wsconfig.Link{System: "/b"}},
+	}})
+	v := ansi.Strip(c.View())
+	for _, want := range []string{"Class", "secret", "config"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("view lacks %q:\n%s", want, v)
+		}
 	}
 }

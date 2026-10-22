@@ -677,11 +677,56 @@ Built on Charm v2: `charm.land/bubbletea/v2`, `charm.land/bubbles/v2`,
 | `internal/tui/modal` | Holds a screen's one open dialog, tagged with a typed step; `Match` routes the dialog's result back. |
 | `internal/tui/handover` | Suspends the TUI to give a program the terminal (`Run`), launches GUI programs (`Launch`), runs CLI wizards (`WS` + `Pause`/`Paged`), opens editors (`Editor`). |
 | `internal/tui/selection`, `clip` | Mouse drag selection over the rendered frame; clipboard copy (OSC 52 + native tool). |
+| `internal/tui/reslist` | The list every list screen is: a `listview` over typed items described by a `resource.Schema`, with filter (`/`), sort (`>` `<`), k9s-style marks (space, `ctrl+space` range, `ctrl+\` clear, `A` all/none), and an all-fields pane (`i`) built in. Screens declare their actions with a `Scope`; `reslist.Run` hands each one its rows. |
 | `internal/tui/listview`, `layout`, `theme`, `format`, `complete` | Load-state-aware table; column sizing from width; lipgloss styles (16-color, matches `internal/style`); cell formatting; path completion. |
 | `internal/tui/env` | Workspace context resolved at startup (paths, config, dirs). Reloaded via `nav.ReloadEnvMsg` after init/reset. |
 | `internal/tui/tuitest` | Snapshot (golden file) and fits-in-terminal assertions. |
 
 (`internal/tui/ghostinput.go` etc. are raw-ANSI prompt widgets used by the CLI.)
+
+### One description per list
+
+Each listed domain declares its records once, in its domain package
+(`fields.go`; `trash/items.go` keeps the loader beside it):
+a `resource.Schema` (`internal/resource`) of fields — key (the JSON key and
+the `--sort` / `--filter` name), title, raw value, display text — plus the
+default columns. The CLI list command (`renderList` in `cmd/list.go`) and the
+TUI screen (`reslist`) both render that schema, so a field added there shows
+up in `--json`, `--wide`, the TUI detail pane, and both filters at once.
+Presentation stays with the caller: `reslist.Col` adds widths and colour.
+See docs/adr/0001-tui-list-screens-from-shared-resource-descriptions.md.
+
+**Actions take rows; they never pick them.** Each list screen declares an
+`actions` table of `reslist.Action{Key, Scope, Do}` and dispatches keys with
+`reslist.Run`, which calls `Do` with the rows the scope covers:
+
+| Scope | Rows | Use for |
+| --- | --- | --- |
+| `Global` | none | add, new, setup, wizards |
+| `Cursor` | the cursor row | open, view, a prompt about one row |
+| `Selected` | marked rows, else the cursor row | remove, delete, tag, exclude |
+| `All` | marked rows, else every row shown (filtered) | fetch, pull, run, fix, reset, empty, purge |
+
+An `All` action that receives every row may use the whole-subsystem
+operation (`dotfile.Reset`, `trash.Empty`); otherwise it acts on just the
+rows. The status line names the keys that will act on the marks or filter.
+
+Parity is tested, not reviewed:
+
+- `cmd` `TestCLICoverage`: every CLI subcommand (read from its help's
+  `Usage`) has an entry in `internal/tui/app/coverage.go` — a TUI key, the
+  screen's list, or a stated reason it is CLI-only. A new command fails
+  until that is decided.
+- `app` `TestCoverageKeysExist`: each entry's key is one its screen offers.
+- `app` `TestListScreensShareListKeys`: every list screen is a `reslist`, and
+  none binds the shared list keys (`/ > < space A i`) to its own actions.
+- `app` `TestEveryListKeyDeclaresItsRows`: every key on a list screen
+  (except movement, back, refresh) is declared with a scope.
+- `app` `TestFooterShowsMarkKeys`: list footers show the mark keys when
+  there is room; the global keys (`? help`, `q quit`) are never truncated —
+  only the screen's own part of the footer is cut, with an ellipsis.
+- `cmd` `TestCompletersOfferEverySubcommand`: shell completion offers every
+  subcommand the help lists.
 
 ### Rules
 

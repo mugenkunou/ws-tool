@@ -56,7 +56,7 @@ RO commands never modify the workspace, config, manifest, or system state. They:
 | `ws log ls` | |
 | `ws scratch ls` | |
 | `ws scratch search` | Search scratch directories by tag/name/content |
-| `ws trash status` | |
+| `ws trash ls`, `ws trash status` | |
 | `ws completions` | |
 
 #### RW Commands (interactive, confirm-before-write)
@@ -469,6 +469,24 @@ The user sees everything that worked plus a clear list of what didn't. They neve
 - **Result lines:** Icon + message (`✔ Workspace is clean.`, `▲ Violations found: 3`). Used by every command's success/failure path.
 - **Severity counters:** `0 critical · 2 warning` with conditional coloring — zero counts are dimmed, non-zero counts use severity color.
 
+**List commands share one record description with the TUI.** Each list
+command (`dotfile ls`, `trash ls`, `cron ls`, `scratch ls`, `log ls`, and the
+scans `ignore scan`, `secret scan`, `repo scan`) prints records described by a
+schema in its domain package (built on `internal/resource`). The same schema drives the TUI screen, so the fields,
+their names, and the filter and sort behave identically in both:
+
+- `--json` records carry every field, keyed by field name.
+- Text output is a table of the schema's columns — the TUI's columns; `--wide`
+  shows every field. (The scans keep their grouped report layout.)
+- `--sort field[,field]` orders rows; `-field` descends.
+- `--filter expr` keeps rows matching `key=text` (field contains text),
+  `key!=text` (does not), or bare `text` (any field contains it), ignoring
+  case; repeat it and all must match. The TUI filter (`/`) takes the same
+  expressions.
+
+Each command's `--help` lists its field names. An unknown field is an error
+that names the valid ones.
+
 **Color suppression:**
 
 Color is automatically disabled when any of these conditions is true:
@@ -697,7 +715,7 @@ The command is optimized for capture speed (Philosophy Factor II): type a name, 
 
 **Scratch search:** `ws scratch search <query>` finds scratch directories matching by tag (score 3), directory name (score 2), or file content (score 1). Multi-token queries use AND logic. Without arguments, enters interactive ghost mode showing all scratch dirs with tags, filterable as you type. Supports `--json` and `--max`.
 
-`ws scratch ls` shows tags inline when present: `my-debug.2026-04  age=2d  size=1.2M  items=7  [k8s, pid-limit]`.
+`ws scratch ls` prints a table of name, age, size, items, and tags (`--wide` adds the path); see "List commands" above for `--sort` and `--filter`. The pre-schema `--sort size` (biggest first) is still accepted.
 
 `ws scratch` is a standalone utility.
 
@@ -977,6 +995,7 @@ ws completions uninstall             Remove installed shell completions from she
 
 ws trash setup                       Configure soft-delete integrations (rm, VS Code, file explorer)
 ws trash disable                     Remove soft-delete integrations
+ws trash ls                          List trashed items (name, original path, size, deleted)
 ws trash status                      Check integration status and trash size
 
 ws repo ls                           Discover git repos under workspace
@@ -2509,7 +2528,6 @@ ws repo scan
    ▲ [identity] user.name not set (local or global)
    ▲ [identity] user.email not set (local or global)
 ⎇  /home/user/Workspace/notes/second-brain  main DIRTY ↑2 ↓0
-⎇  /home/user/Workspace/notes/second-brain  main DIRTY ↑2 ↓0
 
 Hygiene: 2 warning(s) · 7 info hidden (--verbose to show)
 ```
@@ -2517,6 +2535,7 @@ Hygiene: 2 warning(s) · 7 info hidden (--verbose to show)
 With `--verbose`, info findings are shown muted with a `·` marker:
 
 ```text
+⎇  /home/user/Workspace/notes/second-brain  main DIRTY ↑2 ↓0
    · [default-branch] init.defaultBranch not set and origin/HEAD not resolved
    · [fetch-staleness] last fetch was 107 days ago (threshold: 14)
 ```

@@ -28,6 +28,7 @@ type Model struct {
 	empty  string
 	table  table.Model
 	rows   []table.Row // styled rows as given; the cursor row is shown plain
+	marked []bool      // rows drawn as marked (the cursor bar takes the mark colour)
 	state  state
 	err    error
 	width  int
@@ -52,6 +53,19 @@ func (m Model) SetSize(width, height int) Model {
 	return m
 }
 
+// SetTitles renames the columns (one title per column), keeping their sizes.
+func (m Model) SetTitles(titles []string) Model {
+	cols := make([]layout.Col, len(m.cols))
+	copy(cols, m.cols)
+	for i := range cols {
+		if i < len(titles) {
+			cols[i].Title = titles[i]
+		}
+	}
+	m.cols = cols
+	return m.SetSize(m.width, m.height)
+}
+
 // SetLoading marks a reload in progress. Existing rows stay visible.
 func (m Model) SetLoading() Model {
 	if m.state == stateError {
@@ -72,6 +86,14 @@ func (m Model) SetRows(rows []table.Row) Model {
 	return m.plainCursorRow()
 }
 
+// SetMarked flags rows (by index) as marked; set it before SetRows. Marked
+// rows keep whatever styling SetRows gives them; under the cursor the bar is
+// drawn in the mark colour.
+func (m Model) SetMarked(marked []bool) Model {
+	m.marked = marked
+	return m
+}
+
 // plainCursorRow strips cell styling from the selected row so the
 // selection highlight spans the whole row (inner styles would reset it).
 func (m Model) plainCursorRow() Model {
@@ -79,6 +101,11 @@ func (m Model) plainCursorRow() Model {
 	if c < 0 || c >= len(m.rows) {
 		return m
 	}
+	st := theme.Table()
+	if c < len(m.marked) && m.marked[c] {
+		st.Selected = theme.SelectedMarked()
+	}
+	m.table.SetStyles(st)
 	shown := make([]table.Row, len(m.rows))
 	copy(shown, m.rows)
 	plain := make(table.Row, len(m.rows[c]))

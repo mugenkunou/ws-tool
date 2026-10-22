@@ -1,0 +1,30 @@
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Remove 2 dotfiles
+
+› [x] Remove dotfile /home/tester/.bashrc  (restores the file to its system path)
+  [x] Remove dotfile /home/tester/.gitconfig  (restores the file to its system path)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+space toggle • a all/none • enter apply • esc back

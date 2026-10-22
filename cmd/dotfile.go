@@ -10,6 +10,7 @@ import (
 
 	"github.com/mugenkunou/ws-tool/internal/dotfile"
 	"github.com/mugenkunou/ws-tool/internal/repo"
+	"github.com/mugenkunou/ws-tool/internal/resource"
 	"github.com/mugenkunou/ws-tool/internal/secret"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
@@ -29,13 +30,13 @@ var dotfileHelp = cmdHelp{
 		"  migrate                        Split legacy directory entries into file-level entries",
 		"  git <sub>                      Manage the dotfile git backup",
 	},
-	Flags: []string{
+	Flags: append([]string{
 		"      --class string   add, link: config or secret (default: auto-detect for add, config for link)",
 		"                       secrets go to secrets/dotfiles/, configs to configs/dotfiles/",
 		"      --dir            add: link a directory whole, as one entry (e.g. ~/.password-store)",
 		"                       without it, add lets you pick files from the directory",
 		"      --dry-run        Preview only",
-	},
+	}, listFlagHelp("ls", dotfile.Schema(resource.CLIView()).Keys())...),
 }
 
 // dotfileClassFlag registers --class. It has no -c shorthand: the root parser
@@ -289,49 +290,18 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 	case "ls":
 		fs := flag.NewFlagSet("dotfile-ls", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
+		lf := registerListFlags(fs, "")
 		registerGlobalFlags(fs, &globals)
 		if err := fs.Parse(subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		links, err := dotfile.List(configPath)
+		entries, err := dotfile.Entries(workspacePath, configPath)
 		if err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		type lsRecord struct {
-			System        string `json:"system"`
-			Original      string `json:"original"`
-			WorkspacePath string `json:"workspace_path"` // absolute stored file under configs/dotfiles/ or secrets/dotfiles/
-			Sudo          bool   `json:"sudo"`
-			Class         string `json:"class"`
-		}
-		lsRecords := make([]lsRecord, 0, len(links))
-		for _, l := range links {
-			lsRecords = append(lsRecords, lsRecord{
-				System:        l.System,
-				Original:      l.Original,
-				WorkspacePath: style.AbsPath(workspacePath, dotfile.LinkDotfilePath(l)),
-				Sudo:          l.Sudo,
-				Class:         l.Class,
-			})
-		}
-		if globals.json {
-			return writeJSON(stdout, stderr, "dotfile.ls", lsRecords)
-		}
-		if len(links) == 0 {
-			fmt.Fprintln(textOut(globals, stdout), "No managed dotfiles.")
-			return 0
-		}
-		out := textOut(globals, stdout)
-		for _, r := range lsRecords {
-			sudoTag := ""
-			if r.Sudo {
-				sudoTag = "  " + style.Warningf(globals.noColor, "[sudo]")
-			}
-			fmt.Fprintf(out, "%s %s %s%s\n", style.Infof(globals.noColor, "%s", r.System), style.IconArrow(globals.noColor), style.Mutedf(globals.noColor, "%s", r.WorkspacePath), sudoTag)
-		}
-		return 0
+		return renderList(globals, "dotfile.ls", dotfile.Schema(resource.CLIView()), entries, lf, "No managed dotfiles.", stdout, stderr)
 	case "scan":
 		fs := flag.NewFlagSet("dotfile-scan", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)

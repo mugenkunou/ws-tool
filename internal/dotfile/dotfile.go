@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -77,6 +78,7 @@ type FixOptions struct {
 	WorkspacePath string
 	ConfigPath    string
 	DryRun        bool
+	Only          []string // system paths to fix; empty fixes every link
 }
 
 type FixResult struct {
@@ -546,6 +548,9 @@ func Fix(opts FixOptions) (FixResult, error) {
 	}
 
 	for _, link := range cfg.Links {
+		if len(opts.Only) > 0 && !slices.Contains(opts.Only, link.System) {
+			continue
+		}
 		expectedTarget := filepath.Clean(filepath.Join(opts.WorkspacePath, filepath.FromSlash(LinkDotfilePath(link))))
 		issue := Issue{
 			SystemPath:    link.System,

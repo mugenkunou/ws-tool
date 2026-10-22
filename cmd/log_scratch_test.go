@@ -72,15 +72,15 @@ func TestScratchCommandsFlow(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "scratch", "ls"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+	if code := Execute([]string{"--workspace", workspace, "scratch", "ls", "--wide"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
 		t.Fatalf("scratch ls failed: code=%d stderr=%s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), "demo-scratch") {
 		t.Fatalf("unexpected scratch ls output: %s", out.String())
 	}
-	// ls must show a path line (starts with whitespace and contains the scratch root)
+	// ls --wide shows every field, the path included
 	if !strings.Contains(out.String(), filepath.Join(home, "Scratch")) {
-		t.Fatalf("expected path line in scratch ls output: %s", out.String())
+		t.Fatalf("expected path column in scratch ls --wide output: %s", out.String())
 	}
 
 	out.Reset()
@@ -128,7 +128,7 @@ func TestScratchDeleteAndAgeFormatting(t *testing.T) {
 	if code := Execute([]string{"--workspace", workspace, "scratch", "ls"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
 		t.Fatalf("scratch ls failed: code=%d stderr=%s", code, errOut.String())
 	}
-	if !strings.Contains(out.String(), "age=4d") {
+	if !strings.Contains(out.String(), "4d") {
 		t.Fatalf("expected day-format age output, got: %s", out.String())
 	}
 

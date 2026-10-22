@@ -1,0 +1,30 @@
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+────────────────────────────────────────────────────────────────────────────────────────────────────
+filter status!=ok (1 of 3) — x R act on these 1
+ System path                                Stored as                   Class   Status         Sudo
+ /etc/hosts                                 etc/hosts                   config  ⚠ overwritten  yes
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+a add • d remove • x fix links • s sync live→ws • p git push … • tab/⇧tab screens • ? help • q quit

@@ -86,6 +86,7 @@ Your `.bashrc` now lives in the workspace (synced). The system path is a symlink
 | `ws trash disable` | Remove soft-delete integrations |
 | `ws trash empty` | Empty trash contents if the trash root exists |
 | `ws trash purge --older-than <days>` | Permanently delete trash items deleted more than N days ago (age from the `.trashinfo` DeletionDate; supports `--dry-run`) |
+| `ws trash ls` | List trashed items with where they came from, size, and age |
 | `ws trash status` | Check integration status and trash size |
 
 </details>
@@ -186,7 +187,7 @@ Your `.bashrc` now lives in the workspace (synced). The system path is a symlink
 | --- | --- |
 | `ws scratch new [name]` | Create a named scratch directory, open in VS Code; prints the path |
 | `ws scratch open [name]` | Open an existing scratch directory in VS Code (use `wsopen` to also cd into it) |
-| `ws scratch ls` | List scratch directories with age, size, items, and path |
+| `ws scratch ls` | List scratch directories with age, size, items, and tags (`--wide` adds the path) |
 | `ws scratch tag [name]` | Add tags to a scratch directory; prints path on completion |
 | `ws scratch search [query]` | Search scratch directories by tag/name/content; shows path per result |
 | `ws scratch rm <name>` | Delete a scratch directory by name |
@@ -279,6 +280,7 @@ ws ignore generate --merge  # keep your custom rules, add missing template rules
 | **Offload, don't reimplement** | `ln`, `grep`, `find`, `diff`, `script(1)`, `git` — `ws` orchestrates battle-tested tools |
 | **Read/write separation** | Read commands are non-interactive and pipe-safe. Write commands are always interactive with `--dry-run`. |
 | **`--json` everywhere** | Every command supports `--json` for scripting. Stable schema envelope with version. |
+| **One list, two front ends** | Every list (`dotfile ls`, `trash ls`, `cron ls`, `scratch ls`, `log ls`, and the scans) shows the same fields in the CLI and the TUI, with the same `--filter key=text` / `--sort field` (`/` and `>` in the TUI). `--wide` shows every field. In the TUI, mark rows k9s-style (`space`, `ctrl+space` for a range, `ctrl+\` to clear) and actions apply to the marked rows. |
 | **Colored & accessible** | ANSI colors + Unicode icons for scannable output. `--no-color` and `NO_COLOR` env for accessibility. |
 | **Soft-delete first** | `rm` is the delete primitive. `ws trash setup` makes it route to Trash. |
 | **Workspace-sourced metadata** | Manifest lives inside the workspace; config is machine-local at the XDG path. Sync the folder, get the tool state too. |

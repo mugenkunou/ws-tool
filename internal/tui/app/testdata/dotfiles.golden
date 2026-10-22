@@ -1,9 +1,9 @@
 ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- System path                                    Stored as                       Status         Sudo
- ~/.bashrc                                      bashrc                          ✔ ok
- ~/.gitconfig                                   gitconfig                       ✘ broken
- /etc/hosts                                     etc/hosts                       ⚠ overwritten  yes
+ System path                                Stored as                   Class   Status         Sudo
+ ~/.bashrc                                  bashrc                      config  ✔ ok
+ ~/.gitconfig                               gitconfig                   config  ✘ broken
+ /etc/hosts                                 etc/hosts                   config  ⚠ overwritten  yes
 
 
 
@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷
 
 
 
-a add • d remove • x fix links • s sync live→ws • p git push • r refresh • tab/⇧tab screens • ? help
+a add • d remove • x fix links • s sync live→ws • p git push … • tab/⇧tab screens • ? help • q quit

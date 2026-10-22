@@ -173,6 +173,35 @@ func TestFixCreatesSymlink(t *testing.T) {
 	}
 }
 
+func TestFixOnlyTouchesNamedLinks(t *testing.T) {
+	workspaceRoot, configPath := setupWorkspace(t)
+	dir := t.TempDir()
+	var paths []string
+	for _, name := range []string{".a", ".b"} {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Add(AddOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath, SystemPath: p}); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(p); err != nil { // break both links
+			t.Fatal(err)
+		}
+		paths = append(paths, p)
+	}
+	res, err := Fix(FixOptions{WorkspacePath: workspaceRoot, ConfigPath: configPath, Only: paths[:1]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Fixed) != 1 || res.Fixed[0].SystemPath != paths[0] {
+		t.Fatalf("fixed = %+v, want only %s", res.Fixed, paths[0])
+	}
+	if _, err := os.Lstat(paths[1]); !os.IsNotExist(err) {
+		t.Errorf("%s should stay broken, err=%v", paths[1], err)
+	}
+}
+
 func TestFixUnchanged(t *testing.T) {
 	workspaceRoot, configPath := setupWorkspace(t)
 	systemFile := filepath.Join(t.TempDir(), ".gitconfig")

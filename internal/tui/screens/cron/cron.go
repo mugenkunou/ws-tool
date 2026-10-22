@@ -10,11 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -25,24 +23,16 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/format"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
-	"github.com/mugenkunou/ws-tool/internal/tui/layout"
-	"github.com/mugenkunou/ws-tool/internal/tui/listview"
 	"github.com/mugenkunou/ws-tool/internal/tui/modal"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
+	"github.com/mugenkunou/ws-tool/internal/tui/reslist"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 )
 
 const logLines = 200
 
 // Job is one cron job or preset and its install state.
-type Job struct {
-	Name        string
-	Description string
-	Schedule    string // empty for presets
-	Preset      bool
-	Installed   bool
-	LastRun     wscron.RunRecord
-}
+type Job = wscron.Job
 
 // LoadedMsg carries cron job state. Other components (the dashboard) may
 // observe it.
@@ -86,7 +76,7 @@ type logMsg struct {
 
 // readyMsg reports a passed (or failed) preflight before a crontab change.
 type readyMsg struct {
-	job    string
+	jobs   []string // job or preset names
 	remove bool
 	err    error
 }
@@ -107,7 +97,7 @@ type Model struct {
 	env        env.Env
 	keys       keys.CronMap
 	detailKeys keys.DetailMap
-	list       listview.Model
+	list       reslist.Model[Job]
 	log        viewport.Model
 	level      level
 	modal      modal.Model
@@ -129,56 +119,40 @@ func New(e env.Env) Model {
 		keys:       keys.Cron(),
 		detailKeys: dk,
 		log:        vp,
-		list: listview.New([]layout.Col{
-			{Title: "Job", Min: 14},
-			{Title: "Schedule", Min: 12},
-			{Title: "State", Min: 13},
-			{Title: "Last run", Min: 16},
-			{Title: "Description", Min: 12, Weight: 1},
-		}, "No cron jobs available."),
+		list: reslist.New(wscron.Schema(e.View()), []reslist.Col[Job]{
+			{Key: "name", Min: 14},
+			{Key: "schedule", Min: 12, Style: func(j Job, t string) string {
+				if j.Preset {
+					return theme.Muted.Render(t)
+				}
+				return t
+			}},
+			{Key: "installed", Min: 13, Style: func(j Job, t string) string {
+				switch {
+				case !j.CrontabOK:
+					return theme.Warn.Render(t)
+				case j.Installed:
+					return theme.OK.Render("✔ " + t)
+				}
+				return theme.Muted.Render(t)
+			}},
+			{Key: "last_run", Min: 16, Style: func(j Job, t string) string {
+				if j.LastRun.ExitCode != 0 {
+					return theme.Error.Render(t)
+				}
+				return t
+			}},
+			{Key: "description", Min: 12, Weight: 1},
+		}, "No cron jobs available.").Declare(reslist.Decls(actions)),
 	}
 }
 
 // Load gathers cron job state.
 func Load(e env.Env) tea.Cmd {
 	return func() tea.Msg {
-		msg := LoadedMsg{CronErr: wscron.Preflight()}
-		statePath, _ := wscron.StateFilePath()
-		for _, name := range wscron.AllNames() {
-			j := Job{Name: name}
-			if b, ok := wscron.Builtins[name]; ok {
-				j.Description, j.Schedule = b.Description, b.Schedule
-			} else if members, ok := wscron.Presets[name]; ok {
-				j.Preset = true
-				j.Description = "preset: " + strings.Join(members, ", ")
-			}
-			if msg.CronErr == nil {
-				if j.Preset {
-					j.Installed = presetInstalled(name)
-				} else {
-					j.Installed, _ = wscron.HasJob(name)
-				}
-			}
-			if !j.Preset {
-				j.LastRun, _ = wscron.LastRun(statePath, name)
-			}
-			msg.Jobs = append(msg.Jobs, j)
-		}
-		return msg
+		jobs, err := wscron.Jobs()
+		return LoadedMsg{Jobs: jobs, CronErr: err}
 	}
-}
-
-func presetInstalled(name string) bool {
-	jobs, err := wscron.Resolve(name)
-	if err != nil || len(jobs) == 0 {
-		return false
-	}
-	for _, j := range jobs {
-		if ok, _ := wscron.HasJob(j.Name); !ok {
-			return false
-		}
-	}
-	return true
 }
 
 func loadLog(job string) tea.Cmd {
@@ -199,15 +173,18 @@ func loadLog(job string) tea.Cmd {
 }
 
 // preflight checks crontab access off the update loop before a change.
-func preflight(job string, remove bool) tea.Cmd {
-	return func() tea.Msg { return readyMsg{job: job, remove: remove, err: wscron.Preflight()} }
+func preflight(jobs []string, remove bool) tea.Cmd {
+	return func() tea.Msg { return readyMsg{jobs: jobs, remove: remove, err: wscron.Preflight()} }
 }
 
 // Init starts the first load.
 func (m Model) Init() tea.Cmd { return Load(m.env) }
 
+// Declared lists the screen's actions and their scopes.
+func (m Model) Declared() []reslist.Decl { return m.list.Declared() }
+
 // CapturesKeys implements nav.Component.
-func (m Model) CapturesKeys() bool { return m.modal.Open() }
+func (m Model) CapturesKeys() bool { return m.modal.Open() || m.list.Editing() }
 
 func (m Model) reload() (Model, tea.Cmd) {
 	m.list = m.list.SetLoading()
@@ -242,7 +219,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		return m.reload()
 	case LoadedMsg:
 		m.loaded, m.state = true, msg
-		m.list = m.list.SetRows(m.rows())
+		m.list = m.list.SetItems(msg.Jobs)
 		return m, nil
 	case SelectJobMsg:
 		m.level = levelList
@@ -264,7 +241,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 			}
 			return m, nav.Notify(nav.LevelError, text)
 		}
-		return m.openChange(msg.job, msg.remove)
+		return m.openChange(msg.jobs, msg.remove)
 	}
 
 	if m.modal.Open() {
@@ -286,26 +263,47 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		return m, cmd
 	}
 
-	j, haveJob := m.selected()
+	if l, cmd, ok := m.list.HandleKey(k); ok {
+		m.list = l
+		return m, cmd
+	}
+	if next, cmd, ok := reslist.Run(m, m.list, actions, k); ok {
+		return next, cmd
+	}
 	switch {
 	case key.Matches(k, m.keys.Back):
 		return m, nav.Up
 	case key.Matches(k, m.keys.Refresh):
 		return m.reload()
-	case key.Matches(k, m.keys.Log) && haveJob:
-		if j.Preset {
-			return m, nav.Notify(nav.LevelInfo, "Presets have no log of their own — open a member job")
-		}
-		return m.openLog(j.Name)
-	case key.Matches(k, m.keys.Add) && haveJob:
-		return m, preflight(j.Name, false)
-	case key.Matches(k, m.keys.Remove) && haveJob:
-		return m, preflight(j.Name, true)
 	}
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(k)
 	return m, cmd
 }
+
+// actions is every cron key and the rows it acts on.
+var actions = func() []reslist.Action[Model, Job] {
+	k := keys.Cron()
+	change := func(remove bool) func(Model, []Job) (Model, tea.Cmd) {
+		return func(m Model, rows []Job) (Model, tea.Cmd) {
+			names := make([]string, len(rows))
+			for i, j := range rows {
+				names[i] = j.Name
+			}
+			return m, preflight(names, remove)
+		}
+	}
+	return []reslist.Action[Model, Job]{
+		{Key: k.Log, Scope: reslist.Cursor, Do: func(m Model, rows []Job) (Model, tea.Cmd) {
+			if rows[0].Preset {
+				return m, nav.Notify(nav.LevelInfo, "Presets have no log of their own — open a member job")
+			}
+			return m.openLog(rows[0].Name)
+		}},
+		{Key: k.Add, Scope: reslist.Selected, Do: change(false)},
+		{Key: k.Remove, Scope: reslist.Selected, Do: change(true)},
+	}
+}()
 
 func (m Model) openLog(name string) (Model, tea.Cmd) {
 	m.level, m.logJob = levelLog, name
@@ -314,33 +312,34 @@ func (m Model) openLog(name string) (Model, tea.Cmd) {
 }
 
 func (m Model) selectJob(name string) Model {
-	for i, j := range m.state.Jobs {
-		if j.Name == name {
-			m.list = m.list.SetCursor(i)
-		}
-	}
+	m.list, _ = m.list.Select(func(j Job) bool { return j.Name == name })
 	return m
 }
 
-func (m Model) selected() (Job, bool) {
-	i := m.list.Cursor()
-	if i < 0 || i >= len(m.state.Jobs) {
-		return Job{}, false
-	}
-	return m.state.Jobs[i], true
-}
-
-func (m Model) openChange(name string, remove bool) (Model, tea.Cmd) {
-	jobs, err := wscron.Resolve(name)
-	if err != nil {
-		return m, nav.Notify(nav.LevelError, err.Error())
+// openChange installs or removes the named jobs; presets expand to their
+// members, each job once.
+func (m Model) openChange(names []string, remove bool) (Model, tea.Cmd) {
+	var jobs []*wscron.BuiltinJob
+	seen := map[string]bool{}
+	for _, name := range names {
+		resolved, err := wscron.Resolve(name)
+		if err != nil {
+			return m, nav.Notify(nav.LevelError, err.Error())
+		}
+		for _, j := range resolved {
+			if !seen[j.Name] {
+				seen[j.Name] = true
+				jobs = append(jobs, j)
+			}
+		}
 	}
 	p := m.env.Paths
 	pl := plan.Plan{Command: "cron.add"}
-	title := "Install cron job " + name
+	what := strings.Join(names, ", ")
+	title := "Install cron job " + what
 	if remove {
 		pl = plan.Plan{Command: "cron.rm", Actions: wscron.RemoveActions(jobs)}
-		title = "Remove cron job " + name
+		title = "Remove cron job " + what
 	} else {
 		actions, err := wscron.AddActions(jobs, wscron.WSBinary(), wscron.DefaultDisplay(), p.Workspace)
 		if err != nil {
@@ -350,32 +349,6 @@ func (m Model) openChange(name string, remove bool) (Model, tea.Cmd) {
 	}
 	m.modal = m.modal.Confirm(stepChange, confirm.New(title, pl))
 	return m, nil
-}
-
-func (m Model) rows() []table.Row {
-	out := make([]table.Row, 0, len(m.state.Jobs))
-	for _, j := range m.state.Jobs {
-		state := theme.Muted.Render("not installed")
-		switch {
-		case m.state.CronErr != nil:
-			state = theme.Warn.Render("crontab n/a")
-		case j.Installed:
-			state = theme.OK.Render("✔ installed")
-		}
-		last := ""
-		if !j.LastRun.Time.IsZero() {
-			last = format.Age(time.Since(j.LastRun.Time)) + " ago"
-			if j.LastRun.ExitCode != 0 {
-				last = theme.Error.Render(fmt.Sprintf("%s (exit %d)", last, j.LastRun.ExitCode))
-			}
-		}
-		sched := j.Schedule
-		if j.Preset {
-			sched = theme.Muted.Render("preset")
-		}
-		out = append(out, table.Row{j.Name, sched, state, last, j.Description})
-	}
-	return out
 }
 
 func (m Model) statusLine() string {
@@ -412,5 +385,5 @@ func (m Model) KeyMap() help.KeyMap {
 	case m.level == levelLog:
 		return m.detailKeys
 	}
-	return m.keys
+	return m.list.Help(m.keys)
 }

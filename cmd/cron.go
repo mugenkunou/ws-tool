@@ -4,12 +4,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/mugenkunou/ws-tool/internal/cron"
+	"github.com/mugenkunou/ws-tool/internal/resource"
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
 
@@ -26,11 +25,11 @@ var cronHelp = cmdHelp{
 		"  status [job]   Show last run, exit code, and next scheduled run",
 		"  log [job]      Show recent log entries",
 	},
-	Flags: []string{
+	Flags: append([]string{
 		"      --display string   X11 DISPLAY for mega-sync (default: $DISPLAY then :1)",
 		"      --lines int        Lines of log to show for 'log' subcommand (default: 20)",
 		"      --dry-run          Preview only (add/rm/apply)",
-	},
+	}, listFlagHelp("ls", cron.Schema(resource.CLIView()).Keys())...),
 }
 
 func runCron(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -210,108 +209,14 @@ func runCronRm(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 func runCronLs(args []string, globals globalFlags, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("cron-ls", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	lf := registerListFlags(fs, "")
 	registerGlobalFlags(fs, &globals)
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	nc := globals.noColor
-	statePath, _ := cron.StateFilePath()
-
-	// Collect last run records for installed-job status.
-	records, _ := cron.ReadState(statePath)
-	lastByJob := map[string]cron.RunRecord{}
-	for _, r := range records {
-		lastByJob[r.Job] = r
-	}
-
-	if globals.json {
-		type jobInfo struct {
-			Name         string `json:"name"`
-			Schedule     string `json:"schedule,omitempty"`
-			Description  string `json:"description"`
-			Preset       bool   `json:"preset,omitempty"`
-			Installed    bool   `json:"installed"`
-			LastRunTime  string `json:"last_run,omitempty"`
-			LastExitCode int    `json:"last_exit,omitempty"`
-		}
-		var infos []jobInfo
-		for _, name := range cron.AllNames() {
-			installed, _ := cron.HasJob(name)
-			ji := jobInfo{Name: name, Installed: installed}
-			if job, ok := cron.Builtins[name]; ok {
-				ji.Schedule = job.Schedule
-				ji.Description = job.Description
-			} else {
-				ji.Preset = true
-				ji.Description = presetDescription(name)
-			}
-			if r, ok := lastByJob[name]; ok {
-				ji.LastRunTime = r.Time.UTC().Format(time.RFC3339)
-				ji.LastExitCode = r.ExitCode
-			}
-			infos = append(infos, ji)
-		}
-		return writeJSON(stdout, stderr, "cron.ls", map[string]any{"jobs": infos})
-	}
-
-	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, style.Boldf(nc, "Available cron jobs:"))
-	fmt.Fprintln(tw, style.Mutedf(nc, "  NAME\tSCHEDULE\tDESCRIPTION\tSTATUS"))
-	for _, name := range cron.AllNames() {
-		installed, _ := cron.HasJob(name)
-		status := style.Mutedf(nc, "not installed")
-		if installed {
-			status = style.Successf(nc, "installed")
-		}
-		if job, ok := cron.Builtins[name]; ok {
-			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", name, job.Schedule, job.Description, status)
-		} else {
-			fmt.Fprintf(tw, "  %s\t(preset)\t%s\t%s\n", name, presetDescription(name), status)
-		}
-	}
-	_ = tw.Flush()
-
-	// Last-run summary for installed jobs.
-	var installedNames []string
-	for name := range cron.Builtins {
-		if ok, _ := cron.HasJob(name); ok {
-			installedNames = append(installedNames, name)
-		}
-	}
-	if len(installedNames) > 0 {
-		sort.Strings(installedNames)
-		fmt.Fprintln(stdout)
-		fmt.Fprintln(stdout, style.Boldf(nc, "Last run:"))
-		tw2 := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-		for _, name := range installedNames {
-			r, ok := lastByJob[name]
-			if !ok {
-				fmt.Fprintf(tw2, "  %s\tnever\n", name)
-				continue
-			}
-			exitStr := style.Successf(nc, "exit 0")
-			if r.ExitCode != 0 {
-				exitStr = style.ResultError(nc, "exit %d", r.ExitCode)
-			}
-			fmt.Fprintf(tw2, "  %s\t%s\t%s\n",
-				name,
-				r.Time.Local().Format("2006-01-02 15:04"),
-				exitStr,
-			)
-		}
-		_ = tw2.Flush()
-	}
-
-	return 0
-}
-
-func presetDescription(name string) string {
-	jobs, ok := cron.Presets[name]
-	if !ok {
-		return ""
-	}
-	return "installs: " + strings.Join(jobs, ", ")
+	jobs, _ := cron.Jobs() // an unreadable crontab shows as "crontab n/a"
+	return renderListIn(globals, "cron.ls", "jobs", cron.Schema(resource.CLIView()), jobs, lf, "No cron jobs.", stdout, stderr)
 }
 
 // ── status ───────────────────────────────────────────────────────────────────

@@ -55,15 +55,15 @@ type completer struct {
 var completers = map[string]completer{
 	"completions":           {subcommands: []string{"bash", "zsh", "fish", "install", "uninstall"}},
 	"config":                {subcommands: []string{"view", "defaults"}},
-	"cron":                  {subcommands: []string{"add", "rm", "ls", "status", "log"}, resolve: completeCron},
-	"dotfile":               {subcommands: []string{"add", "rm", "ls", "scan", "fix", "reset", "git"}, resolve: completeDotfile},
+	"cron":                  {subcommands: []string{"add", "rm", "remove", "run", "apply", "ls", "list", "status", "log"}, resolve: completeCron},
+	"dotfile":               {subcommands: []string{"add", "link", "rm", "ls", "scan", "fix", "sync", "reset", "migrate", "git"}, resolve: completeDotfile},
 	"git-credential-helper": {subcommands: []string{"setup", "status", "disconnect"}},
 	"ignore":                {subcommands: []string{"check", "scan", "fix", "ls", "tree", "edit"}, resolve: completeIgnore},
 	"log":                   {subcommands: []string{"start", "stop", "ls", "prune", "rm"}, resolve: completeLog},
-	"repo":                  {subcommands: []string{"ls", "scan", "fetch", "pull", "sync", "run"}, resolve: completeRepo},
+	"repo":                  {subcommands: []string{"ls", "scan", "fetch", "pull", "sync", "run", "add-root", "ls-roots"}, resolve: completeRepo},
 	"scratch":               {subcommands: []string{"new", "open", "ls", "tag", "search", "rm"}, resolve: completeScratch},
 	"secret":                {subcommands: []string{"scan", "fix", "setup", "status", "git"}, resolve: completeSecret},
-	"trash":                 {subcommands: []string{"enable", "disable", "empty", "purge", "status"}},
+	"trash":                 {subcommands: []string{"enable", "setup", "disable", "ls", "empty", "purge", "rm", "status"}},
 }
 
 // completionCtx holds best-effort workspace state loaded once per
@@ -572,7 +572,7 @@ func isStringFlag(flag string) bool {
 	switch name {
 	case "workspace", "w", "config", "c", "manifest",
 		"tag", "since", "type", "path", "context", "max-results",
-		"sort", "older-than", "name", "editor", "terminal",
+		"sort", "filter", "older-than", "name", "editor", "terminal",
 		"root-dir", "secret-mode", "mode",
 		"remote-url", "username", "pass-entry", "branch",
 		"shell", "depth", "rule",

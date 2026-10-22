@@ -5,17 +5,15 @@ package trash
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/table"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -26,30 +24,22 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/format"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
-	"github.com/mugenkunou/ws-tool/internal/tui/layout"
-	"github.com/mugenkunou/ws-tool/internal/tui/listview"
 	"github.com/mugenkunou/ws-tool/internal/tui/modal"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/prompt"
+	"github.com/mugenkunou/ws-tool/internal/tui/reslist"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 )
 
-const maxItems = 200
-
 // Item is one top-level entry in the trash root.
-type Item struct {
-	Name      string
-	SizeBytes int64
-	Deleted   time.Time // modification time of the entry
-	Dir       bool
-}
+type Item = wstrash.Item
 
 // LoadedMsg carries trash state. Other components (the dashboard) may
 // observe it.
 type LoadedMsg struct {
 	Status wstrash.Status
 	Scan   wstrash.ScanResult
-	Items  []Item // newest first, at most maxItems
+	Items  []Item // newest first
 	Err    error
 }
 
@@ -72,10 +62,11 @@ const (
 type Model struct {
 	env    env.Env
 	keys   keys.TrashMap
-	list   listview.Model
+	list   reslist.Model[Item]
 	modal  modal.Model
 	state  LoadedMsg
 	loaded bool
+	purge  map[string]bool // item names the purge prompt is for; nil = all
 	width  int
 	height int
 }
@@ -87,11 +78,12 @@ func New(e env.Env) Model {
 	return Model{
 		env:  e,
 		keys: keys.Trash(),
-		list: listview.New([]layout.Col{
-			{Title: "Recently deleted", Min: 20, Weight: 1},
-			{Title: "Size", Min: 9},
-			{Title: "Deleted", Min: 9},
-		}, theme.Icon(theme.IconSparkles)+"Trash is empty."),
+		list: reslist.New(wstrash.Schema(e.View()), []reslist.Col[Item]{
+			{Key: "name", Min: 20, Weight: 2},
+			{Key: "original_path", Min: 12, Weight: 1, Style: func(_ Item, t string) string { return theme.Muted.Render(t) }},
+			{Key: "size_bytes", Min: 9},
+			{Key: "deleted_at", Min: 9},
+		}, theme.Icon(theme.IconSparkles)+"Trash is empty.").Declare(reslist.Decls(actions)),
 	}
 }
 
@@ -112,48 +104,22 @@ func Load(e env.Env) tea.Cmd {
 		}
 		msg := LoadedMsg{Status: st}
 		msg.Scan, _ = wstrash.Scan(wstrash.ScanOptions{RootDir: st.RootDir, WarnSizeMB: 1024})
-		filesDir := filepath.Join(st.RootDir, "files")
-		entries, err := os.ReadDir(filesDir)
+		msg.Items, err = wstrash.Items(st.RootDir)
 		if err != nil {
-			return msg // a missing trash root just means nothing deleted yet
-		}
-		for _, de := range entries {
-			info, err := de.Info()
-			if err != nil {
-				continue
-			}
-			it := Item{Name: de.Name(), Deleted: info.ModTime(), Dir: de.IsDir(), SizeBytes: info.Size()}
-			if de.IsDir() {
-				it.SizeBytes = dirSize(filepath.Join(filesDir, de.Name()))
-			}
-			msg.Items = append(msg.Items, it)
-		}
-		sort.Slice(msg.Items, func(i, j int) bool { return msg.Items[i].Deleted.After(msg.Items[j].Deleted) })
-		if len(msg.Items) > maxItems {
-			msg.Items = msg.Items[:maxItems]
+			msg.Err = err
 		}
 		return msg
 	}
 }
 
-func dirSize(dir string) int64 {
-	var n int64
-	_ = filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() {
-			if info, err := d.Info(); err == nil {
-				n += info.Size()
-			}
-		}
-		return nil
-	})
-	return n
-}
-
 // Init starts the first load.
 func (m Model) Init() tea.Cmd { return Load(m.env) }
 
+// Declared lists the screen's actions and their scopes.
+func (m Model) Declared() []reslist.Decl { return m.list.Declared() }
+
 // CapturesKeys implements nav.Component.
-func (m Model) CapturesKeys() bool { return m.modal.Open() }
+func (m Model) CapturesKeys() bool { return m.modal.Open() || m.list.Editing() }
 
 func (m Model) reload() (Model, tea.Cmd) {
 	m.list = m.list.SetLoading()
@@ -171,6 +137,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		if done.Result.Aborted {
 			return m, nil
 		}
+		m.list = m.list.ClearMarks() // the marks were for this action
 		level := nav.LevelSuccess
 		if done.Result.HasFailures() {
 			level = nav.LevelWarn
@@ -195,7 +162,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 			return m, nil
 		}
 		m.state = msg
-		m.list = m.list.SetRows(m.rows())
+		m.list = m.list.SetItems(msg.Items)
 		return m, nil
 	case RequestEnableMsg:
 		if !m.modal.Open() {
@@ -204,7 +171,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		return m, nil
 	case RequestEmptyMsg:
 		if !m.modal.Open() {
-			m = m.openEmpty()
+			m = m.openEmpty(m.list.Items())
 		}
 		return m, nil
 	}
@@ -218,31 +185,61 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	if l, cmd, ok := m.list.HandleKey(k); ok {
+		m.list = l
+		return m, cmd
+	}
+	if next, cmd, ok := reslist.Run(m, m.list, actions, k); ok {
+		return next, cmd
+	}
 	switch {
 	case key.Matches(k, m.keys.Back):
 		return m, nav.Up
 	case key.Matches(k, m.keys.Refresh):
 		return m.reload()
-	case key.Matches(k, m.keys.Enable):
-		return m.openEnable(), nil
-	case key.Matches(k, m.keys.Disable):
-		return m.openDisable(), nil
-	case key.Matches(k, m.keys.Empty):
-		return m.openEmpty(), nil
-	case key.Matches(k, m.keys.Purge):
-		var cmd tea.Cmd
-		m.modal, cmd = m.modal.Prompt(stepPurgeDays, prompt.New("Purge items older than (days)",
-			prompt.WithHint("Permanently deletes trash items deleted more than this many days ago."),
-			prompt.WithValidate(parseDays)))
-		return m, cmd
-	case key.Matches(k, m.keys.DeleteItem):
-		if i := m.list.Cursor(); i >= 0 && i < len(m.state.Items) {
-			return m.openDeleteItem(m.state.Items[i]), nil
-		}
-		return m, nil
 	}
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(k)
+	return m, cmd
+}
+
+// actions is every trash key and the rows it acts on.
+var actions = func() []reslist.Action[Model, Item] {
+	k := keys.Trash()
+	plain := func(f func(Model, []Item) Model) func(Model, []Item) (Model, tea.Cmd) {
+		return func(m Model, rows []Item) (Model, tea.Cmd) { return f(m, rows), nil }
+	}
+	return []reslist.Action[Model, Item]{
+		{Key: k.Enable, Scope: reslist.Global, Do: func(m Model, _ []Item) (Model, tea.Cmd) { return m.openEnable(), nil }},
+		{Key: k.Disable, Scope: reslist.Global, Do: func(m Model, _ []Item) (Model, tea.Cmd) { return m.openDisable(), nil }},
+		{Key: k.DeleteItem, Scope: reslist.Selected, Do: plain(Model.openDeleteItems)},
+		{Key: k.Empty, Scope: reslist.All, Do: plain(Model.openEmpty)},
+		{Key: k.Purge, Scope: reslist.All, Do: Model.promptPurge},
+	}
+}()
+
+// names is rows as a name set, or nil when rows is every item.
+func (m Model) names(rows []Item) map[string]bool {
+	if len(rows) == len(m.list.Items()) {
+		return nil
+	}
+	out := make(map[string]bool, len(rows))
+	for _, it := range rows {
+		out[it.Name] = true
+	}
+	return out
+}
+
+func (m Model) promptPurge(rows []Item) (Model, tea.Cmd) {
+	m.purge = m.names(rows)
+	title := "Purge items older than (days)"
+	if m.purge != nil {
+		title = "Purge " + format.Plural(len(rows), "item") + " older than (days)"
+	}
+	var cmd tea.Cmd
+	m.modal, cmd = m.modal.Prompt(stepPurgeDays, prompt.New(title,
+		prompt.WithHint("Permanently deletes trash items deleted more than this many days ago."),
+		prompt.WithValidate(parseDays)))
 	return m, cmd
 }
 
@@ -289,29 +286,32 @@ func (m Model) openDisable() Model {
 	return m
 }
 
-func (m Model) openDeleteItem(it Item) Model {
+func (m Model) openDeleteItems(items []Item) Model {
 	r := m.state.Status.RootDir
 	if r == "" {
 		r = root(m.env)
 	}
-	itemPath := filepath.Join(r, "files", it.Name)
-	infoPath := filepath.Join(r, "info", it.Name+".trashinfo")
-	desc := it.Name
-	if it.SizeBytes > 0 {
-		desc += " (" + style.HumanBytes(it.SizeBytes) + ")"
+	pl := plan.Plan{Command: "trash.rm"}
+	for _, it := range items {
+		itemPath := filepath.Join(r, "files", it.Name)
+		infoPath := filepath.Join(r, "info", it.Name+".trashinfo")
+		desc := it.Name
+		if it.SizeBytes > 0 {
+			desc += " (" + style.HumanBytes(it.SizeBytes) + ")"
+		}
+		pl.Actions = append(pl.Actions, plan.Action{
+			ID:          "trash-rm-" + it.Name,
+			Description: "Permanently delete " + desc,
+			Execute: func() error {
+				if err := os.RemoveAll(itemPath); err != nil {
+					return err
+				}
+				_ = os.Remove(infoPath) // best-effort: remove .trashinfo
+				return nil
+			},
+		})
 	}
-	pl := plan.Plan{Command: "trash.delete-item", Actions: []plan.Action{{
-		ID:          "trash-delete-item",
-		Description: "Permanently delete " + desc,
-		Execute: func() error {
-			if err := os.RemoveAll(itemPath); err != nil {
-				return err
-			}
-			_ = os.Remove(infoPath) // best-effort: remove .trashinfo
-			return nil
-		},
-	}}}
-	m.modal = m.modal.Confirm(stepDeleteItem, confirm.New("Delete trash item", pl))
+	m.modal = m.modal.Confirm(stepDeleteItem, confirm.New("Delete "+format.Plural(len(items), "trash item"), pl))
 	return m
 }
 
@@ -353,6 +353,12 @@ func (m Model) purgeDays(r prompt.ResultMsg) (nav.Component, tea.Cmd) {
 	if len(res.Matched) == 0 {
 		return m, nav.Notify(nav.LevelInfo, fmt.Sprintf("Nothing older than %d days.", days))
 	}
+	if m.purge != nil {
+		res.Matched = slices.DeleteFunc(res.Matched, func(e wstrash.Entry) bool { return !m.purge[e.Name] })
+		if len(res.Matched) == 0 {
+			return m, nav.Notify(nav.LevelInfo, fmt.Sprintf("None of the %d items is older than %d days.", len(m.purge), days))
+		}
+	}
 	now := m.env.Now()
 	pl := plan.Plan{Command: "trash.purge"}
 	for _, e := range res.Matched {
@@ -375,7 +381,12 @@ func (m Model) purgeDays(r prompt.ResultMsg) (nav.Component, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) openEmpty() Model {
+// openEmpty empties the whole trash when rows is every item, else deletes
+// just rows.
+func (m Model) openEmpty(rows []Item) Model {
+	if m.names(rows) != nil {
+		return m.openDeleteItems(rows)
+	}
 	r := m.state.Status.RootDir
 	if r == "" {
 		r = root(m.env)
@@ -394,19 +405,6 @@ func (m Model) openEmpty() Model {
 	}
 	m.modal = m.modal.Confirm(stepChange, confirm.New("Empty trash", pl))
 	return m
-}
-
-func (m Model) rows() []table.Row {
-	out := make([]table.Row, 0, len(m.state.Items))
-	now := m.env.Now()
-	for _, it := range m.state.Items {
-		name := it.Name
-		if it.Dir {
-			name += "/"
-		}
-		out = append(out, table.Row{name, style.HumanBytes(it.SizeBytes), format.Age(now.Sub(it.Deleted)) + " ago"})
-	}
-	return out
 }
 
 func (m Model) header() []string {
@@ -455,5 +453,5 @@ func (m Model) KeyMap() help.KeyMap {
 	if m.modal.Open() {
 		return m.modal.KeyMap()
 	}
-	return m.keys
+	return m.list.Help(m.keys)
 }

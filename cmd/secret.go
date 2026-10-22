@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mugenkunou/ws-tool/internal/ignore"
+	"github.com/mugenkunou/ws-tool/internal/resource"
 	"github.com/mugenkunou/ws-tool/internal/secret"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
@@ -34,11 +35,12 @@ var secretHelp = cmdHelp{
 		"",
 		"  For credential helper commands: ws git-credential-helper",
 	},
+	Flags: listFlagHelp("scan", secret.Schema(resource.CLIView(), "").Keys()),
 }
 
 // secretScanResult is the JSON envelope for ws secret scan.
 type secretScanResult struct {
-	Violations       []secret.Violation      `json:"violations"`
+	Violations       []resource.Record       `json:"violations"`
 	SkippedDirs      []string                `json:"skipped_dirs,omitempty"`
 	Pass             secret.PassHealth       `json:"pass"`
 	PassAudit        *secret.PassAuditResult `json:"pass_audit,omitempty"`
@@ -88,8 +90,14 @@ func runSecretScan(args []string, globals globalFlags, workspacePath, configPath
 	passAudit := fs.Bool("pass", false, "")
 	var skipDirFlags stringSliceFlag
 	fs.Var(&skipDirFlags, "skip-dir", "")
+	lf := registerListFlags(fs, "")
 	registerGlobalFlags(fs, &globals)
 	if err := fs.Parse(args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	schema := secret.Schema(resource.CLIView(), workspacePath)
+	if err := schema.Validate(lf.query()); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
@@ -145,6 +153,11 @@ func runSecretScan(args []string, globals globalFlags, workspacePath, configPath
 		}
 	}
 
+	violations, ok := applyList(schema, violations, lf, stderr)
+	if !ok {
+		return 1
+	}
+
 	passHealth := secret.CheckPass()
 
 	var auditResult *secret.PassAuditResult
@@ -158,7 +171,7 @@ func runSecretScan(args []string, globals globalFlags, workspacePath, configPath
 
 	if globals.json {
 		return writeJSON(stdout, stderr, "secret.scan", secretScanResult{
-			Violations:       absSecretViolations(workspacePath, violations),
+			Violations:       schema.Records(violations),
 			SkippedDirs:      absPaths(workspacePath, skipDirs),
 			Pass:             passHealth,
 			PassAudit:        auditResult,

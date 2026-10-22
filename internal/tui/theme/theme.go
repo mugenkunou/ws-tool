@@ -14,6 +14,7 @@ var (
 	colorWarn   = lipgloss.Color("3") // yellow
 	colorError  = lipgloss.Color("1") // red
 	colorMuted  = lipgloss.Color("8") // bright black
+	colorMark   = lipgloss.Color("5") // magenta: no status uses it
 )
 
 var (
@@ -28,6 +29,9 @@ var (
 	Error     = lipgloss.NewStyle().Foreground(colorError)
 	Rule      = lipgloss.NewStyle().Foreground(colorMuted)
 	Selection = lipgloss.NewStyle().Reverse(true) // mouse text selection
+	// Marked colours a marked list row, as k9s does: the whole row's text in
+	// the mark colour, nothing inserted.
+	Marked = lipgloss.NewStyle().Foreground(colorMark)
 
 	// Card frames a dashboard summary card; CardSelected marks the cursor.
 	Card         = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorMuted).Padding(0, 1)
@@ -42,6 +46,10 @@ func Table() table.Styles {
 		Selected: lipgloss.NewStyle().Bold(true).Reverse(true),
 	}
 }
+
+// SelectedMarked is the cursor row when it is marked: the reversed cursor
+// bar takes the mark colour, so the mark stays visible under the cursor.
+func SelectedMarked() lipgloss.Style { return Table().Selected.Foreground(colorMark) }
 
 // TableCellPadding is the horizontal padding Table() adds around each cell.
 const TableCellPadding = 2

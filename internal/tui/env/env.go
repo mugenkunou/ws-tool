@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mugenkunou/ws-tool/internal/resource"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
@@ -70,6 +71,9 @@ func Load(o workspace.PathOverrides) (Env, error) {
 	}
 	return e, nil
 }
+
+// View is how resource schemas render on screen: the TUI clock and Rel paths.
+func (e Env) View() resource.View { return resource.View{Now: e.Now, Path: e.Rel} }
 
 // Rel shortens an absolute path for display relative to the workspace, or
 // the home directory, falling back to the path itself.

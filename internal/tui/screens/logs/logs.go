@@ -39,6 +39,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/modal"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/prompt"
+	"github.com/mugenkunou/ws-tool/internal/tui/reslist"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 )
 
@@ -102,13 +103,12 @@ type Model struct {
 	env        env.Env
 	keys       keys.LogsMap
 	viewerKeys keys.ViewerMap
-	list       listview.Model
+	list       reslist.Model[wslog.Session]
 	results    listview.Model
 	viewer     viewport.Model
 	level      level
 	modal      modal.Model
 
-	sessions []wslog.Session
 	matches  []search.Match
 	query    string
 	viewTag  string
@@ -130,14 +130,19 @@ func New(e env.Env) Model {
 		viewerKeys: keys.ViewerMap{Detail: dk, ToggleMode: k.ToggleMode},
 		viewer:     vp,
 		viewMode:   modeFull,
-		list: listview.New([]layout.Col{
-			{Title: "Tag", Min: 14, Weight: 3},
-			{Title: "Started", Min: 16},
-			{Title: "Duration", Min: 8},
-			{Title: "Cmds", Min: 4},
-			{Title: "Size", Min: 9},
-			{Title: "State", Min: 11},
-		}, theme.Icon(theme.IconTape)+"No recorded sessions yet. Press s to start one."),
+		list: reslist.New(wslog.Schema(e.View()), []reslist.Col[wslog.Session]{
+			{Key: "tag", Min: 14, Weight: 3},
+			{Key: "started_at", Min: 16},
+			{Key: "duration_sec", Min: 8},
+			{Key: "commands", Min: 4},
+			{Key: "size_bytes", Min: 9},
+			{Key: "active", Min: 11, Style: func(s wslog.Session, t string) string {
+				if s.Active {
+					return theme.Error.Render("● " + t)
+				}
+				return theme.Muted.Render(t)
+			}},
+		}, theme.Icon(theme.IconTape)+"No recorded sessions yet. Press s to start one.").Declare(reslist.Decls(actions)),
 		results: listview.New([]layout.Col{
 			{Title: "Session", Min: 14, Weight: 1},
 			{Title: "Line", Min: 5},
@@ -173,8 +178,11 @@ func searchLogs(e env.Env, query string) tea.Cmd {
 // Init starts the first load.
 func (m Model) Init() tea.Cmd { return Load(m.env) }
 
+// Declared lists the screen's actions and their scopes.
+func (m Model) Declared() []reslist.Decl { return m.list.Declared() }
+
 // CapturesKeys implements nav.Component.
-func (m Model) CapturesKeys() bool { return m.modal.Open() }
+func (m Model) CapturesKeys() bool { return m.modal.Open() || m.list.Editing() }
 
 func (m Model) reload() (Model, tea.Cmd) {
 	m.list = m.list.SetLoading()
@@ -204,8 +212,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 			m.list = m.list.SetError(msg.Err)
 			return m, nil
 		}
-		m.sessions = msg.Sessions
-		m.list = m.list.SetRows(rows(msg.Sessions))
+		m.list = m.list.SetItems(msg.Sessions)
 		return m, nil
 	case showMsg:
 		if msg.tag != m.viewTag || msg.mode != m.viewMode {
@@ -256,16 +263,8 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	return m.updateList(k)
 }
 
-func (m Model) selected() (wslog.Session, bool) {
-	i := m.list.Cursor()
-	if i < 0 || i >= len(m.sessions) {
-		return wslog.Session{}, false
-	}
-	return m.sessions[i], true
-}
-
 func (m Model) active() (wslog.Session, bool) {
-	for _, s := range m.sessions {
+	for _, s := range m.list.Items() {
 		if s.Active {
 			return s, true
 		}
@@ -282,49 +281,75 @@ func (m Model) openViewer(tag string) (Model, tea.Cmd) {
 }
 
 func (m Model) updateList(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
+	if l, cmd, ok := m.list.HandleKey(k); ok {
+		m.list = l
+		return m, cmd
+	}
+	if next, cmd, ok := reslist.Run(m, m.list, actions, k); ok {
+		return next, cmd
+	}
 	switch {
 	case key.Matches(k, m.keys.Back):
 		return m, nav.Up
 	case key.Matches(k, m.keys.Refresh):
 		return m.reload()
-	case key.Matches(k, m.keys.View):
-		if s, ok := m.selected(); ok {
-			return m.openViewer(s.Tag)
-		}
-	case key.Matches(k, m.keys.Start):
-		if s, ok := m.active(); ok {
-			return m, nav.Notify(nav.LevelWarn, "Already recording: "+s.Tag)
-		}
-		var cmd tea.Cmd
-		m.modal, cmd = m.modal.Prompt(stepStartTag, prompt.New("Start a recorded shell session",
-			prompt.WithHint("Optional tag (blank for a timestamp). Type `exit` or Ctrl-D to end and return here."),
-			prompt.AllowEmpty()))
-		return m, cmd
-	case key.Matches(k, m.keys.Stop):
-		s, ok := m.active()
-		if !ok {
-			return m, nav.Notify(nav.LevelInfo, "No recording in progress")
-		}
-		return m.openStop(s), nil
-	case key.Matches(k, m.keys.Search):
-		var cmd tea.Cmd
-		m.modal, cmd = m.modal.Prompt(stepSearchQuery, prompt.New("Search recorded sessions", prompt.WithValue(m.query)))
-		return m, cmd
-	case key.Matches(k, m.keys.Delete):
-		if s, ok := m.selected(); ok {
-			if s.Active {
+	}
+	var cmd tea.Cmd
+	m.list, cmd = m.list.Update(k)
+	return m, cmd
+}
+
+// actions is every logs key and the rows it acts on.
+var actions = func() []reslist.Action[Model, wslog.Session] {
+	k := keys.Logs()
+	return []reslist.Action[Model, wslog.Session]{
+		{Key: k.View, Scope: reslist.Cursor, Do: func(m Model, rows []wslog.Session) (Model, tea.Cmd) {
+			return m.openViewer(rows[0].Tag)
+		}},
+		{Key: k.Start, Scope: reslist.Global, Do: func(m Model, _ []wslog.Session) (Model, tea.Cmd) {
+			if s, ok := m.active(); ok {
+				return m, nav.Notify(nav.LevelWarn, "Already recording: "+s.Tag)
+			}
+			var cmd tea.Cmd
+			m.modal, cmd = m.modal.Prompt(stepStartTag, prompt.New("Start a recorded shell session",
+				prompt.WithHint("Optional tag (blank for a timestamp). Type `exit` or Ctrl-D to end and return here."),
+				prompt.AllowEmpty()))
+			return m, cmd
+		}},
+		{Key: k.Stop, Scope: reslist.Global, Do: func(m Model, _ []wslog.Session) (Model, tea.Cmd) {
+			s, ok := m.active()
+			if !ok {
+				return m, nav.Notify(nav.LevelInfo, "No recording in progress")
+			}
+			return m.openStop(s), nil
+		}},
+		{Key: k.Search, Scope: reslist.Global, Do: func(m Model, _ []wslog.Session) (Model, tea.Cmd) {
+			var cmd tea.Cmd
+			m.modal, cmd = m.modal.Prompt(stepSearchQuery, prompt.New("Search recorded sessions", prompt.WithValue(m.query)))
+			return m, cmd
+		}},
+		{Key: k.Delete, Scope: reslist.Selected, Do: func(m Model, rows []wslog.Session) (Model, tea.Cmd) {
+			done := finished(rows)
+			if len(done) == 0 {
 				return m, nav.Notify(nav.LevelWarn, "Stop the recording before deleting it")
 			}
-			return m.openDelete(s), nil
-		}
-	case key.Matches(k, m.keys.Prune):
-		return m.openPrune(), nil
-	default:
-		var cmd tea.Cmd
-		m.list, cmd = m.list.Update(k)
-		return m, cmd
+			return m.openDelete(done), nil
+		}},
+		{Key: k.Prune, Scope: reslist.All, Do: func(m Model, rows []wslog.Session) (Model, tea.Cmd) {
+			return m.openPrune(finished(rows)), nil
+		}},
 	}
-	return m, nil
+}()
+
+// finished drops the session being recorded.
+func finished(rows []wslog.Session) []wslog.Session {
+	var out []wslog.Session
+	for _, s := range rows {
+		if !s.Active {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func (m Model) updateViewer(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
@@ -394,6 +419,7 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 	if done.Result.Aborted {
 		return m, nil
 	}
+	m.list = m.list.ClearMarks() // the marks were for this action
 	level := nav.LevelSuccess
 	if done.Result.HasFailures() {
 		level = nav.LevelWarn
@@ -429,30 +455,33 @@ func (m Model) openStop(s wslog.Session) Model {
 	return m
 }
 
-func (m Model) openDelete(s wslog.Session) Model {
-	logDir, tag := m.env.LogDir, s.Tag
-	p := plan.Plan{Command: "log.rm", Actions: []plan.Action{{
-		ID:          "log-rm-" + tag,
-		Description: fmt.Sprintf("Remove log session %s (%s)", filepath.Join(logDir, tag), style.HumanBytes(s.SizeBytes)),
-		Execute: func() error {
-			_, err := wslog.Remove(wslog.RemoveOptions{LogDir: logDir, Tag: tag})
-			return err
-		},
-	}}}
-	m.modal = m.modal.Confirm(stepDelete, confirm.New("Delete session", p))
+// openDelete removes finished sessions (the recording one is never offered).
+func (m Model) openDelete(sessions []wslog.Session) Model {
+	logDir := m.env.LogDir
+	p := plan.Plan{Command: "log.rm"}
+	for _, s := range sessions {
+		tag := s.Tag
+		p.Actions = append(p.Actions, plan.Action{
+			ID:          "log-rm-" + tag,
+			Description: fmt.Sprintf("Remove log session %s (%s)", filepath.Join(logDir, tag), style.HumanBytes(s.SizeBytes)),
+			Execute: func() error {
+				_, err := wslog.Remove(wslog.RemoveOptions{LogDir: logDir, Tag: tag})
+				return err
+			},
+		})
+	}
+	m.modal = m.modal.Confirm(stepDelete, confirm.New("Delete "+format.Plural(len(sessions), "session"), p))
 	return m
 }
 
-// openPrune lists every finished session, none pre-checked: the CLI needs an
-// explicit --older-than or --all, so the user chooses here (a toggles all).
-func (m Model) openPrune() Model {
+// openPrune offers rows for removal, none pre-checked unless they were
+// marked (the CLI needs an explicit --older-than or --all, so the user
+// chooses here; a toggles all).
+func (m Model) openPrune(rows []wslog.Session) Model {
 	logDir := m.env.LogDir
-	now := time.Now()
+	now := m.env.Now()
 	p := plan.Plan{Command: "log.prune"}
-	for _, s := range m.sessions {
-		if s.Active {
-			continue
-		}
+	for _, s := range rows {
 		tag := s.Tag
 		p.Actions = append(p.Actions, plan.Action{
 			ID:          "prune-" + tag,
@@ -463,9 +492,10 @@ func (m Model) openPrune() Model {
 			},
 		})
 	}
+	picked := len(rows) != len(finished(m.list.Items())) // narrowed by marks or a filter
 	c := confirm.New("Prune recorded sessions", p).
 		WithNote("Tick the sessions to remove (a selects all).").
-		WithChecked(func(int, plan.Action) bool { return false })
+		WithChecked(func(int, plan.Action) bool { return picked })
 	m.modal = m.modal.Confirm(stepPrune, c)
 	return m
 }
@@ -496,27 +526,6 @@ func (m Model) matchRows() []table.Row {
 	return out
 }
 
-func rows(sessions []wslog.Session) []table.Row {
-	out := make([]table.Row, 0, len(sessions))
-	for _, s := range sessions {
-		state := theme.Muted.Render("done")
-		duration := format.Duration(s.DurationSec)
-		if s.Active {
-			state = theme.Error.Render("● recording")
-			duration = "—"
-		}
-		out = append(out, table.Row{
-			s.Tag,
-			s.StartedAt.Local().Format("2006-01-02 15:04"),
-			duration,
-			strconv.Itoa(s.Commands),
-			style.HumanBytes(s.SizeBytes),
-			state,
-		})
-	}
-	return out
-}
-
 // View implements nav.Component.
 func (m Model) View() string {
 	clip := lipgloss.NewStyle().MaxWidth(m.width)
@@ -531,7 +540,7 @@ func (m Model) View() string {
 		head := clip.Render(theme.Bold.Render(m.viewTag) + theme.Muted.Render("  ("+mode+")"))
 		return lipgloss.JoinVertical(lipgloss.Left, head, m.viewer.View())
 	case m.level == levelSearch:
-		head := clip.Render(theme.Muted.Render("Results for ") + theme.Bold.Render(m.query) + theme.Muted.Render("  (enter views · / new search · esc back)"))
+		head := clip.Render(theme.Muted.Render("Results for ") + theme.Bold.Render(m.query) + theme.Muted.Render("  (enter views · F new search · esc back)"))
 		return lipgloss.JoinVertical(lipgloss.Left, head, m.results.View())
 	}
 	return m.list.View()
@@ -544,6 +553,8 @@ func (m Model) KeyMap() help.KeyMap {
 		return m.modal.KeyMap()
 	case m.level == levelViewer:
 		return m.viewerKeys
+	case m.level == levelList:
+		return m.list.Help(m.keys)
 	}
 	return m.keys
 }

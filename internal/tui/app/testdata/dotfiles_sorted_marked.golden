@@ -1,0 +1,30 @@
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+────────────────────────────────────────────────────────────────────────────────────────────────────
+sort System path ↑ · 2 marked — d s x R act on them · ctrl+\ clears
+ System path ↑                              Stored as                   Class   Status         Sudo
+ /etc/hosts                                 etc/hosts                   config  ⚠ overwritten  yes
+ ~/.bashrc                                  bashrc                      config  ✔ ok
+ ~/.gitconfig                               gitconfig                   config  ✘ broken
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+a add • d remove • x fix links • s sync live→ws • p git push … • tab/⇧tab screens • ? help • q quit

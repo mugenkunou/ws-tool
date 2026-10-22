@@ -9,13 +9,14 @@ import (
 	"strings"
 
 	"github.com/mugenkunou/ws-tool/internal/repo"
+	"github.com/mugenkunou/ws-tool/internal/resource"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 var repoHelp = cmdHelp{
 	Usage: "ws repo <ls|scan|fetch|pull|sync|run|add-root|ls-roots>",
-	Flags: []string{
+	Flags: append([]string{
 		"      --dry-run    Preview write operations (default: false)",
 		"      --rebase     Use rebase for diverged repos in sync (default: merge)",
 		"      --path       Restrict to repos under this workspace subpath",
@@ -23,7 +24,7 @@ var repoHelp = cmdHelp{
 		"      --ahead      Only repos ahead of upstream",
 		"      --behind     Only repos behind upstream",
 		"      --detached   Only repos in detached HEAD",
-	},
+	}, listFlagHelp("scan", repo.Schema(resource.CLIView()).Keys())...),
 }
 
 // repoFilterFlags holds the common filter flags for repo subcommands.
@@ -187,6 +188,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		fs.Var(&checks, "check", "run only this hygiene check (repeatable)")
 		var filters repoFilterFlags
 		registerRepoFilterFlags(fs, &filters)
+		lf := registerListFlags(fs, "")
 		registerGlobalFlags(fs, &globals)
 		if err := fs.Parse(subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
@@ -198,6 +200,10 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		}
 		if msg := validateHygieneChecks(checks); msg != "" {
 			fmt.Fprintln(stderr, msg)
+			return 1
+		}
+		if err := repo.Schema(resource.CLIView()).Validate(lf.query()); err != nil {
+			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
 		repos, err := repo.Discover(workspacePath, roots, excludeDirs)
@@ -240,6 +246,17 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			scanned = append(scanned, repo.Repository{Path: st.Path})
 		}
 		findings := repo.Doctor(workspacePath, scanned, repo.DoctorOptions{Checks: checks})
+
+		// --sort / --filter work on the same records the TUI lists.
+		entries, ok := applyList(repo.Schema(resource.CLIView()), repo.Entries(statuses, findings), lf, stderr)
+		if !ok {
+			return 1
+		}
+		statuses, findings = statuses[:0], findings[:0]
+		for _, e := range entries {
+			statuses = append(statuses, e.Status)
+			findings = append(findings, e.Findings...)
+		}
 
 		return renderRepoScan(globals, workspacePath, statuses, fetchWarnings, findings, stdout, stderr)
 	case "doctor":
@@ -719,7 +736,7 @@ func renderRepoScan(globals globalFlags, workspacePath string, statuses []repo.R
 	}
 
 	if globals.json {
-		data := map[string]any{"statuses": statuses, "findings": findings}
+		data := map[string]any{"statuses": repo.Schema(resource.CLIView()).Records(repo.Entries(statuses, findings)), "findings": findings}
 		if findings == nil {
 			data["findings"] = []repo.Finding{}
 		}

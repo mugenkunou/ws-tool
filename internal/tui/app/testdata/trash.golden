@@ -6,8 +6,8 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷
   ✔ VS Code        editor deletes go here
   ✘ file explorer  desktop trash points here
 
- Recently deleted                                                              Size       Deleted
- old-notes.md                                                                  2.0 KB     3h ago
+ Name                                              Deleted from                Size       Deleted
+ old-notes.md                                      Notes/old-notes.md          2.0 KB     3h ago
  build/                                                                        3.0 MB     2d ago
 
 
@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷
 
 
 
-e enable soft-delete • D disable • d delete item • p purge older • x empty trash • r refresh …
+e enable soft-delete • D disable • d delete item … • tab/⇧tab screens • ? help • q quit

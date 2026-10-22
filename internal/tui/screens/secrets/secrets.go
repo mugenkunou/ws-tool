@@ -12,19 +12,16 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/plan"
-	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 	"github.com/mugenkunou/ws-tool/internal/secret"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
@@ -32,12 +29,12 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/format"
 	"github.com/mugenkunou/ws-tool/internal/tui/handover"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
-	"github.com/mugenkunou/ws-tool/internal/tui/layout"
-	"github.com/mugenkunou/ws-tool/internal/tui/listview"
 	"github.com/mugenkunou/ws-tool/internal/tui/modal"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/prompt"
+	"github.com/mugenkunou/ws-tool/internal/tui/reslist"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // Health is pass store + credential helper state.
@@ -70,7 +67,6 @@ type step int
 
 const (
 	stepFix step = iota
-	stepAllowAll
 	stepPassEntryName
 	stepSkipDirInput
 	stepRemoteURL
@@ -86,12 +82,11 @@ type Model struct {
 	env        env.Env
 	keys       keys.SecretsMap
 	detailKeys keys.DetailMap
-	list       listview.Model
+	list       reslist.Model[secret.Violation]
 	detail     viewport.Model
 	level      level
 	modal      modal.Model
 
-	violations  []secret.Violation
 	health      Health
 	loaded      bool
 	scanning    bool
@@ -113,11 +108,16 @@ func New(e env.Env) Model {
 		detailKeys: dk,
 		detail:     vp,
 		scanning:   true,
-		list: listview.New([]layout.Col{
-			{Title: "Severity", Min: 8},
-			{Title: "Location", Min: 20, Weight: 2},
-			{Title: "Match", Min: 16, Weight: 3},
-		}, theme.Icon(theme.IconLock)+"No secrets found in your workspace. Nice."),
+		list: reslist.New(secret.Schema(e.View(), e.Paths.Workspace), []reslist.Col[secret.Violation]{
+			{Key: "severity", Min: 8, Style: func(v secret.Violation, t string) string {
+				if v.Severity == "CRITICAL" {
+					return theme.Error.Render(t)
+				}
+				return t
+			}},
+			{Key: "location", Min: 20, Weight: 2},
+			{Key: "snippet", Min: 16, Weight: 3},
+		}, theme.Icon(theme.IconLock)+"No secrets found in your workspace. Nice.").Declare(reslist.Decls(actions)),
 	}
 }
 
@@ -199,8 +199,11 @@ func passLog() tea.Cmd {
 // Init starts the first scan.
 func (m Model) Init() tea.Cmd { return Load(m.env) }
 
+// Declared lists the screen's actions and their scopes.
+func (m Model) Declared() []reslist.Decl { return m.list.Declared() }
+
 // CapturesKeys implements nav.Component.
-func (m Model) CapturesKeys() bool { return m.modal.Open() }
+func (m Model) CapturesKeys() bool { return m.modal.Open() || m.list.Editing() }
 
 func (m Model) rescan() (Model, tea.Cmd) {
 	m.scanning = true
@@ -236,8 +239,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 			m.list = m.list.SetError(msg.Err)
 			return m, nil
 		}
-		m.violations = msg.Violations
-		m.list = m.list.SetRows(m.rows())
+		m.list = m.list.SetItems(msg.Violations)
 		return m, nil
 	case detailMsg:
 		m.detailTitle = msg.title
@@ -271,14 +273,6 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	return m.updateList(k)
 }
 
-func (m Model) selected() (secret.Violation, bool) {
-	i := m.list.Cursor()
-	if i < 0 || i >= len(m.violations) {
-		return secret.Violation{}, false
-	}
-	return m.violations[i], true
-}
-
 func (m Model) openDetail(title string, cmd tea.Cmd) (Model, tea.Cmd) {
 	m.level = levelDetail
 	m.detailTitle = title
@@ -287,73 +281,101 @@ func (m Model) openDetail(title string, cmd tea.Cmd) (Model, tea.Cmd) {
 	return m, cmd
 }
 
+// actions is every secrets key and the rows it acts on.
+var actions = func() []reslist.Action[Model, secret.Violation] {
+	k := keys.Secrets()
+	global := func(f func(Model) (Model, tea.Cmd)) func(Model, []secret.Violation) (Model, tea.Cmd) {
+		return func(m Model, _ []secret.Violation) (Model, tea.Cmd) { return f(m) }
+	}
+	each := func(title string, build func(Model, secret.Violation) plan.Action) func(Model, []secret.Violation) (Model, tea.Cmd) {
+		return func(m Model, rows []secret.Violation) (Model, tea.Cmd) {
+			return m.confirmEach(stepFix, title, rows, build), nil
+		}
+	}
+	return []reslist.Action[Model, secret.Violation]{
+		{Key: k.View, Scope: reslist.Cursor, Do: func(m Model, rows []secret.Violation) (Model, tea.Cmd) {
+			return m.openDetail("", viewContext(m.env, rows[0]))
+		}},
+		{Key: k.Allowlist, Scope: reslist.Selected, Do: each("Allowlist", Model.allowAction)},
+		{Key: k.AllowAll, Scope: reslist.All, Do: each("Allowlist", Model.allowAction)},
+		{Key: k.Exclude, Scope: reslist.Selected, Do: each("Exclude from sync", Model.excludeAction)},
+		{Key: k.StorePass, Scope: reslist.Cursor, Do: Model.promptStorePass},
+		{Key: k.SkipDir, Scope: reslist.Cursor, Do: func(m Model, rows []secret.Violation) (Model, tea.Cmd) {
+			m.pending = rows[0]
+			var cmd tea.Cmd
+			m.modal, cmd = m.modal.Prompt(stepSkipDirInput, prompt.New("Skip a directory in secret scans",
+				prompt.WithHint("Saved to secret.skip_dirs in config."),
+				prompt.WithValue(filepath.Dir(m.abs(rows[0])))))
+			return m, cmd
+		}},
+		{Key: k.Audit, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
+			return m.openDetail("Pass store audit", audit())
+		})},
+		{Key: k.PassLog, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
+			if !m.health.Pass.GitBacked {
+				return m, nav.Notify(nav.LevelWarn, "Pass store is not git-backed — press S to run setup")
+			}
+			return m.openDetail("Pass store git log", passLog())
+		})},
+		{Key: k.PassPush, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
+			if ph := m.health.Pass; !ph.GitBacked || !ph.GitRemote {
+				return m, nav.Notify(nav.LevelWarn, "Pass store has no git remote — press o to set one")
+			}
+			return m.confirmOne(stepPassGit, "Push pass store", plan.Action{
+				ID: "pass-push", Description: "Push pass store to " + m.health.RemoteURL, Execute: secret.GitPush,
+			}), nil
+		})},
+		{Key: k.PassRemote, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
+			if !m.health.Pass.GitBacked {
+				return m, nav.Notify(nav.LevelWarn, "Pass store is not git-backed — press S to run setup")
+			}
+			var cmd tea.Cmd
+			m.modal, cmd = m.modal.Prompt(stepRemoteURL, prompt.New("Set pass store git remote",
+				prompt.WithValue(m.health.RemoteURL), prompt.WithHint("Use a private repository.")))
+			return m, cmd
+		})},
+		{Key: k.Setup, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) { return m, m.wizard("secret", "setup") })},
+		{Key: k.CredSetup, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
+			return m, m.wizard("git-credential-helper", "setup")
+		})},
+		{Key: k.CredStatus, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
+			return m, handover.Run(handover.Paged(handover.WS(m.env.Paths, "git-credential-helper", "status")), handoverWizard)
+		})},
+		{Key: k.CredDisconnect, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
+			return m, m.wizard("git-credential-helper", "disconnect")
+		})},
+	}
+}()
+
 func (m Model) updateList(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
-	v, haveV := m.selected()
-	ph := m.health.Pass
+	if l, cmd, ok := m.list.HandleKey(k); ok {
+		m.list = l
+		return m, cmd
+	}
+	if next, cmd, ok := reslist.Run(m, m.list, actions, k); ok {
+		return next, cmd
+	}
 	switch {
 	case key.Matches(k, m.keys.Back):
 		return m, nav.Up
 	case key.Matches(k, m.keys.Refresh):
 		return m.rescan()
-	case key.Matches(k, m.keys.Audit):
-		return m.openDetail("Pass store audit", audit())
-	case key.Matches(k, m.keys.PassLog):
-		if !ph.GitBacked {
-			return m, nav.Notify(nav.LevelWarn, "Pass store is not git-backed — press S to run setup")
-		}
-		return m.openDetail("Pass store git log", passLog())
-	case key.Matches(k, m.keys.PassPush):
-		if !ph.GitBacked || !ph.GitRemote {
-			return m, nav.Notify(nav.LevelWarn, "Pass store has no git remote — press o to set one")
-		}
-		return m.confirmOne(stepPassGit, "Push pass store", plan.Action{
-			ID: "pass-push", Description: "Push pass store to " + m.health.RemoteURL, Execute: secret.GitPush,
-		}), nil
-	case key.Matches(k, m.keys.PassRemote):
-		if !ph.GitBacked {
-			return m, nav.Notify(nav.LevelWarn, "Pass store is not git-backed — press S to run setup")
-		}
-		var cmd tea.Cmd
-		m.modal, cmd = m.modal.Prompt(stepRemoteURL, prompt.New("Set pass store git remote",
-			prompt.WithValue(m.health.RemoteURL), prompt.WithHint("Use a private repository.")))
-		return m, cmd
-	case key.Matches(k, m.keys.Setup):
-		return m, m.wizard("secret", "setup")
-	case key.Matches(k, m.keys.CredSetup):
-		return m, m.wizard("git-credential-helper", "setup")
-	case key.Matches(k, m.keys.CredStatus):
-		return m, handover.Run(handover.Paged(handover.WS(m.env.Paths, "git-credential-helper", "status")), handoverWizard)
-	case key.Matches(k, m.keys.CredDisconnect):
-		return m, m.wizard("git-credential-helper", "disconnect")
-	case key.Matches(k, m.keys.AllowAll):
-		return m.openAllowAll(), nil
-	case !haveV:
-	case key.Matches(k, m.keys.View):
-		return m.openDetail("", viewContext(m.env, v))
-	case key.Matches(k, m.keys.Allowlist):
-		return m.confirmOne(stepFix, "Allowlist", m.allowAction(v)), nil
-	case key.Matches(k, m.keys.Exclude):
-		return m.confirmOne(stepFix, "Exclude from sync", m.excludeAction(v)), nil
-	case key.Matches(k, m.keys.StorePass):
-		if !ph.Initialized {
-			return m, nav.Notify(nav.LevelWarn, "Pass store not initialized — press S to run setup")
-		}
-		m.pending = v
-		var cmd tea.Cmd
-		m.modal, cmd = m.modal.Prompt(stepPassEntryName, prompt.New("Store this secret in pass",
-			prompt.WithHint(fmt.Sprintf("Entry name for %s:%d", m.abs(v), v.Line)),
-			prompt.WithValue(secret.SuggestPassEntry(v.Path, v.Snippet))))
-		return m, cmd
-	case key.Matches(k, m.keys.SkipDir):
-		m.pending = v
-		var cmd tea.Cmd
-		m.modal, cmd = m.modal.Prompt(stepSkipDirInput, prompt.New("Skip a directory in secret scans",
-			prompt.WithHint("Saved to secret.skip_dirs in config."),
-			prompt.WithValue(filepath.Dir(m.abs(v)))))
-		return m, cmd
 	}
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(k)
+	return m, cmd
+}
+
+func (m Model) promptStorePass(rows []secret.Violation) (Model, tea.Cmd) {
+	if !m.health.Pass.Initialized {
+		return m, nav.Notify(nav.LevelWarn, "Pass store not initialized — press S to run setup")
+	}
+	v := rows[0]
+	m.pending = v
+	var cmd tea.Cmd
+	m.modal, cmd = m.modal.Prompt(stepPassEntryName, prompt.New("Store this secret in pass",
+		prompt.WithHint(fmt.Sprintf("Entry name for %s:%d", m.abs(v), v.Line)),
+		prompt.WithValue(secret.SuggestPassEntry(v.Path, v.Snippet))))
 	return m, cmd
 }
 
@@ -395,6 +417,7 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 	if done.Result.Aborted {
 		return m, nil
 	}
+	m.list = m.list.ClearMarks() // the marks were for this action
 	level := nav.LevelSuccess
 	if done.Result.HasFailures() {
 		level = nav.LevelWarn
@@ -407,6 +430,22 @@ func (m Model) abs(v secret.Violation) string { return style.AbsPath(m.env.Paths
 
 func (m Model) confirmOne(st step, title string, a plan.Action) Model {
 	m.modal = m.modal.Confirm(st, confirm.New(title, plan.Plan{Command: "secret.fix", Actions: []plan.Action{a}}))
+	return m
+}
+
+// confirmEach opens a checklist with one action per row. Findings in one
+// file share an exclude.
+func (m Model) confirmEach(st step, title string, rows []secret.Violation, action func(Model, secret.Violation) plan.Action) Model {
+	p := plan.Plan{Command: "secret.fix"}
+	seen := map[string]bool{}
+	for _, v := range rows {
+		a := action(m, v)
+		if !seen[a.ID] {
+			seen[a.ID] = true
+			p.Actions = append(p.Actions, a)
+		}
+	}
+	m.modal = m.modal.Confirm(st, confirm.New(title, p))
 	return m
 }
 
@@ -457,31 +496,6 @@ func (m Model) passAction(v secret.Violation, entry string) plan.Action {
 	}
 }
 
-func (m Model) openAllowAll() Model {
-	p := plan.Plan{Command: "secret.fix"}
-	for _, v := range m.violations {
-		p.Actions = append(p.Actions, m.allowAction(v))
-	}
-	m.modal = m.modal.Confirm(stepAllowAll, confirm.New("Allowlist "+format.Plural(len(p.Actions), "finding"), p))
-	return m
-}
-
-func (m Model) rows() []table.Row {
-	out := make([]table.Row, 0, len(m.violations))
-	for _, v := range m.violations {
-		sev := v.Severity
-		if sev == "CRITICAL" {
-			sev = theme.Error.Render(sev)
-		}
-		out = append(out, table.Row{
-			sev,
-			m.env.Rel(m.abs(v)) + ":" + strconv.Itoa(v.Line),
-			strings.Join(strings.Fields(v.Snippet), " "),
-		})
-	}
-	return out
-}
-
 func mark(ok bool, label string) string {
 	if ok {
 		return theme.OK.Render("✔ " + label)
@@ -516,7 +530,7 @@ func (m Model) statusLine() string {
 	if m.scanning {
 		return theme.Muted.Render("Scanning for secrets…")
 	}
-	return format.Plural(len(m.violations), "finding")
+	return format.Plural(len(m.list.Items()), "finding")
 }
 
 // View implements nav.Component.
@@ -539,5 +553,5 @@ func (m Model) KeyMap() help.KeyMap {
 	case m.level == levelDetail:
 		return m.detailKeys
 	}
-	return m.keys
+	return m.list.Help(m.keys)
 }

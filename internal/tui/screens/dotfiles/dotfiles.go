@@ -14,7 +14,6 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 
@@ -29,20 +28,16 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/format"
 	"github.com/mugenkunou/ws-tool/internal/tui/handover"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
-	"github.com/mugenkunou/ws-tool/internal/tui/layout"
-	"github.com/mugenkunou/ws-tool/internal/tui/listview"
 	"github.com/mugenkunou/ws-tool/internal/tui/modal"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/prompt"
+	"github.com/mugenkunou/ws-tool/internal/tui/reslist"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // Entry is one managed dotfile and its health.
-type Entry struct {
-	Link   wsconfig.Link
-	Status string // "" when healthy, else dotfile.StatusBroken / StatusOverwritten
-}
+type Entry = dotfile.Entry
 
 // LoadedMsg carries the result of loading the dotfile list. Other components
 // (the dashboard) may observe it.
@@ -120,11 +115,10 @@ type Model struct {
 	env        env.Env
 	keys       keys.DotfilesMap
 	detailKeys keys.DetailMap
-	list       listview.Model
+	list       reslist.Model[Entry]
 	git        viewport.Model
 	level      level
 	modal      modal.Model
-	entries    []Entry
 	preparing  bool
 	width      int
 	height     int
@@ -141,35 +135,38 @@ func New(e env.Env) Model {
 		keys:       keys.Dotfiles(),
 		detailKeys: dk,
 		git:        vp,
-		list: listview.New([]layout.Col{
-			{Title: "System path", Min: 20, Weight: 3},
-			{Title: "Stored as", Min: 12, Weight: 2},
-			{Title: "Status", Min: 13},
-			{Title: "Sudo", Min: 4},
-		}, theme.Icon(theme.IconSprout)+"No dotfiles managed yet. Press a to add one."),
+		list: reslist.New(dotfile.Schema(e.View()), []reslist.Col[Entry]{
+			{Key: "system", Min: 20, Weight: 3},
+			{Key: "original", Min: 12, Weight: 2},
+			{Key: "class", Min: 6, Style: classStyle},
+			{Key: "status", Min: 13, Style: statusStyle},
+			{Key: "sudo", Min: 4},
+		}, theme.Icon(theme.IconSprout)+"No dotfiles managed yet. Press a to add one.").Declare(reslist.Decls(actions)),
 	}
+}
+
+func classStyle(e Entry, text string) string {
+	if e.EntryClass() == dotfile.ClassSecret {
+		return theme.Warn.Render(text)
+	}
+	return text
+}
+
+func statusStyle(e Entry, text string) string {
+	switch e.Status {
+	case dotfile.StatusBroken:
+		return theme.Error.Render("✘ " + text)
+	case dotfile.StatusOverwritten:
+		return theme.Warn.Render("⚠ " + text)
+	}
+	return theme.OK.Render("✔ " + text)
 }
 
 // Load reads the config and checks every symlink.
 func Load(e env.Env) tea.Cmd {
 	return func() tea.Msg {
-		links, err := dotfile.List(e.Paths.Config)
-		if err != nil {
-			return LoadedMsg{Err: err}
-		}
-		issues, err := dotfile.Scan(dotfile.ScanOptions{WorkspacePath: e.Paths.Workspace, ConfigPath: e.Paths.Config})
-		if err != nil {
-			return LoadedMsg{Err: err}
-		}
-		status := make(map[string]string, len(issues))
-		for _, is := range issues {
-			status[is.SystemPath] = is.Status
-		}
-		entries := make([]Entry, 0, len(links))
-		for _, l := range links {
-			entries = append(entries, Entry{Link: l, Status: status[l.System]})
-		}
-		return LoadedMsg{Entries: entries}
+		entries, err := dotfile.Entries(e.Paths.Workspace, e.Paths.Config)
+		return LoadedMsg{Entries: entries, Err: err}
 	}
 }
 
@@ -253,8 +250,11 @@ func loadGitView(e env.Env) tea.Cmd {
 // Init starts the first load.
 func (m Model) Init() tea.Cmd { return Load(m.env) }
 
+// Declared lists the screen's actions and their scopes.
+func (m Model) Declared() []reslist.Decl { return m.list.Declared() }
+
 // CapturesKeys implements nav.Component.
-func (m Model) CapturesKeys() bool { return m.modal.Open() }
+func (m Model) CapturesKeys() bool { return m.modal.Open() || m.list.Editing() }
 
 // Update implements nav.Component.
 func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
@@ -279,15 +279,12 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 			m.list = m.list.SetError(msg.Err)
 			return m, nil
 		}
-		m.entries = msg.Entries
-		m.list = m.list.SetRows(m.rows())
+		m.list = m.list.SetItems(msg.Entries)
 		return m, nil
 	case SelectMsg:
-		for i, e := range m.entries {
-			if e.Link.System == msg.System {
-				m.level = levelList
-				m.list = m.list.SetCursor(i)
-			}
+		var found bool
+		if m.list, found = m.list.Select(func(e Entry) bool { return e.Link.System == msg.System }); found {
+			m.level = levelList
 		}
 		return m, nil
 	case RequestFixMsg:
@@ -295,7 +292,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 			return m, nil
 		}
 		m.level = levelList
-		return m.openFix(), nil
+		return m.openFix(m.list.Items()), nil
 	case addPreparedMsg:
 		m.preparing = false
 		if msg.err != nil {
@@ -337,51 +334,66 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	return m.updateList(k)
 }
 
+// actions is every dotfiles key and the rows it acts on.
+var actions = func() []reslist.Action[Model, Entry] {
+	k := keys.Dotfiles()
+	global := func(f func(Model) (Model, tea.Cmd)) func(Model, []Entry) (Model, tea.Cmd) {
+		return func(m Model, _ []Entry) (Model, tea.Cmd) { return f(m) }
+	}
+	plain := func(f func(Model, []Entry) Model) func(Model, []Entry) (Model, tea.Cmd) {
+		return func(m Model, rows []Entry) (Model, tea.Cmd) { return f(m, rows), nil }
+	}
+	return []reslist.Action[Model, Entry]{
+		{Key: k.Add, Scope: reslist.Global, Do: global(Model.promptAdd)},
+		{Key: k.Remove, Scope: reslist.Selected, Do: plain(Model.openRemove)},
+		{Key: k.Sync, Scope: reslist.Selected, Do: plain(Model.openSync)},
+		{Key: k.Fix, Scope: reslist.All, Do: plain(Model.openFix)},
+		{Key: k.Reset, Scope: reslist.All, Do: plain(Model.openReset)},
+		{Key: k.Push, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) { return m.openPush(), nil })},
+		{Key: k.GitView, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
+			m.level = levelGit
+			m.git.SetContent(theme.Muted.Render("Loading…"))
+			m.git.GotoTop()
+			return m, loadGitView(m.env)
+		})},
+		{Key: k.GitSetup, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
+			return m, handover.Run(handover.Pause(handover.WS(m.env.Paths, "dotfile", "git", "setup")), handoverGitSetup)
+		})},
+		{Key: k.Migrate, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
+			return m, handover.Run(handover.Pause(handover.WS(m.env.Paths, "dotfile", "migrate")), handoverMigrate)
+		})},
+	}
+}()
+
 func (m Model) updateList(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
+	if l, cmd, ok := m.list.HandleKey(k); ok {
+		m.list = l
+		return m, cmd
+	}
+	if next, cmd, ok := reslist.Run(m, m.list, actions, k); ok {
+		return next, cmd
+	}
 	switch {
 	case key.Matches(k, m.keys.Back):
 		return m, nav.Up
 	case key.Matches(k, m.keys.Refresh):
 		m.list = m.list.SetLoading()
 		return m, Load(m.env)
-	case key.Matches(k, m.keys.Add):
-		if m.preparing {
-			return m, nil
-		}
-		var cmd tea.Cmd
-		m.modal, cmd = m.modal.Prompt(stepAddPath, prompt.New("Add a dotfile or config directory",
-			prompt.WithHint("The original moves into configs/dotfiles/ and is symlinked back."),
-			prompt.WithValue("~/"),
-			prompt.WithCompleter(complete.Paths)))
-		return m, cmd
-	case key.Matches(k, m.keys.Remove):
-		if i := m.list.Cursor(); i >= 0 && i < len(m.entries) {
-			return m.openRemove(m.entries[i].Link), nil
-		}
-		return m, nil
-	case key.Matches(k, m.keys.Fix):
-		return m.openFix(), nil
-	case key.Matches(k, m.keys.Sync):
-		if i := m.list.Cursor(); i >= 0 && i < len(m.entries) {
-			return m.openSync(m.entries[i].Link), nil
-		}
-		return m, nil
-	case key.Matches(k, m.keys.Reset):
-		return m.openReset(), nil
-	case key.Matches(k, m.keys.Push):
-		return m.openPush(), nil
-	case key.Matches(k, m.keys.GitView):
-		m.level = levelGit
-		m.git.SetContent(theme.Muted.Render("Loading…"))
-		m.git.GotoTop()
-		return m, loadGitView(m.env)
-	case key.Matches(k, m.keys.GitSetup):
-		return m, handover.Run(handover.Pause(handover.WS(m.env.Paths, "dotfile", "git", "setup")), handoverGitSetup)
-	case key.Matches(k, m.keys.Migrate):
-		return m, handover.Run(handover.Pause(handover.WS(m.env.Paths, "dotfile", "migrate")), handoverMigrate)
 	}
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(k)
+	return m, cmd
+}
+
+func (m Model) promptAdd() (Model, tea.Cmd) {
+	if m.preparing {
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.modal, cmd = m.modal.Prompt(stepAddPath, prompt.New("Add a dotfile or config directory",
+		prompt.WithHint("The original moves into configs/dotfiles/ and is symlinked back."),
+		prompt.WithValue("~/"),
+		prompt.WithCompleter(complete.Paths)))
 	return m, cmd
 }
 
@@ -398,6 +410,7 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 	if done.Result.Aborted {
 		return m, nil
 	}
+	m.list = m.list.ClearMarks() // the marks were for this action
 	level := nav.LevelSuccess
 	if done.Result.HasFailures() {
 		level = nav.LevelWarn
@@ -472,27 +485,36 @@ func (m Model) openAdd(msg addPreparedMsg) Model {
 	return m
 }
 
-func (m Model) openRemove(link wsconfig.Link) Model {
-	p := m.env.Paths
-	sys := link.System
-	pl := plan.Plan{Command: "dotfile.rm", Actions: []plan.Action{{
-		ID:          "dotfile-rm",
-		Description: "Remove dotfile " + sys + theme.Muted.Render("  (restores the file to its system path)"),
-		Execute: func() error {
-			_, err := dotfile.Remove(dotfile.RemoveOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config, SystemPath: sys})
-			return err
-		},
-	}}}
-	m.modal = m.modal.Confirm(stepRemove, confirm.New("Remove dotfile", pl))
+func (m Model) openRemove(targets []Entry) Model {
+	m.modal = m.modal.Confirm(stepRemove, confirm.New("Remove "+format.Plural(len(targets), "dotfile"), m.removePlan(targets)))
 	return m
 }
 
-func (m Model) openFix() Model {
+func (m Model) removePlan(targets []Entry) plan.Plan {
 	p := m.env.Paths
-	var broken []string
-	for _, e := range m.entries {
+	pl := plan.Plan{Command: "dotfile.rm"}
+	for _, e := range targets {
+		sys := e.Link.System
+		pl.Actions = append(pl.Actions, plan.Action{
+			ID:          "dotfile-rm-" + sys,
+			Description: "Remove dotfile " + sys + theme.Muted.Render("  (restores the file to its system path)"),
+			Execute: func() error {
+				_, err := dotfile.Remove(dotfile.RemoveOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config, SystemPath: sys})
+				return err
+			},
+		})
+	}
+	return pl
+}
+
+// openFix recreates the broken links among rows.
+func (m Model) openFix(rows []Entry) Model {
+	p := m.env.Paths
+	var broken, only []string
+	for _, e := range rows {
 		if e.Status != "" {
 			broken = append(broken, m.env.Rel(e.Link.System))
+			only = append(only, e.Link.System)
 		}
 	}
 	pl := plan.Plan{Command: "dotfile.fix"}
@@ -501,7 +523,7 @@ func (m Model) openFix() Model {
 			ID:          "dotfile-fix",
 			Description: "Recreate " + format.Plural(len(broken), "link") + ": " + strings.Join(broken, ", "),
 			Execute: func() error {
-				res, err := dotfile.Fix(dotfile.FixOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config})
+				res, err := dotfile.Fix(dotfile.FixOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config, Only: only})
 				if err != nil {
 					return err
 				}
@@ -520,11 +542,19 @@ func (m Model) openFix() Model {
 	return m
 }
 
-func (m Model) openSync(link wsconfig.Link) Model {
+func (m Model) openSync(targets []Entry) Model {
+	pl := plan.Plan{Command: "dotfile.sync"}
+	for _, e := range targets {
+		pl.Actions = append(pl.Actions, m.syncAction(e.Link.System))
+	}
+	m.modal = m.modal.Confirm(stepSync, confirm.New("Sync "+format.Plural(len(targets), "dotfile"), pl))
+	return m
+}
+
+func (m Model) syncAction(sys string) plan.Action {
 	p := m.env.Paths
-	sys := link.System
-	pl := plan.Plan{Command: "dotfile.sync", Actions: []plan.Action{{
-		ID:          "dotfile-sync",
+	return plan.Action{
+		ID:          "dotfile-sync-" + sys,
 		Description: "Sync " + sys + theme.Muted.Render("  (live file → workspace copy)"),
 		Execute: func() error {
 			// Step 1: unregister — drops the config record and the stale
@@ -548,22 +578,28 @@ func (m Model) openSync(link wsconfig.Link) Model {
 			})
 			return err
 		},
-	}}}
-	m.modal = m.modal.Confirm(stepSync, confirm.New("Sync dotfile", pl))
-	return m
+	}
 }
 
-func (m Model) openReset() Model {
+// openReset restores rows to their system paths and unregisters them: the
+// whole subsystem (`dotfile reset`) when rows is every dotfile, else one
+// remove per row. Nothing is pre-checked.
+func (m Model) openReset(rows []Entry) Model {
 	p := m.env.Paths
-	pl := plan.Plan{Command: "dotfile.reset", Actions: []plan.Action{{
-		ID:          "dotfile-reset-all",
-		Description: "Reset all " + format.Plural(len(m.entries), "managed dotfile") + theme.Warn.Render("  (restores originals, unregisters all)"),
-		Execute: func() error {
-			_, err := dotfile.Reset(dotfile.ResetOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config})
-			return err
-		},
-	}}}
-	c := confirm.New("Reset dotfiles", pl).WithChecked(func(int, plan.Action) bool { return false })
+	var pl plan.Plan
+	if len(rows) == len(m.list.Items()) {
+		pl = plan.Plan{Command: "dotfile.reset", Actions: []plan.Action{{
+			ID:          "dotfile-reset-all",
+			Description: "Reset all " + format.Plural(len(rows), "managed dotfile") + theme.Warn.Render("  (restores originals, unregisters all)"),
+			Execute: func() error {
+				_, err := dotfile.Reset(dotfile.ResetOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config})
+				return err
+			},
+		}}}
+	} else {
+		pl = m.removePlan(rows)
+	}
+	c := confirm.New("Reset "+format.Plural(len(rows), "dotfile"), pl).WithChecked(func(int, plan.Action) bool { return false })
 	m.modal = m.modal.Confirm(stepReset, c)
 	return m
 }
@@ -613,25 +649,6 @@ func (m Model) openPush() Model {
 	return m
 }
 
-func (m Model) rows() []table.Row {
-	rows := make([]table.Row, 0, len(m.entries))
-	for _, e := range m.entries {
-		status := theme.OK.Render("✔ ok")
-		switch e.Status {
-		case dotfile.StatusBroken:
-			status = theme.Error.Render("✘ broken")
-		case dotfile.StatusOverwritten:
-			status = theme.Warn.Render("⚠ overwritten")
-		}
-		sudo := ""
-		if e.Link.Sudo {
-			sudo = "yes"
-		}
-		rows = append(rows, table.Row{m.env.Rel(e.Link.System), e.Link.Original, status, sudo})
-	}
-	return rows
-}
-
 // View implements nav.Component.
 func (m Model) View() string {
 	switch {
@@ -653,5 +670,5 @@ func (m Model) KeyMap() help.KeyMap {
 	case m.level == levelGit:
 		return m.detailKeys
 	}
-	return m.keys
+	return m.list.Help(m.keys)
 }

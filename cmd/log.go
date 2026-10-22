@@ -12,11 +12,15 @@ import (
 	"time"
 
 	wslog "github.com/mugenkunou/ws-tool/internal/log"
+	"github.com/mugenkunou/ws-tool/internal/resource"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
-var logHelp = cmdHelp{Usage: "ws log <start|stop|ls|prune|rm>"}
+var logHelp = cmdHelp{
+	Usage: "ws log <start|stop|ls|prune|rm>",
+	Flags: listFlagHelp("ls", wslog.Schema(resource.CLIView()).Keys()),
+}
 
 func runLog(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	if hasHelpArg(args) || len(args) == 0 {
@@ -227,32 +231,20 @@ func runLog(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 		}
 		return planResult.ExitCode()
 	case "ls":
+		fs := flag.NewFlagSet("log-ls", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		lf := registerListFlags(fs, "")
+		registerGlobalFlags(fs, &globals)
+		if err := fs.Parse(subArgs); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
 		sessions, err := wslog.List(logDir)
 		if err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		if globals.json {
-			return writeJSON(stdout, stderr, "log.ls", sessions)
-		}
-		out := textOut(globals, stdout)
-		if len(sessions) == 0 {
-			fmt.Fprintln(out, "No recorded sessions.")
-			return 0
-		}
-		for _, s := range sessions {
-			nc := globals.noColor
-			mark := style.Mutedf(nc, " ")
-			if s.Active {
-				mark = style.Paint(style.FgRed, "●", nc)
-			}
-			fmt.Fprintf(out, "%s %s  %s  %s\n",
-				mark,
-				style.Boldf(nc, "%-20s", s.Tag),
-				style.Mutedf(nc, "%d cmds", s.Commands),
-				style.Mutedf(nc, "%s", style.HumanBytes(s.SizeBytes)))
-		}
-		return 0
+		return renderList(globals, "log.ls", wslog.Schema(resource.CLIView()), sessions, lf, "No recorded sessions.", stdout, stderr)
 	case "prune":
 		fs := flag.NewFlagSet("log-prune", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mugenkunou/ws-tool/internal/ignore"
+	"github.com/mugenkunou/ws-tool/internal/resource"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
@@ -23,6 +24,18 @@ var ignoreHelp = cmdHelp{
 		"  fix            Interactively resolve violations",
 		"  edit           Open ws/ignore.json in your editor",
 	},
+	Flags: listFlagHelp("scan", ignore.Schema(resource.CLIView(), "").Keys()),
+}
+
+// ignoreScanExit is 2 when an actionable (non-safe-harbor) violation is
+// present, else 0.
+func ignoreScanExit(violations []ignore.Violation) int {
+	for _, v := range violations {
+		if !v.InSafeHarbor {
+			return 2
+		}
+	}
+	return 0
 }
 
 func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -109,6 +122,7 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 		fs.SetOutput(io.Discard)
 		expandHarbors := fs.Bool("expand-suppressed", false, "show suppressed items individually")
 		fs.Bool("expand-harbors", false, "alias for --expand-suppressed (deprecated)") // hidden compat alias
+		lf := registerListFlags(fs, "")
 		registerGlobalFlags(fs, &globals)
 		if err := fs.Parse(subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
@@ -125,8 +139,13 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
+		schema := ignore.Schema(resource.CLIView(), workspacePath)
+		violations, ok := applyList(schema, violations, lf, stderr)
+		if !ok {
+			return 1
+		}
 		if globals.json {
-			return writeJSON(stdout, stderr, "ignore.scan", absIgnoreViolations(workspacePath, violations))
+			return writeJSON(stdout, stderr, "ignore.scan", schema.Records(violations))
 		}
 		out := textOut(globals, stdout)
 		if len(violations) == 0 {
@@ -139,13 +158,7 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 			}
 			printIgnoreViolationsSplit(out, absIgnoreViolations(workspacePath, violations), globals.noColor, expandSuppressed)
 		}
-		// Only actionable (non-safe-harbor) violations trigger exit 2.
-		for _, v := range violations {
-			if !v.InSafeHarbor {
-				return 2
-			}
-		}
-		return 0
+		return ignoreScanExit(violations)
 	case "fix":
 		fs := flag.NewFlagSet("ignore-fix", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)

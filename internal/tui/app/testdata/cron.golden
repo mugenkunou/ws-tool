@@ -4,7 +4,7 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷
  Job             Schedule      State          Last run          Description
  dotfile-push    0 * * * *     ✔ installed    2h ago            commit + push dotfiles
  repo-sync       */30 * * * *  ✔ installed    40m ago (exit 2)  sync repo fleet
- all             preset        not installed                    preset: dotfile-push, repo-sync
+ all             preset        not installed                    installs: dotfile-push, repo-sync
 
 
 
@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷
 
 
 
-enter view log • a install • d remove • r refresh • tab/⇧tab screens • ? help • q quit
+enter view log • a install • d remove • r refresh … • tab/⇧tab screens • ? help • q quit

@@ -514,8 +514,55 @@ func (m Model) footer() string {
 	}
 	if cur.CapturesKeys() {
 		km = cur.KeyMap() // global keys are inactive while a modal is open
+	} else if !m.fullHelp {
+		return m.withToast(clip.Render(shortFooter(h, cur.KeyMap(), km.(combinedKeys).global, m.width)))
 	}
 	return m.withToast(clip.Render(h.View(km)))
+}
+
+// shortFooter renders the screen's short help, then the global keys. The
+// global part (screens, ? help, q quit) always fits; the screen's part keeps
+// as many whole items as fit and ends with an ellipsis when some do not.
+// (bubbles' help.ShortHelpView adds an overflowing item anyway when no
+// ellipsis fits, so this truncates itself.)
+func shortFooter(h help.Model, local, global help.KeyMap, width int) string {
+	h.SetWidth(0)
+	g := h.ShortHelpView(global.ShortHelp())
+	sep := h.Styles.ShortSeparator.Inline(true).Render(h.ShortSeparator)
+	tail := " " + h.Styles.Ellipsis.Inline(true).Render(h.Ellipsis)
+	room := width - lipgloss.Width(g) - lipgloss.Width(sep)
+
+	var items []string
+	used, cut := 0, false
+	for _, kb := range local.ShortHelp() {
+		if !kb.Enabled() {
+			continue
+		}
+		item := h.Styles.ShortKey.Inline(true).Render(kb.Help().Key) + " " +
+			h.Styles.ShortDesc.Inline(true).Render(kb.Help().Desc)
+		if len(items) > 0 {
+			item = sep + item
+		}
+		if used+lipgloss.Width(item) > room {
+			cut = true
+			break
+		}
+		used += lipgloss.Width(item)
+		items = append(items, item)
+	}
+	// Drop items until the ellipsis fits, so a cut is always visible.
+	for cut && len(items) > 0 && used+lipgloss.Width(tail) > room {
+		used -= lipgloss.Width(items[len(items)-1])
+		items = items[:len(items)-1]
+	}
+	l := strings.Join(items, "")
+	if cut && len(items) > 0 {
+		l += tail
+	}
+	if l == "" {
+		return g
+	}
+	return l + sep + g
 }
 
 // withToast draws the active toast over the footer's last line, so showing

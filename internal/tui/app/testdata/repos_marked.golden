@@ -1,0 +1,30 @@
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+────────────────────────────────────────────────────────────────────────────────────────────────────
+4 repos · 1 dirty · 1 ahead · 1 behind · 1 issue
+3 marked — f p P s S x act on them · ctrl+\ clears
+ Repo                                           State        ↑    ↓    Issues  Branch
+ Projects/api                                   ✔ clean      ·    ·            main
+ Projects/web                                   ● dirty      2    ·    1       feature/login
+ Projects/old                                   ✔ clean      ·    5            (detached)
+ ~/.password-store                              no upstream  ·    ·            master
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+enter details • s sync (merge) • p pull (ff-only) • f fetch … • tab/⇧tab screens • ? help • q quit

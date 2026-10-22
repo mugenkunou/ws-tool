@@ -14,13 +14,11 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/table"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/plan"
-	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/tui/complete"
 	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
@@ -28,12 +26,12 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/format"
 	"github.com/mugenkunou/ws-tool/internal/tui/handover"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
-	"github.com/mugenkunou/ws-tool/internal/tui/layout"
-	"github.com/mugenkunou/ws-tool/internal/tui/listview"
 	"github.com/mugenkunou/ws-tool/internal/tui/modal"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/prompt"
+	"github.com/mugenkunou/ws-tool/internal/tui/reslist"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // LoadedMsg carries scan violations. Other components (the dashboard) may
@@ -70,8 +68,8 @@ const (
 type screenLevel int
 
 const (
-	levelLive screenLevel = iota // live violations
-	levelSuppressed               // suppressed warnings
+	levelLive       screenLevel = iota // live violations
+	levelSuppressed                    // suppressed warnings
 )
 
 type handoverTag int
@@ -82,13 +80,10 @@ const handoverRules handoverTag = iota
 type Model struct {
 	env      env.Env
 	keys     keys.IgnoreMap
-	liveList listview.Model
-	suppList listview.Model
+	liveList reslist.Model[wsignore.Violation] // actionable (not in safe harbor)
+	suppList reslist.Model[wsignore.Violation] // suppressed (in safe harbor)
 	modal    modal.Model
 	all      []wsignore.Violation
-	live     []wsignore.Violation // actionable (not in safe harbor)
-	supp     []wsignore.Violation // suppressed (in safe harbor)
-	marks    map[int]bool         // indices into the current level's slice marked for bulk action
 	level    screenLevel
 	scanning bool
 	width    int
@@ -97,19 +92,37 @@ type Model struct {
 
 // New creates the screen.
 func New(e env.Env) Model {
-	cols := []layout.Col{
-		{Title: "Severity", Min: 8},
-		{Title: "Type", Min: 12},
-		{Title: "Size", Min: 9},
-		{Title: "Path", Min: 20, Weight: 1},
+	schema := wsignore.Schema(e.View(), e.Paths.Workspace)
+	cols := []reslist.Col[wsignore.Violation]{
+		{Key: "severity", Min: 10, Style: severityStyle},
+		{Key: "type", Min: 12},
+		{Key: "size_bytes", Min: 9},
+		{Key: "path", Min: 20, Weight: 1, Style: func(v wsignore.Violation, t string) string {
+			if v.InSafeHarbor {
+				return theme.Muted.Render(t)
+			}
+			return t
+		}},
 	}
 	return Model{
 		env:      e,
 		keys:     keys.Ignore(),
 		scanning: true,
-		liveList: listview.New(cols, theme.Icon(theme.IconBroom)+"Squeaky clean — no sync hygiene violations."),
-		suppList: listview.New(cols, theme.Icon(theme.IconBroom)+"No suppressed warnings."),
+		liveList: reslist.New(schema, cols, theme.Icon(theme.IconBroom)+"Squeaky clean — no sync hygiene violations.").Declare(reslist.Decls(liveActions)),
+		suppList: reslist.New(schema, cols, theme.Icon(theme.IconBroom)+"No suppressed warnings.").Declare(reslist.Decls(suppActions)),
 	}
+}
+
+func severityStyle(v wsignore.Violation, t string) string {
+	switch {
+	case v.InSafeHarbor:
+		return theme.Muted.Render("suppressed")
+	case v.Severity == "CRITICAL":
+		return theme.Error.Render(t)
+	case v.Severity == "WARNING":
+		return theme.Warn.Render(t)
+	}
+	return t
 }
 
 func engine(e env.Env) (*wsignore.Engine, error) {
@@ -172,37 +185,34 @@ func check(e env.Env, input string) tea.Cmd {
 // Init starts the first scan.
 func (m Model) Init() tea.Cmd { return Load(m.env) }
 
+// Declared lists the actions of both levels and their scopes.
+func (m Model) Declared() []reslist.Decl {
+	return append(m.liveList.Declared(), m.suppList.Declared()...)
+}
+
 // CapturesKeys implements nav.Component.
-func (m Model) CapturesKeys() bool { return m.modal.Open() }
+func (m Model) CapturesKeys() bool { return m.modal.Open() || m.activeList().Editing() }
 
 func (m Model) rescan() (Model, tea.Cmd) {
 	m.scanning = true
-	m.marks = nil
 	m.liveList = m.liveList.SetLoading()
 	m.suppList = m.suppList.SetLoading()
 	return m, Load(m.env)
 }
 
-// currentShown returns the violations shown in the active level.
-func (m Model) currentShown() []wsignore.Violation {
-	if m.level == levelSuppressed {
-		return m.supp
-	}
-	return m.live
-}
-
-func (m Model) filter() Model {
-	m.live = m.live[:0:0]
-	m.supp = m.supp[:0:0]
+// split puts actionable violations in the live list and safe-harbor ones in
+// the suppressed list.
+func (m Model) split() Model {
+	var live, supp []wsignore.Violation
 	for _, v := range m.all {
 		if v.InSafeHarbor {
-			m.supp = append(m.supp, v)
+			supp = append(supp, v)
 		} else {
-			m.live = append(m.live, v)
+			live = append(live, v)
 		}
 	}
-	m.liveList = m.liveList.SetRows(m.liveRows())
-	m.suppList = m.suppList.SetRows(m.suppRows())
+	m.liveList = m.liveList.SetItems(live)
+	m.suppList = m.suppList.SetItems(supp)
 	return m
 }
 
@@ -230,7 +240,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 			return m, nil
 		}
 		m.all = msg.Violations
-		return m.filter(), nil
+		return m.split(), nil
 	case checkMsg:
 		return m, nav.Notify(msg.level, msg.text)
 	case handover.DoneMsg:
@@ -250,119 +260,26 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		return m, nil
 	}
 
-	// Level switching: H opens suppressed screen; Back returns to live screen.
-	if key.Matches(k, m.keys.ViewSuppressed) && m.level == levelLive {
-		m.level = levelSuppressed
-		m.marks = nil
-		return m, nil
+	if l, cmd, ok := m.activeList().HandleKey(k); ok {
+		return m.setActiveList(l), cmd
 	}
-	if key.Matches(k, m.keys.Back) {
+
+	acts := liveActions
+	if m.level == levelSuppressed {
+		acts = suppActions
+	}
+	if next, cmd, ok := reslist.Run(m, m.activeList(), acts, k); ok {
+		return next, cmd
+	}
+	switch {
+	case key.Matches(k, m.keys.Back):
 		if m.level == levelSuppressed {
 			m.level = levelLive
-			m.marks = nil
 			return m, nil
 		}
 		return m, nav.Up
-	}
-
-	// Route remaining keys to the active level.
-	shown := m.currentShown()
-	v, haveV := m.selectedFrom(shown)
-	switch {
 	case key.Matches(k, m.keys.Refresh):
 		return m.rescan()
-	case key.Matches(k, m.keys.Check):
-		var cmd tea.Cmd
-		m.modal, cmd = m.modal.Prompt(stepCheckPath, prompt.New("Will this path sync?",
-			prompt.WithValue(m.env.Paths.Workspace+"/"), prompt.WithCompleter(complete.Paths)))
-		return m, cmd
-	case key.Matches(k, m.keys.Tree):
-		return m, handover.Run(handover.Paged(handover.WS(m.env.Paths, "ignore", "tree")), handoverRules)
-	case key.Matches(k, m.keys.List):
-		return m, handover.Run(handover.Paged(handover.WS(m.env.Paths, "ignore", "ls")), handoverRules)
-	case key.Matches(k, m.keys.EditRules):
-		return m, handover.Run(handover.WS(m.env.Paths, "ignore", "edit"), handoverRules)
-	case key.Matches(k, m.keys.ExcludeAll):
-		return m.openExcludeAll(), nil
-	case key.Matches(k, m.keys.Select) && len(shown) > 0:
-		idx := m.activeList().Cursor()
-		if m.marks == nil {
-			m.marks = make(map[int]bool)
-		}
-		if m.marks[idx] {
-			delete(m.marks, idx)
-		} else {
-			m.marks[idx] = true
-		}
-		// Advance cursor one row after marking (ergonomic bulk-marking).
-		m = m.advanceActiveCursor()
-		return m.refreshRows(), nil
-	case key.Matches(k, m.keys.SelectAll) && len(shown) > 0:
-		if len(m.marks) == len(shown) {
-			m.marks = nil
-		} else {
-			m.marks = make(map[int]bool, len(shown))
-			for i := range shown {
-				m.marks[i] = true
-			}
-		}
-		return m.refreshRows(), nil
-
-	// --- Live-level actions ---
-	case m.level == levelLive && key.Matches(k, m.keys.Exclude) && haveV:
-		targets := m.markedViolations(v, shown)
-		var actions []plan.Action
-		for _, t := range targets {
-			actions = append(actions, m.excludeAction(t))
-		}
-		return m.openFixMulti("Add to .megaignore", actions), nil
-	case m.level == levelLive && key.Matches(k, m.keys.Suppress) && haveV:
-		targets := m.markedViolations(v, shown)
-		var actions []plan.Action
-		for _, t := range targets {
-			a, ok := m.harborAction(t)
-			if ok {
-				actions = append(actions, a)
-			}
-		}
-		if len(actions) == 0 {
-			return m, nav.Notify(nav.LevelInfo, "Top-level path has no parent to suppress")
-		}
-		return m.openFixMulti("Suppress warning", actions), nil
-	case m.level == levelLive && key.Matches(k, m.keys.Move) && haveV:
-		if v.Type != "bloat" {
-			return m, nav.Notify(nav.LevelInfo, "Only bloat can be moved to scratch")
-		}
-		targets := m.markedViolations(v, shown)
-		var actions []plan.Action
-		for _, t := range targets {
-			if t.Type == "bloat" {
-				actions = append(actions, m.moveAction(t))
-			}
-		}
-		return m.openFixMulti("Move to scratch", actions), nil
-	case m.level == levelLive && key.Matches(k, m.keys.Delete) && haveV:
-		targets := m.markedViolations(v, shown)
-		var actions []plan.Action
-		for _, t := range targets {
-			actions = append(actions, m.deleteAction(t))
-		}
-		return m.openFixMulti("Delete", actions), nil
-
-	// --- Suppressed-level actions ---
-	case m.level == levelSuppressed && key.Matches(k, m.keys.Unsuppress) && haveV:
-		targets := m.markedViolations(v, shown)
-		var actions []plan.Action
-		for _, t := range targets {
-			a, ok := m.unsuppressAction(t)
-			if ok {
-				actions = append(actions, a)
-			}
-		}
-		if len(actions) == 0 {
-			return m, nav.Notify(nav.LevelInfo, "Cannot determine suppress rule for selected items")
-		}
-		return m.openFixMulti("Remove suppress rules", actions), nil
 	}
 
 	// Delegate movement to the active list.
@@ -375,52 +292,93 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	return m, cmd
 }
 
+// fix opens one checklist with each row's action from build; a row build
+// skips (ok false) is left out, and none at all notifies empty instead.
+func fix(title, empty string, build func(Model, wsignore.Violation) (plan.Action, bool)) func(Model, []wsignore.Violation) (Model, tea.Cmd) {
+	return func(m Model, rows []wsignore.Violation) (Model, tea.Cmd) {
+		var actions []plan.Action
+		for _, v := range rows {
+			if a, ok := build(m, v); ok {
+				actions = append(actions, a)
+			}
+		}
+		if len(actions) == 0 {
+			return m, nav.Notify(nav.LevelInfo, empty)
+		}
+		return m.openFixMulti(title, actions), nil
+	}
+}
+
+func always(f func(Model, wsignore.Violation) plan.Action) func(Model, wsignore.Violation) (plan.Action, bool) {
+	return func(m Model, v wsignore.Violation) (plan.Action, bool) { return f(m, v), true }
+}
+
+// commonActions are the keys both levels share; none acts on rows.
+func commonActions() []reslist.Action[Model, wsignore.Violation] {
+	k := keys.Ignore()
+	run := func(f func(Model) tea.Cmd) func(Model, []wsignore.Violation) (Model, tea.Cmd) {
+		return func(m Model, _ []wsignore.Violation) (Model, tea.Cmd) { return m, f(m) }
+	}
+	return []reslist.Action[Model, wsignore.Violation]{
+		{Key: k.Check, Scope: reslist.Global, Do: func(m Model, _ []wsignore.Violation) (Model, tea.Cmd) {
+			var cmd tea.Cmd
+			m.modal, cmd = m.modal.Prompt(stepCheckPath, prompt.New("Will this path sync?",
+				prompt.WithValue(m.env.Paths.Workspace+"/"), prompt.WithCompleter(complete.Paths)))
+			return m, cmd
+		}},
+		{Key: k.Tree, Scope: reslist.Global, Do: run(func(m Model) tea.Cmd {
+			return handover.Run(handover.Paged(handover.WS(m.env.Paths, "ignore", "tree")), handoverRules)
+		})},
+		{Key: k.List, Scope: reslist.Global, Do: run(func(m Model) tea.Cmd {
+			return handover.Run(handover.Paged(handover.WS(m.env.Paths, "ignore", "ls")), handoverRules)
+		})},
+		{Key: k.EditRules, Scope: reslist.Global, Do: run(func(m Model) tea.Cmd {
+			return handover.Run(handover.WS(m.env.Paths, "ignore", "edit"), handoverRules)
+		})},
+	}
+}
+
+// liveActions is every key on the violations level and the rows it acts on.
+var liveActions = func() []reslist.Action[Model, wsignore.Violation] {
+	k := keys.Ignore()
+	return append([]reslist.Action[Model, wsignore.Violation]{
+		{Key: k.Exclude, Scope: reslist.Selected, Do: fix("Add to .megaignore", "", always(Model.excludeAction))},
+		{Key: k.Suppress, Scope: reslist.Selected, Do: fix("Suppress warning", "Top-level path has no parent to suppress", Model.harborAction)},
+		{Key: k.Move, Scope: reslist.Selected, Do: fix("Move to scratch", "Only bloat can be moved to scratch",
+			func(m Model, v wsignore.Violation) (plan.Action, bool) { return m.moveAction(v), v.Type == "bloat" })},
+		{Key: k.Delete, Scope: reslist.Selected, Do: fix("Delete", "", always(Model.deleteAction))},
+		{Key: k.ExcludeAll, Scope: reslist.All, Do: func(m Model, rows []wsignore.Violation) (Model, tea.Cmd) {
+			return m.openExcludeAll(rows), nil
+		}},
+		{Key: k.ViewSuppressed, Scope: reslist.Global, Do: func(m Model, _ []wsignore.Violation) (Model, tea.Cmd) {
+			m.level = levelSuppressed
+			return m, nil
+		}},
+	}, commonActions()...)
+}()
+
+// suppActions is every key on the suppressed-warnings level.
+var suppActions = func() []reslist.Action[Model, wsignore.Violation] {
+	k := keys.Ignore()
+	return append([]reslist.Action[Model, wsignore.Violation]{
+		{Key: k.Unsuppress, Scope: reslist.Selected, Do: fix("Remove suppress rules", "Cannot determine suppress rule for selected items", Model.unsuppressAction)},
+	}, commonActions()...)
+}()
+
 // activeList returns the list model for the current level.
-func (m Model) activeList() listview.Model {
+func (m Model) activeList() reslist.Model[wsignore.Violation] {
 	if m.level == levelSuppressed {
 		return m.suppList
 	}
 	return m.liveList
 }
 
-// advanceActiveCursor moves the cursor down one row in the active list.
-func (m Model) advanceActiveCursor() Model {
+func (m Model) setActiveList(l reslist.Model[wsignore.Violation]) Model {
 	if m.level == levelSuppressed {
-		m.suppList, _ = m.suppList.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		m.suppList = l
 	} else {
-		m.liveList, _ = m.liveList.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		m.liveList = l
 	}
-	return m
-}
-
-func (m Model) selectedFrom(shown []wsignore.Violation) (wsignore.Violation, bool) {
-	i := m.activeList().Cursor()
-	if i < 0 || i >= len(shown) {
-		return wsignore.Violation{}, false
-	}
-	return shown[i], true
-}
-
-// markedViolations returns the marked subset of shown, or [fallback] when no
-// marks are set. This lets action keys work on a bulk selection or fall back
-// to the cursor item seamlessly.
-func (m Model) markedViolations(fallback wsignore.Violation, shown []wsignore.Violation) []wsignore.Violation {
-	if len(m.marks) == 0 {
-		return []wsignore.Violation{fallback}
-	}
-	out := make([]wsignore.Violation, 0, len(m.marks))
-	for i, v := range shown {
-		if m.marks[i] {
-			out = append(out, v)
-		}
-	}
-	return out
-}
-
-// refreshRows rebuilds both list rows to reflect current mark state.
-func (m Model) refreshRows() Model {
-	m.liveList = m.liveList.SetRows(m.liveRows())
-	m.suppList = m.suppList.SetRows(m.suppRows())
 	return m
 }
 
@@ -436,6 +394,8 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 	if done.Result.Aborted {
 		return m, nil
 	}
+	m.liveList = m.liveList.ClearMarks() // the marks were for this action
+	m.suppList = m.suppList.ClearMarks() // the marks were for this action
 	level := nav.LevelSuccess
 	if done.Result.HasFailures() {
 		level = nav.LevelWarn
@@ -534,92 +494,38 @@ func (m Model) deleteAction(v wsignore.Violation) plan.Action {
 	}
 }
 
-func (m Model) openFix(title string, a plan.Action) Model {
-	return m.openFixMulti(title, []plan.Action{a})
-}
-
 func (m Model) openFixMulti(title string, actions []plan.Action) Model {
 	p := plan.Plan{Command: "ignore.fix", Actions: actions}
 	m.modal = m.modal.Confirm(stepFix, confirm.New(title, p))
 	return m
 }
 
-func (m Model) openExcludeAll() Model {
+func (m Model) openExcludeAll(rows []wsignore.Violation) Model {
 	p := plan.Plan{Command: "ignore.fix"}
-	for _, v := range m.all {
-		if !v.InSafeHarbor {
-			p.Actions = append(p.Actions, m.excludeAction(v))
-		}
+	for _, v := range rows {
+		p.Actions = append(p.Actions, m.excludeAction(v))
 	}
 	title := "Add " + format.Plural(len(p.Actions), "violation") + " to .megaignore"
 	m.modal = m.modal.Confirm(stepExcludeAll, confirm.New(title, p))
 	return m
 }
 
-func violationRow(v wsignore.Violation, marked bool, rel func(string) string, abs func(wsignore.Violation) string) table.Row {
-	sev := v.Severity
-	switch {
-	case v.InSafeHarbor:
-		sev = theme.Muted.Render("suppressed")
-	case sev == "CRITICAL":
-		sev = theme.Error.Render(sev)
-	case sev == "WARNING":
-		sev = theme.Warn.Render(sev)
-	}
-	if marked {
-		sev = theme.Title.Render("✓")
-	}
-	size := ""
-	switch {
-	case v.SizeBytes > 0:
-		size = style.HumanBytes(v.SizeBytes)
-	case v.Depth > 0:
-		size = fmt.Sprintf("%d lvl", v.Depth)
-	}
-	path := rel(abs(v))
-	if v.InSafeHarbor {
-		path = theme.Muted.Render(path)
-	}
-	return table.Row{sev, v.Type, size, path}
-}
-
-func (m Model) liveRows() []table.Row {
-	out := make([]table.Row, 0, len(m.live))
-	for i, v := range m.live {
-		out = append(out, violationRow(v, m.level == levelLive && m.marks[i], m.env.Rel, m.abs))
-	}
-	return out
-}
-
-func (m Model) suppRows() []table.Row {
-	out := make([]table.Row, 0, len(m.supp))
-	for i, v := range m.supp {
-		out = append(out, violationRow(v, m.level == levelSuppressed && m.marks[i], m.env.Rel, m.abs))
-	}
-	return out
-}
-
 func (m Model) statusLine() string {
 	if m.scanning {
 		return theme.Muted.Render("Scanning workspace…")
 	}
+	live, supp := len(m.liveList.Items()), len(m.suppList.Items())
 	if m.level == levelSuppressed {
 		parts := []string{
 			theme.Title.Render("Suppressed warnings"),
-			theme.Muted.Render(fmt.Sprintf("%d item(s)", len(m.supp))),
+			theme.Muted.Render(fmt.Sprintf("%d item(s)", supp)),
+			theme.Muted.Render("u unsuppress · esc back"),
 		}
-		if len(m.marks) > 0 {
-			parts = append([]string{theme.Title.Render(fmt.Sprintf("%d marked", len(m.marks)))}, parts[1:]...)
-		}
-		parts = append(parts, theme.Muted.Render("u unsuppress · esc back"))
 		return lipgloss.NewStyle().MaxWidth(m.width).Render(strings.Join(parts, theme.Muted.Render(" · ")))
 	}
-	parts := []string{format.Plural(len(m.live), "violation")}
-	if len(m.marks) > 0 {
-		parts = []string{theme.Title.Render(fmt.Sprintf("%d marked", len(m.marks))), format.Plural(len(m.live), "violation")}
-	}
-	if len(m.supp) > 0 {
-		parts = append(parts, theme.Muted.Render(fmt.Sprintf("%d suppressed (H to view)", len(m.supp))))
+	parts := []string{format.Plural(live, "violation")}
+	if supp > 0 {
+		parts = append(parts, theme.Muted.Render(fmt.Sprintf("%d suppressed (H to view)", supp)))
 	}
 	return lipgloss.NewStyle().MaxWidth(m.width).Render(strings.Join(parts, theme.Muted.Render(" · ")))
 }
@@ -629,11 +535,7 @@ func (m Model) View() string {
 	if m.modal.Open() {
 		return m.modal.View()
 	}
-	list := m.liveList
-	if m.level == levelSuppressed {
-		list = m.suppList
-	}
-	return lipgloss.JoinVertical(lipgloss.Left, m.statusLine(), list.View())
+	return lipgloss.JoinVertical(lipgloss.Left, m.statusLine(), m.activeList().View())
 }
 
 // KeyMap implements nav.Component.
@@ -641,5 +543,5 @@ func (m Model) KeyMap() help.KeyMap {
 	if m.modal.Open() {
 		return m.modal.KeyMap()
 	}
-	return m.keys
+	return m.activeList().Help(m.keys)
 }

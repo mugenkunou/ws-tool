@@ -9,6 +9,12 @@
 //     returns to the dashboard; does nothing at the dashboard
 //   - tab / shift+tab next / previous screen (global; also ] [ and 1-9)
 //   - r               reload the current screen
+//   - /  > <  i       on every list: filter, sort by the next field, reverse
+//     the sort, show every field of the cursor row (see ListMap)
+//   - space ctrl+space ctrl+\ A   marks, as in k9s: mark the cursor row, mark
+//     the range from the nearest mark to the cursor, clear all marks; A marks
+//     all/none. esc clears an active filter or marks before it goes up a level. Action keys act on the marked rows when
+//     there are marks (see reslist.Scope)
 //   - ?               full help · q quit (ctrl+c always quits)
 //   - mouse           drag selects text and copies it on release; the wheel
 //     scrolls like ↑↓ (WS_NO_MOUSE=1 leaves the mouse to the terminal)
@@ -20,6 +26,7 @@
 package keys
 
 import (
+	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/viewport"
@@ -162,7 +169,7 @@ func Repos() ReposMap {
 	return ReposMap{
 		Table:      Table(),
 		Open:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "details")),
-		Fetch:      key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "fetch all")),
+		Fetch:      key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "fetch")),
 		Pull:       key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "pull (ff-only)")),
 		PullRebase: key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "pull --rebase")),
 		Sync:       key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync (merge)")),
@@ -259,7 +266,7 @@ func Scratch() ScratchMap {
 		Open:    key.NewBinding(key.WithKeys("enter", "o"), key.WithHelp("enter", "open in editor")),
 		Tag:     key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tag")),
 		AutoTag: key.NewBinding(key.WithKeys("T"), key.WithHelp("T", "auto-tag")),
-		Search:  key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
+		Search:  key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "find")),
 		Delete:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
 		Refresh: refresh(),
 		Back:    back(),
@@ -303,7 +310,7 @@ func Logs() LogsMap {
 		Stop:       key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "stop recording")),
 		View:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "view")),
 		ToggleMode: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "commands only")),
-		Search:     key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
+		Search:     key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "find")),
 		Delete:     key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
 		Prune:      key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "prune")),
 		Refresh:    refresh(),
@@ -346,22 +353,20 @@ func (k ViewerMap) FullHelp() [][]key.Binding {
 // marks are set), except MegaignoreAll which always covers everything.
 // The screen has two levels: live violations and suppressed warnings.
 type IgnoreMap struct {
-	Table        table.KeyMap
-	Exclude      key.Binding // add selected/marked to .megaignore
-	Suppress     key.Binding // suppress warning for parent dir (was Harbor/h, now s)
-	Unsuppress   key.Binding // remove suppress rule (when in suppressed level)
-	Move         key.Binding
-	Delete       key.Binding
-	ExcludeAll   key.Binding // megaignore all violations at once
-	Select       key.Binding // mark/unmark current row
-	SelectAll    key.Binding // mark all / clear all marks
-	Check        key.Binding
+	Table          table.KeyMap
+	Exclude        key.Binding // add selected/marked to .megaignore
+	Suppress       key.Binding // suppress warning for parent dir (was Harbor/h, now s)
+	Unsuppress     key.Binding // remove suppress rule (when in suppressed level)
+	Move           key.Binding
+	Delete         key.Binding
+	ExcludeAll     key.Binding // megaignore all violations at once
+	Check          key.Binding
 	ViewSuppressed key.Binding // switch to suppressed-warnings screen
-	Tree         key.Binding
-	List         key.Binding
-	EditRules    key.Binding
-	Refresh      key.Binding
-	Back         key.Binding
+	Tree           key.Binding
+	List           key.Binding
+	EditRules      key.Binding
+	Refresh        key.Binding
+	Back           key.Binding
 }
 
 // Ignore returns bindings for the ignore screen.
@@ -374,8 +379,6 @@ func Ignore() IgnoreMap {
 		Move:           key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "move to scratch")),
 		Delete:         key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
 		ExcludeAll:     key.NewBinding(key.WithKeys("X"), key.WithHelp("X", "megaignore all")),
-		Select:         key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "mark")),
-		SelectAll:      key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "mark all/none")),
 		Check:          key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "check path")),
 		ViewSuppressed: key.NewBinding(key.WithKeys("H"), key.WithHelp("H", "view suppressed")),
 		Tree:           key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tree…")),
@@ -388,7 +391,7 @@ func Ignore() IgnoreMap {
 
 // ShortHelp implements help.KeyMap.
 func (k IgnoreMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Exclude, k.Suppress, k.Move, k.Delete, k.Select, k.Refresh}
+	return []key.Binding{k.Exclude, k.Suppress, k.Move, k.Delete, k.Refresh}
 }
 
 // FullHelp implements help.KeyMap.
@@ -396,7 +399,7 @@ func (k IgnoreMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
 		{k.Exclude, k.Suppress, k.Unsuppress, k.Move, k.Delete, k.ExcludeAll},
-		{k.Select, k.SelectAll, k.Check, k.ViewSuppressed},
+		{k.Check, k.ViewSuppressed},
 		{k.Tree, k.List, k.EditRules, k.Refresh, k.Back},
 	}
 }
@@ -675,6 +678,72 @@ func (k ChooseMap) ShortHelp() []key.Binding { return []key.Binding{k.Up, k.Down
 // FullHelp implements help.KeyMap.
 func (k ChooseMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{{k.Up, k.Down}, {k.Choose, k.Cancel}}
+}
+
+// ListMap is the binding set every resource list shares (reslist): filter,
+// sort, marking, and the all-fields detail pane. Screens must not reuse these
+// keys for their own actions.
+type ListMap struct {
+	Filter    key.Binding
+	Sort      key.Binding
+	Reverse   key.Binding
+	Mark      key.Binding
+	MarkRange key.Binding // k9s: from the nearest mark to the cursor
+	MarkClear key.Binding
+	MarkAll   key.Binding
+	Detail    key.Binding
+	Clear     key.Binding // esc while a filter or marks are active
+	Apply     key.Binding // while typing a filter
+	Cancel    key.Binding // while typing a filter
+}
+
+// List returns bindings shared by every resource list.
+func List() ListMap {
+	return ListMap{
+		Filter:    key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
+		Sort:      key.NewBinding(key.WithKeys(">"), key.WithHelp(">", "sort by next field")),
+		Reverse:   key.NewBinding(key.WithKeys("<"), key.WithHelp("<", "reverse sort")),
+		Mark:      key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "mark")),
+		MarkRange: key.NewBinding(key.WithKeys("ctrl+space"), key.WithHelp("ctrl+space", "mark range")),
+		MarkClear: key.NewBinding(key.WithKeys("ctrl+\\"), key.WithHelp("ctrl+\\", "clear marks")),
+		MarkAll:   key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "mark all/none")),
+		Detail:    key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "all fields")),
+		Clear:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear filter/marks")),
+		Apply:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "keep filter")),
+		Cancel:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
+	}
+}
+
+// Bindings lists the list bindings shown in help.
+func (k ListMap) Bindings() []key.Binding {
+	return []key.Binding{k.Filter, k.Sort, k.Reverse, k.Detail, k.Mark, k.MarkRange, k.MarkClear, k.MarkAll}
+}
+
+// FilterMap is the help shown while a filter is being typed.
+type FilterMap struct{ List ListMap }
+
+// ShortHelp implements help.KeyMap.
+func (k FilterMap) ShortHelp() []key.Binding { return []key.Binding{k.List.Apply, k.List.Cancel} }
+
+// FullHelp implements help.KeyMap.
+func (k FilterMap) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
+
+// WithList adds the shared list bindings to a screen's help: the mark keys
+// after the screen's own in the short help, and a column with all of them in
+// the full help.
+func WithList(m help.KeyMap, l ListMap) help.KeyMap { return withList{m, l} }
+
+type withList struct {
+	help.KeyMap
+	list ListMap
+}
+
+func (w withList) ShortHelp() []key.Binding {
+	return append(append([]key.Binding{}, w.KeyMap.ShortHelp()...), w.list.Mark, w.list.MarkRange)
+}
+
+func (w withList) FullHelp() [][]key.Binding {
+	return append(append([][]key.Binding{}, w.KeyMap.FullHelp()...), w.list.Bindings())
 }
 
 func refresh() key.Binding {

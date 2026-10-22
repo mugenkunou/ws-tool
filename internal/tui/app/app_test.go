@@ -104,18 +104,18 @@ func fixtures() []tea.Msg {
 			Health:     secrets.Health{Pass: secret.PassHealth{Installed: true, GPGAvailable: true, Initialized: true, GitBacked: true, EntryCount: 42}},
 		},
 		cron.LoadedMsg{Jobs: []cron.Job{
-			{Name: "dotfile-push", Schedule: "0 * * * *", Description: "commit + push dotfiles", Installed: true,
-				LastRun: wscron.RunRecord{Job: "dotfile-push", Time: time.Now().Add(-2 * time.Hour)}},
-			{Name: "repo-sync", Schedule: "*/30 * * * *", Description: "sync repo fleet", Installed: true,
-				LastRun: wscron.RunRecord{Job: "repo-sync", Time: time.Now().Add(-40 * time.Minute), ExitCode: 2}},
-			{Name: "all", Preset: true, Description: "preset: dotfile-push, repo-sync"},
+			{Name: "dotfile-push", Schedule: "0 * * * *", Description: "commit + push dotfiles", Installed: true, CrontabOK: true,
+				Interval: time.Hour, LastRun: wscron.RunRecord{Job: "dotfile-push", Time: fixedClock().Add(-2 * time.Hour)}},
+			{Name: "repo-sync", Schedule: "*/30 * * * *", Description: "sync repo fleet", Installed: true, CrontabOK: true,
+				Interval: 30 * time.Minute, LastRun: wscron.RunRecord{Job: "repo-sync", Time: fixedClock().Add(-40 * time.Minute), ExitCode: 2}},
+			{Name: "all", Preset: true, CrontabOK: true, Description: "installs: dotfile-push, repo-sync"},
 		}},
 		trash.LoadedMsg{
 			Status: wstrash.Status{RootDir: "/home/tester/.Trash", ShellRMConfigured: true, VSCodeConfigured: true},
 			Scan:   wstrash.ScanResult{SizeBytes: 3 << 20, FileCount: 12, WarnSizeMB: 1024},
 			Items: []trash.Item{
-				{Name: "old-notes.md", SizeBytes: 2048, Deleted: fixedClock().Add(-3 * time.Hour)},
-				{Name: "build", SizeBytes: 3 << 20, Deleted: fixedClock().Add(-50 * time.Hour), Dir: true},
+				{Name: "old-notes.md", OriginalPath: ws + "/Notes/old-notes.md", SizeBytes: 2048, Files: 1, DeletedAt: fixedClock().Add(-3 * time.Hour)},
+				{Name: "build", SizeBytes: 3 << 20, Files: 40, DeletedAt: fixedClock().Add(-50 * time.Hour), Dir: true},
 			},
 		},
 	}
@@ -158,6 +158,8 @@ func press(s string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
 	case "ctrl+c":
 		return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+	case "ctrl+space":
+		return tea.KeyPressMsg{Code: tea.KeySpace, Mod: tea.ModCtrl}
 	}
 	r := []rune(s)[0]
 	return tea.KeyPressMsg{Code: r, Text: s}
@@ -213,19 +215,32 @@ func TestSnapshots(t *testing.T) {
 		{"repos", []string{"2"}},
 		{"repos_detail", []string{"2", "down", "enter"}},
 		{"repos_pull_checklist", []string{"2", "p"}},
+		{"repos_filtered_pull", []string{"2", "/", "s", "t", "a", "t", "e", "=", "c", "l", "e", "a", "n", "enter", "p"}},
+		{"repos_marked_fetch", []string{"2", "space", "down", "space", "down", "space", "f"}},
+		{"repos_marked", []string{"2", "space", "down", "space", "down", "space"}},
+		{"repos_range_marked", []string{"2", "down", "space", "down", "down", "ctrl+space"}},
 		{"dotfiles", []string{"3"}},
 		{"dotfiles_reset_checklist", []string{"3", "R"}},
+		{"dotfiles_filter", []string{"3", "/", "s", "t", "a", "t", "u", "s", "!", "=", "o", "k", "enter"}},
+		{"dotfiles_sorted_marked", []string{"3", ">", "space", "down", "space"}},
+		{"dotfiles_marked_remove", []string{"3", "space", "down", "space", "d"}},
+		{"dotfiles_marked_reset", []string{"3", "down", "space", "R"}},
+		{"dotfiles_detail", []string{"3", "down", "i"}},
 		{"scratch", []string{"4"}},
 		{"scratch_new_prompt", []string{"4", "n", "d", "n"}},
 		{"scratch_tag_prompt", []string{"4", "t", "n"}},
 		{"logs", []string{"5"}},
 		{"ignore", []string{"6"}},
 		{"ignore_harbors_shown", []string{"6", "H"}},
+		{"ignore_marked_exclude", []string{"6", "space", "down", "space", "a"}},
 		{"secrets", []string{"7"}},
+		{"secrets_detail", []string{"7", "i"}},
 		{"cron", []string{"8"}},
 		{"trash", []string{"9"}},
 		{"trash_empty_checklist", []string{"9", "x"}},
 		{"trash_purge_prompt", []string{"9", "p"}},
+		{"trash_marked_delete", []string{"9", "A", "d"}},
+		{"trash_marked_empty", []string{"9", "space", "x"}},
 		{"full_help", []string{"2", "?"}},
 	}
 	for _, c := range cases {

@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷
 
 
 
-enter view • s start recording • x stop recording • / search • d delete • P prune • tab/⇧tab screens
+enter view • s start recording • x stop recording • F find … • tab/⇧tab screens • ? help • q quit

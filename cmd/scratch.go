@@ -7,10 +7,9 @@ import (
 	"io"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
 
+	"github.com/mugenkunou/ws-tool/internal/resource"
 	"github.com/mugenkunou/ws-tool/internal/scratch"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/tui"
@@ -27,6 +26,7 @@ var scratchHelp = cmdHelp{
 		"  search [query]  Search scratch directories by tag/name/content",
 		"  rm <name>       Delete a scratch directory by name",
 	},
+	Flags: listFlagHelp("ls", scratch.Schema(resource.CLIView()).Keys()),
 }
 
 func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -126,39 +126,20 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fs := flag.NewFlagSet("scratch-ls", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		registerGlobalFlags(fs, &globals)
-		sortBy := fs.String("sort", "age", "sort by age|size|name")
+		lf := registerListFlags(fs, "age")
 		if err := fs.Parse(subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		list, err := scratch.List(scratch.ListOptions{RootDir: rootDir, SortBy: *sortBy})
+		if strings.EqualFold(strings.TrimSpace(lf.sort), "size") { // the pre-schema spelling sorted biggest first
+			lf.sort = "-size_bytes"
+		}
+		list, err := scratch.List(scratch.ListOptions{RootDir: rootDir})
 		if err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		if globals.json {
-			return writeJSON(stdout, stderr, "scratch.ls", list)
-		}
-		out := textOut(globals, stdout)
-		if len(list) == 0 {
-			fmt.Fprintln(out, "No scratch directories.")
-			return 0
-		}
-		for _, e := range list {
-			nc := globals.noColor
-			tagStr := ""
-			if len(e.Tags) > 0 {
-				tagStr = "  " + style.Mutedf(nc, "[%s]", strings.Join(e.Tags, ", "))
-			}
-			fmt.Fprintf(out, "%s  %s  %s  %s%s\n",
-				style.Boldf(nc, "%-30s", e.Name),
-				style.Mutedf(nc, "age=%s", formatScratchAge(e.Age)),
-				style.Mutedf(nc, "size=%s", style.HumanBytes(e.SizeBytes)),
-				style.Mutedf(nc, "items=%d", e.Items),
-				tagStr)
-			fmt.Fprintf(out, "  %s\n", style.Mutedf(nc, "%s", e.Path))
-		}
-		return 0
+		return renderList(globals, "scratch.ls", scratch.Schema(resource.CLIView()), list, lf, "No scratch directories.", stdout, stderr)
 	case "rm":
 		fs := flag.NewFlagSet("scratch-rm", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -591,18 +572,4 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fmt.Fprintf(stderr, "unknown scratch subcommand: %s\n", sub)
 		return 1
 	}
-}
-
-func formatScratchAge(d time.Duration) string {
-	if d < 48*time.Hour {
-		return d.Truncate(time.Second).String()
-	}
-	total := int64(d / time.Second)
-	days := total / 86400
-	total %= 86400
-	hours := total / 3600
-	total %= 3600
-	mins := total / 60
-	secs := total % 60
-	return strconv.FormatInt(days, 10) + "d" + strconv.FormatInt(hours, 10) + "h" + strconv.FormatInt(mins, 10) + "m" + strconv.FormatInt(secs, 10) + "s"
 }

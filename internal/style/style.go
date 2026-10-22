@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -445,4 +446,30 @@ func AbsPath(workspacePath, p string) string {
 		p = filepath.Join(workspacePath, filepath.FromSlash(p))
 	}
 	return filepath.Clean(p)
+}
+
+// Age renders a duration as its largest whole unit: "45s", "12m", "5h", "3d".
+func Age(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
+}
+
+// Duration renders seconds as "42s", "3m 05s" or "1h 02m".
+func Duration(seconds int64) string {
+	switch {
+	case seconds < 60:
+		return fmt.Sprintf("%ds", seconds)
+	case seconds < 3600:
+		return fmt.Sprintf("%dm %02ds", seconds/60, seconds%60)
+	default:
+		return fmt.Sprintf("%dh %02dm", seconds/3600, (seconds%3600)/60)
+	}
 }
