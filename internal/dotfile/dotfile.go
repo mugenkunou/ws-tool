@@ -15,12 +15,11 @@ package dotfile
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
+	"github.com/mugenkunou/ws-tool/internal/fsutil"
 	"github.com/mugenkunou/ws-tool/internal/trash"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
@@ -796,68 +795,7 @@ func renamePath(src, dst string, sudo bool) error {
 	return os.Rename(src, dst)
 }
 
-func movePath(src, dst string) error {
-	err := os.Rename(src, dst)
-	if err == nil {
-		return nil
-	}
-	var linkErr *os.LinkError
-	if errors.As(err, &linkErr) && errors.Is(linkErr.Err, syscall.EXDEV) {
-		if err := copyAny(src, dst); err != nil {
-			return err
-		}
-		return os.RemoveAll(src)
-	}
-	return err
-}
+// movePath and copyAny are the shared mover (internal/fsutil).
+func movePath(src, dst string) error { return fsutil.Move(src, dst) }
 
-func copyAny(src, dst string) error {
-	info, err := os.Lstat(src)
-	if err != nil {
-		return err
-	}
-
-	if info.Mode()&os.ModeSymlink != 0 {
-		target, err := os.Readlink(src)
-		if err != nil {
-			return err
-		}
-		return os.Symlink(target, dst)
-	}
-
-	if info.IsDir() {
-		if err := os.MkdirAll(dst, info.Mode().Perm()); err != nil {
-			return err
-		}
-		entries, err := os.ReadDir(src)
-		if err != nil {
-			return err
-		}
-		for _, entry := range entries {
-			if err := copyAny(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name())); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
-
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
-	}
-	return out.Close()
-}
+func copyAny(src, dst string) error { return fsutil.Copy(src, dst) }

@@ -126,32 +126,65 @@ func List(opts ListOptions) ([]Entry, error) {
 	return out, nil
 }
 
-func Delete(opts DeleteOptions) (DeleteResult, error) {
-	name := strings.TrimSpace(opts.Name)
+// Resolve finds the one scratch directory a name stands for (spec §5 scratch,
+// "Names"). An exact name wins. Otherwise a case-insensitive substring that
+// matches exactly one directory is used, so `dns` finds `dns-debug.2026-09`. A
+// name that matches nothing, or several directories, is an error that lists the
+// candidates.
+func Resolve(rootDir, name string) (Entry, error) {
+	name = strings.TrimSpace(name)
 	if name == "" {
-		return DeleteResult{}, errors.New("scratch name is required")
+		return Entry{}, errors.New("scratch name is required")
 	}
-
-	list, err := List(ListOptions{RootDir: opts.RootDir, SortBy: "name"})
+	list, err := List(ListOptions{RootDir: rootDir, SortBy: "name"})
 	if err != nil {
-		return DeleteResult{}, err
+		return Entry{}, err
 	}
-
-	res := DeleteResult{Removed: []string{}, DryRun: opts.DryRun}
 	for _, e := range list {
-		if e.Name != name && !strings.Contains(strings.ToLower(e.Name), strings.ToLower(name)) {
-			continue
+		if e.Name == name {
+			return e, nil
 		}
-		if !opts.DryRun {
-			if err := trash.SoftDelete(e.Path); err != nil {
-				return res, err
-			}
-		}
-		res.Removed = append(res.Removed, e.Name)
-		res.FreedBytes += e.SizeBytes
 	}
-	if len(res.Removed) == 0 {
-		return res, fmt.Errorf("scratch entry not found: %s", name)
+	var matches []Entry
+	for _, e := range list {
+		if strings.Contains(strings.ToLower(e.Name), strings.ToLower(name)) {
+			matches = append(matches, e)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return Entry{}, fmt.Errorf("scratch entry not found: %s", name)
+	case 1:
+		return matches[0], nil
+	}
+	names := make([]string, len(matches))
+	for i, m := range matches {
+		names[i] = m.Name
+	}
+	return Entry{}, fmt.Errorf("%q matches several scratch directories: %s", name, strings.Join(names, ", "))
+}
+
+// Remove moves one scratch directory to the XDG trash, where `ws trash
+// restore` can bring it back. It takes the directory itself, never a name: a
+// substring must not decide what is deleted.
+func Remove(entry Entry) error {
+	return trash.SoftDelete(entry.Path)
+}
+
+// Delete resolves name to exactly one directory (see Resolve) and moves it to
+// the trash. It used to delete every directory whose name contained the
+// argument, so deleting `foo` also deleted `foo-2` and `myfoo`.
+func Delete(opts DeleteOptions) (DeleteResult, error) {
+	entry, err := Resolve(opts.RootDir, opts.Name)
+	if err != nil {
+		return DeleteResult{Removed: []string{}, DryRun: opts.DryRun}, err
+	}
+	res := DeleteResult{Removed: []string{entry.Name}, FreedBytes: entry.SizeBytes, DryRun: opts.DryRun}
+	if opts.DryRun {
+		return res, nil
+	}
+	if err := Remove(entry); err != nil {
+		return DeleteResult{Removed: []string{}}, err
 	}
 	return res, nil
 }

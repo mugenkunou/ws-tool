@@ -494,17 +494,15 @@ func (m Model) tagAction(e wsscratch.Entry, tags []string, desc string) plan.Act
 }
 
 func (m Model) openDelete(targets []wsscratch.Entry) Model {
-	root := m.env.ScratchDir
 	p := plan.Plan{Command: "scratch.rm"}
 	for _, e := range targets {
-		name := e.Name
+		entry := e
 		p.Actions = append(p.Actions, plan.Action{
-			ID:          "scratch-rm-" + name,
-			Description: fmt.Sprintf("Delete %s (%s)", e.Path, style.HumanBytes(e.SizeBytes)),
-			Execute: func() error {
-				_, err := wsscratch.Delete(wsscratch.DeleteOptions{RootDir: root, Name: name})
-				return err
-			},
+			ID:          "scratch-rm-" + entry.Path,
+			Description: fmt.Sprintf("Delete %s (%s)", entry.Path, style.HumanBytes(entry.SizeBytes)),
+			// The directory itself is deleted, never a name: a name that is a
+			// substring of another must not take that one with it.
+			Execute: func() error { return wsscratch.Remove(entry) },
 		})
 	}
 	m.modal = m.modal.Confirm(stepDelete, confirm.New("Delete "+format.Plural(len(targets), "scratch directory"), p))

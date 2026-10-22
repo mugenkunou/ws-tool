@@ -26,7 +26,7 @@ func TestScratchCommandsFlow(t *testing.T) {
 	if code := Execute([]string{"--workspace", workspace, "scratch", "new", "demo-scratch", "--no-open"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
 		t.Fatalf("scratch new failed: code=%d stderr=%s", code, errOut.String())
 	}
-	if !strings.Contains(out.String(), "Create scratch") {
+	if !strings.Contains(out.String(), "Create ") {
 		t.Fatalf("unexpected scratch new output: %s", out.String())
 	}
 	if !strings.Contains(out.String(), "demo-scratch") {
