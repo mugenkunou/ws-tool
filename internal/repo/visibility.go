@@ -213,6 +213,13 @@ func checkBitbucket(owner, repoName, token string) VisibilityResult {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
+		if token == "" {
+			return VisibilityResult{
+				Provider: "bitbucket",
+				Checked:  false,
+				Warning:  "repository not found (may be private — provide a token for authenticated check)",
+			}
+		}
 		return VisibilityResult{Provider: "bitbucket", Checked: true, Error: "repository not found"}
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -232,5 +239,44 @@ func checkBitbucket(owner, repoName, token string) VisibilityResult {
 	return VisibilityResult{Provider: "bitbucket", Private: result.IsPrivate, Checked: true}
 }
 
-// ErrPublicRepository is returned when a dotfile remote is public.
+// ErrPublicRepository is returned when a backup remote is public.
 var ErrPublicRepository = errors.New("ws requires dotfile Git remotes to be private repositories")
+
+// ErrRepositoryNotFound is returned when an authenticated lookup finds no such
+// repository: pushing there cannot be checked, and is refused.
+var ErrRepositoryNotFound = errors.New("repository not found")
+
+// Refusal returns the error that stops a backup push or a remote from being
+// saved, or nil when the push may go ahead (spec §5 dotfile backup). The API
+// reporting the repository public is refused, and so is an authenticated
+// lookup that finds no repository. A result that could not be determined (an
+// unknown or self-hosted host, an unauthenticated 404, a network error) is not
+// refused: the caller warns and goes on.
+//
+// An authenticated 404 sets Checked and Error but leaves Private false, so
+// Error must be read before Private: reading Private alone calls a missing
+// repository public.
+func (v VisibilityResult) Refusal() error {
+	if !v.Checked {
+		return nil
+	}
+	if v.Error != "" {
+		return ErrRepositoryNotFound
+	}
+	if !v.Private {
+		return ErrPublicRepository
+	}
+	return nil
+}
+
+// Notice is the warning to print when the check could not be determined, or
+// "" when there is nothing to say.
+func (v VisibilityResult) Notice() string {
+	switch {
+	case v.Warning != "":
+		return v.Warning
+	case !v.Checked && v.Error != "":
+		return "visibility check failed: " + v.Error
+	}
+	return ""
+}

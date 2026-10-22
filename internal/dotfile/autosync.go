@@ -5,20 +5,17 @@ import (
 )
 
 // AutoSync runs the configured auto-commit/push after a dotfile change.
-// It does nothing (enabled=false) unless a dotfile git remote is configured.
+// It does nothing (enabled=false) unless a backup remote is configured, because
+// backup is enabled exactly while dotfile.git.remote_url is set.
 func AutoSync(workspacePath, configPath, commitMessage string) (res GitSyncResult, enabled bool) {
 	cfg, err := wsconfig.Load(configPath)
 	if err != nil || cfg.Dotfile.Git.RemoteURL == "" {
 		return GitSyncResult{}, false
 	}
-	repoPath := RepoPath(workspacePath)
 	return GitSync(GitSyncOptions{
 		WorkspacePath: workspacePath,
-		RepoPath:      repoPath,
-		RemoteURL:     cfg.Dotfile.Git.RemoteURL,
-		Branch:        cfg.Dotfile.Git.Branch,
-		AutoCommit:    cfg.Dotfile.Git.AutoCommit,
-		AutoPush:      cfg.Dotfile.Git.AutoPush,
+		ConfigPath:    configPath,
+		Git:           cfg.Dotfile.Git,
 		CommitMessage: commitMessage,
 	}), true
 }

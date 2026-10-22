@@ -44,12 +44,9 @@ func Entries(workspacePath, configPath string) ([]Entry, error) {
 	return out, nil
 }
 
-// EntryClass is the entry's class, "config" when unset.
-func (e Entry) EntryClass() string {
-	if e.Link.Class == ClassSecret {
-		return ClassSecret
-	}
-	return ClassConfig
+// Secret reports whether the entry's workspace copy lives under secrets/.
+func (e Entry) Secret() bool {
+	return strings.HasPrefix(LinkDotfilePath(e.Link), "secrets/")
 }
 
 // Health is "ok", "broken", or "overwritten".
@@ -68,15 +65,14 @@ func Schema(v resource.View) resource.Schema[Entry] {
 		Fields: []resource.Field[Entry]{
 			{Key: "system", Title: "System path", Value: func(e Entry) any { return e.Link.System },
 				Text: func(e Entry) string { return v.Path(e.Link.System) }},
-			{Key: "original", Title: "Stored as", Value: func(e Entry) any { return e.Link.Original }},
-			{Key: "workspace_path", Title: "Workspace path", Value: func(e Entry) any { return e.WorkspacePath },
+			{Key: "workspace_path", Title: "Workspace copy", Value: func(e Entry) any { return e.WorkspacePath },
 				Text: func(e Entry) string { return v.Path(e.WorkspacePath) }},
-			{Key: "class", Title: "Class", Value: func(e Entry) any { return e.EntryClass() }},
+			{Key: "original", Title: "Stored as", Value: func(e Entry) any { return e.Link.Original }},
 			{Key: "status", Title: "Status", Value: func(e Entry) any { return e.Health() }},
 			{Key: "message", Title: "Problem", Value: func(e Entry) any { return e.Message }},
 			{Key: "dir", Title: "Directory", Value: func(e Entry) any { return e.Link.Dir }},
 			{Key: "sudo", Title: "Sudo", Value: func(e Entry) any { return e.Link.Sudo }},
 		},
-		Columns: []string{"system", "original", "class", "status", "sudo"},
+		Columns: []string{"system", "workspace_path", "status", "sudo"},
 	}
 }

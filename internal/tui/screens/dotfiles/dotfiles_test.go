@@ -77,15 +77,21 @@ func TestLoadMissingConfig(t *testing.T) {
 	}
 }
 
-func TestListShowsClass(t *testing.T) {
+// TestListShowsTheWorkspaceCopy: the list shows where each copy lives (there is
+// no class column: the location says what it is), and the copy's path is
+// shown in full for a secret too.
+func TestListShowsTheWorkspaceCopy(t *testing.T) {
 	e := env.Env{Paths: workspace.Paths{Workspace: "/ws"}}
 	c, _ := New(e).Update(nav.ResizeMsg{Width: 100, Height: 10})
 	c, _ = c.Update(LoadedMsg{Entries: []Entry{
-		{Link: wsconfig.Link{System: "/a", Class: dotfile.ClassSecret}},
-		{Link: wsconfig.Link{System: "/b"}},
+		{Link: wsconfig.Link{System: "/a", Original: "secrets/dotfiles/a"}, WorkspacePath: "/ws/secrets/dotfiles/a"},
+		{Link: wsconfig.Link{System: "/b", Original: "configs/dotfiles/b"}, WorkspacePath: "/ws/configs/dotfiles/b"},
 	}})
 	v := ansi.Strip(c.View())
-	for _, want := range []string{"Class", "secret", "config"} {
+	if strings.Contains(v, "Class") {
+		t.Errorf("the class column is gone:\n%s", v)
+	}
+	for _, want := range []string{"Workspace copy", "secrets/dotfiles/a", "configs/dotfiles/b"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("view lacks %q:\n%s", want, v)
 		}

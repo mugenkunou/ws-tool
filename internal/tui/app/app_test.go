@@ -78,9 +78,9 @@ func fixtures() []tea.Msg {
 			{Status: repo.RepoStatus{Path: "/home/tester/.password-store", Branch: "master"}},
 		}},
 		dotfiles.LoadedMsg{Entries: []dotfiles.Entry{
-			{Link: wsconfig.Link{System: "/home/tester/.bashrc", Original: "bashrc"}},
-			{Link: wsconfig.Link{System: "/home/tester/.gitconfig", Original: "gitconfig"}, Status: dotfile.StatusBroken},
-			{Link: wsconfig.Link{System: "/etc/hosts", Original: "etc/hosts", Sudo: true}, Status: dotfile.StatusOverwritten},
+			{Link: wsconfig.Link{System: "/home/tester/.bashrc", Original: "configs/dotfiles/bashrc"}, WorkspacePath: "/home/tester/Workspace/configs/dotfiles/bashrc"},
+			{Link: wsconfig.Link{System: "/home/tester/.gitconfig", Original: "configs/dotfiles/gitconfig"}, WorkspacePath: "/home/tester/Workspace/configs/dotfiles/gitconfig", Status: dotfile.StatusBroken},
+			{Link: wsconfig.Link{System: "/etc/hosts", Original: "configs/dotfiles/etc/hosts", Sudo: true}, WorkspacePath: "/home/tester/Workspace/configs/dotfiles/etc/hosts", Status: dotfile.StatusOverwritten},
 		}},
 		scratch.LoadedMsg{
 			Entries: []wsscratch.Entry{
@@ -412,7 +412,7 @@ func TestDashboardQuickFix(t *testing.T) {
 	if m.active != nav.ScreenDotfiles || !m.current().CapturesKeys() {
 		t.Fatalf("quick fix: active = %v, dialog open = %v", m.active.Title(), m.current().CapturesKeys())
 	}
-	if v := tuitest.Plain(view(m)); !strings.Contains(v, "Fix dotfile links") || !strings.Contains(v, "~/.gitconfig") {
+	if v := tuitest.Plain(view(m)); !strings.Contains(v, "Link dotfiles") || !strings.Contains(v, "~/.gitconfig") {
 		t.Fatalf("fix checklist not shown:\n%s", v)
 	}
 

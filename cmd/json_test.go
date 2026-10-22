@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -58,7 +59,7 @@ func TestJSONExitHelper(t *testing.T) {
 
 // jsonMigrated lists the nouns whose JSON command names follow the grammar.
 // Each noun is added in the commit that moves it (plan 0002 phase B).
-var jsonMigrated = []string{"version"}
+var jsonMigrated = []string{"version", "dotfile"}
 
 // TestJSONCommandNames: every read-only command that needs no target, run with
 // --json, reports <noun>.<verb> as its command (spec §4.4).
@@ -102,5 +103,27 @@ func TestFlagsMayFollowPositionals(t *testing.T) {
 	code := Execute([]string{"--workspace", workspace, "dotfile", "add", dir, "--dir", "--dry-run"}, strings.NewReader(""), &out, &errOut)
 	if code != 0 {
 		t.Fatalf("a flag after the positional should parse: exit %d stderr=%s", code, errOut.String())
+	}
+}
+
+// TestJSONStdoutIsOnlyJSON: with --json, a write command's stdout is the
+// envelope and nothing else; the plan's "✔ …" lines used to precede it, so
+// `ws --json … | jq` failed.
+func TestJSONStdoutIsOnlyJSON(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workspace := initWorkspace(t)
+	system := filepath.Join(home, ".bashrc")
+	if err := os.WriteFile(system, []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	code := Execute([]string{"--workspace", workspace, "--json", "dotfile", "add", system}, strings.NewReader(""), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("exit %d stderr=%s", code, errOut.String())
+	}
+	var env jsonEnvelope
+	if err := json.Unmarshal(out.Bytes(), &env); err != nil {
+		t.Fatalf("stdout is not a single JSON document: %v\n%s", err, out.String())
 	}
 }

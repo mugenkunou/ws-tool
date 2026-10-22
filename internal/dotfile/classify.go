@@ -58,6 +58,12 @@ var stateExactNames = map[string]bool{
 	"known_hosts.old": true,
 }
 
+// nameLooksSecret reports whether a lowercase base name is one of a secret's
+// usual names (id_ed25519, credentials, *.pem, *_token, …).
+func nameLooksSecret(base string) bool {
+	return secretBaseNames[base] || secretPattern.MatchString(base)
+}
+
 const secretContentSniffBytes = 512
 
 // ClassifyFile returns the classification of a regular file at absPath.
@@ -65,10 +71,7 @@ const secretContentSniffBytes = 512
 func ClassifyFile(absPath string) FileClass {
 	base := strings.ToLower(filepath.Base(absPath))
 
-	if secretBaseNames[base] {
-		return FileClassSecret
-	}
-	if secretPattern.MatchString(base) {
+	if nameLooksSecret(base) {
 		return FileClassSecret
 	}
 	if stateExactNames[base] {

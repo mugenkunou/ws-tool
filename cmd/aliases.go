@@ -34,7 +34,9 @@ type alias struct {
 // aliasLive lists the old first words whose aliases are switched on. Each
 // noun's rows go live in the commit that implements its new commands, so the
 // old and new handlers never disagree about which names exist.
-var aliasLive = map[string]bool{}
+var aliasLive = map[string]bool{
+	"dotfile": true,
+}
 
 // aliases is every row of spec §3.5.
 var aliases = []alias{

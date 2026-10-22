@@ -52,3 +52,34 @@ func TestCheckRepoVisibilityUnknownHost(t *testing.T) {
 		t.Error("expected a warning for unknown host")
 	}
 }
+
+func TestRefusal(t *testing.T) {
+	cases := []struct {
+		name string
+		v    VisibilityResult
+		want error
+	}{
+		{"private", VisibilityResult{Checked: true, Private: true}, nil},
+		{"public", VisibilityResult{Checked: true, Private: false}, ErrPublicRepository},
+		// An authenticated 404 leaves Private false. Reading Private alone calls
+		// a missing repository "public"; the spec says "repository not found".
+		{"authenticated 404", VisibilityResult{Checked: true, Private: false, Error: "repository not found"}, ErrRepositoryNotFound},
+		{"unauthenticated 404 is undetermined", VisibilityResult{Warning: "repository not found (may be private)"}, nil},
+		{"unknown host", VisibilityResult{Provider: "unknown", Warning: "cannot verify"}, nil},
+		{"network error", VisibilityResult{Error: "API request failed: timeout"}, nil},
+	}
+	for _, c := range cases {
+		if got := c.v.Refusal(); got != c.want {
+			t.Errorf("%s: Refusal() = %v, want %v", c.name, got, c.want)
+		}
+	}
+	if n := (VisibilityResult{Warning: "w"}).Notice(); n != "w" {
+		t.Errorf("Notice: %q", n)
+	}
+	if n := (VisibilityResult{Error: "boom"}).Notice(); n != "visibility check failed: boom" {
+		t.Errorf("Notice: %q", n)
+	}
+	if n := (VisibilityResult{Checked: true, Private: true}).Notice(); n != "" {
+		t.Errorf("Notice: %q", n)
+	}
+}

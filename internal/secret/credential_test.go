@@ -224,3 +224,40 @@ func TestResolveCredentialEntry(t *testing.T) {
 		}
 	}
 }
+
+// fakePassCommand puts a `pass` on PATH that shows only the given entries.
+func fakePassCommand(t *testing.T, entries map[string]string) {
+	t.Helper()
+	dir := t.TempDir()
+	var cases strings.Builder
+	for entry, content := range entries {
+		cases.WriteString("  " + entry + ") printf '%s\\n' '" + content + "' ;;\n")
+	}
+	script := "#!/bin/sh\n[ \"$1\" = show ] || exit 2\ncase \"$2\" in\n" + cases.String() + "  *) exit 1 ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(dir, "pass"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// TestResolveGitTokenFindsTheEntry: the token lookup read git/git/<host> and
+// git/<pass_entry> (LookupCredential prefixes git/ again), so it never found
+// the entry it was given (plan 0002 bug B6).
+func TestResolveGitTokenFindsTheEntry(t *testing.T) {
+	fakePassCommand(t, map[string]string{
+		"git/github.com": "host-token",
+		"work/gh-api":    "explicit-token",
+	})
+	if got := ResolveGitToken("https://github.com/me/dotfiles.git", "work/gh-api"); got != "explicit-token" {
+		t.Errorf("explicit pass_entry: got %q, want explicit-token", got)
+	}
+	if got := ResolveGitToken("https://github.com/me/dotfiles.git", ""); got != "host-token" {
+		t.Errorf("default git/<host>: got %q, want host-token", got)
+	}
+	if got := ResolveGitToken("git@github.com:me/dotfiles.git", "missing/entry"); got != "host-token" {
+		t.Errorf("a missing pass_entry falls back to git/<host>: got %q", got)
+	}
+	if got := ResolveGitToken("https://gitlab.com/me/x.git", ""); got != "" {
+		t.Errorf("no entry: got %q, want empty", got)
+	}
+}

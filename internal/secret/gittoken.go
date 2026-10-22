@@ -19,10 +19,12 @@ func ResolveGitToken(remoteURL, passEntry string) string {
 	return ""
 }
 
-// passToken returns the password (token) for entry if pass can resolve it.
+// passToken returns the password (token) of the pass entry named entry, if
+// pass can show it. The entry is read as it is: LookupCredential would prefix
+// it with git/ again and look for git/git/<host>.
 func passToken(entry string) (string, bool) {
-	resp := LookupCredential(CredentialRequest{Protocol: "https", Host: entry})
-	if resp.Password != "" {
+	resp, ok := tryPassEntry(entry)
+	if ok && resp.Password != "" {
 		return resp.Password, true
 	}
 	return "", false

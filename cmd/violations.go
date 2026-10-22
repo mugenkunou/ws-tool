@@ -5,7 +5,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/mugenkunou/ws-tool/internal/dotfile"
 	"github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/secret"
 	"github.com/mugenkunou/ws-tool/internal/style"
@@ -124,26 +123,6 @@ func printSecretViolations(w io.Writer, violations []secret.Violation, nc bool, 
 			detail = fmt.Sprintf("%s:%d: %s", v.Path, v.Line, strings.TrimSpace(v.Snippet))
 		}
 		fmt.Fprintf(w, "%s%s  %s\n", pfx, sev, detail)
-	}
-}
-
-func printDotfileIssues(w io.Writer, issues []dotfile.Issue, nc bool, indent bool) {
-	if len(issues) == 0 {
-		return
-	}
-	pfx := ""
-	if indent {
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, style.Boldf(nc, "  [Dotfiles]"))
-		pfx = "  "
-	}
-	for _, d := range issues {
-		sev := "WARNING"
-		if d.Status == dotfile.StatusBroken {
-			sev = "CRITICAL"
-		}
-		label := severityLabel(sev, nc)
-		fmt.Fprintf(w, "%s%s  %-12s %s  →  %s  [%s]\n", pfx, label, d.Status, d.SystemPath, d.WorkspacePath, d.Message)
 	}
 }
 

@@ -95,7 +95,7 @@ func TestSaveWritesEveryKey(t *testing.T) {
 func TestLinkWritesEveryKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ws.json")
 	cfg := Default()
-	cfg.Links = []Link{{System: "/home/u/.bashrc", Original: "configs/dotfiles/bashrc", Class: "config"}}
+	cfg.Links = []Link{{System: "/home/u/.bashrc", Original: "configs/dotfiles/bashrc"}}
 	if err := Save(path, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestRoundTripKeepsEveryValue(t *testing.T) {
 	cfg.Pass.PassEntry = "git/github.com"
 	cfg.Secret.SkipDirs = []string{"references/vendor"}
 	cfg.Session.CapMB = 250
-	cfg.Links = []Link{{System: "/etc/hosts", Original: "secrets/dotfiles/etc/hosts", Dir: false, Sudo: true, Class: "secret"}}
+	cfg.Links = []Link{{System: "/etc/hosts", Original: "secrets/dotfiles/etc/hosts", Dir: false, Sudo: true}}
 	if err := Save(path, cfg); err != nil {
 		t.Fatal(err)
 	}

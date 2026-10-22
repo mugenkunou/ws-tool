@@ -43,6 +43,10 @@ func RunPlan(plan Plan, stdin io.Reader, stdout io.Writer, globals globalFlags) 
 	}
 
 	out := textOut(globals, stdout)
+	if globals.json {
+		// stdout carries the JSON envelope and nothing else.
+		out = io.Discard
+	}
 
 	// --dry-run: show plan, skip execution entirely.
 	if globals.dryRun {

@@ -109,14 +109,14 @@ func TestTrashLs(t *testing.T) {
 func TestDotfileLsFieldsAndFilter(t *testing.T) {
 	workspace := initWorkspace(t)
 	sys := t.TempDir()
-	for _, f := range []struct{ name, class string }{{".bashrc", "config"}, {".netrc", "secret"}} {
-		p := filepath.Join(sys, f.name)
+	for _, name := range []string{".bashrc", "id_rsa"} { // a private key goes under secrets/
+		p := filepath.Join(sys, name)
 		if err := os.WriteFile(p, []byte("x\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		var out, errOut bytes.Buffer
-		if code := Execute([]string{"--workspace", workspace, "dotfile", "add", "--class", f.class, p}, strings.NewReader("y\ny\n"), &out, &errOut); code != 0 {
-			t.Fatalf("add %s: %s", f.name, errOut.String())
+		if code := Execute([]string{"--workspace", workspace, "dotfile", "add", p}, strings.NewReader("y\ny\n"), &out, &errOut); code != 0 {
+			t.Fatalf("add %s: %s", name, errOut.String())
 		}
 	}
 
@@ -131,8 +131,8 @@ func TestDotfileLsFieldsAndFilter(t *testing.T) {
 		}
 	}
 
-	recs = listRecords(t, "--workspace", workspace, "dotfile", "ls", "--filter", "class=secret")
-	if len(recs) != 1 || !strings.HasSuffix(recs[0]["system"].(string), ".netrc") {
-		t.Errorf("--filter class=secret = %v", recs)
+	recs = listRecords(t, "--workspace", workspace, "dotfile", "ls", "--filter", "workspace_path=secrets/dotfiles")
+	if len(recs) != 1 || !strings.HasSuffix(recs[0]["system"].(string), "id_rsa") {
+		t.Errorf("--filter workspace_path=secrets/dotfiles = %v", recs)
 	}
 }

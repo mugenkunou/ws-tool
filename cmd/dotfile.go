@@ -6,1065 +6,819 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mugenkunou/ws-tool/internal/dotfile"
-	"github.com/mugenkunou/ws-tool/internal/repo"
+	"github.com/mugenkunou/ws-tool/internal/editor"
 	"github.com/mugenkunou/ws-tool/internal/resource"
-	"github.com/mugenkunou/ws-tool/internal/secret"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
-var dotfileHelp = cmdHelp{
-	Usage: "ws dotfile <add|link|rm|ls|scan|fix|sync|reset|migrate|git> [args]",
-	Subcommands: []string{
-		"  add [flags] <path>             Move a file or directory into the workspace and symlink it back",
-		"  link [flags] <path> <ws-path>  Symlink a system path to a file or directory already in the workspace",
-		"  rm <path>                      Restore the workspace copy to the system path and unregister it",
-		"  ls                             List registered dotfiles",
-		"  scan                           Check every registered symlink",
-		"  fix                            Repair broken or missing symlinks",
-		"  sync <path>                    Adopt the live file as the new workspace copy",
-		"  reset                          Restore every dotfile and unregister them all",
-		"  migrate                        Split legacy directory entries into file-level entries",
-		"  git <sub>                      Manage the dotfile git backup",
-	},
-	Flags: append([]string{
-		"      --class string   add, link: config or secret (default: auto-detect for add, config for link)",
-		"                       secrets go to secrets/dotfiles/, configs to configs/dotfiles/",
-		"      --dir            add: link a directory whole, as one entry (e.g. ~/.password-store)",
-		"                       without it, add lets you pick files from the directory",
-		"      --dry-run        Preview only",
-	}, listFlagHelp("ls", dotfile.Schema(resource.CLIView()).Keys())...),
-}
-
-// dotfileClassFlag registers --class. It has no -c shorthand: the root parser
-// takes -c as --config wherever it appears.
-func dotfileClassFlag(fs *flag.FlagSet) *string {
-	return fs.String("class", "", "")
-}
-
+// runDotfile dispatches `ws dotfile <verb>` (spec §5 dotfile).
 func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	if hasHelpArg(args) {
-		return printCmdHelp(stdout, dotfileHelp)
-	}
-	if len(args) == 0 {
-		return printCmdHelp(stdout, dotfileHelp)
-	}
-
 	workspacePath, configPath, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-
-	subcommand := args[0]
-	subArgs := args[1:]
-
-	switch subcommand {
-	case "link":
-		return runDotfileLink(subArgs, globals, stdin, stdout, stderr, workspacePath, configPath)
-	case "add":
-		fs := flag.NewFlagSet("dotfile-add", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		classFlag := dotfileClassFlag(fs)
-		wholeDir := fs.Bool("dir", false, "")
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if len(fs.Args()) != 1 {
-			fmt.Fprintln(stderr, "usage: ws dotfile add [--class config|secret] [--dir] <path>")
-			return 1
-		}
-		class, err := dotfile.NormalizeClass(*classFlag)
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-
-		targetPath := fs.Args()[0]
-
-		// Resolve the path so we can stat it before passing to internal logic.
-		absTarget, err := wsconfig.ExpandUserPath(targetPath)
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-
-		out := textOut(globals, stdout)
-
-		info, statErr := os.Stat(absTarget)
-		if statErr != nil {
-			fmt.Fprintf(stderr, "path not found: %s\n", absTarget)
-			return 1
-		}
-
-		if *wholeDir && !info.IsDir() {
-			fmt.Fprintf(stderr, "--dir needs a directory: %s\n", absTarget)
-			return 1
-		}
-
-		var filesToAdd []string // absolute paths of files to track
-
-		if info.IsDir() && *wholeDir {
-			filesToAdd = []string{absTarget}
-		} else if info.IsDir() {
-			fmt.Fprintf(out, "Scanning %s ...\n", absTarget)
-			fmt.Fprintln(out, style.Mutedf(globals.noColor, "  (pass --dir to link the whole directory as one entry instead)"))
-			entries, expanded, expandErr := dotfile.ExpandDir(absTarget)
-			if expandErr != nil {
-				fmt.Fprintln(stderr, expandErr.Error())
-				return 1
-			}
-			if len(entries) == 0 {
-				fmt.Fprintln(out, "Directory is empty — nothing to add.")
-				return 0
-			}
-			selected := promptDirSelection(stdin, stdout, globals, entries, expanded, absTarget)
-			if len(selected) == 0 {
-				fmt.Fprintln(out, "Nothing selected.")
-				return 0
-			}
-			for _, e := range selected {
-				files, collectErr := dotfile.CollectFiles(e)
-				if collectErr != nil {
-					fmt.Fprintf(stderr, "error reading %s: %v\n", e.AbsPath, collectErr)
-					return 1
-				}
-				filesToAdd = append(filesToAdd, files...)
-			}
-		} else {
-			filesToAdd = []string{absTarget}
-		}
-
-		// Warn about secret files and let user opt out. An explicit --class secret
-		// already says they are secrets, and a whole directory isn't sniffed.
-		if class != dotfile.ClassSecret && !*wholeDir {
-			filesToAdd, _ = warnAndFilterSecrets(filesToAdd, stdin, stdout, globals, configPath)
-		}
-		if len(filesToAdd) == 0 {
-			fmt.Fprintln(out, "Nothing to add.")
-			return 0
-		}
-
-		// Build a plan: one action per file.
-		plan := Plan{Command: "dotfile.add"}
-		for _, f := range filesToAdd {
-			f := f
-			desc := fmt.Sprintf("Add dotfile %s", f)
-			if *wholeDir {
-				desc = fmt.Sprintf("Add directory %s (whole)", f)
-			}
-			if class != "" {
-				desc += " as " + class
-			}
-			plan.Actions = append(plan.Actions, Action{
-				ID:          "dotfile-add-" + f,
-				Description: desc,
-				Execute: func() error {
-					_, addErr := dotfile.Add(dotfile.AddOptions{
-						WorkspacePath: workspacePath,
-						ConfigPath:    configPath,
-						SystemPath:    f,
-						Class:         class,
-						Dir:           *wholeDir,
-						DryRun:        false,
-					})
-					return addErr
-				},
-			})
-		}
-		planResult := RunPlan(plan, stdin, stdout, globals)
-		if planResult.ExecutedCount() > 0 && !planResult.HasFailures() {
-			label := targetPath
-			dotfileGitAutoSync(workspacePath, configPath, "dotfile add: "+label, globals, stdout)
-		}
-		if globals.json {
-			return writeJSONDryRun(stdout, stderr, "dotfile.add", globals.dryRun, map[string]any{
-				"actions": planResult.Actions,
-			})
-		}
-		return planResult.ExitCode()
-	case "rm":
-		fs := flag.NewFlagSet("dotfile-rm", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if len(fs.Args()) != 1 {
-			fmt.Fprintln(stderr, "usage: ws dotfile rm <path>")
-			return 1
-		}
-
-		// Resolve like every path input: absolute, ~, or relative to cwd.
-		targetPath, err := wsconfig.ExpandUserPath(fs.Args()[0])
-		if err != nil {
-			fmt.Fprintf(stderr, "invalid path %q: %s\n", fs.Args()[0], err.Error())
-			return 1
-		}
-		plan := Plan{Command: "dotfile.rm"}
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "dotfile-rm",
-			Description: fmt.Sprintf("Remove dotfile %s", targetPath),
-			Execute: func() error {
-				_, err := dotfile.Remove(dotfile.RemoveOptions{
-					WorkspacePath: workspacePath,
-					ConfigPath:    configPath,
-					SystemPath:    targetPath,
-					DryRun:        false,
-				})
-				return err
-			},
-		})
-		planResult := RunPlan(plan, stdin, stdout, globals)
-		if planResult.ExecutedCount() > 0 && !planResult.HasFailures() {
-			dotfileGitAutoSync(workspacePath, configPath, "dotfile rm: "+targetPath, globals, stdout)
-		}
-		if globals.json {
-			return writeJSONDryRun(stdout, stderr, "dotfile.rm", globals.dryRun, map[string]any{
-				"actions": planResult.Actions,
-			})
-		}
-		return planResult.ExitCode()
-	case "sync":
-		fs := flag.NewFlagSet("dotfile-sync", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if len(fs.Args()) != 1 {
-			fmt.Fprintln(stderr, "usage: ws dotfile sync <path>")
-			return 1
-		}
-		targetPath, err := wsconfig.ExpandUserPath(fs.Args()[0])
-		if err != nil {
-			fmt.Fprintf(stderr, "invalid path %q: %s\n", fs.Args()[0], err.Error())
-			return 1
-		}
-
-		plan := Plan{Command: "dotfile.sync"}
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "dotfile-sync",
-			Description: fmt.Sprintf("Sync dotfile %s (live → workspace)", targetPath),
-			Execute: func() error {
-				// Step 1: unregister — drops the link record and the stale
-				// ws copy WITHOUT touching the live file at targetPath. A plain
-				// dotfile.Remove would restore that stale ws copy onto the
-				// system path, destroying the live content sync is meant to
-				// adopt — see dotfile.Unregister's doc comment.
-				if err := dotfile.Unregister(dotfile.UnregisterOptions{
-					WorkspacePath: workspacePath,
-					ConfigPath:    configPath,
-					SystemPath:    targetPath,
-				}); err != nil {
-					return err
-				}
-
-				// Step 2: add — moves live file into configs/dotfiles or secrets/dotfiles, creates symlink, registers.
-				_, err := dotfile.Add(dotfile.AddOptions{
-					WorkspacePath: workspacePath,
-					ConfigPath:    configPath,
-					SystemPath:    targetPath,
-					DryRun:        false,
-				})
-				return err
-			},
-		})
-		planResult := RunPlan(plan, stdin, stdout, globals)
-		if planResult.ExecutedCount() > 0 && !planResult.HasFailures() {
-			dotfileGitAutoSync(workspacePath, configPath, "dotfile sync: "+targetPath, globals, stdout)
-		}
-		if globals.json {
-			return writeJSONDryRun(stdout, stderr, "dotfile.sync", globals.dryRun, map[string]any{
-				"actions": planResult.Actions,
-			})
-		}
-		return planResult.ExitCode()
-	case "ls":
-		fs := flag.NewFlagSet("dotfile-ls", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		lf := registerListFlags(fs, "")
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		entries, err := dotfile.Entries(workspacePath, configPath)
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		return renderList(globals, "dotfile.ls", dotfile.Schema(resource.CLIView()), entries, lf, "No managed dotfiles.", stdout, stderr)
-	case "scan":
-		fs := flag.NewFlagSet("dotfile-scan", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		issues, err := dotfile.Scan(dotfile.ScanOptions{WorkspacePath: workspacePath, ConfigPath: configPath})
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if globals.json {
-			return writeJSON(stdout, stderr, "dotfile.scan", issues)
-		}
-		out := textOut(globals, stdout)
-		if len(issues) == 0 {
-			fmt.Fprintln(out, style.ResultSuccess(globals.noColor, "Dotfile scan: %s", style.Badge("ok", globals.noColor)))
-		} else {
-			printDotfileIssues(out, issues, globals.noColor, false)
-		}
-		return 0
-	case "fix":
-		fs := flag.NewFlagSet("dotfile-fix", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if *dryRun {
-			globals.dryRun = true
-		}
-
-		fixResult, err := dotfile.Fix(dotfile.FixOptions{
-			WorkspacePath: workspacePath,
-			ConfigPath:    configPath,
-			DryRun:        globals.dryRun,
-		})
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-
-		if globals.json {
-			return writeJSON(stdout, stderr, "dotfile.fix", fixResult)
-		}
-
-		out := textOut(globals, stdout)
-		nc := globals.noColor
-		style.Header(out, style.IconLink(nc)+" Dotfile Fix", nc)
-
-		for _, iss := range fixResult.Fixed {
-			fmt.Fprintf(out, "  %s %s  %s  %s\n", style.IconCheck(nc), iss.SystemPath, style.IconArrow(nc), style.Mutedf(nc, "%s", iss.Message))
-		}
-		for _, iss := range fixResult.Unchanged {
-			fmt.Fprintf(out, "  %s %s  %s\n", style.Mutedf(nc, "–"), iss.SystemPath, style.Mutedf(nc, "ok"))
-		}
-		for _, iss := range fixResult.Failed {
-			fmt.Fprintf(out, "  %s %s  %s\n", style.IconCross(nc), iss.SystemPath, style.Errorf(nc, "%s", iss.Message))
-		}
-
-		fmt.Fprintln(out)
-		fmt.Fprintf(out, "Created: %d   Skipped: %d   Failed: %d\n",
-			len(fixResult.Fixed), len(fixResult.Unchanged), len(fixResult.Failed))
-
-		if len(fixResult.Failed) > 0 {
-			return 3
-		}
-		return 0
-	case "reset":
-		fs := flag.NewFlagSet("dotfile-reset", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-
-		plan := Plan{Command: "dotfile.reset"}
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "dotfile-reset-all",
-			Description: "Reset all managed dotfiles",
-			Execute: func() error {
-				_, err := dotfile.Reset(dotfile.ResetOptions{
-					WorkspacePath: workspacePath,
-					ConfigPath:    configPath,
-					DryRun:        false,
-				})
-				return err
-			},
-		})
-		planResult := RunPlan(plan, stdin, stdout, globals)
-		if globals.json {
-			return writeJSONDryRun(stdout, stderr, "dotfile.reset", globals.dryRun, map[string]any{
-				"actions": planResult.Actions,
-			})
-		}
-		return planResult.ExitCode()
-	case "git":
-		if len(subArgs) == 0 {
-			fmt.Fprintln(stderr, "usage: ws dotfile git <remote|push|log|status|setup|disconnect>")
-			return 1
-		}
-		cfg, cfgErr := wsconfig.Load(configPath)
-		if cfgErr != nil {
-			fmt.Fprintln(stderr, cfgErr.Error())
-			return 1
-		}
-		repoPath := dotfile.RepoPath(workspacePath)
-
-		switch subArgs[0] {
-		case "remote":
-			fs := flag.NewFlagSet("dotfile-git-remote", flag.ContinueOnError)
-			fs.SetOutput(io.Discard)
-			passEntry := fs.String("pass-entry", "", "optional pass entry for auth")
-			dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
-			registerGlobalFlags(fs, &globals)
-			if err := parseInterspersed(fs, subArgs[1:]); err != nil {
-				fmt.Fprintln(stderr, err.Error())
-				return 1
-			}
-			if *dryRun {
-				globals.dryRun = true
-			}
-			if len(fs.Args()) != 1 {
-				fmt.Fprintln(stderr, "usage: ws dotfile git remote <url>")
-				return 1
-			}
-			remoteURL := strings.TrimSpace(fs.Args()[0])
-
-			if !dotfile.GitIsInitialized(repoPath) {
-				fmt.Fprintln(stderr, style.ResultError(globals.noColor, "Git not initialized. Run: ws dotfile git setup"))
-				return 1
-			}
-
-			// Enforce private remote — hard constraint.
-			out := textOut(globals, stdout)
-			nc := globals.noColor
-			fmt.Fprintln(out, style.Mutedf(nc, "Checking repository visibility…"))
-			token := resolveGitToken(remoteURL, *passEntry)
-			vis := repo.CheckRepoVisibility(remoteURL, token)
-			if vis.Checked && !vis.Private {
-				fmt.Fprintln(stderr, style.ResultError(nc, "%s", repo.ErrPublicRepository))
-				fmt.Fprintln(stderr, style.Mutedf(nc, "Make the repository private, then retry."))
-				return 1
-			}
-			if vis.Warning != "" {
-				fmt.Fprintln(out, style.ResultWarning(nc, "%s", vis.Warning))
-			}
-			if vis.Error != "" && !vis.Checked {
-				fmt.Fprintln(out, style.ResultWarning(nc, "visibility check failed: %s", vis.Error))
-			}
-
-			plan := Plan{Command: "dotfile.git.remote"}
-			plan.Actions = append(plan.Actions, Action{
-				ID:          "add-remote",
-				Description: fmt.Sprintf("Set remote origin to %s", remoteURL),
-				Execute: func() error {
-					if err := dotfile.GitAddRemote(repoPath, remoteURL); err != nil {
-						return err
-					}
-					cfg.Dotfile.Git.RemoteURL = remoteURL
-					if *passEntry != "" {
-						// pass-entry is informational only in new layout; no separate config file
-						_ = *passEntry
-					}
-					return wsconfig.Save(configPath, cfg)
-				},
-			})
-			planResult := RunPlan(plan, stdin, stdout, globals)
-			if globals.json {
-				return writeJSONDryRun(stdout, stderr, "dotfile.git.remote", globals.dryRun, map[string]any{
-					"remote_url": remoteURL,
-					"actions":    planResult.Actions,
-				})
-			}
-			if planResult.WasExecuted("add-remote") {
-				fmt.Fprintln(out, style.ResultSuccess(nc, "Remote set to %s", remoteURL))
-			}
-			return planResult.ExitCode()
-
-		case "push":
-			fs := flag.NewFlagSet("dotfile-git-push", flag.ContinueOnError)
-			fs.SetOutput(io.Discard)
-			message := fs.String("m", "", "commit message (default: auto)")
-			passEntry := fs.String("pass-entry", "", "optional pass entry for auth")
-			registerGlobalFlags(fs, &globals)
-			if err := parseInterspersed(fs, subArgs[1:]); err != nil {
-				fmt.Fprintln(stderr, err.Error())
-				return 1
-			}
-			_ = passEntry // reserved for future credential resolution before push
-
-			if !dotfile.GitIsInitialized(repoPath) {
-				fmt.Fprintln(stderr, style.ResultError(globals.noColor, "Git not initialized. Run: ws dotfile git setup"))
-				return 1
-			}
-			if !dotfile.GitHasRemote(repoPath) {
-				fmt.Fprintln(stderr, style.ResultError(globals.noColor, "No remote configured. Run: ws dotfile git remote <url>"))
-				return 1
-			}
-
-			out := textOut(globals, stdout)
-			nc := globals.noColor
-
-			// Smart push: commit any pending changes first.
-			commitMsg := *message
-			if commitMsg == "" {
-				commitMsg = "manual push"
-			}
-			result := dotfile.GitSync(dotfile.GitSyncOptions{
-				WorkspacePath: workspacePath,
-				RepoPath:      repoPath,
-				RemoteURL:     cfg.Dotfile.Git.RemoteURL,
-				Branch:        cfg.Dotfile.Git.Branch,
-				AutoCommit:    true,
-				AutoPush:      false, // we handle push with visibility check below
-				CommitMessage: commitMsg,
-			})
-			if result.Error != "" {
-				fmt.Fprintln(stderr, style.ResultError(nc, "commit: %s", result.Error))
-				return 1
-			}
-			if result.Committed {
-				fmt.Fprintln(out, style.ResultSuccess(nc, "Committed."))
-			}
-
-			// Pre-push private repo check.
-			remoteURL := dotfile.GitRemoteURL(repoPath)
-			token := resolveGitToken(remoteURL, "")
-			vis := repo.CheckRepoVisibility(remoteURL, token)
-			if vis.Checked && !vis.Private {
-				fmt.Fprintln(stderr, style.ResultError(nc, "%s", repo.ErrPublicRepository))
-				return 1
-			}
-
-			branch := cfg.Dotfile.Git.Branch
-			if err := dotfile.GitPush(repoPath, branch); err != nil {
-				fmt.Fprintln(stderr, style.ResultError(nc, "push failed: %s", err))
-				return 1
-			}
-			fmt.Fprintln(out, style.ResultSuccess(nc, "Pushed to %s", remoteURL))
-			return 0
-
-		case "log":
-			fs := flag.NewFlagSet("dotfile-git-log", flag.ContinueOnError)
-			fs.SetOutput(io.Discard)
-			count := fs.Int("n", 20, "number of commits to show")
-			registerGlobalFlags(fs, &globals)
-			if err := parseInterspersed(fs, subArgs[1:]); err != nil {
-				fmt.Fprintln(stderr, err.Error())
-				return 1
-			}
-
-			if !dotfile.GitIsInitialized(repoPath) {
-				fmt.Fprintln(stderr, style.ResultError(globals.noColor, "Git not initialized. Run: ws dotfile git setup"))
-				return 1
-			}
-
-			logOut, err := dotfile.GitLog(repoPath, *count)
-			if err != nil {
-				fmt.Fprintln(stderr, style.ResultError(globals.noColor, "git log: %s", err))
-				return 1
-			}
-			if globals.json {
-				return writeJSON(stdout, stderr, "dotfile.git.log", map[string]any{
-					"log": strings.TrimSpace(logOut),
-				})
-			}
-			out := textOut(globals, stdout)
-			logStr := strings.TrimSpace(logOut)
-			if logStr == "" {
-				fmt.Fprintln(out, style.Mutedf(globals.noColor, "No commits yet."))
-			} else {
-				fmt.Fprintln(out, logStr)
-			}
-			return 0
-
-		case "status":
-			fs := flag.NewFlagSet("dotfile-git-status", flag.ContinueOnError)
-			fs.SetOutput(io.Discard)
-			registerGlobalFlags(fs, &globals)
-			if err := parseInterspersed(fs, subArgs[1:]); err != nil {
-				fmt.Fprintln(stderr, err.Error())
-				return 1
-			}
-			out := textOut(globals, stdout)
-			nc := globals.noColor
-
-			gitInited := dotfile.GitIsInitialized(repoPath)
-			hasRemote := false
-			remoteURL := ""
-			branch := ""
-			lastCommit := ""
-			dirty := ""
-			var ahead, behind int
-
-			if gitInited {
-				hasRemote = dotfile.GitHasRemote(repoPath)
-				remoteURL = dotfile.GitRemoteURL(repoPath)
-				branch = dotfile.GitBranch(repoPath)
-				lastCommit, _ = dotfile.GitLastCommit(repoPath)
-				lastCommit = strings.TrimSpace(lastCommit)
-				porcelain, _ := dotfile.GitStatus(repoPath)
-				if strings.TrimSpace(porcelain) != "" {
-					dirty = "dirty"
-				} else {
-					dirty = "clean"
-				}
-				if hasRemote {
-					ahead, behind = dotfile.GitAheadBehind(repoPath, branch)
-				}
-			}
-
-			result := map[string]any{
-				"git_initialized": gitInited,
-				"git_remote":      hasRemote,
-				"remote_url":      remoteURL,
-				"branch":          branch,
-				"auto_commit":     cfg.Dotfile.Git.AutoCommit,
-				"auto_push":       cfg.Dotfile.Git.AutoPush,
-				"working_tree":    dirty,
-				"last_commit":     lastCommit,
-				"ahead":           ahead,
-				"behind":          behind,
-				"repo_path":       repoPath,
-			}
-			if globals.json {
-				return writeJSON(stdout, stderr, "dotfile.git.status", result)
-			}
-
-			if !gitInited {
-				fmt.Fprintln(out, style.ResultInfo(nc, "Git not initialized."))
-				fmt.Fprintln(out, style.Mutedf(nc, "  Run: ws dotfile git setup"))
-				return 0
-			}
-
-			style.KV(out, "Git", style.Badge("initialized", nc), nc)
-			style.KV(out, "Repo", repoPath, nc)
-			style.KV(out, "Branch", branch, nc)
-			if hasRemote {
-				style.KV(out, "Remote", style.Infof(nc, "%s", remoteURL), nc)
-				style.KV(out, "Ahead/behind", fmt.Sprintf("↑%d ↓%d", ahead, behind), nc)
-			} else {
-				style.KV(out, "Remote", style.ResultWarning(nc, "none"), nc)
-			}
-			style.KV(out, "Working tree", dirty, nc)
-			style.KV(out, "Auto-commit", fmt.Sprintf("%t", cfg.Dotfile.Git.AutoCommit), nc)
-			style.KV(out, "Auto-push", fmt.Sprintf("%t", cfg.Dotfile.Git.AutoPush), nc)
-			if lastCommit != "" {
-				style.KV(out, "Last commit", lastCommit, nc)
-			}
-
-			if !hasRemote {
-				fmt.Fprintln(out)
-				fmt.Fprintln(out, style.ResultWarning(nc, "No git remote. Dotfiles only exist on this machine."))
-				fmt.Fprintln(out, style.Mutedf(nc, "  Add one with: ws dotfile git remote <url>"))
-				fmt.Fprintln(out, style.Mutedf(nc, "  Use a PRIVATE repo — never push dotfiles to a public repo."))
-			}
-			return 0
-
-		case "setup":
-			fs := flag.NewFlagSet("dotfile-git-setup", flag.ContinueOnError)
-			fs.SetOutput(io.Discard)
-			dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
-			registerGlobalFlags(fs, &globals)
-			if err := parseInterspersed(fs, subArgs[1:]); err != nil {
-				fmt.Fprintln(stderr, err.Error())
-				return 1
-			}
-			if *dryRun {
-				globals.dryRun = true
-			}
-
-			out := textOut(globals, stdout)
-			nc := globals.noColor
-
-			plan := Plan{Command: "dotfile.git.setup"}
-
-			// Step 1: git init if needed.
-			gitInited := dotfile.GitIsInitialized(repoPath)
-			branch := cfg.Dotfile.Git.Branch
-			if branch == "" {
-				branch = "main"
-			}
-
-			if !gitInited {
-				plan.Actions = append(plan.Actions, Action{
-					ID:          "git-init",
-					Description: fmt.Sprintf("Initialize git in %s (branch: %s)", repoPath, branch),
-					Execute: func() error {
-						if err := dotfile.EnsureGitRepo(repoPath, "", branch); err != nil {
-							return err
-						}
-						cfg.Dotfile.Git.AutoCommit = true
-						if cfg.Dotfile.Git.Branch == "" {
-							cfg.Dotfile.Git.Branch = branch
-						}
-						return wsconfig.Save(configPath, cfg)
-					},
-				})
-			}
-
-			// Step 2: remote if not configured.
-			hasRemote := gitInited && dotfile.GitHasRemote(repoPath)
-			var remoteURL string
-			if !hasRemote {
-				fmt.Fprintln(out)
-				fmt.Fprintln(out, style.Mutedf(nc, "  A private git remote provides off-machine backup for your dotfiles."))
-				fmt.Fprintln(out, style.Mutedf(nc, "  Create a PRIVATE repo first, then paste the URL below."))
-				remoteURL = promptLine(stdin, stdout, globals, "  Remote URL (blank to skip)", "")
-
-				if remoteURL != "" {
-					// Enforce private remote.
-					fmt.Fprintln(out, style.Mutedf(nc, "Checking repository visibility…"))
-					token := resolveGitToken(remoteURL, "")
-					vis := repo.CheckRepoVisibility(remoteURL, token)
-					if vis.Checked && !vis.Private {
-						fmt.Fprintln(stderr, style.ResultError(nc, "%s", repo.ErrPublicRepository))
-						fmt.Fprintln(stderr, style.Mutedf(nc, "Make the repository private, then retry."))
-						return 1
-					}
-					if vis.Warning != "" {
-						fmt.Fprintln(out, style.ResultWarning(nc, "%s", vis.Warning))
-					}
-					if vis.Error != "" && !vis.Checked {
-						fmt.Fprintln(out, style.ResultWarning(nc, "visibility check failed: %s", vis.Error))
-					}
-
-					capturedURL := remoteURL
-					plan.Actions = append(plan.Actions, Action{
-						ID:          "add-remote",
-						Description: fmt.Sprintf("Set remote origin to %s", capturedURL),
-						Execute: func() error {
-							if err := dotfile.GitAddRemote(repoPath, capturedURL); err != nil {
-								return err
-							}
-							cfg.Dotfile.Git.RemoteURL = capturedURL
-							return wsconfig.Save(configPath, cfg)
-						},
-					})
-				}
-			}
-
-			// Step 3: enable auto-push if remote is being set and not already enabled.
-			if (hasRemote || remoteURL != "") && !cfg.Dotfile.Git.AutoPush {
-				plan.Actions = append(plan.Actions, Action{
-					ID:          "enable-auto-push",
-					Description: "Enable auto-push on dotfile changes",
-					Execute: func() error {
-						cfg.Dotfile.Git.AutoPush = true
-						return wsconfig.Save(configPath, cfg)
-					},
-				})
-			}
-
-			if len(plan.Actions) == 0 {
-				fmt.Fprintln(out, style.ResultSuccess(nc, "Dotfile git already set up."))
-				fmt.Fprintln(out)
-				style.KV(out, "Repo", repoPath, nc)
-				style.KV(out, "Remote", style.Infof(nc, "%s", dotfile.GitRemoteURL(repoPath)), nc)
-				style.KV(out, "Branch", dotfile.GitBranch(repoPath), nc)
-				return 0
-			}
-
-			planResult := RunPlan(plan, stdin, stdout, globals)
-
-			if globals.json {
-				return writeJSONDryRun(stdout, stderr, "dotfile.git.setup", globals.dryRun, map[string]any{
-					"actions": planResult.Actions,
-				})
-			}
-
-			if !planResult.HasFailures() {
-				fmt.Fprintln(out)
-				finalHasRemote := dotfile.GitHasRemote(repoPath)
-				if !finalHasRemote {
-					fmt.Fprintln(out, style.ResultWarning(nc, "No git remote. Dotfiles only exist on this machine."))
-					fmt.Fprintln(out, style.Mutedf(nc, "  To add one later: ws dotfile git remote <url>"))
-					fmt.Fprintln(out, style.Mutedf(nc, "  Use a PRIVATE repo — never push dotfiles to a public repo."))
-				} else {
-					fmt.Fprintln(out, style.ResultSuccess(nc, "Dotfile git setup complete."))
-				}
-			}
-			return planResult.ExitCode()
-
-		case "disconnect":
-			fs := flag.NewFlagSet("dotfile-git-disconnect", flag.ContinueOnError)
-			fs.SetOutput(io.Discard)
-			dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
-			registerGlobalFlags(fs, &globals)
-			if err := parseInterspersed(fs, subArgs[1:]); err != nil {
-				fmt.Fprintln(stderr, err.Error())
-				return 1
-			}
-			if *dryRun {
-				globals.dryRun = true
-			}
-
-			if cfg.Dotfile.Git.RemoteURL == "" {
-				fmt.Fprintln(stderr, "dotfile git versioning has no remote configured")
-				return 1
-			}
-
-			plan := Plan{Command: "dotfile.git.disconnect"}
-			plan.Actions = append(plan.Actions, Action{
-				ID:          "disconnect-git",
-				Description: "Disable dotfile git auto-push",
-				Execute: func() error {
-					cfg.Dotfile.Git.AutoPush = false
-					cfg.Dotfile.Git.AutoCommit = false
-					return wsconfig.Save(configPath, cfg)
-				},
-			})
-
-			planResult := RunPlan(plan, stdin, stdout, globals)
-			if globals.json {
-				return writeJSONDryRun(stdout, stderr, "dotfile.git.disconnect", globals.dryRun, map[string]any{
-					"actions": planResult.Actions,
-				})
-			}
-			out := textOut(globals, stdout)
-			nc := globals.noColor
-			if planResult.WasExecuted("disconnect-git") {
-				fmt.Fprintln(out, style.ResultSuccess(nc, "Dotfile git auto-push disabled."))
-				fmt.Fprintln(out, style.Mutedf(nc, "  .git directory preserved in %s", repoPath))
-				fmt.Fprintln(out, style.Mutedf(nc, "  Re-enable with: ws dotfile git setup"))
-			}
-			return planResult.ExitCode()
-
-		// Keep old names as aliases for backward compatibility.
-		case "enable", "connect":
-			fmt.Fprintln(stderr, style.ResultWarning(globals.noColor, "Use 'ws dotfile git setup' instead."))
-			return 1
-
-		default:
-			fmt.Fprintf(stderr, "unknown dotfile git subcommand: %s\n", subArgs[0])
-			fmt.Fprintln(stderr, "usage: ws dotfile git <remote|push|log|status|setup|disconnect>")
-			return 1
-		}
-	case "migrate":
-		fs := flag.NewFlagSet("dotfile-migrate", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-
-		out := textOut(globals, stdout)
-		nc := globals.noColor
-
-		dirLinks, err := dotfile.FindDirEntries(workspacePath, configPath)
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if len(dirLinks) == 0 {
-			fmt.Fprintln(out, style.ResultSuccess(nc, "No directory entries found — all dotfiles are already file-level."))
-			return 0
-		}
-
-		fmt.Fprintf(out, "Found %d directory entry(s) to migrate:\n\n", len(dirLinks))
-		exitCode := 0
-
-		for _, link := range dirLinks {
-			wsDir := filepath.Join(workspacePath, filepath.FromSlash(dotfile.LinkDotfilePath(link)))
-			fmt.Fprintf(out, "%s %s\n", style.Infof(nc, "%s", link.System), style.Mutedf(nc, "(→ %s)", wsDir))
-
-			entries, expanded, expandErr := dotfile.ExpandDir(wsDir)
-			if expandErr != nil {
-				fmt.Fprintf(stderr, "  error scanning %s: %v\n", wsDir, expandErr)
-				exitCode = 1
-				continue
-			}
-			if len(entries) == 0 {
-				fmt.Fprintln(out, style.Mutedf(nc, "  (empty — skipping)"))
-				continue
-			}
-
-			selected := promptDirSelection(stdin, stdout, globals, entries, expanded, wsDir)
-			if len(selected) == 0 {
-				fmt.Fprintln(out, style.Mutedf(nc, "  Nothing selected — skipping."))
-				continue
-			}
-
-			// Collect the paths the files will have AFTER Remove restores the directory.
-			type fileTask struct {
-				systemPath    string
-				workspacePath string // for display
-			}
-			var tasks []fileTask
-			for _, e := range selected {
-				var relPaths []string
-				if e.IsDir {
-					// Walk the workspace subdirectory to gather all file paths.
-					subFiles, collectErr := dotfile.CollectFiles(e)
-					if collectErr != nil {
-						fmt.Fprintf(stderr, "  error reading %s: %v\n", e.AbsPath, collectErr)
-						continue
-					}
-					for _, sf := range subFiles {
-						rel, _ := filepath.Rel(wsDir, sf)
-						relPaths = append(relPaths, rel)
-					}
-				} else {
-					rel, _ := filepath.Rel(wsDir, e.AbsPath)
-					relPaths = append(relPaths, rel)
-				}
-				for _, rel := range relPaths {
-					sysPath := filepath.Join(link.System, filepath.FromSlash(rel))
-					tasks = append(tasks, fileTask{systemPath: sysPath, workspacePath: e.Name})
-				}
-			}
-
-			if globals.dryRun {
-				fmt.Fprintln(out, style.Mutedf(nc, "  [dry-run] would migrate:"))
-				for _, task := range tasks {
-					fmt.Fprintf(out, "    %s %s %s\n", style.Mutedf(nc, "[dry-run]"), task.systemPath, style.IconArrow(nc))
-				}
-				continue
-			}
-
-			// Step 1: Remove the directory entry, restoring the real directory.
-			if _, removeErr := dotfile.Remove(dotfile.RemoveOptions{
-				WorkspacePath: workspacePath,
-				ConfigPath:    configPath,
-				SystemPath:    link.System,
-			}); removeErr != nil {
-				fmt.Fprintf(stderr, "  failed to remove directory entry %s: %v\n", link.System, removeErr)
-				exitCode = 1
-				continue
-			}
-
-			// Step 2: Warn about secrets in the files about to be added.
-			var sysPaths []string
-			for _, t := range tasks {
-				sysPaths = append(sysPaths, t.systemPath)
-			}
-			sysPaths, _ = warnAndFilterSecrets(sysPaths, stdin, stdout, globals, configPath)
-
-			// Step 3: Add each selected file individually.
-			addedCount := 0
-			for _, sysPath := range sysPaths {
-				_, addErr := dotfile.Add(dotfile.AddOptions{
-					WorkspacePath: workspacePath,
-					ConfigPath:    configPath,
-					SystemPath:    sysPath,
-				})
-				if addErr != nil {
-					fmt.Fprintf(stderr, "  failed to add %s: %v\n", sysPath, addErr)
-					exitCode = 1
-					continue
-				}
-				fmt.Fprintf(out, "  %s %s\n", style.IconCheck(nc), style.Mutedf(nc, "%s", sysPath))
-				addedCount++
-			}
-			fmt.Fprintf(out, "  Migrated %d file(s) from %s\n\n", addedCount, link.System)
-		}
-
-		if exitCode == 0 {
-			dotfileGitAutoSync(workspacePath, configPath, "dotfile migrate", globals, stdout)
-		}
-		return exitCode
-
-	default:
-		fmt.Fprintf(stderr, "unknown dotfile subcommand: %s\n", subcommand)
-		fmt.Fprintln(stderr, "usage: ws dotfile <add|link|rm|ls|scan|fix|sync|reset|migrate|git>")
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, "usage: ws dotfile <ls|add|link|unlink|edit|backup> …")
 		return 1
 	}
+
+	verb, rest := args[0], args[1:]
+	switch verb {
+	case "ls":
+		return runDotfileLs(rest, globals, stdout, stderr, workspacePath, configPath)
+	case "add":
+		return runDotfileAdd(rest, globals, stdin, stdout, stderr, workspacePath, configPath)
+	case "link":
+		return runDotfileLink(rest, globals, stdin, stdout, stderr, workspacePath, configPath)
+	case "unlink":
+		return runDotfileUnlink(rest, globals, stdin, stdout, stderr, workspacePath, configPath)
+	case "edit":
+		return runDotfileEdit(rest, globals, stdout, stderr, workspacePath, configPath)
+	case "backup":
+		return runBackup(dotfileBackupSpec(workspacePath, configPath), rest, globals, stdin, stdout, stderr)
+	case "migrate": // hidden: a one-off legacy split, until it is deleted
+		return runDotfileMigrate(rest, globals, stdin, stdout, stderr, workspacePath, configPath)
+	}
+	fmt.Fprintf(stderr, "unknown command: dotfile %s\n", verb)
+	fmt.Fprintln(stderr, "usage: ws dotfile <ls|add|link|unlink|edit|backup> …")
+	return 1
 }
 
-// runDotfileLink implements `ws dotfile link <system-path> <workspace-rel-path>`.
-// It links a system path to a workspace file that already exists (e.g.
-// agent/AGENTS.md) without moving anything.
-func runDotfileLink(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer, workspacePath, configPath string) int {
-	fs := flag.NewFlagSet("dotfile-link", flag.ContinueOnError)
+// classRemoved is the error for the removed --class flag (spec §3.5).
+func classRemoved(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		if a == "--class" || strings.HasPrefix(a, "--class=") {
+			return true
+		}
+	}
+	return false
+}
+
+const classRemovedMessage = "ws: --class was removed; where the copy lives says what it is. Use --to <ws-path> to choose where it goes"
+
+// resolveTargets resolves path arguments the way every command does (absolute,
+// ~, or relative to the current directory) and drops repeats.
+func resolveTargets(raw []string) ([]string, error) {
+	var out []string
+	for _, p := range raw {
+		abs, err := wsconfig.ExpandUserPath(p)
+		if err != nil {
+			return nil, fmt.Errorf("invalid path %q: %w", p, err)
+		}
+		if !slices.Contains(out, abs) {
+			out = append(out, abs)
+		}
+	}
+	return out, nil
+}
+
+// ── ls ─────────────────────────────────────────────────────────────
+
+func runDotfileLs(args []string, globals globalFlags, stdout, stderr io.Writer, workspacePath, configPath string) int {
+	fs := flag.NewFlagSet("dotfile-ls", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	classFlag := dotfileClassFlag(fs)
-	dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
+	lf := registerListFlags(fs, "")
 	registerGlobalFlags(fs, &globals)
 	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	normClass, err := dotfile.NormalizeClass(*classFlag)
+	if len(fs.Args()) > 0 {
+		fmt.Fprintln(stderr, "ws dotfile ls takes no targets; use --filter status!=ok to list only the problems")
+		return 1
+	}
+	entries, err := dotfile.Entries(workspacePath, configPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	class := &normClass
-	if *dryRun {
-		globals.dryRun = true
-	}
-	remaining := fs.Args()
-	if len(remaining) != 2 {
-		fmt.Fprintln(stderr, "usage: ws dotfile link [--class config|secret] <system-path> <workspace-rel-path>")
-		fmt.Fprintln(stderr, "  system-path      — the system symlink to create (e.g. ~/.claude/CLAUDE.md)")
-		fmt.Fprintln(stderr, "  workspace-rel-path — path relative to workspace root (e.g. agent/AGENTS.md)")
+	return renderList(globals, "dotfile.ls", dotfile.Schema(resource.CLIView()), entries, lf, "No managed dotfiles.", stdout, stderr)
+}
+
+// ── add ────────────────────────────────────────────────────────────
+
+// addTarget is one path `dotfile add` was asked to take.
+type addTarget struct {
+	path string
+	// kind: "new" (a file or whole directory), "again" (an overwritten entry).
+	again bool
+	whole bool // a directory taken whole (--dir)
+}
+
+func runDotfileAdd(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer, workspacePath, configPath string) int {
+	if classRemoved(args) {
+		fmt.Fprintln(stderr, classRemovedMessage)
 		return 1
 	}
-
-	sysPathRaw := remaining[0]
-	wsRelPath := remaining[1]
-
-	absSystem, err := wsconfig.ExpandUserPath(sysPathRaw)
+	fs := flag.NewFlagSet("dotfile-add", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	to := fs.String("to", "", "")
+	wholeDir := fs.Bool("dir", false, "")
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if len(fs.Args()) == 0 {
+		fmt.Fprintln(stderr, "usage: ws dotfile add <path…> [--to <ws-path>] [--dir]")
+		return 1
+	}
+	paths, err := resolveTargets(fs.Args())
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
+	toAbs := ""
+	if *to != "" {
+		if len(paths) != 1 {
+			fmt.Fprintln(stderr, "--to takes exactly one path")
+			return 1
+		}
+		if toAbs, err = wsconfig.ExpandUserPath(*to); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+	}
 
-	plan := Plan{Command: "dotfile.link"}
-	plan.Actions = append(plan.Actions, Action{
-		ID:          "dotfile-link",
-		Description: fmt.Sprintf("Link %s → %s/%s", absSystem, workspacePath, wsRelPath),
-		Execute: func() error {
-			_, err := dotfile.Link(dotfile.LinkOptions{
-				WorkspacePath:    workspacePath,
-				ConfigPath:       configPath,
-				SystemPath:       absSystem,
-				WorkspaceRelPath: wsRelPath,
-				Class:            *class,
-				DryRun:           false,
-			})
-			return err
-		},
-	})
+	cfg, err := wsconfig.Load(configPath)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	issues, err := dotfile.Scan(dotfile.ScanOptions{WorkspacePath: workspacePath, ConfigPath: configPath})
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	issueFor := map[string]dotfile.Issue{}
+	for _, is := range issues {
+		issueFor[is.SystemPath] = is
+	}
 
 	out := textOut(globals, stdout)
-	nc := globals.noColor
-	planResult := RunPlan(plan, stdin, stdout, globals)
-
-	if globals.dryRun {
-		res, _ := dotfile.Link(dotfile.LinkOptions{
-			WorkspacePath:    workspacePath,
-			ConfigPath:       configPath,
-			SystemPath:       absSystem,
-			WorkspaceRelPath: wsRelPath,
-			Class:            *class,
-			DryRun:           true,
-		})
-		for _, msg := range res.Messages {
-			fmt.Fprintln(out, style.Mutedf(nc, "%s", msg))
-		}
-		return 0
-	}
-
 	if globals.json {
-		return writeJSONDryRun(stdout, stderr, "dotfile.link", globals.dryRun, map[string]any{
-			"system":   absSystem,
-			"original": wsRelPath,
-		})
+		out = io.Discard
+	}
+	nc := globals.noColor
+
+	var targets []addTarget
+	for _, abs := range paths {
+		if link, managed := dotfile.FindLink(cfg, abs); managed {
+			if *to != "" {
+				fmt.Fprintf(stderr, "--to applies to a new path, and %s is already managed (ws dotfile link %s repairs it)\n", abs, abs)
+				return 1
+			}
+			is, bad := issueFor[link.System]
+			switch {
+			case !bad:
+				fmt.Fprintf(out, "  %s %s is already managed\n", style.Mutedf(nc, "–"), abs)
+			case is.Status == dotfile.StatusOverwritten:
+				targets = append(targets, addTarget{path: abs, again: true})
+			default: // broken: nothing to take
+				fmt.Fprintf(out, "  %s %s: nothing to take (%s); try: ws dotfile link %s\n", style.Mutedf(nc, "–"), abs, is.Message, abs)
+			}
+			continue
+		}
+
+		info, statErr := os.Lstat(abs)
+		isDir := statErr == nil && info.IsDir()
+		switch {
+		case *wholeDir:
+			if !isDir {
+				fmt.Fprintf(stderr, "--dir needs a directory: %s\n", abs)
+				return 1
+			}
+			targets = append(targets, addTarget{path: abs, whole: true})
+		case isDir:
+			files, code := selectDirectoryFiles(abs, globals, stdin, stdout, stderr)
+			if code != 0 {
+				return code
+			}
+			for _, f := range files {
+				targets = append(targets, addTarget{path: f})
+			}
+		default:
+			targets = append(targets, addTarget{path: abs})
+		}
 	}
 
-	if !planResult.HasFailures() && planResult.ExecutedCount() > 0 {
-		fmt.Fprintln(out, style.ResultSuccess(nc, "Linked."))
-		dotfileGitAutoSync(workspacePath, configPath, "dotfile link: "+sysPathRaw, globals, stdout)
+	// Unless --to or --dir says where it goes, warn about files that look like
+	// secrets, once, and let the user drop them.
+	if *to == "" && !*wholeDir {
+		var fresh []string
+		for _, t := range targets {
+			if !t.again {
+				fresh = append(fresh, t.path)
+			}
+		}
+		kept, _ := warnAndFilterSecrets(fresh, stdin, stdout, globals, configPath)
+		targets = slices.DeleteFunc(targets, func(t addTarget) bool { return !t.again && !slices.Contains(kept, t.path) })
+	}
+
+	p := Plan{Command: "dotfile.add"}
+	var labels []string
+	for _, t := range targets {
+		t := t
+		labels = append(labels, t.path)
+		switch {
+		case t.again:
+			link, _ := dotfile.FindLink(cfg, t.path)
+			p.Actions = append(p.Actions, Action{
+				ID: "dotfile-add-" + t.path,
+				Description: fmt.Sprintf("Add %s again (the live file replaces %s; the old copy goes to the trash)",
+					t.path, dotfile.WorkspaceCopy(workspacePath, link)),
+				Execute: func() error {
+					return dotfile.TakeLive(dotfile.TakeLiveOptions{WorkspacePath: workspacePath, ConfigPath: configPath, SystemPath: t.path})
+				},
+			})
+		default:
+			p.Actions = append(p.Actions, Action{
+				ID:          "dotfile-add-" + t.path,
+				Description: addDescription(workspacePath, t, toAbs),
+				Execute: func() error {
+					_, err := dotfile.Add(dotfile.AddOptions{
+						WorkspacePath: workspacePath, ConfigPath: configPath, SystemPath: t.path, To: toAbs, Dir: t.whole,
+					})
+					return err
+				},
+			})
+		}
+	}
+
+	planResult := RunPlan(p, stdin, stdout, globals)
+	if planResult.ExecutedCount() > 0 {
+		dotfileGitAutoSync(workspacePath, configPath, "dotfile add: "+strings.Join(labels, ", "), globals, stdout, stderr)
+	}
+	if globals.json {
+		return writeJSONDryRun(stdout, stderr, "dotfile.add", globals.dryRun, map[string]any{"actions": planResult.Actions})
 	}
 	return planResult.ExitCode()
 }
+
+// addDescription is the plan line of a new add: where the copy will go.
+func addDescription(workspacePath string, t addTarget, toAbs string) string {
+	dest := toAbs
+	secret := false
+	if dest == "" {
+		isDir := t.whole
+		secret = dotfile.LooksLikeSecret(t.path, isDir)
+		rel, err := dotfile.StoragePath(t.path, secret)
+		if err != nil {
+			return "Add " + t.path
+		}
+		dest = filepath.Join(workspacePath, filepath.FromSlash(rel))
+	}
+	desc := fmt.Sprintf("Add %s → %s", t.path, dest)
+	if t.whole {
+		desc = fmt.Sprintf("Add directory %s → %s (whole)", t.path, dest)
+	}
+	if secret {
+		desc += " (secret)"
+	}
+	return desc
+}
+
+// selectDirectoryFiles expands a directory into the files to track and asks
+// which ones (spec §5 dotfile add). --quiet and --json take the defaults.
+func selectDirectoryFiles(abs string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) ([]string, int) {
+	out := textOut(globals, stdout)
+	if globals.json {
+		out = io.Discard
+	}
+	fmt.Fprintf(out, "Scanning %s ...\n", abs)
+	fmt.Fprintln(out, style.Mutedf(globals.noColor, "  (pass --dir to link the whole directory as one entry instead)"))
+	entries, expanded, err := dotfile.ExpandDir(abs)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return nil, 1
+	}
+	if len(entries) == 0 {
+		fmt.Fprintln(out, "Directory is empty — nothing to add.")
+		return nil, 0
+	}
+	selected := promptDirSelection(stdin, stdout, globals, entries, expanded, abs)
+	if len(selected) == 0 {
+		fmt.Fprintln(out, "Nothing selected.")
+		return nil, 0
+	}
+	var files []string
+	for _, e := range selected {
+		fs, err := dotfile.CollectFiles(e)
+		if err != nil {
+			fmt.Fprintf(stderr, "error reading %s: %v\n", e.AbsPath, err)
+			return nil, 1
+		}
+		files = append(files, fs...)
+	}
+	return files, 0
+}
+
+// ── link ───────────────────────────────────────────────────────────
+
+func runDotfileLink(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer, workspacePath, configPath string) int {
+	if classRemoved(args) {
+		fmt.Fprintln(stderr, classRemovedMessage)
+		return 1
+	}
+	fs := flag.NewFlagSet("dotfile-link", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	to := fs.String("to", "", "")
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	paths, err := resolveTargets(fs.Args())
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if *to != "" {
+		return runDotfileLinkTo(paths, *to, globals, stdin, stdout, stderr, workspacePath, configPath)
+	}
+	return runDotfileRelink(paths, globals, stdin, stdout, stderr, workspacePath, configPath)
+}
+
+// runDotfileRelink repairs entries: the workspace copy wins.
+func runDotfileRelink(paths []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer, workspacePath, configPath string) int {
+	cfg, err := wsconfig.Load(configPath)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	issues, err := dotfile.Scan(dotfile.ScanOptions{WorkspacePath: workspacePath, ConfigPath: configPath})
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	unhealthy := map[string]bool{}
+	for _, is := range issues {
+		unhealthy[is.SystemPath] = true
+	}
+
+	out := textOut(globals, stdout)
+	if globals.json {
+		out = io.Discard
+	}
+	nc := globals.noColor
+
+	// Targets: every entry that is not ok, or the named ones. A named path that
+	// is not an entry is an error before anything changes.
+	var links []wsconfig.Link
+	if len(paths) == 0 {
+		for _, l := range cfg.Links {
+			if unhealthy[l.System] {
+				links = append(links, l)
+			}
+		}
+	} else {
+		for _, p := range paths {
+			l, ok := dotfile.FindLink(cfg, p)
+			if !ok {
+				fmt.Fprintf(stderr, "not a managed dotfile: %s\n", p)
+				return 1
+			}
+			links = append(links, l)
+		}
+	}
+
+	p := Plan{Command: "dotfile.link"}
+	var missing []ActionStatus
+	for _, l := range links {
+		l := l
+		rp := dotfile.PlanRelink(workspacePath, l)
+		switch {
+		case rp.Missing:
+			// Not offered as an action: nothing can be linked. Reported, and it
+			// counts as failed in the exit code and the JSON.
+			fmt.Fprintf(out, "%s %s: workspace copy %s is missing\n", style.IconCross(nc), l.System, rp.Workspace)
+			missing = append(missing, ActionStatus{
+				ID:     "dotfile-link-" + l.System,
+				Status: "failed",
+				Error:  fmt.Sprintf("workspace copy %s is missing", rp.Workspace),
+			})
+		case rp.OK:
+			fmt.Fprintf(out, "  %s %s is already linked\n", style.Mutedf(nc, "–"), l.System)
+		default:
+			desc := fmt.Sprintf("Link %s → %s", l.System, rp.Workspace)
+			if rp.Backup != "" {
+				desc += fmt.Sprintf(" (the live file moves to %s)", rp.Backup)
+			}
+			p.Actions = append(p.Actions, Action{
+				ID:          "dotfile-link-" + l.System,
+				Description: desc,
+				Execute: func() error {
+					return dotfile.Relink(dotfile.RelinkOptions{WorkspacePath: workspacePath, ConfigPath: configPath, SystemPath: l.System})
+				},
+			})
+		}
+	}
+	if len(p.Actions) == 0 && len(missing) == 0 && len(paths) == 0 {
+		if globals.json {
+			return writeJSON(stdout, stderr, "dotfile.link", map[string]any{"actions": []ActionStatus{}})
+		}
+		fmt.Fprintln(out, "All dotfile links are ok.")
+		return 0
+	}
+
+	planResult := RunPlan(p, stdin, stdout, globals)
+	planResult.Actions = append(planResult.Actions, missing...)
+	// Repairing changes nothing in the backup repository, so it does not commit.
+	if globals.json {
+		return writeJSONDryRun(stdout, stderr, "dotfile.link", globals.dryRun, map[string]any{"actions": planResult.Actions})
+	}
+	return planResult.ExitCode()
+}
+
+// runDotfileLinkTo manages a path as a link to a file already in the workspace.
+func runDotfileLinkTo(paths []string, to string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer, workspacePath, configPath string) int {
+	if len(paths) != 1 {
+		fmt.Fprintln(stderr, "usage: ws dotfile link <path> --to <ws-path>")
+		return 1
+	}
+	toAbs, err := wsconfig.ExpandUserPath(to)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	opts := dotfile.LinkToOptions{WorkspacePath: workspacePath, ConfigPath: configPath, SystemPath: paths[0], To: toAbs}
+	lp, err := dotfile.PlanLinkTo(opts)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+
+	desc := fmt.Sprintf("Link %s → %s (new entry)", lp.System, lp.Workspace)
+	if lp.Backup != "" {
+		desc = fmt.Sprintf("Link %s → %s (new entry; the live file moves to %s)", lp.System, lp.Workspace, lp.Backup)
+	}
+	p := Plan{Command: "dotfile.link", Actions: []Action{{
+		ID:          "dotfile-link-" + lp.System,
+		Description: desc,
+		Execute: func() error {
+			_, err := dotfile.LinkTo(opts)
+			return err
+		},
+	}}}
+	planResult := RunPlan(p, stdin, stdout, globals)
+	if planResult.ExecutedCount() > 0 {
+		dotfileGitAutoSync(workspacePath, configPath, "dotfile link: "+lp.System, globals, stdout, stderr)
+	}
+	if globals.json {
+		return writeJSONDryRun(stdout, stderr, "dotfile.link", globals.dryRun, map[string]any{
+			"system":         lp.System,
+			"workspace_path": lp.Workspace,
+			"actions":        planResult.Actions,
+		})
+	}
+	return planResult.ExitCode()
+}
+
+// ── unlink ─────────────────────────────────────────────────────────
+
+func runDotfileUnlink(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer, workspacePath, configPath string) int {
+	fs := flag.NewFlagSet("dotfile-unlink", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	all := fs.Bool("all", false, "")
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	paths, err := resolveTargets(fs.Args())
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if *all == (len(paths) > 0) {
+		fmt.Fprintln(stderr, "usage: ws dotfile unlink <path…> | --all (paths or --all, not both)")
+		return 1
+	}
+	cfg, err := wsconfig.Load(configPath)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+
+	var links []wsconfig.Link
+	if *all {
+		links = cfg.Links
+	} else {
+		for _, p := range paths {
+			l, ok := dotfile.FindLink(cfg, p)
+			if !ok {
+				fmt.Fprintf(stderr, "not a managed dotfile: %s\n", p)
+				return 1
+			}
+			links = append(links, l)
+		}
+	}
+	if len(links) == 0 {
+		if globals.json {
+			return writeJSON(stdout, stderr, "dotfile.unlink", map[string]any{"actions": []ActionStatus{}})
+		}
+		fmt.Fprintln(textOut(globals, stdout), "No managed dotfiles.")
+		return 0
+	}
+
+	p := Plan{Command: "dotfile.unlink"}
+	var labels []string
+	for _, l := range links {
+		l := l
+		labels = append(labels, l.System)
+		p.Actions = append(p.Actions, Action{
+			ID:          "dotfile-unlink-" + l.System,
+			Description: unlinkDescription(dotfile.PlanUnlink(workspacePath, cfg, l)),
+			Execute: func() error {
+				return dotfile.Unlink(dotfile.UnlinkOptions{WorkspacePath: workspacePath, ConfigPath: configPath, SystemPath: l.System})
+			},
+		})
+	}
+	planResult := RunPlan(p, stdin, stdout, globals)
+	if planResult.ExecutedCount() > 0 {
+		dotfileGitAutoSync(workspacePath, configPath, "dotfile unlink: "+strings.Join(labels, ", "), globals, stdout, stderr)
+	}
+	if globals.json {
+		return writeJSONDryRun(stdout, stderr, "dotfile.unlink", globals.dryRun, map[string]any{"actions": planResult.Actions})
+	}
+	return planResult.ExitCode()
+}
+
+// unlinkDescription is the plan line of one unlink: what happens to the copy,
+// and what happens to a live file that replaced the link.
+func unlinkDescription(p dotfile.UnlinkPlan) string {
+	switch p.Mode {
+	case dotfile.ModeMissing:
+		return fmt.Sprintf("Unregister %s (workspace copy missing; nothing to restore)", p.Link.System)
+	case dotfile.ModeCopy:
+		d := fmt.Sprintf("Unlink %s (copy %s there; the original stays)", p.Link.System, p.Workspace)
+		if p.Backup != "" {
+			d = strings.TrimSuffix(d, ")") + fmt.Sprintf("; the live file moves to %s)", p.Backup)
+		}
+		return d
+	}
+	d := fmt.Sprintf("Unlink %s (move %s back)", p.Link.System, p.Workspace)
+	if p.Backup != "" {
+		d = strings.TrimSuffix(d, ")") + fmt.Sprintf("; the live file moves to %s)", p.Backup)
+	}
+	return d
+}
+
+// ── edit ───────────────────────────────────────────────────────────
+
+// runDotfileEdit opens an entry's workspace copy in the editor. It runs no
+// plan: ws itself changes nothing, and the next auto-commit or backup push
+// includes the edit.
+func runDotfileEdit(args []string, globals globalFlags, stdout, stderr io.Writer, workspacePath, configPath string) int {
+	fs := flag.NewFlagSet("dotfile-edit", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if len(fs.Args()) != 1 {
+		fmt.Fprintln(stderr, "usage: ws dotfile edit <path>")
+		return 1
+	}
+	abs, err := wsconfig.ExpandUserPath(fs.Args()[0])
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	cfg, err := wsconfig.Load(configPath)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	link, ok := dotfile.FindLink(cfg, abs)
+	if !ok {
+		fmt.Fprintf(stderr, "not a managed dotfile: %s\n", abs)
+		return 1
+	}
+	copyPath := dotfile.WorkspaceCopy(workspacePath, link)
+	info, err := os.Stat(copyPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "workspace copy %s is missing\n", copyPath)
+		return 1
+	}
+
+	nc := globals.noColor
+	if issues, _ := dotfile.Scan(dotfile.ScanOptions{WorkspacePath: workspacePath, ConfigPath: configPath}); slices.ContainsFunc(issues, func(i dotfile.Issue) bool {
+		return i.SystemPath == abs && i.Status == dotfile.StatusOverwritten
+	}) {
+		fmt.Fprintln(stderr, style.ResultWarning(nc, "%s is a separate live file; edits to the workspace copy reach it only after ws dotfile link %s. To keep the live content, ws dotfile add it first.", abs, abs))
+	}
+	if !info.IsDir() {
+		if f, err := os.OpenFile(copyPath, os.O_WRONLY, 0); err != nil {
+			fmt.Fprintln(stderr, style.ResultWarning(nc, "you cannot write %s; ws does not run the editor with sudo", copyPath))
+		} else {
+			_ = f.Close()
+		}
+	}
+
+	// With --json the envelope owns stdout, so the editor's screen goes to stderr.
+	editorOut := stdout
+	if globals.json {
+		editorOut = stderr
+	}
+	if err := editor.Open(editorFor("", cfg), copyPath, editorOut); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if globals.json {
+		return writeJSON(stdout, stderr, "dotfile.edit", map[string]any{"system": abs, "workspace_path": copyPath})
+	}
+	return 0
+}
+
+// ── backup ─────────────────────────────────────────────────────────
+
+// dotfileBackupSpec is the dotfile side of the shared backup runner.
+func dotfileBackupSpec(workspacePath, configPath string) backupSpec {
+	repoPath := dotfile.RepoPath(workspacePath)
+	load := func() (backupSettings, error) {
+		cfg, err := wsconfig.Load(configPath)
+		if err != nil {
+			return backupSettings{}, err
+		}
+		g := cfg.Dotfile.Git
+		return backupSettings{RemoteURL: g.RemoteURL, Branch: g.Branch, PassEntry: g.PassEntry, AutoCommit: g.AutoCommit, AutoPush: g.AutoPush}, nil
+	}
+	return backupSpec{
+		noun:      "dotfile",
+		job:       "dotfile-backup",
+		oldJobs:   []string{"dotfile-sync"},
+		repoPath:  repoPath,
+		workspace: workspacePath,
+		hasAutos:  true,
+
+		initialized: func() bool { return dotfile.GitIsInitialized(repoPath) },
+		initPlan:    fmt.Sprintf("Initialize git in %s (branch main)", repoPath),
+		init:        func() error { return dotfile.EnsureGitRepo(repoPath, "", "main") },
+
+		load: load,
+		save: func(s backupSettings) error {
+			cfg, err := wsconfig.Load(configPath)
+			if err != nil {
+				return err
+			}
+			cfg.Dotfile.Git = wsconfig.DotfileGit{
+				RemoteURL: s.RemoteURL, Branch: s.Branch, PassEntry: s.PassEntry, AutoCommit: s.AutoCommit, AutoPush: s.AutoPush,
+			}
+			return wsconfig.Save(configPath, cfg)
+		},
+		commit: func(message string) (bool, error) {
+			s, err := load()
+			if err != nil {
+				return false, err
+			}
+			return dotfile.CommitBackup(dotfile.BackupOptions{
+				WorkspacePath: workspacePath,
+				ConfigPath:    configPath,
+				Git:           wsconfig.DotfileGit{RemoteURL: s.RemoteURL, Branch: s.Branch, PassEntry: s.PassEntry, AutoCommit: s.AutoCommit, AutoPush: s.AutoPush},
+				Message:       message,
+			})
+		},
+		defaultMessage: "ws dotfile backup push",
+	}
+}
+
+// dotfileGitAutoSync runs the auto-commit (and auto-push) after add, link --to
+// and unlink changed at least one entry. One commit covers the whole plan, even
+// when some of its actions failed. A failed commit or push prints a warning and
+// never changes the exit code. With --json the notes go to stderr, so stdout
+// stays the envelope.
+func dotfileGitAutoSync(workspacePath, configPath, commitMessage string, globals globalFlags, stdout, stderr io.Writer) {
+	result, enabled := dotfile.AutoSync(workspacePath, configPath, commitMessage)
+	if !enabled {
+		return
+	}
+	var out io.Writer = textOut(globals, stdout)
+	if globals.json {
+		out = stderr
+	}
+	nc := globals.noColor
+	if result.Committed {
+		fmt.Fprintln(out, style.Mutedf(nc, "dotfile backup: committed"))
+	}
+	if result.Pushed {
+		fmt.Fprintln(out, style.Mutedf(nc, "dotfile backup: pushed"))
+	}
+	if result.Error != "" {
+		fmt.Fprintln(out, style.ResultWarning(nc, "dotfile backup: %s", result.Error))
+	}
+}
+
+// ── hidden: migrate ────────────────────────────────────────────────
+
+func runDotfileMigrate(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer, workspacePath, configPath string) int {
+	fs := flag.NewFlagSet("dotfile-migrate", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+
+	out := textOut(globals, stdout)
+	nc := globals.noColor
+
+	dirLinks, err := dotfile.FindDirEntries(workspacePath, configPath)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if len(dirLinks) == 0 {
+		fmt.Fprintln(out, style.ResultSuccess(nc, "No directory entries found — all dotfiles are already file-level."))
+		return 0
+	}
+
+	fmt.Fprintf(out, "Found %d directory entry(s) to migrate:\n\n", len(dirLinks))
+	exitCode := 0
+
+	for _, link := range dirLinks {
+		wsDir := dotfile.WorkspaceCopy(workspacePath, link)
+		fmt.Fprintf(out, "%s %s\n", style.Infof(nc, "%s", link.System), style.Mutedf(nc, "(→ %s)", wsDir))
+
+		entries, expanded, expandErr := dotfile.ExpandDir(wsDir)
+		if expandErr != nil {
+			fmt.Fprintf(stderr, "  error scanning %s: %v\n", wsDir, expandErr)
+			exitCode = 1
+			continue
+		}
+		if len(entries) == 0 {
+			fmt.Fprintln(out, style.Mutedf(nc, "  (empty — skipping)"))
+			continue
+		}
+
+		selected := promptDirSelection(stdin, stdout, globals, entries, expanded, wsDir)
+		if len(selected) == 0 {
+			fmt.Fprintln(out, style.Mutedf(nc, "  Nothing selected — skipping."))
+			continue
+		}
+
+		// The paths the files will have once Unlink puts the directory back.
+		var sysPaths []string
+		for _, e := range selected {
+			files := []string{e.AbsPath}
+			if e.IsDir {
+				var collectErr error
+				if files, collectErr = dotfile.CollectFiles(e); collectErr != nil {
+					fmt.Fprintf(stderr, "  error reading %s: %v\n", e.AbsPath, collectErr)
+					continue
+				}
+			}
+			for _, f := range files {
+				rel, _ := filepath.Rel(wsDir, f)
+				sysPaths = append(sysPaths, filepath.Join(link.System, filepath.FromSlash(rel)))
+			}
+		}
+
+		if globals.dryRun {
+			fmt.Fprintln(out, style.Mutedf(nc, "  [dry-run] would migrate:"))
+			for _, sp := range sysPaths {
+				fmt.Fprintf(out, "    %s %s %s\n", style.Mutedf(nc, "[dry-run]"), sp, style.IconArrow(nc))
+			}
+			continue
+		}
+
+		if err := dotfile.Unlink(dotfile.UnlinkOptions{WorkspacePath: workspacePath, ConfigPath: configPath, SystemPath: link.System}); err != nil {
+			fmt.Fprintf(stderr, "  failed to remove directory entry %s: %v\n", link.System, err)
+			exitCode = 1
+			continue
+		}
+		sysPaths, _ = warnAndFilterSecrets(sysPaths, stdin, stdout, globals, configPath)
+
+		added := 0
+		for _, sp := range sysPaths {
+			if _, addErr := dotfile.Add(dotfile.AddOptions{WorkspacePath: workspacePath, ConfigPath: configPath, SystemPath: sp}); addErr != nil {
+				fmt.Fprintf(stderr, "  failed to add %s: %v\n", sp, addErr)
+				exitCode = 1
+				continue
+			}
+			fmt.Fprintf(out, "  %s %s\n", style.IconCheck(nc), style.Mutedf(nc, "%s", sp))
+			added++
+		}
+		fmt.Fprintf(out, "  Migrated %d file(s) from %s\n\n", added, link.System)
+	}
+
+	if exitCode == 0 {
+		dotfileGitAutoSync(workspacePath, configPath, "dotfile migrate", globals, stdout, stderr)
+	}
+	return exitCode
+}
+
+// ── shared prompts ─────────────────────────────────────────────────
 
 // promptDirSelection presents the expanded directory entries to the user and
 // returns the subset they choose to track. Defaults to all FileClassConfig entries.
@@ -1072,6 +826,9 @@ func runDotfileLink(args []string, globals globalFlags, stdin io.Reader, stdout,
 // In --json / --quiet mode the defaults are accepted automatically.
 func promptDirSelection(stdin io.Reader, stdout io.Writer, globals globalFlags, entries []dotfile.DirEntry, expanded bool, rootPath string) []dotfile.DirEntry {
 	out := textOut(globals, stdout)
+	if globals.json {
+		out = io.Discard
+	}
 	nc := globals.noColor
 
 	totalFiles := 0
@@ -1085,11 +842,9 @@ func promptDirSelection(stdin io.Reader, stdout io.Writer, globals globalFlags, 
 		fmt.Fprintf(out, "  %d file(s) total — showing top-level entries:\n\n", totalFiles)
 	}
 
-	// Print numbered list.
 	var defaultIdxs []int
 	for i, e := range entries {
 		num := i + 1
-		sizeStr := style.HumanBytes(e.Size)
 		classStr := ""
 		switch e.Class {
 		case dotfile.FileClassSecret:
@@ -1097,26 +852,16 @@ func promptDirSelection(stdin io.Reader, stdout io.Writer, globals globalFlags, 
 		case dotfile.FileClassState:
 			classStr = style.Mutedf(nc, "likely state")
 		}
-
 		var countStr string
 		if e.IsDir {
 			countStr = fmt.Sprintf("  (%d files)", e.FileCount)
 		}
-
-		fmt.Fprintf(out, "  %2d  %-40s %8s  %s%s\n",
-			num,
-			e.AbsPath,
-			sizeStr,
-			classStr,
-			countStr,
-		)
-
+		fmt.Fprintf(out, "  %2d  %-40s %8s  %s%s\n", num, e.AbsPath, style.HumanBytes(e.Size), classStr, countStr)
 		if e.Class == dotfile.FileClassConfig {
 			defaultIdxs = append(defaultIdxs, num)
 		}
 	}
 
-	// Build default string.
 	var defaultParts []string
 	for _, idx := range defaultIdxs {
 		defaultParts = append(defaultParts, fmt.Sprintf("%d", idx))
@@ -1125,26 +870,23 @@ func promptDirSelection(stdin io.Reader, stdout io.Writer, globals globalFlags, 
 	if defaultStr == "" {
 		defaultStr = "none"
 	}
-
 	fmt.Fprintln(out)
 
-	// Auto-accept defaults in non-interactive modes.
-	if globals.json || globals.quiet {
+	defaults := func() []dotfile.DirEntry {
 		var result []dotfile.DirEntry
 		for _, idx := range defaultIdxs {
 			result = append(result, entries[idx-1])
 		}
 		return result
 	}
+	if globals.json || globals.quiet {
+		return defaults()
+	}
 
 	fmt.Fprintf(out, "Select entries to track [%s] (or Enter for defaults, \"all\", \"none\"): ", style.Mutedf(nc, "%s", defaultStr))
 	line, err := readLine(stdin)
 	if err != nil || strings.TrimSpace(line) == "" {
-		var result []dotfile.DirEntry
-		for _, idx := range defaultIdxs {
-			result = append(result, entries[idx-1])
-		}
-		return result
+		return defaults()
 	}
 
 	line = strings.TrimSpace(line)
@@ -1155,13 +897,11 @@ func promptDirSelection(stdin io.Reader, stdout io.Writer, globals globalFlags, 
 		return nil
 	}
 
-	// Parse comma-separated numbers.
 	var result []dotfile.DirEntry
 	seen := make(map[int]bool)
 	for _, part := range strings.Split(line, ",") {
-		part = strings.TrimSpace(part)
 		n := 0
-		for _, c := range part {
+		for _, c := range strings.TrimSpace(part) {
 			if c >= '0' && c <= '9' {
 				n = n*10 + int(c-'0')
 			}
@@ -1190,84 +930,20 @@ func warnAndFilterSecrets(filesToAdd []string, stdin io.Reader, stdout io.Writer
 	}
 
 	out := textOut(globals, stdout)
+	if globals.json {
+		out = io.Discard
+	}
 	nc := globals.noColor
 
-	fmt.Fprintf(out, "\n%s %d file(s) look like secrets:\n", style.IconWarning(nc), len(secretFiles))
+	fmt.Fprintf(out, "%s %d file(s) look like secrets:\n", style.IconWarning(nc), len(secretFiles))
 	for _, f := range secretFiles {
 		fmt.Fprintf(out, "  %s\n", style.Mutedf(nc, "%s", f))
 	}
 
-	if confirm(stdin, stdout, globals, "Track anyway?") {
+	if confirm(stdin, io.Writer(stdout), globals, "Track anyway?") {
 		return filesToAdd, nil
 	}
 
-	// Remove secrets.
-	secretSet := make(map[string]bool, len(secretFiles))
-	for _, f := range secretFiles {
-		secretSet[f] = true
-	}
-	var filtered []string
-	for _, f := range filesToAdd {
-		if !secretSet[f] {
-			filtered = append(filtered, f)
-		}
-	}
+	filtered := slices.DeleteFunc(slices.Clone(filesToAdd), func(f string) bool { return slices.Contains(secretFiles, f) })
 	return filtered, secretFiles
-}
-
-func writeDotfileResult(globals globalFlags, command string, data any, stdout, stderr io.Writer) int {
-	if globals.json {
-		return writeJSONDryRun(stdout, stderr, command, globals.dryRun, data)
-	}
-
-	out := textOut(globals, stdout)
-	switch v := data.(type) {
-	case dotfile.AddResult:
-		for _, line := range v.Messages {
-			fmt.Fprintln(out, line)
-		}
-	case dotfile.RemoveResult:
-		for _, line := range v.Messages {
-			fmt.Fprintln(out, line)
-		}
-	case dotfile.FixResult:
-		for _, line := range v.Messages {
-			fmt.Fprintln(out, line)
-		}
-		if len(v.Failed) > 0 {
-			for _, issue := range v.Failed {
-				fmt.Fprintln(out, strings.TrimSpace(issue.Status+" "+issue.SystemPath+" "+issue.Message))
-			}
-		}
-	default:
-		fmt.Fprintln(stdout, "ok")
-	}
-
-	return 0
-}
-
-// dotfileGitAutoSync runs auto-commit/push if dotfile git is enabled.
-// Errors are non-fatal — they are printed as warnings, never block the parent command.
-func dotfileGitAutoSync(workspacePath, configPath, commitMessage string, globals globalFlags, stdout io.Writer) {
-	result, enabled := dotfile.AutoSync(workspacePath, configPath, commitMessage)
-	if !enabled {
-		return
-	}
-	out := textOut(globals, stdout)
-	nc := globals.noColor
-	if result.Committed {
-		fmt.Fprintln(out, style.Mutedf(nc, "dotfile git: committed"))
-	}
-	if result.Pushed {
-		fmt.Fprintln(out, style.Mutedf(nc, "dotfile git: pushed"))
-	}
-	if result.Error != "" {
-		fmt.Fprintln(out, style.ResultWarning(nc, "dotfile git: %s", result.Error))
-	}
-}
-
-// resolveGitToken tries to find a token for the remote URL via pass.
-// Returns empty string if no token is available (non-fatal).
-func resolveGitToken(remoteURL, passEntry string) string {
-	return secret.ResolveGitToken(remoteURL, passEntry)
 }

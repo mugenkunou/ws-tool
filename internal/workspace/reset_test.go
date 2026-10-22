@@ -100,7 +100,6 @@ func TestProvisions(t *testing.T) {
 	if err := wsconfig.AddLink(cfgPath, wsconfig.Link{
 		System:   "/home/user/.bashrc",
 		Original: "configs/dotfiles/bashrc",
-		Class:    "config",
 	}); err != nil {
 		t.Fatalf("AddLink: %v", err)
 	}

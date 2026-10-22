@@ -29,7 +29,7 @@ func TestDotfileCommandAddAndScan(t *testing.T) {
 	if code := Execute([]string{"--workspace", workspace, "dotfile", "add", systemFile}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
 		t.Fatalf("dotfile add failed: code=%d stderr=%s", code, errOut.String())
 	}
-	if !strings.Contains(out.String(), "Add dotfile") {
+	if !strings.Contains(out.String(), "Add ") || !strings.Contains(out.String(), "→") {
 		t.Fatalf("unexpected add output: %s", out.String())
 	}
 
@@ -38,8 +38,12 @@ func TestDotfileCommandAddAndScan(t *testing.T) {
 	if code := Execute([]string{"--workspace", workspace, "dotfile", "scan"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
 		t.Fatalf("dotfile scan failed: code=%d stderr=%s", code, errOut.String())
 	}
-	if !strings.Contains(out.String(), "Dotfile scan") || !strings.Contains(out.String(), "OK") {
+	// The old `scan` is `ls`: a table with the entry and its health.
+	if !strings.Contains(out.String(), "SYSTEM PATH") || !strings.Contains(out.String(), "ok") {
 		t.Fatalf("unexpected scan output: %s", out.String())
+	}
+	if !strings.Contains(errOut.String(), `"dotfile scan" is now "dotfile ls"`) {
+		t.Fatalf("a typed alias prints the rename: %q", errOut.String())
 	}
 }
 
@@ -165,7 +169,7 @@ func TestDotfileAddDirAsSecret(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "dotfile", "add", "--class", "secrets", "--dir", store}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+	if code := Execute([]string{"--workspace", workspace, "dotfile", "add", "--dir", "--to", filepath.Join(workspace, "secrets", "dotfiles", "password-store"), store}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
 		t.Fatalf("dotfile add --dir failed: code=%d stderr=%s out=%s", code, errOut.String(), out.String())
 	}
 	if strings.Count(out.String(), "[y/n/a/q]") != 1 {
@@ -180,8 +184,8 @@ func TestDotfileAddDirAsSecret(t *testing.T) {
 	}
 
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "dotfile", "add", "--class", "bogus", store}, strings.NewReader(""), &out, &errOut); code == 0 || !strings.Contains(errOut.String(), "unknown class") {
-		t.Fatalf("expected an unknown class to fail, code=%d stderr=%s", code, errOut.String())
+	if code := Execute([]string{"--workspace", workspace, "dotfile", "add", "--class", "secret", store}, strings.NewReader(""), &out, &errOut); code == 0 || !strings.Contains(errOut.String(), "--to") {
+		t.Fatalf("--class is removed and its error points to --to, code=%d stderr=%s", code, errOut.String())
 	}
 }
 

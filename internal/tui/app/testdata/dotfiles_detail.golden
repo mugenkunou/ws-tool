@@ -3,15 +3,15 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷
 dotfile  ~/.gitconfig
 
 System path     ~/.gitconfig
-Stored as       gitconfig
-Workspace path
-Class           config
+Workspace copy  configs/dotfiles/gitconfig
+Stored as       configs/dotfiles/gitconfig
 Status          broken
 Problem
 Directory
 Sudo
 
 esc back
+
 
 
 

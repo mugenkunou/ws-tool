@@ -19,8 +19,6 @@ import (
 
 	"github.com/mugenkunou/ws-tool/internal/dotfile"
 	"github.com/mugenkunou/ws-tool/internal/plan"
-	"github.com/mugenkunou/ws-tool/internal/repo"
-	"github.com/mugenkunou/ws-tool/internal/secret"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/tui/complete"
 	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
@@ -137,16 +135,16 @@ func New(e env.Env) Model {
 		git:        vp,
 		list: reslist.New(dotfile.Schema(e.View()), []reslist.Col[Entry]{
 			{Key: "system", Min: 20, Weight: 3},
-			{Key: "original", Min: 12, Weight: 2},
-			{Key: "class", Min: 6, Style: classStyle},
+			{Key: "workspace_path", Min: 12, Weight: 2, Style: copyStyle},
 			{Key: "status", Min: 13, Style: statusStyle},
 			{Key: "sudo", Min: 4},
 		}, theme.Icon(theme.IconSprout)+"No dotfiles managed yet. Press a to add one.").Declare(reslist.Decls(actions)),
 	}
 }
 
-func classStyle(e Entry, text string) string {
-	if e.EntryClass() == dotfile.ClassSecret {
+// copyStyle highlights a workspace copy that lives under secrets/.
+func copyStyle(e Entry, text string) string {
+	if e.Secret() {
 		return theme.Warn.Render(text)
 	}
 	return text
@@ -499,46 +497,37 @@ func (m Model) removePlan(targets []Entry) plan.Plan {
 			ID:          "dotfile-rm-" + sys,
 			Description: "Remove dotfile " + sys + theme.Muted.Render("  (restores the file to its system path)"),
 			Execute: func() error {
-				_, err := dotfile.Remove(dotfile.RemoveOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config, SystemPath: sys})
-				return err
+				return dotfile.Unlink(dotfile.UnlinkOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config, SystemPath: sys})
 			},
 		})
 	}
 	return pl
 }
 
-// openFix recreates the broken links among rows.
+// openFix links the broken and overwritten rows to their workspace copies: one
+// action per entry, the workspace copy winning (`ws dotfile link`).
 func (m Model) openFix(rows []Entry) Model {
 	p := m.env.Paths
-	var broken, only []string
+	pl := plan.Plan{Command: "dotfile.link"}
 	for _, e := range rows {
-		if e.Status != "" {
-			broken = append(broken, m.env.Rel(e.Link.System))
-			only = append(only, e.Link.System)
+		if e.Status == "" {
+			continue
 		}
-	}
-	pl := plan.Plan{Command: "dotfile.fix"}
-	if len(broken) > 0 {
-		pl.Actions = []plan.Action{{
-			ID:          "dotfile-fix",
-			Description: "Recreate " + format.Plural(len(broken), "link") + ": " + strings.Join(broken, ", "),
+		sys := e.Link.System
+		rp := dotfile.PlanRelink(p.Workspace, e.Link)
+		desc := "Link " + m.env.Rel(sys)
+		if rp.Backup != "" {
+			desc += theme.Muted.Render("  (the live file moves to " + m.env.Rel(rp.Backup) + ")")
+		}
+		pl.Actions = append(pl.Actions, plan.Action{
+			ID:          "dotfile-link-" + sys,
+			Description: desc,
 			Execute: func() error {
-				res, err := dotfile.Fix(dotfile.FixOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config, Only: only})
-				if err != nil {
-					return err
-				}
-				if len(res.Failed) > 0 {
-					msgs := make([]string, 0, len(res.Failed))
-					for _, f := range res.Failed {
-						msgs = append(msgs, f.SystemPath+": "+f.Message)
-					}
-					return fmt.Errorf("%d failed: %s", len(res.Failed), strings.Join(msgs, "; "))
-				}
-				return nil
+				return dotfile.Relink(dotfile.RelinkOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config, SystemPath: sys})
 			},
-		}}
+		})
 	}
-	m.modal = m.modal.Confirm(stepFix, confirm.New("Fix dotfile links", pl))
+	m.modal = m.modal.Confirm(stepFix, confirm.New("Link dotfiles", pl))
 	return m
 }
 
@@ -554,29 +543,10 @@ func (m Model) openSync(targets []Entry) Model {
 func (m Model) syncAction(sys string) plan.Action {
 	p := m.env.Paths
 	return plan.Action{
-		ID:          "dotfile-sync-" + sys,
-		Description: "Sync " + sys + theme.Muted.Render("  (live file → workspace copy)"),
+		ID:          "dotfile-add-" + sys,
+		Description: "Add " + sys + theme.Muted.Render("  (the live file replaces the workspace copy)"),
 		Execute: func() error {
-			// Step 1: unregister — drops the config record and the stale
-			// ws copy WITHOUT touching the live file at sys. A plain
-			// dotfile.Remove would restore the stale ws copy onto the system
-			// path, destroying the live content sync is meant to adopt.
-			if err := dotfile.Unregister(dotfile.UnregisterOptions{
-				WorkspacePath: p.Workspace,
-				ConfigPath:    p.Config,
-				SystemPath:    sys,
-			}); err != nil {
-				return err
-			}
-
-			// Step 2: add — moves the live file into configs/dotfiles/, creates
-			// the symlink, and registers the config record.
-			_, err := dotfile.Add(dotfile.AddOptions{
-				WorkspacePath: p.Workspace,
-				ConfigPath:    p.Config,
-				SystemPath:    sys,
-			})
-			return err
+			return dotfile.TakeLive(dotfile.TakeLiveOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config, SystemPath: sys})
 		},
 	}
 }
@@ -604,45 +574,25 @@ func (m Model) openReset(rows []Entry) Model {
 	return m
 }
 
-// openPush mirrors `ws dotfile git push`: commit pending changes, refuse a
+// openPush mirrors `ws dotfile backup push`: commit pending changes, refuse a
 // public remote, push.
 func (m Model) openPush() Model {
 	p := m.env.Paths
-	pl := plan.Plan{Command: "dotfile.git.push", Actions: []plan.Action{{
-		ID:          "dotfile-git-push",
+	pl := plan.Plan{Command: "dotfile.backup.push", Actions: []plan.Action{{
+		ID:          "dotfile-backup-push",
 		Description: "Commit pending dotfile changes and push",
 		Execute: func() error {
-			repoPath := dotfile.RepoPath(p.Workspace)
-			if !dotfile.GitIsInitialized(repoPath) {
-				return fmt.Errorf("git not initialized — press G to run setup")
-			}
-			if !dotfile.GitHasRemote(repoPath) {
-				return fmt.Errorf("no remote configured — press G to run setup")
-			}
 			cfg, err := wsconfig.Load(p.Config)
 			if err != nil {
 				return err
 			}
-			res := dotfile.GitSync(dotfile.GitSyncOptions{
+			_, err = dotfile.PushBackup(dotfile.BackupOptions{
 				WorkspacePath: p.Workspace,
-				RepoPath:      repoPath,
-				RemoteURL:     cfg.Dotfile.Git.RemoteURL,
-				Branch:        cfg.Dotfile.Git.Branch,
-				AutoCommit:    true,
-				CommitMessage: "manual push",
+				ConfigPath:    p.Config,
+				Git:           cfg.Dotfile.Git,
+				Message:       "ws dotfile backup push",
 			})
-			if res.Error != "" {
-				return fmt.Errorf("commit: %s", res.Error)
-			}
-			remote := dotfile.GitRemoteURL(repoPath)
-			vis := repo.CheckRepoVisibility(remote, secret.ResolveGitToken(remote, cfg.Dotfile.Git.PassEntry))
-			if vis.Checked && !vis.Private {
-				return repo.ErrPublicRepository
-			}
-			if err := dotfile.GitPush(repoPath, cfg.Dotfile.Git.Branch); err != nil {
-				return fmt.Errorf("push failed: %w", err)
-			}
-			return nil
+			return err
 		},
 	}}}
 	m.modal = m.modal.Confirm(stepPush, confirm.New("Push dotfiles", pl))

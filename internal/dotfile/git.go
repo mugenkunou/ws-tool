@@ -1,33 +1,108 @@
 package dotfile
 
 import (
-	"bytes"
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
+
+	"github.com/mugenkunou/ws-tool/internal/backup"
+	"github.com/mugenkunou/ws-tool/internal/repo"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
-// RepoPath returns the dotfile git repo, which is configs/dotfiles/ itself:
-// the originals are the work tree.
+// RepoPath returns the dotfile backup repository, which is configs/dotfiles/
+// itself: the originals are the work tree.
 func RepoPath(workspacePath string) string {
 	return filepath.Join(workspacePath, "configs", "dotfiles")
 }
 
-// GitSyncOptions configures an auto-commit/push operation on the dotfiles repo.
-type GitSyncOptions struct {
-	WorkspacePath string
-	RepoPath      string // absolute path to configs/dotfiles (the git repo itself)
-	RemoteURL     string
-	Branch        string
-	AutoCommit    bool
-	AutoPush      bool
-	CommitMessage string
+// BackupBranch is the branch ws commits to and pushes.
+func BackupBranch(git wsconfig.DotfileGit) string {
+	if git.Branch != "" {
+		return git.Branch
+	}
+	return backup.DefaultBranch
 }
 
-// GitSyncResult describes the outcome of a dotfile git sync operation.
+// EnsureGitRepo initializes the backup repository if needed, and sets the
+// branch and, when remoteURL is not empty, origin.
+func EnsureGitRepo(repoPath, remoteURL, branch string) error {
+	if err := backup.Init(repoPath, branch); err != nil {
+		return err
+	}
+	if remoteURL != "" && backup.RemoteURL(repoPath) != remoteURL {
+		return backup.SetRemote(repoPath, remoteURL)
+	}
+	return nil
+}
+
+// BackupOptions configures CommitBackup and PushBackup.
+type BackupOptions struct {
+	WorkspacePath string
+	ConfigPath    string // the resolved ws.json, which travels with the backup
+	Git           wsconfig.DotfileGit
+	Message       string
+}
+
+// CommitBackup commits every pending change in the backup repository, together
+// with a fresh copy of ws.json (at configs/dotfiles/ws.json), so the remote
+// alone holds the entry list. It reports whether a commit was made.
+func CommitBackup(opts BackupOptions) (committed bool, err error) {
+	repoPath := RepoPath(opts.WorkspacePath)
+	if err := EnsureGitRepo(repoPath, opts.Git.RemoteURL, BackupBranch(opts.Git)); err != nil {
+		return false, fmt.Errorf("git repo setup: %w", err)
+	}
+	// The resolved config, not <workspace>/ws.json: --config and $WS_CONFIG apply.
+	if data, err := os.ReadFile(opts.ConfigPath); err == nil {
+		_ = os.WriteFile(filepath.Join(repoPath, "ws.json"), data, 0o644)
+	}
+	msg := opts.Message
+	if msg == "" {
+		msg = "auto-sync dotfiles"
+	}
+	return backup.CommitAll(repoPath, msg)
+}
+
+// PushResult describes the outcome of PushBackup.
+type PushResult struct {
+	Committed  bool                  `json:"committed"`
+	Pushed     bool                  `json:"pushed"`
+	RemoteURL  string                `json:"remote_url"`
+	Branch     string                `json:"branch"`
+	Visibility repo.VisibilityResult `json:"visibility"`
+}
+
+// PushBackup commits pending changes and pushes the branch. The private-remote
+// check runs first: a public repository, or an authenticated lookup that finds
+// none, is refused and nothing is pushed (the commit stays local). A check that
+// cannot be determined is reported in the result, and the push goes ahead. It
+// ignores auto_commit and auto_push, because it is an explicit request.
+func PushBackup(opts BackupOptions) (PushResult, error) {
+	repoPath := RepoPath(opts.WorkspacePath)
+	res := PushResult{RemoteURL: opts.Git.RemoteURL, Branch: BackupBranch(opts.Git)}
+	if opts.Git.RemoteURL == "" {
+		return res, fmt.Errorf("backup is not enabled; run ws dotfile backup enable --remote <url>")
+	}
+
+	committed, err := CommitBackup(opts)
+	res.Committed = committed
+	if err != nil {
+		return res, err
+	}
+
+	res.Visibility = backup.CheckRemote(opts.Git.RemoteURL, opts.Git.PassEntry)
+	if err := res.Visibility.Refusal(); err != nil {
+		return res, err
+	}
+	if err := backup.Push(repoPath, res.Branch); err != nil {
+		return res, fmt.Errorf("push failed (commit kept locally): %w", err)
+	}
+	res.Pushed = true
+	return res, nil
+}
+
+// GitSyncResult describes the outcome of the auto-commit that follows add,
+// link --to and unlink.
 type GitSyncResult struct {
 	Committed bool   `json:"committed"`
 	Pushed    bool   `json:"pushed"`
@@ -35,207 +110,102 @@ type GitSyncResult struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// GitSync performs auto-commit and optional auto-push on the dotfiles repo.
-// The git repo lives directly inside configs/dotfiles/ (like pass uses ~/.password-store/).
-// Errors are non-fatal — the operation returns a result
-// rather than failing the parent command.
+// GitSyncOptions configures GitSync.
+type GitSyncOptions struct {
+	WorkspacePath string
+	ConfigPath    string
+	Git           wsconfig.DotfileGit
+	CommitMessage string
+}
+
+// GitSync performs the auto-commit and the optional auto-push after a dotfile
+// change (the settings auto_commit and auto_push). Errors are not fatal: they
+// come back in the result, so the command that changed the dotfile still
+// succeeds. A push is checked like backup push is, so a public remote is never
+// pushed to.
 func GitSync(opts GitSyncOptions) GitSyncResult {
-	if !opts.AutoCommit {
+	if !opts.Git.AutoCommit {
 		return GitSyncResult{Message: "auto-commit disabled"}
 	}
-
-	// Ensure the repo is initialized.
-	if err := EnsureGitRepo(opts.RepoPath, opts.RemoteURL, opts.Branch); err != nil {
-		return GitSyncResult{Error: "git repo setup: " + err.Error()}
+	committed, err := CommitBackup(BackupOptions{
+		WorkspacePath: opts.WorkspacePath,
+		ConfigPath:    opts.ConfigPath,
+		Git:           opts.Git,
+		Message:       opts.CommitMessage,
+	})
+	if err != nil {
+		return GitSyncResult{Error: err.Error()}
+	}
+	result := GitSyncResult{Committed: committed}
+	if !committed {
+		result.Message = "nothing to commit"
+	}
+	if !opts.Git.AutoPush {
+		return result
 	}
 
-	// Copy ws.json into the dotfiles git repo for portable restore.
-	configSrc := filepath.Join(opts.WorkspacePath, "ws.json")
-	configDest := filepath.Join(opts.RepoPath, "ws.json")
-	if _, err := os.Stat(configSrc); err == nil {
-		data, err := os.ReadFile(configSrc)
-		if err == nil {
-			_ = os.WriteFile(configDest, data, 0o644)
-		}
+	vis := backup.CheckRemote(opts.Git.RemoteURL, opts.Git.PassEntry)
+	if err := vis.Refusal(); err != nil {
+		result.Error = "push refused (commit kept locally): " + err.Error()
+		return result
 	}
-
-	// Stage all changes.
-	if _, err := runDotfileGit(opts.RepoPath, "add", "-A"); err != nil {
-		return GitSyncResult{Error: "git add: " + err.Error()}
+	if err := backup.Push(RepoPath(opts.WorkspacePath), BackupBranch(opts.Git)); err != nil {
+		result.Error = "push failed (commit kept locally): " + err.Error()
+		return result
 	}
-
-	// Check if there are changes to commit.
-	porcelain, _ := runDotfileGit(opts.RepoPath, "status", "--porcelain")
-	if strings.TrimSpace(porcelain) == "" {
-		return GitSyncResult{Message: "nothing to commit"}
-	}
-
-	// Commit.
-	msg := opts.CommitMessage
-	if msg == "" {
-		msg = "auto-sync dotfiles"
-	}
-	if _, err := runDotfileGit(opts.RepoPath, "commit", "-m", msg); err != nil {
-		return GitSyncResult{Error: "git commit: " + err.Error()}
-	}
-	result := GitSyncResult{Committed: true}
-
-	// Push if configured.
-	if opts.AutoPush {
-		if _, err := runDotfileGit(opts.RepoPath, "push", "-u", "origin", opts.Branch); err != nil {
-			result.Error = "push failed (commit preserved locally): " + err.Error()
-			return result
-		}
-		result.Pushed = true
-	}
-
+	result.Pushed = true
 	return result
 }
 
-// EnsureGitRepo initializes the git repo if needed, sets remote and branch.
-func EnsureGitRepo(repoPath, remoteURL, branch string) error {
-	if err := os.MkdirAll(repoPath, 0o755); err != nil {
-		return err
-	}
+// GitIsInitialized, GitRemoteURL and friends are the repository queries the
+// TUI's git view still uses; they read the shared backup package.
+func GitIsInitialized(repoPath string) bool { return backup.IsRepo(repoPath) }
 
-	gitDir := filepath.Join(repoPath, ".git")
-	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
-		if _, err := runDotfileGit(repoPath, "init"); err != nil {
-			return err
-		}
-		if _, err := runDotfileGit(repoPath, "config", "user.email", "ws@localhost"); err != nil {
-			return err
-		}
-		if _, err := runDotfileGit(repoPath, "config", "user.name", "ws"); err != nil {
-			return err
-		}
-	}
+// GitHasRemote reports whether the repository has an origin.
+func GitHasRemote(repoPath string) bool { return backup.RemoteURL(repoPath) != "" }
 
-	// Ensure branch.
-	if branch != "" {
-		currentBranch, _ := runDotfileGit(repoPath, "rev-parse", "--abbrev-ref", "HEAD")
-		if strings.TrimSpace(currentBranch) != branch {
-			// Try to checkout or create the branch.
-			if _, err := runDotfileGit(repoPath, "checkout", "-B", branch); err != nil {
-				return err
-			}
-		}
-	}
+// GitRemoteURL returns origin's url, or "".
+func GitRemoteURL(repoPath string) string { return backup.RemoteURL(repoPath) }
 
-	// Ensure remote.
-	if remoteURL != "" {
-		existing, _ := runDotfileGit(repoPath, "remote", "get-url", "origin")
-		if strings.TrimSpace(existing) != remoteURL {
-			if strings.TrimSpace(existing) != "" {
-				_, _ = runDotfileGit(repoPath, "remote", "set-url", "origin", remoteURL)
-			} else {
-				_, _ = runDotfileGit(repoPath, "remote", "add", "origin", remoteURL)
-			}
-		}
-	}
+// GitBranch returns the checked-out branch.
+func GitBranch(repoPath string) string { return backup.CurrentBranch(repoPath) }
 
-	return nil
+// GitAheadBehind returns ahead/behind relative to origin/<branch>.
+func GitAheadBehind(repoPath, branch string) (ahead, behind int) {
+	return backup.AheadBehind(repoPath, branch)
 }
 
-func runDotfileGit(repoPath string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", repoPath}, args...)...)
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		errText := strings.TrimSpace(stderr.String())
-		if errText == "" {
-			errText = err.Error()
-		}
-		return "", errors.New(errText)
-	}
-	return stdout.String(), nil
-}
+// GitAddRemote adds or updates origin.
+func GitAddRemote(repoPath, url string) error { return backup.SetRemote(repoPath, url) }
 
-// GitIsInitialized returns true if ws/dotfiles/ has a .git directory.
-func GitIsInitialized(repoPath string) bool {
-	info, err := os.Stat(filepath.Join(repoPath, ".git"))
-	return err == nil && info.IsDir()
-}
+// GitPush pushes the branch to origin.
+func GitPush(repoPath, branch string) error { return backup.Push(repoPath, branch) }
 
-// GitHasRemote returns true if the repo has a remote named "origin".
-func GitHasRemote(repoPath string) bool {
-	out, err := runDotfileGit(repoPath, "remote", "get-url", "origin")
-	return err == nil && strings.TrimSpace(out) != ""
-}
-
-// GitRemoteURL returns the origin remote URL, or empty string.
-func GitRemoteURL(repoPath string) string {
-	out, err := runDotfileGit(repoPath, "remote", "get-url", "origin")
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(out)
-}
-
-// GitBranch returns the current branch name.
-func GitBranch(repoPath string) string {
-	out, err := runDotfileGit(repoPath, "rev-parse", "--abbrev-ref", "HEAD")
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(out)
-}
-
-// GitPush pushes the current branch to origin.
-func GitPush(repoPath, branch string) error {
-	if branch == "" {
-		branch = GitBranch(repoPath)
-	}
-	if branch == "" {
-		branch = "main"
-	}
-	_, err := runDotfileGit(repoPath, "push", "-u", "origin", branch)
-	return err
-}
-
-// GitLog returns the last N commit log entries as a string.
-func GitLog(repoPath string, count int) (string, error) {
-	countStr := fmt.Sprintf("-%d", count)
-	return runDotfileGit(repoPath, "log", countStr, "--oneline", "--no-decorate")
-}
-
-// GitStatus returns the porcelain status output.
+// GitStatus returns the porcelain output.
 func GitStatus(repoPath string) (string, error) {
-	return runDotfileGit(repoPath, "status", "--porcelain")
+	lines, err := backup.Porcelain(repoPath)
+	if err != nil {
+		return "", err
+	}
+	out := ""
+	for _, l := range lines {
+		out += l + "\n"
+	}
+	return out, nil
 }
 
 // GitLastCommit returns the last commit's date and message.
-func GitLastCommit(repoPath string) (string, error) {
-	return runDotfileGit(repoPath, "log", "-1", "--format=%ci  %s")
-}
+func GitLastCommit(repoPath string) (string, error) { return backup.LastCommit(repoPath), nil }
 
-// GitAheadBehind returns ahead/behind counts relative to origin/branch.
-func GitAheadBehind(repoPath, branch string) (ahead, behind int) {
-	if branch == "" {
-		branch = "main"
-	}
-	ref := "origin/" + branch
-	out, err := runDotfileGit(repoPath, "rev-list", "--left-right", "--count", "HEAD..."+ref)
+// GitLog returns the last count commits, one per line.
+func GitLog(repoPath string, count int) (string, error) {
+	commits, err := backup.Log(repoPath, count)
 	if err != nil {
-		return 0, 0
+		return "", err
 	}
-	parts := strings.Fields(strings.TrimSpace(out))
-	if len(parts) == 2 {
-		fmt.Sscanf(parts[0], "%d", &ahead)
-		fmt.Sscanf(parts[1], "%d", &behind)
+	out := ""
+	for _, c := range commits {
+		out += c.Hash + " " + c.Subject + "\n"
 	}
-	return
-}
-
-// GitAddRemote adds or updates the origin remote.
-func GitAddRemote(repoPath, url string) error {
-	existing, _ := runDotfileGit(repoPath, "remote", "get-url", "origin")
-	if strings.TrimSpace(existing) != "" {
-		_, err := runDotfileGit(repoPath, "remote", "set-url", "origin", url)
-		return err
-	}
-	_, err := runDotfileGit(repoPath, "remote", "add", "origin", url)
-	return err
+	return out, nil
 }

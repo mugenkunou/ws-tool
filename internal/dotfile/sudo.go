@@ -42,6 +42,11 @@ func sudoSymlink(target, linkPath string) error {
 	return sudoRun("ln", "-s", "--", target, linkPath)
 }
 
+// sudoCopy copies src to dst recursively, keeping modes, using "sudo cp -a".
+func sudoCopy(src, dst string) error {
+	return sudoRun("cp", "-a", "--", src, dst)
+}
+
 // sudoRemoveAll removes path using "sudo rm -rf". Use only for paths that
 // have been explicitly confirmed as managed dotfile system paths.
 func sudoRemoveAll(path string) error {

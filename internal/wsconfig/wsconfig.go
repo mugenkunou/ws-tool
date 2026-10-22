@@ -112,11 +112,6 @@ type Link struct {
 	Original string `json:"original"` // workspace-relative path of the original
 	Dir      bool   `json:"dir"`      // true if the system path is a directory link
 	Sudo     bool   `json:"sudo"`     // true if the symlink needs sudo
-
-	// Class is not stored: ws.json has no class (where the copy lives says
-	// what it is). Load derives it from Original so the dotfile commands that
-	// still ask keep working until plan 0002 B1 removes them.
-	Class string `json:"-"`
 }
 
 // Default returns the out-of-the-box WsConfig written by `ws init`.
@@ -194,14 +189,6 @@ func normalize(cfg *WsConfig) {
 	if cfg.Links == nil {
 		cfg.Links = []Link{}
 	}
-}
-
-// deriveClass is the dotfile class implied by where the workspace copy lives.
-func deriveClass(original string) string {
-	if strings.HasPrefix(filepath.ToSlash(filepath.Clean(original)), "secrets/dotfiles") {
-		return "secret"
-	}
-	return "config"
 }
 
 // LoadIgnoreRules loads only the ignore rules from ws.json.
@@ -336,9 +323,6 @@ func Load(path string) (WsConfig, error) {
 	}
 
 	normalize(&cfg)
-	for i := range cfg.Links {
-		cfg.Links[i].Class = deriveClass(cfg.Links[i].Original)
-	}
 	return cfg, nil
 }
 
