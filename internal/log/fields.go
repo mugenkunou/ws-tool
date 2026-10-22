@@ -5,11 +5,11 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
 
-// Schema describes recorded sessions for the CLI (`ws log ls`) and the TUI
-// logs screen.
+// Schema describes recorded sessions for the CLI (`ws session ls`) and the TUI
+// Sessions screen.
 func Schema(v resource.View) resource.Schema[Session] {
 	return resource.Schema[Session]{
-		Name: "log session",
+		Name: "session",
 		ID:   func(s Session) string { return s.Tag },
 		Fields: []resource.Field[Session]{
 			{Key: "tag", Title: "Tag", Value: func(s Session) any { return s.Tag }},

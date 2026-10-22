@@ -9,43 +9,6 @@ import (
 	"time"
 )
 
-func TestLogCommandsFlow(t *testing.T) {
-	testSetXDG(t)
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	workspace := filepath.Join(t.TempDir(), "Workspace")
-	var out bytes.Buffer
-	var errOut bytes.Buffer
-
-	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
-		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
-	}
-
-	out.Reset()
-	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "log", "start", "--tag", "demo"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
-		t.Fatalf("log start failed: code=%d stderr=%s", code, errOut.String())
-	}
-	if !strings.Contains(out.String(), "Start recording") {
-		t.Fatalf("unexpected start output: %s", out.String())
-	}
-
-	out.Reset()
-	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "log", "ls"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
-		t.Fatalf("log ls failed: code=%d stderr=%s", code, errOut.String())
-	}
-	if !strings.Contains(out.String(), "demo") {
-		t.Fatalf("unexpected ls output: %s", out.String())
-	}
-
-	out.Reset()
-	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "log", "stop"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
-		t.Fatalf("log stop failed: code=%d stderr=%s", code, errOut.String())
-	}
-}
-
 func TestScratchCommandsFlow(t *testing.T) {
 	testSetXDG(t)
 	home := t.TempDir()

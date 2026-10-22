@@ -63,8 +63,8 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runIgnore(commandArgs, globals, stdin, stdout, stderr)
 	case "secret":
 		return runSecret(commandArgs, globals, stdin, stdout, stderr)
-	case "log":
-		return runLog(commandArgs, globals, stdin, stdout, stderr)
+	case "session":
+		return runSession(commandArgs, globals, stdin, stdout, stderr)
 	case "scratch":
 		return runScratch(commandArgs, globals, stdin, stdout, stderr)
 	case "repo":

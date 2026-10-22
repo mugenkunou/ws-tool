@@ -10,12 +10,9 @@ package logs
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
-	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -27,7 +24,6 @@ import (
 
 	wslog "github.com/mugenkunou/ws-tool/internal/log"
 	"github.com/mugenkunou/ws-tool/internal/plan"
-	"github.com/mugenkunou/ws-tool/internal/search"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
@@ -41,6 +37,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/prompt"
 	"github.com/mugenkunou/ws-tool/internal/tui/reslist"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // LoadedMsg carries the session list, newest first. Other components (the
@@ -65,9 +62,16 @@ type showMsg struct {
 	err             error
 }
 
+// match is one line `session grep` found: the file, its line and the text.
+type match struct {
+	Path    string
+	Line    int
+	Snippet string
+}
+
 type searchMsg struct {
 	query   string
-	matches []search.Match
+	matches []match
 	err     error
 }
 
@@ -109,7 +113,7 @@ type Model struct {
 	level      level
 	modal      modal.Model
 
-	matches  []search.Match
+	matches  []match
 	query    string
 	viewTag  string
 	viewMode string
@@ -154,23 +158,33 @@ func New(e env.Env) Model {
 // Load lists recorded sessions.
 func Load(e env.Env) tea.Cmd {
 	return func() tea.Msg {
-		sessions, err := wslog.List(e.LogDir)
+		sessions, err := wslog.List(e.LogDir, stateDir())
 		return LoadedMsg{Sessions: sessions, Err: err}
 	}
 }
 
+// stateDir is the machine-local state directory, where the active recording's
+// marker lives.
+func stateDir() string {
+	dir, _ := wsconfig.StateDir()
+	return dir
+}
+
 func show(e env.Env, tag, mode string) tea.Cmd {
 	return func() tea.Msg {
-		text, err := wslog.Show(e.LogDir, tag, mode)
-		// Recordings are raw PTY streams: strip escapes and carriage returns.
-		text = strings.ReplaceAll(ansi.Strip(text), "\r", "")
-		return showMsg{tag: tag, mode: mode, text: text, err: err}
+		// Recordings are raw PTY streams: Show strips escapes and carriage returns.
+		res, err := wslog.Show(e.LogDir, tag, mode == modeCommands)
+		return showMsg{tag: tag, mode: mode, text: res.Text, err: err}
 	}
 }
 
 func searchLogs(e env.Env, query string) tea.Cmd {
 	return func() tea.Msg {
-		matches, err := search.Run(search.Options{WorkspacePath: e.LogDir, Query: query})
+		found, err := wslog.Grep(e.LogDir, stateDir(), query, 0)
+		matches := make([]match, len(found))
+		for i, m := range found {
+			matches[i] = match{Path: m.Path, Line: m.Line, Snippet: m.Text}
+		}
 		return searchMsg{query: query, matches: matches, err: err}
 	}
 }
@@ -397,13 +411,12 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 		if r.Cancelled {
 			return m, nil
 		}
-		args := []string{"log", "start"}
+		args := []string{"session", "record"}
 		if r.Value != "" {
-			args = append(args, "--tag", r.Value)
+			args = append(args, r.Value)
 		}
-		// The CLI's own start plan has one action; --quiet-start accepts it
-		// (the user already confirmed here) without the banner.
-		return m, handover.Run(handover.WS(m.env.Paths, append(args, "--quiet-start")...), handoverRecording)
+		// --quiet: no banner, the user just asked for the recording here.
+		return m, handover.Run(handover.WS(m.env.Paths, append(args, "--quiet")...), handoverRecording)
 	case stepSearchQuery:
 		r := msg.(prompt.ResultMsg)
 		if r.Cancelled {
@@ -428,26 +441,15 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 	return m, tea.Batch(nav.Notify(level, confirm.Summary(done.Result)), load)
 }
 
-// openStop mirrors `ws log stop`: signal the recorder, wait up to 3s, then
+// openStop mirrors `ws session stop`: signal the recorder, wait up to 3s, then
 // finalize the session metadata.
 func (m Model) openStop(s wslog.Session) Model {
 	logDir := m.env.LogDir
-	p := plan.Plan{Command: "log.stop", Actions: []plan.Action{{
-		ID:          "log-stop",
+	p := plan.Plan{Command: "session.stop", Actions: []plan.Action{{
+		ID:          "session-stop",
 		Description: "Stop recording session " + s.Tag,
 		Execute: func() error {
-			if pid := wslog.GetActivePID(logDir); pid > 0 {
-				if proc, err := os.FindProcess(pid); err == nil {
-					_ = proc.Signal(syscall.SIGTERM)
-					for range 30 {
-						if err := proc.Signal(syscall.Signal(0)); err != nil {
-							break
-						}
-						time.Sleep(100 * time.Millisecond)
-					}
-				}
-			}
-			_, err := wslog.Stop(wslog.StopOptions{LogDir: logDir})
+			_, err := wslog.StopActive(wslog.StopOptions{LogDir: logDir, StateDir: stateDir()})
 			return err
 		},
 	}}}
@@ -458,15 +460,14 @@ func (m Model) openStop(s wslog.Session) Model {
 // openDelete removes finished sessions (the recording one is never offered).
 func (m Model) openDelete(sessions []wslog.Session) Model {
 	logDir := m.env.LogDir
-	p := plan.Plan{Command: "log.rm"}
+	p := plan.Plan{Command: "session.rm"}
 	for _, s := range sessions {
 		tag := s.Tag
 		p.Actions = append(p.Actions, plan.Action{
-			ID:          "log-rm-" + tag,
-			Description: fmt.Sprintf("Remove log session %s (%s)", filepath.Join(logDir, tag), style.HumanBytes(s.SizeBytes)),
+			ID:          "session-rm-" + tag,
+			Description: fmt.Sprintf("Delete %s (%s)", filepath.Join(logDir, tag), style.HumanBytes(s.SizeBytes)),
 			Execute: func() error {
-				_, err := wslog.Remove(wslog.RemoveOptions{LogDir: logDir, Tag: tag})
-				return err
+				return wslog.Remove(wslog.RemoveOptions{LogDir: logDir, StateDir: stateDir(), Tag: tag})
 			},
 		})
 	}
@@ -475,20 +476,18 @@ func (m Model) openDelete(sessions []wslog.Session) Model {
 }
 
 // openPrune offers rows for removal, none pre-checked unless they were
-// marked (the CLI needs an explicit --older-than or --all, so the user
-// chooses here; a toggles all).
+// marked (the user chooses here; a toggles all).
 func (m Model) openPrune(rows []wslog.Session) Model {
 	logDir := m.env.LogDir
 	now := m.env.Now()
-	p := plan.Plan{Command: "log.prune"}
+	p := plan.Plan{Command: "session.prune"}
 	for _, s := range rows {
 		tag := s.Tag
 		p.Actions = append(p.Actions, plan.Action{
-			ID:          "prune-" + tag,
-			Description: fmt.Sprintf("Remove %s  %s, %s old", tag, style.HumanBytes(s.SizeBytes), format.Age(now.Sub(s.StartedAt))),
+			ID:          "session-rm-" + tag,
+			Description: fmt.Sprintf("Delete %s  %s, %s old", tag, style.HumanBytes(s.SizeBytes), format.Age(now.Sub(s.StartedAt))),
 			Execute: func() error {
-				_, err := wslog.Remove(wslog.RemoveOptions{LogDir: logDir, Tag: tag})
-				return err
+				return wslog.Remove(wslog.RemoveOptions{LogDir: logDir, StateDir: stateDir(), Tag: tag})
 			},
 		})
 	}

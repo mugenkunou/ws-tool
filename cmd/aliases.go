@@ -36,6 +36,7 @@ type alias struct {
 // old and new handlers never disagree about which names exist.
 var aliasLive = map[string]bool{
 	"dotfile": true,
+	"log":     true,
 }
 
 // aliases is every row of spec §3.5.
