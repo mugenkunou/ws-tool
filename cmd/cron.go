@@ -102,7 +102,7 @@ func runCronAdd(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		}
 	}
 
-	workspacePath, _, _, err := requireWorkspaceInitialized(globals, stderr)
+	workspacePath, _, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -173,7 +173,7 @@ func runCronRm(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 		}
 	}
 
-	if _, _, _, err := requireWorkspaceInitialized(globals, stderr); err != nil {
+	if _, _, err := requireWorkspaceInitialized(globals, stderr); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
@@ -366,7 +366,7 @@ func runCronRun(args []string, globals globalFlags, stdout, stderr io.Writer) in
 	}
 	jobName := remaining[0]
 
-	workspacePath, _, _, err := requireWorkspaceInitialized(globals, stderr)
+	workspacePath, _, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -414,7 +414,7 @@ func runCronApply(args []string, globals globalFlags, stdin io.Reader, stdout, s
 		globals.dryRun = true
 	}
 
-	workspacePath, _, _, err := requireWorkspaceInitialized(globals, stderr)
+	workspacePath, _, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1

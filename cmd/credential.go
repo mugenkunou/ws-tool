@@ -182,7 +182,7 @@ func runCredentialSetup(args []string, globals globalFlags, stdin io.Reader, std
 	}
 
 	// Discover workspace remotes and offer to create missing pass entries.
-	workspacePath, _, _, wsErr := requireWorkspaceInitialized(globals)
+	workspacePath, _, wsErr := requireWorkspaceInitialized(globals)
 	if wsErr == nil {
 		// Reconcile stale local credential.helper overrides in repos.
 		localOverrides := discoverLocalHelperOverrides(workspacePath)
@@ -284,7 +284,7 @@ func runCredentialStatus(args []string, globals globalFlags, stdout, stderr io.W
 	var remotes []remoteEntry
 	var localOverrides []localHelperOverride
 
-	workspacePath, _, _, wsErr := requireWorkspaceInitialized(globals)
+	workspacePath, _, wsErr := requireWorkspaceInitialized(globals)
 	if wsErr == nil {
 		useHTTPPath := make(map[string]bool) // per host
 		for _, e := range discoverRemoteEntries(workspacePath) {
@@ -466,7 +466,7 @@ func runCredentialDisconnect(args []string, globals globalFlags, stdin io.Reader
 
 	// Also discover local ws overrides in workspace repos.
 	var localOverrides []localHelperOverride
-	workspacePath, _, _, wsErr := requireWorkspaceInitialized(globals)
+	workspacePath, _, wsErr := requireWorkspaceInitialized(globals)
 	if wsErr == nil {
 		localOverrides = discoverLocalHelperOverrides(workspacePath)
 	}

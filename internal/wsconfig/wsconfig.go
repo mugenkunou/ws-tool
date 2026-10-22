@@ -34,23 +34,27 @@ const (
 // WsConfig is the single workspace configuration file (ws.json at the
 // workspace root). All fields are synced with the workspace. Machine-local
 // state is stored under ~/.local/state/ws-tool/ instead.
+//
+// ws.json always holds every key (spec §2.3): no field is omitted because it
+// is empty or still the default, and the field order below is the file's order.
 type WsConfig struct {
 	Schema      int              `json:"schema"`
+	Editor      string           `json:"editor"`
 	Scratch     Scratch          `json:"scratch"`
 	Repo        Repo             `json:"repo"`
 	Dotfile     Dotfile          `json:"dotfile"`
 	Secret      Secret           `json:"secret"`
+	Pass        Pass             `json:"pass"`
 	Ignore      Ignore           `json:"ignore"`
 	IgnoreRules ignore.UserRules `json:"ignore_rules"`
-	Log         Log              `json:"log"`
+	Session     Session          `json:"session"`
 	Links       []Link           `json:"links"`
 }
 
 // Scratch holds scratch-directory settings.
 type Scratch struct {
-	RootDir   string   `json:"root_dir"`
-	EditorCmd string   `json:"editor_cmd"`
-	Tags      []string `json:"tags,omitempty"`
+	RootDir string   `json:"root_dir"`
+	Tags    []string `json:"tags"`
 }
 
 // Repo holds repository fleet settings.
@@ -67,28 +71,34 @@ type Dotfile struct {
 
 // DotfileGit holds dotfile git-backup settings (synced with the workspace).
 type DotfileGit struct {
-	RemoteURL  string `json:"remote_url,omitempty"`
-	Branch     string `json:"branch,omitempty"`
+	RemoteURL  string `json:"remote_url"`
+	Branch     string `json:"branch"`
 	AutoCommit bool   `json:"auto_commit"`
 	AutoPush   bool   `json:"auto_push"`
-	PassEntry  string `json:"pass_entry,omitempty"` // pass(1) entry for git credentials
+	PassEntry  string `json:"pass_entry"` // pass(1) entry holding an API token for the visibility check
 }
 
 // Secret holds secret-scanning settings and the allowlist.
 type Secret struct {
 	Allowlist []string `json:"allowlist"`
-	SkipDirs  []string `json:"skip_dirs,omitempty"`
+	SkipDirs  []string `json:"skip_dirs"`
 }
 
-// Ignore holds sync-hygiene thresholds.
+// Pass holds pass-store settings.
+type Pass struct {
+	PassEntry string `json:"pass_entry"` // pass(1) entry holding an API token for the pass backup's visibility check
+}
+
+// Ignore holds sync-hygiene thresholds and the muted paths.
 type Ignore struct {
-	WarnSizeMB int `json:"warn_size_mb"`
-	CritSizeMB int `json:"crit_size_mb"`
-	MaxDepth   int `json:"max_depth"`
+	WarnSizeMB int      `json:"warn_size_mb"`
+	CritSizeMB int      `json:"crit_size_mb"`
+	MaxDepth   int      `json:"max_depth"`
+	Muted      []string `json:"muted"` // paths whose sync warnings are hidden (they keep syncing)
 }
 
-// Log holds session-recording settings.
-type Log struct {
+// Session holds session-recording settings (the old "log" key).
+type Session struct {
 	CapMB        int `json:"cap_mb"`
 	MaxSessionMB int `json:"max_session_mb"`
 }
@@ -98,11 +108,15 @@ type Log struct {
 // When Dir is true, the system path is a directory link (e.g. ~/.password-store).
 // When Sudo is true, creating the symlink requires root.
 type Link struct {
-	System   string `json:"system"`          // absolute system path (symlink source)
-	Original string `json:"original"`        // workspace-relative path of the original
-	Dir      bool   `json:"dir,omitempty"`   // true if the system path is a directory link
-	Sudo     bool   `json:"sudo,omitempty"`  // true if the symlink needs sudo
-	Class    string `json:"class,omitempty"` // "config" or "secret" (informational)
+	System   string `json:"system"`   // absolute system path (symlink source)
+	Original string `json:"original"` // workspace-relative path of the original
+	Dir      bool   `json:"dir"`      // true if the system path is a directory link
+	Sudo     bool   `json:"sudo"`     // true if the symlink needs sudo
+
+	// Class is not stored: ws.json has no class (where the copy lives says
+	// what it is). Load derives it from Original so the dotfile commands that
+	// still ask keep working until plan 0002 B1 removes them.
+	Class string `json:"-"`
 }
 
 // Default returns the out-of-the-box WsConfig written by `ws init`.
@@ -110,8 +124,8 @@ func Default() WsConfig {
 	return WsConfig{
 		Schema: CurrentSchema,
 		Scratch: Scratch{
-			RootDir:   "~/Scratch",
-			EditorCmd: "code",
+			RootDir: "~/Scratch",
+			Tags:    []string{},
 		},
 		Repo: Repo{
 			Roots:       []string{"."},
@@ -127,19 +141,67 @@ func Default() WsConfig {
 		},
 		Secret: Secret{
 			Allowlist: []string{},
+			SkipDirs:  []string{},
 		},
 		Ignore: Ignore{
 			WarnSizeMB: 1,
 			CritSizeMB: 10,
 			MaxDepth:   6,
+			Muted:      []string{},
 		},
 		IgnoreRules: ignore.DefaultUserRules(),
-		Log: Log{
+		Session: Session{
 			CapMB:        500,
 			MaxSessionMB: 100,
 		},
 		Links: []Link{},
 	}
+}
+
+// normalize replaces nil lists with empty ones, so a write always shows every
+// key as [] rather than null.
+func normalize(cfg *WsConfig) {
+	if cfg.Scratch.Tags == nil {
+		cfg.Scratch.Tags = []string{}
+	}
+	if cfg.Repo.Roots == nil {
+		cfg.Repo.Roots = []string{"."}
+	}
+	if cfg.Repo.ExcludeDirs == nil {
+		cfg.Repo.ExcludeDirs = []string{}
+	}
+	if cfg.Secret.Allowlist == nil {
+		cfg.Secret.Allowlist = []string{}
+	}
+	if cfg.Secret.SkipDirs == nil {
+		cfg.Secret.SkipDirs = []string{}
+	}
+	if cfg.Ignore.Muted == nil {
+		cfg.Ignore.Muted = []string{}
+	}
+	if cfg.IgnoreRules.Exclude == nil {
+		cfg.IgnoreRules.Exclude = []ignore.RuleEntry{}
+	}
+	if cfg.IgnoreRules.SafeHarbors == nil {
+		cfg.IgnoreRules.SafeHarbors = []ignore.RuleEntry{}
+	}
+	if cfg.IgnoreRules.SuppressDefaults == nil {
+		cfg.IgnoreRules.SuppressDefaults = []string{}
+	}
+	if cfg.IgnoreRules.SuppressHarbors == nil {
+		cfg.IgnoreRules.SuppressHarbors = []string{}
+	}
+	if cfg.Links == nil {
+		cfg.Links = []Link{}
+	}
+}
+
+// deriveClass is the dotfile class implied by where the workspace copy lives.
+func deriveClass(original string) string {
+	if strings.HasPrefix(filepath.ToSlash(filepath.Clean(original)), "secrets/dotfiles") {
+		return "secret"
+	}
+	return "config"
 }
 
 // LoadIgnoreRules loads only the ignore rules from ws.json.
@@ -244,6 +306,8 @@ func ConfigPath(workspaceRoot string) string {
 
 // Load reads and parses ws.json from the given path.
 // Returns an error if the file is missing, invalid JSON, or from a newer schema.
+// Keys missing from the file take their defaults, and the next Save writes
+// them. The old "log" key is read when "session" is absent.
 func Load(path string) (WsConfig, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -255,6 +319,15 @@ func Load(path string) (WsConfig, error) {
 		return WsConfig{}, fmt.Errorf("parsing %s: %w", path, err)
 	}
 
+	// Renamed keys are still read; only the new name is written.
+	var legacy struct {
+		Session json.RawMessage `json:"session"`
+		Log     json.RawMessage `json:"log"`
+	}
+	if err := json.Unmarshal(content, &legacy); err == nil && legacy.Session == nil && legacy.Log != nil {
+		_ = json.Unmarshal(legacy.Log, &cfg.Session)
+	}
+
 	if cfg.Schema <= 0 {
 		return WsConfig{}, errors.New("ws.json: schema must be a positive integer")
 	}
@@ -262,20 +335,10 @@ func Load(path string) (WsConfig, error) {
 		return WsConfig{}, fmt.Errorf("ws.json: unsupported schema %d (this build supports up to %d)", cfg.Schema, CurrentSchema)
 	}
 
-	// Ensure non-nil slices.
-	if cfg.Links == nil {
-		cfg.Links = []Link{}
+	normalize(&cfg)
+	for i := range cfg.Links {
+		cfg.Links[i].Class = deriveClass(cfg.Links[i].Original)
 	}
-	if cfg.Secret.Allowlist == nil {
-		cfg.Secret.Allowlist = []string{}
-	}
-	if cfg.Repo.Roots == nil {
-		cfg.Repo.Roots = []string{"."}
-	}
-	if cfg.Repo.ExcludeDirs == nil {
-		cfg.Repo.ExcludeDirs = []string{}
-	}
-
 	return cfg, nil
 }
 
@@ -284,6 +347,7 @@ func Save(path string, cfg WsConfig) error {
 	if cfg.Schema == 0 {
 		cfg.Schema = CurrentSchema
 	}
+	normalize(&cfg)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -418,6 +482,11 @@ func WithAbsPaths(cfg WsConfig, workspacePath string) WsConfig {
 	out.Repo.Roots = absAll(cfg.Repo.Roots)
 	out.Repo.ExcludeDirs = absAll(cfg.Repo.ExcludeDirs)
 	out.Secret.SkipDirs = absAll(cfg.Secret.SkipDirs)
+	out.Links = make([]Link, len(cfg.Links))
+	for i, l := range cfg.Links {
+		l.Original = abs(l.Original)
+		out.Links[i] = l
+	}
 	return out
 }
 

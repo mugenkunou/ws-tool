@@ -317,7 +317,7 @@ func loadCompletionCtx(globals globalFlags) completionCtx {
 
 	// Same (side-effect-free) resolution as every command, so completions
 	// match what the command will see.
-	resolved, resolvedConfig, _, err := resolveWorkspacePaths(globals)
+	resolved, resolvedConfig, err := resolveWorkspacePaths(globals)
 	if err != nil {
 		return ctx
 	}

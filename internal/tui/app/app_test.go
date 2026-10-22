@@ -55,7 +55,6 @@ func testEnv(t *testing.T) env.Env {
 		Paths: workspace.Paths{
 			Workspace: ws,
 			Config:    ws + "/ws.json",
-			Manifest:  ws + "/ws.json",
 		},
 		Config:     cfg,
 		ScratchDir: "/home/tester/Scratch",
@@ -665,7 +664,7 @@ func TestScratchNewEndToEnd(t *testing.T) {
 	}
 	cfg := wsconfig.Default()
 	cfg.Scratch.RootDir = filepath.Join(root, "Scratch")
-	cfg.Scratch.EditorCmd = "true" // the "editor" launched after creation
+	cfg.Editor = "true" // the editor launched after creation
 	cfgPath := filepath.Join(wsPath, "ws.json")
 	if err := wsconfig.Save(cfgPath, cfg); err != nil {
 		t.Fatal(err)

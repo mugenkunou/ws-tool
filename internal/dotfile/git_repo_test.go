@@ -40,7 +40,7 @@ func TestAutoSyncCommitsInConfigsDotfiles(t *testing.T) {
 		t.Fatalf("add failed: %v", err)
 	}
 
-	sync, enabled := AutoSync(workspaceRoot, configPath, "", "add vimrc")
+	sync, enabled := AutoSync(workspaceRoot, configPath, "add vimrc")
 	if !enabled || sync.Error != "" || !sync.Committed {
 		t.Fatalf("expected a commit, got enabled=%v result=%+v", enabled, sync)
 	}

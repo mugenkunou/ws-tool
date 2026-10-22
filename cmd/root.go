@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/mugenkunou/ws-tool/internal/editor"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
@@ -20,7 +21,6 @@ import (
 type globalFlags struct {
 	workspace  string
 	config     string
-	manifest   string
 	quiet      bool
 	verbose    bool
 	json       bool
@@ -100,7 +100,6 @@ func parseGlobalFlags(args []string) (globalFlags, []string, error) {
 		"w":         {str: &globals.workspace},
 		"config":    {str: &globals.config},
 		"c":         {str: &globals.config},
-		"manifest":  {str: &globals.manifest},
 		"json":      {boo: &globals.json},
 		"dry-run":   {boo: &globals.dryRun},
 		"no-color":  {boo: &globals.noColor},
@@ -178,9 +177,6 @@ func registerGlobalFlags(fs *flag.FlagSet, globals *globalFlags) {
 	if fs.Lookup("c") == nil {
 		fs.StringVar(&globals.config, "c", globals.config, "")
 	}
-	if fs.Lookup("manifest") == nil {
-		fs.StringVar(&globals.manifest, "manifest", globals.manifest, "")
-	}
 	if fs.Lookup("json") == nil {
 		fs.BoolVar(&globals.json, "json", globals.json, "")
 	}
@@ -238,6 +234,15 @@ func parseInterspersed(fs *flag.FlagSet, args []string) error {
 		}
 	}
 	return fs.Parse(append(flags, positional...))
+}
+
+// editorFor is the editor argv for a command: its --editor flag, else ws.json
+// "editor", else $VISUAL, $EDITOR, vim (spec §4.10).
+func editorFor(flagValue string, cfg wsconfig.WsConfig) []string {
+	if strings.TrimSpace(flagValue) != "" {
+		return editor.Command(flagValue)
+	}
+	return editor.Command(cfg.Editor)
 }
 
 // textOut returns stdout when informational text should be shown.
@@ -320,7 +325,6 @@ func resolveGlobalPaths(globals *globalFlags) error {
 	}{
 		{"workspace", &globals.workspace},
 		{"config", &globals.config},
-		{"manifest", &globals.manifest},
 	} {
 		if *f.v == "" {
 			continue
@@ -336,26 +340,25 @@ func resolveGlobalPaths(globals *globalFlags) error {
 
 // resolveWorkspacePaths resolves the workspace and config paths without
 // side effects: flag → env → default, all absolute.
-// Returns workspacePath, configPath, manifestPath (=configPath for compat).
-func resolveWorkspacePaths(globals globalFlags) (workspacePath, configPath, manifestPath string, err error) {
+// Returns the workspace path and the ws.json path.
+func resolveWorkspacePaths(globals globalFlags) (workspacePath, configPath string, err error) {
 	if err := resolveGlobalPaths(&globals); err != nil {
-		return "", "", "", err
+		return "", "", err
 	}
 	p, err := workspace.ResolvePaths(workspace.PathOverrides{
 		Workspace: globals.workspace,
 		Config:    globals.config,
-		Manifest:  globals.manifest,
 	})
 	if err != nil {
-		return "", "", "", err
+		return "", "", err
 	}
-	return p.Workspace, p.Config, p.Manifest, nil
+	return p.Workspace, p.Config, nil
 }
 
-func requireWorkspaceInitialized(globals globalFlags, stderr ...io.Writer) (string, string, string, error) {
-	resolvedWorkspace, configPath, manifestPath, err := resolveWorkspacePaths(globals)
+func requireWorkspaceInitialized(globals globalFlags, stderr ...io.Writer) (string, string, error) {
+	resolvedWorkspace, configPath, err := resolveWorkspacePaths(globals)
 	if err != nil {
-		return "", "", "", err
+		return "", "", err
 	}
 
 	// Verbose: log resolved paths if stderr was provided.
@@ -364,13 +367,13 @@ func requireWorkspaceInitialized(globals globalFlags, stderr ...io.Writer) (stri
 	}
 
 	if info, statErr := os.Stat(configPath); statErr == nil && info.IsDir() {
-		return "", "", "", fmt.Errorf("Error: --config %s is a directory, not a ws.json file.\n(-c is the global --config shorthand; ws dotfile add takes --class for the class.)", configPath)
+		return "", "", fmt.Errorf("Error: --config %s is a directory, not a ws.json file.\n(-c is the global --config shorthand.)", configPath)
 	}
 	if !workspace.ConfigExists(configPath) {
-		return "", "", "", errors.New("Error: workspace not initialized.\nRun `ws init` to set up this directory as a ws workspace.")
+		return "", "", errors.New("Error: workspace not initialized.\nRun `ws init` to set up this directory as a ws workspace.")
 	}
 
-	return resolvedWorkspace, configPath, manifestPath, nil
+	return resolvedWorkspace, configPath, nil
 }
 
 var configHelp = cmdHelp{
@@ -429,7 +432,7 @@ func runConfig(args []string, globals globalFlags, stdout, stderr io.Writer) int
 		return 1
 	}
 
-	workspacePath, configPath, _, err := requireWorkspaceInitialized(globals, stderr)
+	workspacePath, configPath, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1

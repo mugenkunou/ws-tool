@@ -214,3 +214,16 @@ func TestConfigNoArgsShowsHelp(t *testing.T) {
 		t.Fatalf("expected empty stderr, got: %s", errOut.String())
 	}
 }
+
+// TestManifestFlagIsGone: --manifest did nothing and is removed (spec §5
+// workspace commands). It is no longer a global flag, so a command rejects it.
+func TestManifestFlagIsGone(t *testing.T) {
+	testSetXDG(t)
+	var out, errOut bytes.Buffer
+	if code := Execute([]string{"version", "--manifest", "x.json"}, strings.NewReader(""), &out, &errOut); code == 0 {
+		t.Fatalf("--manifest must be rejected, got exit 0 and %q", out.String())
+	}
+	if !strings.Contains(errOut.String(), "manifest") {
+		t.Fatalf("the error should name the flag, got %q", errOut.String())
+	}
+}

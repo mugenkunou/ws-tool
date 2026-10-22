@@ -435,7 +435,7 @@ func (m Model) autoSync(st step) tea.Cmd {
 		msg = "dotfile sync"
 	}
 	return func() tea.Msg {
-		res, enabled := dotfile.AutoSync(p.Workspace, p.Config, p.Manifest, msg)
+		res, enabled := dotfile.AutoSync(p.Workspace, p.Config, msg)
 		switch {
 		case !enabled:
 			return nil

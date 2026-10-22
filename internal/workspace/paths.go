@@ -11,18 +11,12 @@ import (
 type PathOverrides struct {
 	Workspace string
 	Config    string // if set, used instead of <workspace>/ws.json
-	// Manifest is accepted for backward compatibility with callers that still
-	// pass it; in the new layout it is ignored (Config is the single file).
-	Manifest string
 }
 
 // Paths holds the resolved, absolute locations of a workspace's key files.
 type Paths struct {
 	Workspace string // absolute path to the workspace root
 	Config    string // absolute path to ws.json
-	// Manifest equals Config and is kept for call-site compatibility while the
-	// TUI and cmd layers are progressively migrated to the new single-file layout.
-	Manifest string
 }
 
 // ResolvePaths resolves the workspace and config paths without side effects:
@@ -31,7 +25,6 @@ type Paths struct {
 // Resolution:
 //   - Workspace: --workspace flag → $WS_WORKSPACE → ~/Workspace
 //   - Config: --config flag → $WS_CONFIG → <workspace>/ws.json
-//   - Manifest: always equal to Config (compatibility shim; old callers still compile)
 //
 // This is a clean-break implementation: there is no fallback to the old
 // XDG config (~/.config/ws-tool/config.json) or the old ws/manifest.json.
@@ -87,7 +80,7 @@ func ResolvePaths(o PathOverrides) (Paths, error) {
 		}
 	}
 
-	return Paths{Workspace: workspacePath, Config: configPath, Manifest: configPath}, nil
+	return Paths{Workspace: workspacePath, Config: configPath}, nil
 }
 
 // ConfigExists reports whether the config file exists at path.

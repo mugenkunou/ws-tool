@@ -34,7 +34,7 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		return printCmdHelp(stdout, scratchHelp)
 	}
 
-	workspacePath, configPath, _, err := requireWorkspaceInitialized(globals, stderr)
+	workspacePath, configPath, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -115,7 +115,7 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			nc := globals.noColor
 			fmt.Fprintf(out, "  %s\n", style.Mutedf(nc, "%s", res.Path))
 			if !*noOpen {
-				if err := editor.Open(editor.Command(*editorFlag), res.Path, stdout); err != nil {
+				if err := editor.Open(editorFor(*editorFlag, cfg), res.Path, stdout); err != nil {
 					fmt.Fprintln(out, style.ResultWarning(nc, "Editor launch skipped: %v", err))
 				}
 			}
@@ -542,7 +542,7 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		if *printPath {
 			// Open the editor with its screen on stderr, then print the resolved
 			// path to stdout so the calling shell function can cd to it.
-			argv := editor.Command(*editorFlag)
+			argv := editorFor(*editorFlag, cfg)
 			nc := globals.noColor
 			if err := editor.Open(argv, matchPath, stderr); err != nil {
 				fmt.Fprintln(stderr, style.ResultWarning(nc, "Editor launch skipped: %v", err))
@@ -553,7 +553,7 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			return 0
 		}
 
-		argv := editor.Command(*editorFlag)
+		argv := editorFor(*editorFlag, cfg)
 		out := textOut(globals, stdout)
 		nc := globals.noColor
 		if err := editor.Open(argv, matchPath, stdout); err != nil {

@@ -44,7 +44,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		return printCmdHelp(stdout, trashHelp)
 	}
 
-	workspacePath, configPath, _, err := requireWorkspaceInitialized(globals, stderr)
+	workspacePath, configPath, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1

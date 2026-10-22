@@ -6,7 +6,7 @@ import (
 
 // AutoSync runs the configured auto-commit/push after a dotfile change.
 // It does nothing (enabled=false) unless a dotfile git remote is configured.
-func AutoSync(workspacePath, configPath, _ /* manifestPath compat */, commitMessage string) (res GitSyncResult, enabled bool) {
+func AutoSync(workspacePath, configPath, commitMessage string) (res GitSyncResult, enabled bool) {
 	cfg, err := wsconfig.Load(configPath)
 	if err != nil || cfg.Dotfile.Git.RemoteURL == "" {
 		return GitSyncResult{}, false

@@ -234,7 +234,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		}
 		return m.openAutoTag(msg), nil
 	case createdMsg:
-		return m, handover.Editor(m.env.Config.Scratch.EditorCmd, msg.path, handoverEditor)
+		return m, handover.Editor(m.env.Config.Editor, msg.path, handoverEditor)
 	case handover.DoneMsg:
 		if _, ok := msg.Tag.(handoverTag); ok && msg.Err != nil {
 			return m, nav.Notify(nav.LevelWarn, "Editor launch skipped: "+msg.Err.Error())
@@ -278,7 +278,7 @@ var actions = func() []reslist.Action[Model, wsscratch.Entry] {
 			return m, cmd
 		}},
 		{Key: k.Open, Scope: reslist.Cursor, Do: func(m Model, rows []wsscratch.Entry) (Model, tea.Cmd) {
-			return m, handover.Editor(m.env.Config.Scratch.EditorCmd, rows[0].Path, handoverEditor)
+			return m, handover.Editor(m.env.Config.Editor, rows[0].Path, handoverEditor)
 		}},
 		{Key: k.Tag, Scope: reslist.Selected, Do: Model.promptTag},
 		{Key: k.AutoTag, Scope: reslist.Selected, Do: func(m Model, rows []wsscratch.Entry) (Model, tea.Cmd) {
@@ -349,7 +349,7 @@ func (m Model) updateSearch(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 		return m, nil
 	case key.Matches(k, m.keys.Open):
 		if i := m.results.Cursor(); i >= 0 && i < len(m.found) {
-			return m, handover.Editor(m.env.Config.Scratch.EditorCmd, m.found[i].Entry.Path, handoverEditor)
+			return m, handover.Editor(m.env.Config.Editor, m.found[i].Entry.Path, handoverEditor)
 		}
 		return m, nil
 	case key.Matches(k, m.keys.Search):

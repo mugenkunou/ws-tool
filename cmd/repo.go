@@ -125,7 +125,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		return printCmdHelp(stdout, repoHelp)
 	}
 
-	workspacePath, configPath, _, err := requireWorkspaceInitialized(globals, stderr)
+	workspacePath, configPath, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1

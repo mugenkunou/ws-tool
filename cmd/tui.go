@@ -46,7 +46,6 @@ func runTUI(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 	overrides := workspace.PathOverrides{
 		Workspace: globals.workspace,
 		Config:    globals.config,
-		Manifest:  globals.manifest,
 	}
 	e, loadErr := env.Load(overrides)
 

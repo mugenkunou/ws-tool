@@ -210,7 +210,7 @@ func dotfileLinkRewrite(rest []string, g *globalFlags) ([]string, bool) {
 	if len(pos) != 2 || slices.Contains(rest, "--to") {
 		return nil, false
 	}
-	ws, _, _, err := resolveWorkspacePaths(*g)
+	ws, _, err := resolveWorkspacePaths(*g)
 	if err != nil {
 		return nil, false
 	}

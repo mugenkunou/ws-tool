@@ -524,7 +524,8 @@ func runIgnoreEdit(configPath, megaignorePath string, currentRules ignore.UserRu
 	}
 	defer os.Remove(editPath)
 
-	argv := editor.Command(*editorFlag)
+	editCfg, _ := wsconfig.Load(configPath)
+	argv := editorFor(*editorFlag, editCfg)
 	cmdName := strings.Join(argv, " ")
 	if err := editor.Open(argv, editPath, os.Stdout); err != nil {
 		fmt.Fprintln(stderr, err.Error())

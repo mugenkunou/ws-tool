@@ -56,7 +56,8 @@ func runSecret(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 		return printCmdHelp(stdout, secretHelp)
 	}
 
-	workspacePath, configPath, manifestPath, err := requireWorkspaceInitialized(globals, stderr)
+	workspacePath, configPath, err := requireWorkspaceInitialized(globals, stderr)
+	manifestPath := configPath
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1

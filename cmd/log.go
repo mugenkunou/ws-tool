@@ -27,7 +27,7 @@ func runLog(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 		return printCmdHelp(stdout, logHelp)
 	}
 
-	resolvedWorkspace, configPath, _, err := requireWorkspaceInitialized(globals, stderr)
+	resolvedWorkspace, configPath, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -143,7 +143,7 @@ func runLog(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 		wslog.SetActivePID(logDir, scriptCmd.Process.Pid)
 
 		// Monitor session size and terminate if over limit.
-		maxSessionMB := cfg.Log.MaxSessionMB
+		maxSessionMB := cfg.Session.MaxSessionMB
 		if maxSessionMB <= 0 {
 			maxSessionMB = 100
 		}

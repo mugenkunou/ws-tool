@@ -53,7 +53,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		return printCmdHelp(stdout, dotfileHelp)
 	}
 
-	workspacePath, configPath, _, err := requireWorkspaceInitialized(globals, stderr)
+	workspacePath, configPath, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -1249,7 +1249,7 @@ func writeDotfileResult(globals globalFlags, command string, data any, stdout, s
 // dotfileGitAutoSync runs auto-commit/push if dotfile git is enabled.
 // Errors are non-fatal — they are printed as warnings, never block the parent command.
 func dotfileGitAutoSync(workspacePath, configPath, commitMessage string, globals globalFlags, stdout io.Writer) {
-	result, enabled := dotfile.AutoSync(workspacePath, configPath, "" /* compat */, commitMessage)
+	result, enabled := dotfile.AutoSync(workspacePath, configPath, commitMessage)
 	if !enabled {
 		return
 	}
