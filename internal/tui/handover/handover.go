@@ -7,11 +7,10 @@ package handover
 import (
 	"os"
 	"os/exec"
-	"path/filepath"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/mugenkunou/ws-tool/internal/editor"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
 )
 
@@ -58,22 +57,14 @@ func Pause(c *exec.Cmd) *exec.Cmd {
 	return exec.Command("sh", append([]string{"-c", script, "sh", c.Path}, c.Args[1:]...)...)
 }
 
-// terminalEditors need the terminal; anything else is assumed to be a GUI
-// program and is launched without suspending the TUI.
-var terminalEditors = map[string]bool{
-	"vi": true, "vim": true, "nvim": true, "nano": true, "emacs": true,
-	"micro": true, "hx": true, "helix": true, "kak": true, "pico": true, "ed": true,
-}
-
-// Editor opens path with editorCmd (which may include arguments, e.g.
-// "code -n"): terminal editors take over the terminal, GUI editors launch.
+// Editor opens path with the editor named by editorCmd (ws.json "editor"; it
+// may include arguments, e.g. "code -n"), else $VISUAL, $EDITOR, or vim
+// (spec §4.10). A terminal editor takes over the terminal; a GUI editor is
+// launched without suspending the TUI.
 func Editor(editorCmd, path string, tag any) tea.Cmd {
-	fields := strings.Fields(editorCmd)
-	if len(fields) == 0 {
-		fields = []string{"vi"}
-	}
-	c := exec.Command(fields[0], append(fields[1:], path)...)
-	if terminalEditors[filepath.Base(fields[0])] {
+	argv := editor.Command(editorCmd)
+	c := editor.Cmd(argv, path)
+	if editor.IsTerminal(argv) {
 		return Run(c, tag)
 	}
 	return Launch(c, tag)

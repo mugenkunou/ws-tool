@@ -64,7 +64,7 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 		fs := flag.NewFlagSet("ignore-check", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -80,7 +80,7 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 		level := fs.Int("L", 0, "max tree depth (like tree -L)")
 		pathFilter := fs.String("path", "", "start from a subpath (deprecated: use positional arg)")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -113,7 +113,7 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 		fs.Bool("expand-harbors", false, "alias for --expand-suppressed (deprecated)") // hidden compat alias
 		lf := registerListFlags(fs, "")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -153,7 +153,7 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 		fs.SetOutput(io.Discard)
 		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}

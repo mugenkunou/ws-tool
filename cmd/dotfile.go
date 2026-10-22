@@ -71,7 +71,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		classFlag := dotfileClassFlag(fs)
 		wholeDir := fs.Bool("dir", false, "")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -192,7 +192,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fs := flag.NewFlagSet("dotfile-rm", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -235,7 +235,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fs := flag.NewFlagSet("dotfile-sync", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -292,7 +292,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fs.SetOutput(io.Discard)
 		lf := registerListFlags(fs, "")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -306,7 +306,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fs := flag.NewFlagSet("dotfile-scan", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -330,7 +330,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fs.SetOutput(io.Discard)
 		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -378,7 +378,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fs := flag.NewFlagSet("dotfile-reset", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -422,7 +422,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			passEntry := fs.String("pass-entry", "", "optional pass entry for auth")
 			dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 			registerGlobalFlags(fs, &globals)
-			if err := fs.Parse(subArgs[1:]); err != nil {
+			if err := parseInterspersed(fs, subArgs[1:]); err != nil {
 				fmt.Fprintln(stderr, err.Error())
 				return 1
 			}
@@ -492,7 +492,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			message := fs.String("m", "", "commit message (default: auto)")
 			passEntry := fs.String("pass-entry", "", "optional pass entry for auth")
 			registerGlobalFlags(fs, &globals)
-			if err := fs.Parse(subArgs[1:]); err != nil {
+			if err := parseInterspersed(fs, subArgs[1:]); err != nil {
 				fmt.Fprintln(stderr, err.Error())
 				return 1
 			}
@@ -554,7 +554,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			fs.SetOutput(io.Discard)
 			count := fs.Int("n", 20, "number of commits to show")
 			registerGlobalFlags(fs, &globals)
-			if err := fs.Parse(subArgs[1:]); err != nil {
+			if err := parseInterspersed(fs, subArgs[1:]); err != nil {
 				fmt.Fprintln(stderr, err.Error())
 				return 1
 			}
@@ -587,7 +587,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			fs := flag.NewFlagSet("dotfile-git-status", flag.ContinueOnError)
 			fs.SetOutput(io.Discard)
 			registerGlobalFlags(fs, &globals)
-			if err := fs.Parse(subArgs[1:]); err != nil {
+			if err := parseInterspersed(fs, subArgs[1:]); err != nil {
 				fmt.Fprintln(stderr, err.Error())
 				return 1
 			}
@@ -671,7 +671,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			fs.SetOutput(io.Discard)
 			dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 			registerGlobalFlags(fs, &globals)
-			if err := fs.Parse(subArgs[1:]); err != nil {
+			if err := parseInterspersed(fs, subArgs[1:]); err != nil {
 				fmt.Fprintln(stderr, err.Error())
 				return 1
 			}
@@ -796,7 +796,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			fs.SetOutput(io.Discard)
 			dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 			registerGlobalFlags(fs, &globals)
-			if err := fs.Parse(subArgs[1:]); err != nil {
+			if err := parseInterspersed(fs, subArgs[1:]); err != nil {
 				fmt.Fprintln(stderr, err.Error())
 				return 1
 			}
@@ -849,7 +849,7 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fs := flag.NewFlagSet("dotfile-migrate", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -986,7 +986,7 @@ func runDotfileLink(args []string, globals globalFlags, stdin io.Reader, stdout,
 	classFlag := dotfileClassFlag(fs)
 	dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 	registerGlobalFlags(fs, &globals)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}

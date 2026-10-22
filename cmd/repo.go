@@ -157,7 +157,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		var filters repoFilterFlags
 		registerRepoFilterFlags(fs, &filters)
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -190,7 +190,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		registerRepoFilterFlags(fs, &filters)
 		lf := registerListFlags(fs, "")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -268,7 +268,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		var filters repoFilterFlags
 		registerRepoFilterFlags(fs, &filters)
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -299,7 +299,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		var filters repoFilterFlags
 		registerRepoFilterFlags(fs, &filters)
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -357,7 +357,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		var filters repoFilterFlags
 		registerRepoFilterFlags(fs, &filters)
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -551,7 +551,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		fs := flag.NewFlagSet("repo-add-root", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -644,7 +644,7 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		fs := flag.NewFlagSet("repo-ls-roots", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}

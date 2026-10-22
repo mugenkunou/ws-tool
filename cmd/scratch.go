@@ -5,10 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/mugenkunou/ws-tool/internal/editor"
 	"github.com/mugenkunou/ws-tool/internal/resource"
 	"github.com/mugenkunou/ws-tool/internal/scratch"
 	"github.com/mugenkunou/ws-tool/internal/style"
@@ -57,11 +57,11 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fs := flag.NewFlagSet("scratch-new", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		noOpen := fs.Bool("no-open", false, "do not open editor")
-		editor := fs.String("editor", cfg.Scratch.EditorCmd, "editor command")
+		editorFlag := fs.String("editor", "", "editor command")
 		noDateSuffix := fs.Bool("no-date", false, "disable auto date suffix")
 		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -115,8 +115,7 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 			nc := globals.noColor
 			fmt.Fprintf(out, "  %s\n", style.Mutedf(nc, "%s", res.Path))
 			if !*noOpen {
-				cmd := exec.Command(*editor, res.Path)
-				if err := cmd.Start(); err != nil {
+				if err := editor.Open(editor.Command(*editorFlag), res.Path, stdout); err != nil {
 					fmt.Fprintln(out, style.ResultWarning(nc, "Editor launch skipped: %v", err))
 				}
 			}
@@ -127,7 +126,7 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fs.SetOutput(io.Discard)
 		registerGlobalFlags(fs, &globals)
 		lf := registerListFlags(fs, "age")
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -145,7 +144,7 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fs.SetOutput(io.Discard)
 		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -216,7 +215,7 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fs.SetOutput(io.Discard)
 		autoTag := fs.Bool("auto", false, "suggest tags from file/content heuristics")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -395,7 +394,7 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fs.SetOutput(io.Discard)
 		maxResults := fs.Int("max", 0, "max results (0=unlimited)")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -471,10 +470,10 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 	case "open":
 		fs := flag.NewFlagSet("scratch-open", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
-		editor := fs.String("editor", cfg.Scratch.EditorCmd, "editor command")
+		editorFlag := fs.String("editor", "", "editor command")
 		printPath := fs.Bool("print-path", false, "print resolved path to stdout (TUI goes to stderr); useful for shell cd wrappers")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -541,31 +540,28 @@ func runScratch(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		}
 
 		if *printPath {
-			// Launch editor in the background, then print the resolved path to
-			// stdout so the calling shell function can cd to it.
-			cmd := exec.Command(*editor, matchPath)
-			if err := cmd.Start(); err != nil {
-				nc := globals.noColor
+			// Open the editor with its screen on stderr, then print the resolved
+			// path to stdout so the calling shell function can cd to it.
+			argv := editor.Command(*editorFlag)
+			nc := globals.noColor
+			if err := editor.Open(argv, matchPath, stderr); err != nil {
 				fmt.Fprintln(stderr, style.ResultWarning(nc, "Editor launch skipped: %v", err))
 			} else {
-				nc := globals.noColor
-				fmt.Fprintf(stderr, "%s\n", style.ResultSuccess(nc, "Opening   %s → %s", *editor, matchPath))
+				fmt.Fprintf(stderr, "%s\n", style.ResultSuccess(nc, "Opening   %s → %s", strings.Join(argv, " "), matchPath))
 			}
 			fmt.Fprintln(stdout, matchPath)
 			return 0
 		}
 
-		cmd := exec.Command(*editor, matchPath)
-		if err := cmd.Start(); err != nil {
-			out := textOut(globals, stdout)
-			nc := globals.noColor
+		argv := editor.Command(*editorFlag)
+		out := textOut(globals, stdout)
+		nc := globals.noColor
+		if err := editor.Open(argv, matchPath, stdout); err != nil {
 			fmt.Fprintln(out, style.ResultWarning(nc, "Editor launch skipped: %v", err))
 			fmt.Fprintln(out, matchPath)
 			return 0
 		}
-		out := textOut(globals, stdout)
-		nc := globals.noColor
-		fmt.Fprintf(out, "%s\n", style.ResultSuccess(nc, "Opening   %s → %s", *editor, matchPath))
+		fmt.Fprintf(out, "%s\n", style.ResultSuccess(nc, "Opening   %s → %s", strings.Join(argv, " "), matchPath))
 		return 0
 
 	default:

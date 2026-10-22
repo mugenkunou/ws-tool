@@ -27,7 +27,7 @@ func runTUI(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	registerGlobalFlags(fs, &globals)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}

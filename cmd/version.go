@@ -40,7 +40,7 @@ func runVersion(args []string, globals globalFlags, stdout, stderr io.Writer) in
 	short := fs.Bool("short", false, "print only semver")
 
 	registerGlobalFlags(fs, &globals)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
@@ -92,7 +92,7 @@ func runInit(args []string, globals globalFlags, _ io.Reader, stdout, stderr io.
 	dryRun := fs.Bool("dry-run", globals.dryRun, "preview actions")
 
 	registerGlobalFlags(fs, &globals)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}

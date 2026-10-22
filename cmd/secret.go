@@ -92,7 +92,7 @@ func runSecretScan(args []string, globals globalFlags, workspacePath, configPath
 	fs.Var(&skipDirFlags, "skip-dir", "")
 	lf := registerListFlags(fs, "")
 	registerGlobalFlags(fs, &globals)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
@@ -255,7 +255,7 @@ func runSecretStatus(args []string, globals globalFlags, stdout, stderr io.Write
 	fs := flag.NewFlagSet("secret-status", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	registerGlobalFlags(fs, &globals)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
@@ -360,7 +360,7 @@ func runSecretFix(args []string, globals globalFlags, workspacePath, configPath,
 	var skipDirFlags stringSliceFlag
 	fs.Var(&skipDirFlags, "skip-dir", "")
 	registerGlobalFlags(fs, &globals)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
@@ -729,7 +729,7 @@ func runSecretSetup(args []string, globals globalFlags, stdin io.Reader, stdout,
 	gitRemote := fs.String("git-remote", "", "")
 	dryRun := fs.Bool("dry-run", false, "")
 	registerGlobalFlags(fs, &globals)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
@@ -928,7 +928,7 @@ func runSecretGit(args []string, globals globalFlags, stdin io.Reader, stdout, s
 		fs.SetOutput(io.Discard)
 		count := fs.Int("n", 20, "number of commits to show")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(args[1:]); err != nil {
+		if err := parseInterspersed(fs, args[1:]); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -955,7 +955,7 @@ func runSecretGit(args []string, globals globalFlags, stdin io.Reader, stdout, s
 		fs.SetOutput(io.Discard)
 		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(args[1:]); err != nil {
+		if err := parseInterspersed(fs, args[1:]); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}

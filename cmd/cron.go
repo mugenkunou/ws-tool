@@ -71,7 +71,7 @@ func runCronAdd(args []string, globals globalFlags, stdin io.Reader, stdout, std
 	display := fs.String("display", "", "X11 DISPLAY for mega-sync")
 	dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 	registerGlobalFlags(fs, &globals)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
@@ -151,7 +151,7 @@ func runCronRm(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 	fs.SetOutput(io.Discard)
 	dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 	registerGlobalFlags(fs, &globals)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
@@ -211,7 +211,7 @@ func runCronLs(args []string, globals globalFlags, stdout, stderr io.Writer) int
 	fs.SetOutput(io.Discard)
 	lf := registerListFlags(fs, "")
 	registerGlobalFlags(fs, &globals)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
@@ -225,7 +225,7 @@ func runCronStatus(args []string, globals globalFlags, stdout, stderr io.Writer)
 	fs := flag.NewFlagSet("cron-status", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	registerGlobalFlags(fs, &globals)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
@@ -354,7 +354,7 @@ func runCronRun(args []string, globals globalFlags, stdout, stderr io.Writer) in
 	fs.SetOutput(io.Discard)
 	display := fs.String("display", "", "X11 DISPLAY for mega-sync")
 	registerGlobalFlags(fs, &globals)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
@@ -406,7 +406,7 @@ func runCronApply(args []string, globals globalFlags, stdin io.Reader, stdout, s
 	fs.SetOutput(io.Discard)
 	dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 	registerGlobalFlags(fs, &globals)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
@@ -482,7 +482,7 @@ func runCronLog(args []string, globals globalFlags, stdout, stderr io.Writer) in
 	fs.SetOutput(io.Discard)
 	lines := fs.Int("lines", 20, "number of log lines to show")
 	registerGlobalFlags(fs, &globals)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}

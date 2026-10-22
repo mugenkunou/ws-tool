@@ -83,3 +83,24 @@ func TestJSONCommandNames(t *testing.T) {
 		}
 	}
 }
+
+// TestFlagsMayFollowPositionals: a flag after a positional argument is parsed
+// (`ws dotfile add ~/.x --dir` used to fail because the standard flag package
+// stops at the first positional).
+func TestFlagsMayFollowPositionals(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workspace := initWorkspace(t)
+	dir := filepath.Join(home, ".config", "app")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.conf"), []byte("x=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	code := Execute([]string{"--workspace", workspace, "dotfile", "add", dir, "--dir", "--dry-run"}, strings.NewReader(""), &out, &errOut)
+	if code != 0 {
+		t.Fatalf("a flag after the positional should parse: exit %d stderr=%s", code, errOut.String())
+	}
+}

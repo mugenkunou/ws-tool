@@ -396,7 +396,7 @@ func runConfig(args []string, globals globalFlags, stdout, stderr io.Writer) int
 		fs := flag.NewFlagSet("config-defaults", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(args[1:]); err != nil {
+		if err := parseInterspersed(fs, args[1:]); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -424,7 +424,7 @@ func runConfig(args []string, globals globalFlags, stdout, stderr io.Writer) int
 	fs := flag.NewFlagSet("config-view", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	registerGlobalFlags(fs, &globals)
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := parseInterspersed(fs, args[1:]); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}

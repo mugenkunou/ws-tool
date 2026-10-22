@@ -51,7 +51,7 @@ func runLog(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 		tag := fs.String("tag", "", "session tag")
 		quietStart := fs.Bool("quiet-start", false, "quiet start")
 		noPrompt := fs.Bool("no-prompt", false, "disable prompt marker")
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -235,7 +235,7 @@ func runLog(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 		fs.SetOutput(io.Discard)
 		lf := registerListFlags(fs, "")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -251,7 +251,7 @@ func runLog(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 		registerGlobalFlags(fs, &globals)
 		olderThan := fs.String("older-than", "", "duration (e.g. 30d, 720h)")
 		all := fs.Bool("all", false, "prune all sessions")
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -310,7 +310,7 @@ func runLog(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 		fs := flag.NewFlagSet("log-rm", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}

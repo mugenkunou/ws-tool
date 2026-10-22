@@ -98,7 +98,7 @@ func runCredentialSetup(args []string, globals globalFlags, stdin io.Reader, std
 	fs.SetOutput(io.Discard)
 	dryRun := fs.Bool("dry-run", globals.dryRun, "")
 	registerGlobalFlags(fs, &globals)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
@@ -450,7 +450,7 @@ func runCredentialDisconnect(args []string, globals globalFlags, stdin io.Reader
 	fs.SetOutput(io.Discard)
 	dryRun := fs.Bool("dry-run", globals.dryRun, "")
 	registerGlobalFlags(fs, &globals)
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}

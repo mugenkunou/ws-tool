@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/mugenkunou/ws-tool/internal/editor"
 	"github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/repo"
 	"github.com/mugenkunou/ws-tool/internal/style"
@@ -33,7 +33,7 @@ func runIgnoreList(engine *ignore.Engine, workspacePath string, args []string, g
 	depth := fs.Int("depth", 1, "max depth (with --tree)")
 	pathFilter := fs.String("path", "", "restrict to subpath")
 	ruleFilter := fs.String("rule", "", "show only entries matching rule")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
@@ -503,8 +503,8 @@ func runIgnoreEdit(configPath, megaignorePath string, currentRules ignore.UserRu
 	fs := flag.NewFlagSet("ignore-edit", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	registerGlobalFlags(fs, &globals)
-	editor := fs.String("editor", "", "override editor command")
-	if err := fs.Parse(args); err != nil {
+	editorFlag := fs.String("editor", "", "override editor command")
+	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
@@ -524,21 +524,9 @@ func runIgnoreEdit(configPath, megaignorePath string, currentRules ignore.UserRu
 	}
 	defer os.Remove(editPath)
 
-	cmdName := strings.TrimSpace(*editor)
-	if cmdName == "" {
-		cmdName = strings.TrimSpace(os.Getenv("EDITOR"))
-	}
-	if cmdName == "" {
-		cmdName = strings.TrimSpace(os.Getenv("VISUAL"))
-	}
-	if cmdName == "" {
-		cmdName = "vi"
-	}
-	cmd := exec.Command(cmdName, editPath)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	argv := editor.Command(*editorFlag)
+	cmdName := strings.Join(argv, " ")
+	if err := editor.Open(argv, editPath, os.Stdout); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}

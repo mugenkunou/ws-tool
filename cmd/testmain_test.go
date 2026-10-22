@@ -11,6 +11,10 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// The editor resolves from $VISUAL and $EDITOR; the host's must not leak in.
+	_ = os.Unsetenv("VISUAL")
+	_ = os.Unsetenv("EDITOR")
+
 	shimDir, err := os.MkdirTemp("", "ws-tool-test-bin-")
 	if err == nil {
 		if createEditorShim(shimDir) == nil {
@@ -87,10 +91,13 @@ func createEditorShim(dir string) error {
 		return os.WriteFile(codePath, []byte(content), 0o644)
 	}
 
-	codePath := filepath.Join(dir, "code")
+	// Both the editors ws may start: vim is the default (spec §4.10), and code
+	// is what a user who set `editor` to it gets. Neither may open a real one.
 	content := "#!/bin/sh\nexit 0\n"
-	if err := os.WriteFile(codePath, []byte(content), 0o755); err != nil {
-		return err
+	for _, name := range []string{"code", "vim"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o755); err != nil {
+			return err
+		}
 	}
 	return nil
 }

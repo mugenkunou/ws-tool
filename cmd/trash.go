@@ -70,7 +70,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		noExplorer := fs.Bool("no-file-explorer", false, "skip file explorer delete configuration")
 		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -153,7 +153,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		fs.SetOutput(io.Discard)
 		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -195,7 +195,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		rootDir := fs.String("root-dir", cfgTrashRoot, "trash root directory")
 		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -278,7 +278,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		olderThan := fs.Int("older-than", 0, "delete items trashed more than this many days ago")
 		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -349,7 +349,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		rootDir := fs.String("root-dir", cfgTrashRoot, "trash root directory")
 		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -402,7 +402,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		rootDir := fs.String("root-dir", cfgTrashRoot, "trash root directory")
 		lf := registerListFlags(fs, "")
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -417,7 +417,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		fs := flag.NewFlagSet("trash-status", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
+		if err := parseInterspersed(fs, subArgs); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
