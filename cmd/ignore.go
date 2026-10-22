@@ -296,7 +296,7 @@ func runIgnoreFixInteractive(violations []ignore.Violation, configPath, megaigno
 				suppressed++
 				needsRegen = true
 			} else {
-				fmt.Fprintf(out, "  %s Suppress rule already exists\n", style.Mutedf(nc, ""))
+				fmt.Fprintf(out, "  %s Already suppressed: %s\n", style.Mutedf(nc, ""), style.Infof(nc, "%s", suppressAbs))
 				skipped++
 			}
 		case "v":

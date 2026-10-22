@@ -7,6 +7,7 @@
 package ignore
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -173,7 +174,11 @@ func check(e env.Env, input string) tea.Cmd {
 		case !res.Included:
 			return checkMsg{level: nav.LevelWarn, text: fmt.Sprintf("✘ IGNORED  %s — excluded by rule `%s`", abs, res.Rule)}
 		case res.SafeHarbor:
-			return checkMsg{level: nav.LevelSuccess, text: fmt.Sprintf("✔ SYNCED  %s — safe harbor `%s` overrides an exclude rule", abs, res.Rule)}
+			rule := res.OverriddenBy
+			if rule == "" {
+				rule = res.Rule
+			}
+			return checkMsg{level: nav.LevelSuccess, text: fmt.Sprintf("✔ SYNCED  %s — suppressed by `%s` (warning hidden, still syncing)", abs, rule)}
 		case res.Rule == "<default>":
 			return checkMsg{level: nav.LevelSuccess, text: fmt.Sprintf("✔ SYNCED  %s — no matching exclude rule", abs)}
 		default:
@@ -294,13 +299,18 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 
 // fix opens one checklist with each row's action from build; a row build
 // skips (ok false) is left out, and none at all notifies empty instead.
+// Actions sharing an ID (two rows in the same directory) collapse to one.
 func fix(title, empty string, build func(Model, wsignore.Violation) (plan.Action, bool)) func(Model, []wsignore.Violation) (Model, tea.Cmd) {
 	return func(m Model, rows []wsignore.Violation) (Model, tea.Cmd) {
 		var actions []plan.Action
+		seen := make(map[string]bool)
 		for _, v := range rows {
-			if a, ok := build(m, v); ok {
-				actions = append(actions, a)
+			a, ok := build(m, v)
+			if !ok || seen[a.ID] {
+				continue
 			}
+			seen[a.ID] = true
+			actions = append(actions, a)
 		}
 		if len(actions) == 0 {
 			return m, nav.Notify(nav.LevelInfo, empty)
@@ -440,8 +450,13 @@ func (m Model) harborAction(v wsignore.Violation) (plan.Action, bool) {
 		ID:          "harbor-" + dir,
 		Description: "Suppress warnings for " + style.AbsPath(e.Paths.Workspace, dir) + "/**",
 		Execute: func() error {
-			if _, err := wsconfig.AddIgnoreSafeHarbor(e.Paths.Config, pattern, ""); err != nil {
+			added, err := wsconfig.AddIgnoreSafeHarbor(e.Paths.Config, pattern, "")
+			if err != nil {
 				return err
+			}
+			if !added {
+				// Already suppressed — report it instead of passing silently.
+				return errors.New("already suppressed")
 			}
 			return regenerate(e)
 		},

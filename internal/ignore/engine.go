@@ -18,10 +18,18 @@ type Engine struct {
 	Rules []Rule
 }
 
+// EvalResult reports whether relPath syncs, and why. The final matching rule
+// wins (last-match-wins): an exclude rule blocks sync, and a later include
+// rule (safe harbor) can hand the path back. SafeHarbor is true when an
+// include override is the reason the path syncs — the path lives inside a
+// suppressed directory, whose violations `ws ignore scan` downgrades and the
+// TUI shows on its suppressed-warnings level. OverriddenBy is the harbor
+// rule that last matched.
 type EvalResult struct {
-	Included   bool   `json:"included"`
-	Rule       string `json:"rule"`
-	SafeHarbor bool   `json:"safe_harbor,omitempty"`
+	Included     bool   `json:"included"`
+	Rule         string `json:"rule"`
+	SafeHarbor   bool   `json:"safe_harbor,omitempty"`
+	OverriddenBy string `json:"overridden_by,omitempty"`
 }
 
 func LoadEngine(path string) (*Engine, error) {
@@ -59,21 +67,22 @@ func (e *Engine) Evaluate(relPath string, isDir bool) EvalResult {
 	}
 
 	result := EvalResult{Included: true, Rule: "<default>"}
-	wasExcluded := false
 	for _, rule := range e.Rules {
 		if matchRule(rule, normalized, isDir) {
-			if !rule.Include {
-				wasExcluded = true
+			if rule.Include {
+				// An include override won: the path is inside a safe harbor
+				// whether or not an earlier exclude matched it.
+				result.SafeHarbor = true
+				result.OverriddenBy = rule.Raw
 			}
 			result.Included = rule.Include
 			result.Rule = rule.Raw
 		}
 	}
-	// Safe harbor: path was excluded by an earlier rule but re-included by a
-	// later +: or +g: override — meaning last-match-wins gave it back.
-	if result.Included && wasExcluded {
-		result.SafeHarbor = true
-	}
+	// Suppressed = included by a safe-harbor include override, even when no
+	// exclude rule ever matched (a harbor dir keeps syncing everything in
+	// it by design). A path the excludes still own is not suppressed.
+	result.SafeHarbor = result.Included && result.SafeHarbor
 	return result
 }
 

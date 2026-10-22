@@ -646,7 +646,7 @@ The built-in template defines two suppress overrides:
 #   Result: EXCLUDED ✔
 ```
 
-**Interaction with violation scanning:** `ws ignore scan` detects violations inside suppress overrides but **downgrades their severity to INFO**. These items don't count as actionable violations: they don't trigger exit code 2, they don't appear in `ws ignore fix`, and they render in muted/dim styling. By default, suppressed items are collapsed to a single summary line:
+**Interaction with violation scanning:** `ws ignore scan` detects violations inside suppress overrides but **downgrades their severity to INFO**. A path is suppressed whenever a safe-harbor include override is the reason it syncs — even when no exclude rule ever matched it (a harbor directory keeps syncing everything in it by design, so its bloat/depth findings are acknowledged, not actionable). These items don't count as actionable violations: they don't trigger exit code 2, they don't appear in `ws ignore fix`, and they render in muted/dim styling. By default, suppressed items are collapsed to a single summary line:
 
 ```text
 Violations (3)
@@ -2748,7 +2748,7 @@ ws ignore check artifacts/datasets/node-metrics.csv
 ws ignore check archive/incident-2026.tar.gz
 
 ✔ SYNCED      /home/user/Workspace/archive/incident-2026.tar.gz
-  Reason: suppressed — Archive/** overrides a .megaignore rule
+  Reason: suppressed — `+g:archive/**` keeps this syncing
   File size: 230 MB
 ```
 

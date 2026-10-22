@@ -172,7 +172,11 @@ func runIgnoreCheckPath(engine *ignore.Engine, workspacePath, target string, glo
 	// Reason line
 	if res.Included {
 		if res.SafeHarbor {
-			fmt.Fprintf(out, "  Reason: suppressed — %s overrides a .megaignore rule\n", style.Mutedf(nc, "%s", res.Rule))
+			rule := res.OverriddenBy
+			if rule == "" {
+				rule = res.Rule
+			}
+			fmt.Fprintf(out, "  Reason: suppressed — %s keeps this syncing\n", style.Mutedf(nc, "`%s`", rule))
 		} else if res.Rule == "<default>" {
 			fmt.Fprintf(out, "  Reason: no matching .megaignore rule\n")
 		} else {
