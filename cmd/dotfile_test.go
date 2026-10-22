@@ -205,7 +205,7 @@ func TestDotfileHelpListsAddFlags(t *testing.T) {
 	if code := Execute([]string{"dotfile", "add", "--help"}, strings.NewReader(""), &out, &errOut); code != 0 {
 		t.Fatalf("help failed: code=%d stderr=%s", code, errOut.String())
 	}
-	for _, want := range []string{"--class", "--dir"} {
+	for _, want := range []string{"--to", "--dir"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("help is missing %s:\n%s", want, out.String())
 		}

@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -18,7 +19,7 @@ func TestCompleteTopLevel(t *testing.T) {
 		t.Fatal("expected top-level commands")
 	}
 	// Spot-check a few known commands.
-	for _, want := range []string{"ignore", "scratch", "log", "completions"} {
+	for _, want := range []string{"ignore", "scratch", "session", "completion", "repo", "pass"} {
 		if !contains(comps, want) {
 			t.Errorf("top-level completions missing %q", want)
 		}
@@ -78,7 +79,8 @@ func TestCompleteSubcommands(t *testing.T) {
 	}{
 		{
 			args:      []string{"scratch", ""},
-			wantSome:  []string{"new", "ls", "rm"},
+			wantSome:  []string{"new", "add", "ls", "rm"},
+			wantNone:  []string{"search", "grep"},
 			directive: compDirectiveNoFileComp,
 		},
 		{
@@ -89,42 +91,65 @@ func TestCompleteSubcommands(t *testing.T) {
 		},
 		{
 			args:      []string{"ignore", ""},
-			wantSome:  []string{"check", "scan", "fix", "ls", "tree", "edit"},
+			wantSome:  []string{"check", "lint", "add", "rm", "mute", "unmute", "ls", "tree", "edit"},
+			wantNone:  []string{"scan", "fix"},
 			directive: compDirectiveNoFileComp,
 		},
 		{
-			args:      []string{"log", ""},
-			wantSome:  []string{"start", "stop", "ls", "prune", "rm"},
+			args:      []string{"session", ""},
+			wantSome:  []string{"record", "stop", "ls", "show", "grep", "prune", "rm"},
+			wantNone:  []string{"start"},
 			directive: compDirectiveNoFileComp,
 		},
 		{
 			args:      []string{"dotfile", ""},
-			wantSome:  []string{"add", "rm", "ls", "scan", "fix", "git"},
+			wantSome:  []string{"add", "link", "unlink", "ls", "edit", "backup"},
+			wantNone:  []string{"rm", "scan", "fix", "sync", "reset", "git", "migrate"},
 			directive: compDirectiveNoFileComp,
 		},
 		{
-			args:      []string{"completions", ""},
-			wantSome:  []string{"bash", "zsh", "fish", "install", "uninstall"},
+			args:      []string{"dotfile", "backup", ""},
+			wantSome:  []string{"enable", "disable", "status", "push"},
+			directive: compDirectiveNoFileComp,
+		},
+		{
+			args:      []string{"completion", ""},
+			wantSome:  []string{"bash", "zsh", "fish", "enable", "disable"},
+			wantNone:  []string{"install", "uninstall"},
 			directive: compDirectiveNoFileComp,
 		},
 		{
 			args:      []string{"config", ""},
-			wantSome:  []string{"view", "defaults"},
+			wantSome:  []string{"show", "edit"},
+			wantNone:  []string{"view", "defaults"},
 			directive: compDirectiveNoFileComp,
 		},
 		{
 			args:      []string{"repo", ""},
-			wantSome:  []string{"ls", "scan", "fetch", "pull", "sync", "run"},
+			wantSome:  []string{"ls", "show", "fetch", "pull", "push", "save", "configure", "run", "root"},
+			wantNone:  []string{"scan", "sync", "add-root", "ls-roots"},
+			directive: compDirectiveNoFileComp,
+		},
+		{
+			args:      []string{"repo", "root", ""},
+			wantSome:  []string{"add", "ls", "rm"},
 			directive: compDirectiveNoFileComp,
 		},
 		{
 			args:      []string{"secret", ""},
-			wantSome:  []string{"scan", "fix"},
+			wantSome:  []string{"ls", "show", "allow", "mute", "unmute", "store"},
+			wantNone:  []string{"scan", "fix", "setup"},
 			directive: compDirectiveNoFileComp,
 		},
 		{
 			args:      []string{"trash", ""},
-			wantSome:  []string{"enable", "empty", "status"},
+			wantSome:  []string{"enable", "empty", "status", "restore", "prune"},
+			wantNone:  []string{"setup", "purge"},
+			directive: compDirectiveNoFileComp,
+		},
+		{
+			args:      []string{"help", "repo", ""},
+			wantSome:  []string{"ls", "root"},
 			directive: compDirectiveNoFileComp,
 		},
 	}
@@ -162,16 +187,20 @@ func TestCompleteCommandFlags(t *testing.T) {
 			wantSome: []string{"--no-open", "--editor", "--dry-run"},
 		},
 		{
-			args:     []string{"log", "start", "--"},
-			wantSome: []string{"--tag", "--quiet-start"},
+			args:     []string{"session", "record", "--"},
+			wantSome: []string{"--no-prompt", "--dry-run"},
 		},
 		{
-			args:     []string{"ignore", "scan", "--"},
-			wantSome: []string{"--expand-harbors"},
+			args:     []string{"ignore", "ls", "--"},
+			wantSome: []string{"--muted", "--filter", "--sort", "--wide"},
 		},
 		{
-			args:     []string{"trash", "empty", "--"},
-			wantSome: []string{"--root-dir", "--dry-run"},
+			args:     []string{"trash", "prune", "--"},
+			wantSome: []string{"--older-than", "--dry-run"},
+		},
+		{
+			args:     []string{"repo", "pull", "--"},
+			wantSome: []string{"--rebase", "--merge", "--dirty", "--path"},
 		},
 	}
 
@@ -217,13 +246,13 @@ func TestCompleteDotfileAdd(t *testing.T) {
 	}
 }
 
-func TestCompleteDotfileGitSubSub(t *testing.T) {
-	comps, dir := resolveCompletions([]string{"dotfile", "git", ""}, globalFlags{})
+func TestCompleteDotfileBackupVerbs(t *testing.T) {
+	comps, dir := resolveCompletions([]string{"dotfile", "backup", ""}, globalFlags{})
 	if dir != compDirectiveNoFileComp {
 		t.Fatalf("expected NoFileComp, got %d", dir)
 	}
-	if !contains(comps, "setup") || !contains(comps, "status") {
-		t.Fatalf("expected git sub-subcommands, got %v", comps)
+	if !contains(comps, "enable") || !contains(comps, "status") {
+		t.Fatalf("expected backup verbs, got %v", comps)
 	}
 }
 
@@ -238,70 +267,74 @@ func TestCompleteSearchRemoved(t *testing.T) {
 	}
 }
 
-// ── Dynamic resource completion with temp workspace ────────────────
+// ── Dynamic resource completion ────────────────────────────────────
 
-func TestCompleteScratchDelete(t *testing.T) {
-	// Create a temp dir simulating the scratch directory with a few scratch entries.
-	tmp := t.TempDir()
-	for _, name := range []string{"2024-12-01_notes", "2024-12-02_draft", "2024-12-03_ideas"} {
-		os.MkdirAll(filepath.Join(tmp, name), 0o755)
-	}
-
-	ctx := completionCtx{
-		scratchIDs: listDirNames(tmp),
-	}
-	comps, dir := completeScratch("rm", nil, "", ctx)
+func TestCompleteScratchNames(t *testing.T) {
+	ctx := completionCtx{scratchIDs: []string{"2024-12-01_notes", "2024-12-02_draft", "2024-12-03_ideas"}}
+	comps, dir := scratchNames(nil, "", ctx)
 	if dir != compDirectiveNoFileComp {
 		t.Fatalf("expected NoFileComp, got %d", dir)
 	}
 	if len(comps) != 3 {
 		t.Fatalf("expected 3 scratch completions, got %v", comps)
 	}
-}
-
-func TestCompleteScratchDeletePrefix(t *testing.T) {
-	ctx := completionCtx{
-		scratchIDs: []string{"2024-12-01_notes", "2024-12-02_draft", "2025-01-01_new"},
-	}
-	comps, _ := completeScratch("rm", nil, "2024", ctx)
+	comps, _ = scratchNames([]string{"2024-12-01_notes"}, "2024", ctx)
 	if len(comps) != 2 {
-		t.Fatalf("expected 2 completions with prefix '2024', got %v", comps)
+		t.Fatalf("expected the 2 names not yet typed, got %v", comps)
 	}
 }
 
-func TestCompleteLogRm(t *testing.T) {
-	ctx := completionCtx{
-		logTags: []string{"work", "personal", "project-x"},
+func TestCompleteScratchTagOnlyName(t *testing.T) {
+	ctx := completionCtx{scratchIDs: []string{"dns", "proxy"}}
+	if comps, _ := scratchFirst(nil, "", ctx); len(comps) != 2 {
+		t.Fatalf("expected both names for the first argument, got %v", comps)
 	}
-	comps, dir := completeLog("rm", nil, "", ctx)
-	if dir != compDirectiveNoFileComp {
-		t.Fatalf("expected NoFileComp, got %d", dir)
-	}
-	if len(comps) != 3 {
-		t.Fatalf("expected 3 log tag completions, got %v", comps)
+	if comps, _ := scratchFirst([]string{"dns"}, "", ctx); len(comps) != 0 {
+		t.Fatalf("tags are free text; expected none, got %v", comps)
 	}
 }
 
-func TestCompleteLogRmPrefix(t *testing.T) {
-	ctx := completionCtx{
-		logTags: []string{"work", "personal", "project-x"},
+func TestCompleteSessionTags(t *testing.T) {
+	ctx := completionCtx{logTags: []string{"work", "personal", "project-x"}}
+	comps, dir := sessionTags(nil, "", ctx)
+	if dir != compDirectiveNoFileComp || len(comps) != 3 {
+		t.Fatalf("expected 3 tags and NoFileComp, got %v %d", comps, dir)
 	}
-	comps, _ := completeLog("rm", nil, "p", ctx)
-	if len(comps) != 2 {
+	if comps, _ := sessionTags(nil, "p", ctx); len(comps) != 2 {
 		t.Fatalf("expected personal and project-x, got %v", comps)
 	}
 }
 
-func TestCompleteDotfileRm(t *testing.T) {
-	ctx := completionCtx{
-		dotfiles: []string{"vimrc", "/home/user/.vimrc", "bashrc", "/home/user/.bashrc"},
+func TestCompleteDotfileTargets(t *testing.T) {
+	ctx := completionCtx{dotfiles: []string{"/home/user/.vimrc", "/home/user/.bashrc"}}
+	comps, dir := dotfileTargets(nil, "", ctx)
+	if dir != compDirectiveNoFileComp || len(comps) != 2 {
+		t.Fatalf("expected 2 system paths, got %v %d", comps, dir)
 	}
-	comps, dir := completeDotfile("rm", nil, "", ctx)
-	if dir != compDirectiveNoFileComp {
-		t.Fatalf("expected NoFileComp, got %d", dir)
+}
+
+func TestCompleteTrashAndCronTargets(t *testing.T) {
+	ctx := completionCtx{trashItems: []string{"old-notes.md", "build"}}
+	if comps, _ := trashTargets(nil, "o", ctx); !slices.Equal(comps, []string{"old-notes.md"}) {
+		t.Fatalf("trash items: %v", comps)
 	}
-	if len(comps) != 4 {
-		t.Fatalf("expected 4 dotfile completions, got %v", comps)
+	comps, _ := cronTargets(nil, "", ctx)
+	for _, retired := range []string{"dotfile-sync", "log-prune", "secret-scan", "ignore-scan", "repo-sync"} {
+		if contains(comps, retired) {
+			t.Errorf("cron completion offers the old name %q", retired)
+		}
+	}
+	for _, job := range []string{"dotfile-backup", "mega-sync", "pass-backup", "session-prune", "sync", "maintenance"} {
+		if !contains(comps, job) {
+			t.Errorf("cron completion lacks %q", job)
+		}
+	}
+}
+
+func TestCompleteShellFlagValue(t *testing.T) {
+	comps, _ := resolveCompletions([]string{"completion", "enable", "--shell", ""}, globalFlags{})
+	if !slices.Equal(comps, []string{"bash", "zsh", "fish"}) {
+		t.Fatalf("--shell values: %v", comps)
 	}
 }
 
@@ -454,8 +487,8 @@ func TestIsStringFlag(t *testing.T) {
 	if !isStringFlag("--workspace") {
 		t.Fatal("--workspace should be a string flag")
 	}
-	if !isStringFlag("--tag") {
-		t.Fatal("--tag should be a string flag")
+	if !isStringFlag("--older-than") {
+		t.Fatal("--older-than should be a string flag")
 	}
 	if isStringFlag("--quiet") {
 		t.Fatal("--quiet should not be a string flag")
@@ -504,7 +537,7 @@ func TestRunCompleteViaExecute(t *testing.T) {
 	}
 
 	output := out.String()
-	if !strings.Contains(output, "check") || !strings.Contains(output, "scan") {
+	if !strings.Contains(output, "check") || !strings.Contains(output, "lint") {
 		t.Fatalf("expected ignore subcommands, got: %q", output)
 	}
 }
@@ -538,13 +571,6 @@ func TestFlagValueCompletionWorkspaceShort(t *testing.T) {
 	_, dir := resolveCompletions([]string{"-w", ""}, globalFlags{})
 	if dir != compDirectiveFilterDirs {
 		t.Fatalf("-w <TAB>: expected FilterDirs, got %d", dir)
-	}
-}
-
-func TestFlagValueCompletionManifest(t *testing.T) {
-	_, dir := resolveCompletions([]string{"--manifest", ""}, globalFlags{})
-	if dir != compDirectiveDefault {
-		t.Fatalf("--manifest <TAB>: expected Default directive, got %d", dir)
 	}
 }
 

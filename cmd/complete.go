@@ -5,9 +5,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mugenkunou/ws-tool/internal/repo"
+	"github.com/mugenkunou/ws-tool/internal/trash"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
@@ -20,50 +22,69 @@ const (
 	compDirectiveFilterDirs = 16 // only complete directories
 )
 
-// topLevelCommands is the authoritative list used by both __complete
-// and the generated shell scripts. Keep alphabetised.
-var topLevelCommands = []string{
-	"completions",
-	"config",
-	"cron",
-	"dotfile",
-	"git-credential-helper",
-	"help",
-	"ignore",
-	"init",
-	"log",
-	"repo",
-	"reset",
-	"restore",
-	"scratch",
-	"secret",
-	"trash",
-	"tui",
-	"version",
-}
+// topLevelCommands is the list used by both __complete and the generated shell
+// scripts. It is derived from the command table, so it holds exactly the
+// commands help lists and never a hidden alias (dev.md §12.6).
+var topLevelCommands = func() []string {
+	out := nextWords(nil)
+	slices.Sort(out)
+	return out
+}()
 
-// completer describes completion behavior for one top-level command.
-type completer struct {
-	subcommands []string
-	// resolve provides dynamic completions after the subcommand position.
-	// sub is the resolved subcommand (empty if none yet), args are the
-	// positional arguments already present, toComplete is the current word.
-	resolve func(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int)
-}
+// resolver provides dynamic completions for one command's positional
+// arguments. args are the positional words already present, toComplete is the
+// current word.
+type resolver func(args []string, toComplete string, ctx completionCtx) ([]string, int)
 
-// completers is the data-driven dispatch table for all commands.
-var completers = map[string]completer{
-	"completions":           {subcommands: []string{"bash", "zsh", "fish", "install", "uninstall"}},
-	"config":                {subcommands: []string{"view", "defaults"}},
-	"cron":                  {subcommands: []string{"add", "rm", "remove", "run", "apply", "ls", "list", "status", "log"}, resolve: completeCron},
-	"dotfile":               {subcommands: []string{"add", "link", "rm", "ls", "scan", "fix", "sync", "reset", "migrate", "git"}, resolve: completeDotfile},
-	"git-credential-helper": {subcommands: []string{"setup", "status", "disconnect"}},
-	"ignore":                {subcommands: []string{"check", "scan", "fix", "ls", "tree", "edit"}, resolve: completeIgnore},
-	"log":                   {subcommands: []string{"start", "stop", "ls", "prune", "rm"}, resolve: completeLog},
-	"repo":                  {subcommands: []string{"ls", "scan", "fetch", "pull", "sync", "run", "add-root", "ls-roots"}, resolve: completeRepo},
-	"scratch":               {subcommands: []string{"new", "open", "ls", "tag", "search", "rm"}, resolve: completeScratch},
-	"secret":                {subcommands: []string{"scan", "fix", "setup", "status", "git"}, resolve: completeSecret},
-	"trash":                 {subcommands: []string{"enable", "setup", "disable", "ls", "empty", "purge", "rm", "status"}},
+// resolvers maps a command ("repo root rm") to the resolver of its targets.
+// Commands not listed here complete no positional argument.
+var resolvers = map[string]resolver{
+	"repo ls":        repoTargets,
+	"repo show":      repoTargets,
+	"repo fetch":     repoTargets,
+	"repo pull":      repoTargets,
+	"repo push":      repoTargets,
+	"repo save":      repoTargets,
+	"repo configure": repoTargets,
+	"repo run":       repoTargets,
+	"repo root add":  func([]string, string, completionCtx) ([]string, int) { return nil, compDirectiveFilterDirs },
+	"repo root rm":   rootTargets,
+
+	"dotfile add":    fileTargets,
+	"dotfile link":   dotfileTargets,
+	"dotfile unlink": dotfileTargets,
+	"dotfile edit":   dotfileTargets,
+
+	"scratch add":  fileTargets,
+	"scratch new":  scratchNames,
+	"scratch open": scratchNames,
+	"scratch tag":  scratchFirst,
+	"scratch rm":   scratchNames,
+
+	"session show": sessionTags,
+	"session rm":   sessionTags,
+
+	"ignore lint":   fileTargets,
+	"ignore add":    fileTargets,
+	"ignore rm":     fileTargets,
+	"ignore mute":   fileTargets,
+	"ignore unmute": fileTargets,
+	"ignore check":  fileTargets,
+	"ignore tree":   dirTargets,
+
+	"secret show":   fileTargets,
+	"secret allow":  fileTargets,
+	"secret store":  fileTargets,
+	"secret mute":   dirTargets,
+	"secret unmute": dirTargets,
+
+	"cron add": cronTargets,
+	"cron rm":  cronTargets,
+	"cron run": cronTargets,
+	"cron log": cronTargets,
+
+	"trash restore": trashTargets,
+	"trash rm":      trashTargets,
 }
 
 // completionCtx holds best-effort workspace state loaded once per
@@ -72,10 +93,12 @@ type completionCtx struct {
 	workspace  string
 	scratchDir string
 	logDir     string
-	dotfiles   []string // dotfile names from manifest
+	dotfiles   []string // dotfile system paths
 	logTags    []string // session tag directory names
 	scratchIDs []string // scratch directory names
-	repoPaths  []string // discovered repo relative paths
+	repoPaths  []string // discovered repo paths (absolute)
+	repoRoots  []string // discovery roots (absolute)
+	trashItems []string // names of trashed items
 }
 
 // globalFlagCompletions is the static list offered when the current word
@@ -83,7 +106,6 @@ type completionCtx struct {
 var globalFlagCompletions = []string{
 	"--workspace",
 	"--config",
-	"--manifest",
 	"--quiet",
 	"--verbose",
 	"--json",
@@ -124,7 +146,7 @@ func flagValueDirective(flag string) (bool, int) {
 	switch name {
 	case "workspace", "w":
 		return true, compDirectiveFilterDirs
-	case "config", "c", "manifest":
+	case "config", "c":
 		return true, compDirectiveDefault
 	}
 	if isStringFlag(flag) {
@@ -140,6 +162,9 @@ func resolveCompletions(args []string, globals globalFlags) ([]string, int) {
 		prev := args[len(args)-2]
 		if strings.HasPrefix(prev, "-") && !strings.Contains(prev, "=") {
 			if ok, dir := flagValueDirective(prev); ok {
+				if strings.TrimLeft(prev, "-") == "shell" {
+					return filterPrefix([]string{"bash", "zsh", "fish"}, args[len(args)-1]), compDirectiveNoFileComp
+				}
 				return nil, dir
 			}
 		}
@@ -148,7 +173,7 @@ func resolveCompletions(args []string, globals globalFlags) ([]string, int) {
 	// Strip consumed flags from the word list so positional resolution works.
 	cleaned, toComplete := splitArgsForCompletion(args)
 
-	// No command word yet — complete top-level commands.
+	// No command word yet: complete the nouns and workspace commands.
 	if len(cleaned) == 0 {
 		if strings.HasPrefix(toComplete, "-") {
 			return filterPrefix(globalFlagCompletions, toComplete), compDirectiveNoFileComp
@@ -156,313 +181,131 @@ func resolveCompletions(args []string, globals globalFlags) ([]string, int) {
 		return filterPrefix(topLevelCommands, toComplete), compDirectiveNoFileComp
 	}
 
-	command := cleaned[0]
-	rest := cleaned[1:]
-
-	comp, known := completers[command]
-	if !known {
-		// Unknown command — nothing to suggest.
-		return nil, compDirectiveNoFileComp
+	// `ws help [noun [verb…]]` completes the command words themselves.
+	if cleaned[0] == "help" {
+		if strings.HasPrefix(toComplete, "-") {
+			return filterPrefix(globalFlagCompletions, toComplete), compDirectiveNoFileComp
+		}
+		return filterPrefix(nextWords(cleaned[1:]), toComplete), compDirectiveNoFileComp
 	}
 
-	// Flag completion at any depth.
+	cmd, positional, ok := matchCommand(cleaned)
+	if !ok {
+		// A noun (or sub-noun) without its verb yet: offer the verbs.
+		if len(nextWords(cleaned)) == 0 {
+			return nil, compDirectiveNoFileComp // unknown command
+		}
+		if strings.HasPrefix(toComplete, "-") {
+			return filterPrefix(globalFlagCompletions, toComplete), compDirectiveNoFileComp
+		}
+		return filterPrefix(nextWords(cleaned), toComplete), compDirectiveNoFileComp
+	}
+
+	// Flag completion.
 	if strings.HasPrefix(toComplete, "-") {
-		flagComps := commandFlags(command, rest)
+		flagComps := commandFlags(cmd)
 		flagComps = append(flagComps, globalFlagCompletions...)
 		return filterPrefix(dedupe(flagComps), toComplete), compDirectiveNoFileComp
 	}
 
-	// Subcommand position — first positional after the command.
-	if len(rest) == 0 && len(comp.subcommands) > 0 {
-		return filterPrefix(comp.subcommands, toComplete), compDirectiveNoFileComp
-	}
-
-	// Determine resolved subcommand and remaining positional args.
-	sub := ""
-	positional := rest
-	if len(rest) > 0 && len(comp.subcommands) > 0 && contains(comp.subcommands, rest[0]) {
-		sub = rest[0]
-		positional = rest[1:]
-	}
-
-	if comp.resolve != nil {
+	// A sub-noun's own verbs (`repo root` and then a verb) are handled above;
+	// here the command is complete and only its targets remain.
+	if res, ok := resolvers[cmd.name()]; ok {
 		ctx := loadCompletionCtx(globals)
-		return comp.resolve(sub, positional, toComplete, ctx)
+		return res(positional, toComplete, ctx)
 	}
-
 	return nil, compDirectiveNoFileComp
 }
 
 // ── Dynamic resolvers ──────────────────────────────────────────────
 
-func completeIgnore(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
-	switch sub {
-	case "check":
-		// File path completion — return default directive to let the shell
-		// perform its native file completion.
-		return nil, compDirectiveDefault
-	case "edit":
-		// Could complete --editor but that's a flag; positional needs nothing.
-		return nil, compDirectiveNoFileComp
-	default:
-		return nil, compDirectiveNoFileComp
+// notGiven drops the candidates the user already typed.
+func notGiven(candidates, given []string) []string {
+	var out []string
+	for _, c := range candidates {
+		if !slices.Contains(given, c) {
+			out = append(out, c)
+		}
 	}
+	return out
 }
 
-func completeDotfile(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
-	switch sub {
-	case "add":
-		// System file path — let the shell do native file completion.
-		return nil, compDirectiveDefault
-	case "rm":
-		// Complete from registered dotfile names or system paths.
-		if len(args) == 0 {
-			return filterPrefix(ctx.dotfiles, toComplete), compDirectiveNoFileComp
-		}
-		return nil, compDirectiveNoFileComp
-	case "git":
-		// Sub-subcommands.
-		if len(args) == 0 {
-			return filterPrefix([]string{"remote", "push", "log", "status", "setup", "disconnect"}, toComplete), compDirectiveNoFileComp
-		}
-		return nil, compDirectiveNoFileComp
-	default:
-		return nil, compDirectiveNoFileComp
-	}
+func repoTargets(args []string, toComplete string, ctx completionCtx) ([]string, int) {
+	return filterPrefix(notGiven(ctx.repoPaths, args), toComplete), compDirectiveNoFileComp
 }
 
-func completeLog(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
-	switch sub {
-	case "rm", "prune":
-		if len(args) == 0 {
-			return filterPrefix(ctx.logTags, toComplete), compDirectiveNoFileComp
-		}
-		return nil, compDirectiveNoFileComp
-	case "search":
-		// free-form query — no completions, but no file fallback either.
-		return nil, compDirectiveNoFileComp
-	default:
-		return nil, compDirectiveNoFileComp
-	}
+func rootTargets(args []string, toComplete string, ctx completionCtx) ([]string, int) {
+	return filterPrefix(notGiven(ctx.repoRoots, args), toComplete), compDirectiveNoFileComp
 }
 
-func completeRepo(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
-	switch sub {
-	case "ls", "scan", "fetch", "pull", "sync":
-		// Complete repo paths as positional argument for targeting.
-		if len(args) == 0 {
-			return filterPrefix(ctx.repoPaths, toComplete), compDirectiveNoFileComp
-		}
-		return nil, compDirectiveNoFileComp
-	case "run":
-		// 'run' uses positional args for the command to execute, not repo names.
-		return nil, compDirectiveNoFileComp
-	default:
-		return nil, compDirectiveNoFileComp
-	}
+// fileTargets lets the shell complete file names.
+func fileTargets([]string, string, completionCtx) ([]string, int) { return nil, compDirectiveDefault }
+
+// dirTargets lets the shell complete directory names.
+func dirTargets([]string, string, completionCtx) ([]string, int) {
+	return nil, compDirectiveFilterDirs
 }
 
-func completeScratch(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
-	switch sub {
-	case "rm", "tag", "open":
-		if len(args) == 0 {
-			return filterPrefix(ctx.scratchIDs, toComplete), compDirectiveNoFileComp
-		}
-		return nil, compDirectiveNoFileComp
-	case "new":
-		// Free-form name — show existing scratch names as context hints,
-		// but don't suppress file completion (user may want to skip).
+func dotfileTargets(args []string, toComplete string, ctx completionCtx) ([]string, int) {
+	return filterPrefix(notGiven(ctx.dotfiles, args), toComplete), compDirectiveNoFileComp
+}
+
+func scratchNames(args []string, toComplete string, ctx completionCtx) ([]string, int) {
+	return filterPrefix(notGiven(ctx.scratchIDs, args), toComplete), compDirectiveNoFileComp
+}
+
+// scratchFirst completes only the name of `scratch tag <name> [tag…]`.
+func scratchFirst(args []string, toComplete string, ctx completionCtx) ([]string, int) {
+	if len(args) == 0 {
 		return filterPrefix(ctx.scratchIDs, toComplete), compDirectiveNoFileComp
-	case "search":
-		return filterPrefix(ctx.scratchIDs, toComplete), compDirectiveNoFileComp
-	case "ls":
-		return nil, compDirectiveNoFileComp
-	default:
-		return nil, compDirectiveNoFileComp
 	}
+	return nil, compDirectiveNoFileComp
 }
 
-func completeSecret(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
-	switch sub {
-	case "git":
-		if len(args) == 0 {
-			return filterPrefix([]string{"push", "log", "remote", "status"}, toComplete), compDirectiveNoFileComp
-		}
-		return nil, compDirectiveNoFileComp
-	default:
-		return nil, compDirectiveNoFileComp
-	}
+func sessionTags(args []string, toComplete string, ctx completionCtx) ([]string, int) {
+	return filterPrefix(notGiven(ctx.logTags, args), toComplete), compDirectiveNoFileComp
 }
 
-func completeCron(sub string, args []string, toComplete string, ctx completionCtx) ([]string, int) {
-	switch sub {
-	case "add", "rm", "remove", "status", "log":
-		// Complete job names and presets as the first positional argument.
-		if len(args) == 0 {
-			var names []string
-			for _, name := range cronJobNames() {
-				if strings.HasPrefix(name, toComplete) {
-					names = append(names, name)
-				}
-			}
-			return names, compDirectiveNoFileComp
-		}
-		return nil, compDirectiveNoFileComp
-	default:
-		return nil, compDirectiveNoFileComp
-	}
+func trashTargets(args []string, toComplete string, ctx completionCtx) ([]string, int) {
+	return filterPrefix(notGiven(ctx.trashItems, args), toComplete), compDirectiveNoFileComp
 }
 
-// cronJobNames returns all built-in job names and preset names for completion.
+// cronTargets completes job and preset names; cron run takes jobs only.
+func cronTargets(args []string, toComplete string, ctx completionCtx) ([]string, int) {
+	return filterPrefix(notGiven(cronJobNames(), args), toComplete), compDirectiveNoFileComp
+}
+
+// cronJobNames returns the built-in job and preset names (never the retired
+// or renamed ones, which are hidden aliases).
 func cronJobNames() []string {
 	return []string{
-		"dotfile-sync",
-		"ignore-scan",
-		"log-prune",
+		"dotfile-backup",
 		"maintenance",
 		"mega-sync",
-		"repo-sync",
-		"secret-scan",
+		"pass-backup",
+		"session-prune",
 		"sync",
 	}
 }
 
 // ── Flag-value completions ─────────────────────────────────────────
 
-// commandFlags returns command- and subcommand-specific flag names.
-func commandFlags(command string, rest []string) []string {
-	sub := ""
-	if len(rest) > 0 {
-		sub = rest[0]
+// commandFlags returns the flag names a command documents. Completion reads
+// the same table as help, so a flag is offered exactly when help lists it.
+func commandFlags(c command) []string {
+	var out []string
+	for _, f := range c.Flags {
+		out = append(out, f.Name)
 	}
-
-	// Common write-command flags.
-	dryRun := "--dry-run"
-
-	switch command {
-	case "version":
-		return []string{"--short"}
-	case "cron":
-		switch sub {
-		case "add":
-			return []string{"--display", dryRun}
-		case "rm", "remove":
-			return []string{dryRun}
-		case "log":
-			return []string{"--lines"}
-		}
-	case "scratch":
-		switch sub {
-		case "new":
-			return []string{"--no-open", "--editor", "--no-date", "--dry-run"}
-		case "open":
-			return []string{"--editor"}
-		case "ls":
-			return []string{"--sort"}
-		case "rm":
-			return []string{dryRun}
-		}
-	case "log":
-		switch sub {
-		case "start":
-			return []string{"--tag", "--quiet-start", "--no-prompt"}
-		case "search":
-			return []string{"--tag", "--since"}
-		case "show":
-			return []string{"--commands-only", "--output-only", "--merged"}
-		case "prune":
-			return []string{"--older-than", "--all"}
-		}
-	case "ignore":
-		switch sub {
-		case "scan":
-			return []string{"--expand-suppressed", "--expand-harbors"}
-		case "fix":
-			return []string{dryRun}
-		case "ls":
-			return []string{"--path", "--rule"}
-		case "tree":
-			return []string{"--path", "--depth"}
-		case "edit":
-			return []string{"--editor"}
-		}
-	case "dotfile":
-		switch sub {
-		case "add":
-			return []string{dryRun}
-		case "rm":
-			return []string{dryRun}
-		case "fix":
-			return []string{dryRun}
-		}
-		if sub == "git" {
-			// rest[0] is "git", check for sub-sub in rest[1:]
-			if len(rest) > 1 {
-				switch rest[1] {
-				case "remote":
-					return []string{"--pass-entry", dryRun}
-				case "setup", "disconnect":
-					return []string{dryRun}
-				case "log":
-					return []string{"-n"}
-				case "push":
-					return []string{"-m", "--pass-entry"}
-				}
-			}
-		}
-	case "secret":
-		if sub == "fix" {
-			return []string{"--secret-mode", "--skip-dir", dryRun}
-		}
-		if sub == "scan" {
-			return []string{"--pass", "--skip-dir"}
-		}
-		if sub == "git" {
-			if len(rest) > 1 {
-				switch rest[1] {
-				case "remote":
-					return []string{dryRun}
-				case "log":
-					return []string{"-n"}
-				}
-			}
-		}
-	case "git-credential-helper":
-		if sub == "setup" || sub == "disconnect" {
-			return []string{dryRun}
-		}
-	case "trash":
-		if sub == "enable" || sub == "setup" {
-			return []string{"--root-dir", "--no-shell-rm", "--no-vscode", "--no-file-explorer", dryRun}
-		}
-		if sub == "empty" {
-			return []string{"--root-dir", dryRun}
-		}
-		if sub == "purge" {
-			return []string{"--older-than", "--root-dir", dryRun}
-		}
-	case "completions":
-		if sub == "install" || sub == "uninstall" {
-			return []string{"--shell", dryRun}
-		}
-	case "repo":
-		filterFlags := []string{"--path", "--dirty", "--ahead", "--behind", "--detached"}
-		switch sub {
-		case "ls":
-			return filterFlags
-		case "scan":
-			return append([]string{"--no-fetch", "--check"}, filterFlags...)
-		case "fetch":
-			return filterFlags
-		case "pull":
-			return append([]string{"--rebase", dryRun}, filterFlags...)
-		case "sync":
-			return append([]string{"--rebase", dryRun}, filterFlags...)
-		case "run":
-			return append([]string{dryRun}, filterFlags...)
+	if c.Fields != nil {
+		for _, f := range listFlagDocs {
+			out = append(out, f.Name)
 		}
 	}
-	return nil
+	if !c.RO {
+		out = append(out, "--dry-run")
+	}
+	return out
 }
 
 // ── Context loader ─────────────────────────────────────────────────
@@ -500,7 +343,27 @@ func loadCompletionCtx(globals globalFlags) completionCtx {
 		}
 	}
 
-	// Log session tags: directory names under data/ws-log/.
+	// Discovery roots, as `repo root ls` prints them.
+	if cfgErr == nil {
+		roots := cfg.Repo.Roots
+		if len(roots) == 0 {
+			roots = []string{"."}
+		}
+		for _, r := range roots {
+			if res, err := wsconfig.ResolvePath(resolved, r); err == nil {
+				ctx.repoRoots = append(ctx.repoRoots, res)
+			}
+		}
+	}
+
+	// Trashed item names.
+	if items, err := trash.Items(""); err == nil {
+		for _, it := range items {
+			ctx.trashItems = append(ctx.trashItems, it.Name)
+		}
+	}
+
+	// Session tags: directory names under data/ws-log/.
 	ctx.logDir = filepath.Join(resolved, "data", "ws-log")
 	ctx.logTags = listDirNames(ctx.logDir)
 
@@ -566,20 +429,31 @@ func splitArgsForCompletion(raw []string) (positional []string, toComplete strin
 	return positional, toComplete
 }
 
+// stringFlags are the flags that take a value: the global ones, and every flag
+// the command table documents with an argument.
+var stringFlags = func() map[string]bool {
+	m := map[string]bool{"workspace": true, "w": true, "config": true, "c": true}
+	for _, c := range commands {
+		for _, f := range c.Flags {
+			if f.Arg != "" {
+				m[strings.TrimLeft(f.Name, "-")] = true
+				if f.Short != "" {
+					m[strings.TrimLeft(f.Short, "-")] = true
+				}
+			}
+		}
+	}
+	for _, f := range listFlagDocs {
+		if f.Arg != "" {
+			m[strings.TrimLeft(f.Name, "-")] = true
+		}
+	}
+	return m
+}()
+
 // isStringFlag returns true for flags known to take a value argument.
 func isStringFlag(flag string) bool {
-	name := strings.TrimLeft(flag, "-")
-	switch name {
-	case "workspace", "w", "config", "c", "manifest",
-		"tag", "since", "type", "path", "context", "max-results",
-		"sort", "filter", "older-than", "name", "editor", "terminal",
-		"root-dir", "secret-mode", "mode",
-		"remote-url", "username", "pass-entry", "branch",
-		"shell", "depth", "rule",
-		"location", "l":
-		return true
-	}
-	return false
+	return stringFlags[strings.TrimLeft(flag, "-")]
 }
 
 // filterPrefix returns entries from candidates that have the given prefix.

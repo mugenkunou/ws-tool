@@ -150,9 +150,9 @@ func TestConfigDefaultsFlag(t *testing.T) {
 // allDispatchedCommands must be kept in sync with the switch in Execute.
 var allDispatchedCommands = []string{
 	"help", "version", "init", "config",
-	"dotfile", "ignore", "secret", "log", "scratch", "repo",
+	"dotfile", "ignore", "secret", "pass", "session", "scratch", "repo",
 	"trash", "cron", "credential", "git-credential-helper",
-	"completions",
+	"completion", "tui",
 }
 
 // TestHelpListsAllDispatchedCommands asserts every command in allDispatchedCommands
@@ -207,8 +207,8 @@ func TestConfigNoArgsShowsHelp(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("ws config (no args): expected exit 0, got %d stderr=%s", code, errOut.String())
 	}
-	if !strings.Contains(out.String(), "view") {
-		t.Fatalf("expected help with 'view' subcommand, got: %s", out.String())
+	if !strings.Contains(out.String(), "show") {
+		t.Fatalf("expected help with 'show' subcommand, got: %s", out.String())
 	}
 	if errOut.Len() != 0 {
 		t.Fatalf("expected empty stderr, got: %s", errOut.String())

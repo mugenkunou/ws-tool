@@ -30,27 +30,14 @@ type globalFlags struct {
 }
 
 func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if shouldShowHelp(args) {
-		// Quick parse --no-color for help display
-		nc := style.ShouldDisableColor()
-		for _, a := range args {
-			if a == "--no-color" {
-				nc = true
-			}
-		}
-		printHelpStyled(stdout, nc)
-		return 0
-	}
-
 	globals, rest, err := parseGlobalFlags(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
 
-	if len(rest) == 0 {
-		printHelp(stdout)
-		return 0
+	if code, handled := handleHelp(rest, globals.noColor, stdout, stderr); handled {
+		return code
 	}
 
 	command := rest[0]
@@ -59,9 +46,6 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	verboseLog(globals, stderr, "command=%s args=%v", command, commandArgs)
 
 	switch command {
-	case "help", "--help", "-h":
-		printHelpStyled(stdout, globals.noColor)
-		return 0
 	case "version":
 		return runVersion(commandArgs, globals, stdout, stderr)
 	case "init":
@@ -465,77 +449,6 @@ func runConfig(args []string, globals globalFlags, stdout, stderr io.Writer) int
 
 	fmt.Fprintln(textOut(globals, stdout), string(encoded))
 	return 0
-}
-
-func printHelp(stdout io.Writer) {
-	printHelpStyled(stdout, false)
-}
-
-func printHelpStyled(stdout io.Writer, noColor bool) {
-	fmt.Fprintln(stdout, style.Boldf(noColor, "ws")+style.Mutedf(noColor, " — Workspace manager"))
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, style.Boldf(noColor, "Usage:"))
-	fmt.Fprintf(stdout, "  %s <command> [flags]\n", style.Accentf(noColor, "ws"))
-
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, style.Boldf(noColor, "Commands:"))
-
-	cmds := []struct{ name, desc string }{
-		{"help", "Show command help"},
-		{"version", "Print version information"},
-		{"tui", "Interactive terminal UI"},
-		{"init", "Initialize a ws workspace"},
-		{"dotfile", "Manage workspace-backed dotfiles"},
-		{"cron", "Managed cron jobs"},
-		{"repo", "Repository fleet operations"},
-		{"trash", "Soft-delete setup and status"},
-		{"log", "Session recording commands"},
-		{"scratch", "Scratch directory commands"},
-		{"completions", "Generate shell completions"},
-		{"ignore", "Ignore rule scan/check"},
-		{"secret", "Secret scanning and pass store management"},
-		{"git-credential-helper", "Git credential helper (pass-backed)"},
-		{"credential", "Alias for git-credential-helper"},
-		{"config", "Configuration of ws"},
-	}
-	for _, c := range cmds {
-		fmt.Fprintf(stdout, "  %-18s %s\n", style.Accentf(noColor, "%s", c.name), c.desc)
-	}
-
-	fmt.Fprintln(stdout)
-	fmt.Fprintln(stdout, style.Boldf(noColor, "Global Flags:"))
-	flags := []string{
-		"  -w, --workspace string   Path to workspace root (default: $WS_WORKSPACE or ~/Workspace)",
-		"  -c, --config string      Path to ws.json (default: <workspace>/ws.json)",
-		"  -q, --quiet              Errors only (default: false)",
-		"      --verbose            Show internal decisions (default: false)",
-		"      --json               Machine-readable output (default: false)",
-		"      --dry-run            Preview actions, no changes (default: false)",
-		"      --no-color           Disable colors/unicode output (default: false)",
-		"  -h, --help               Show help",
-	}
-	for _, f := range flags {
-		fmt.Fprintln(stdout, f)
-	}
-}
-
-func hasHelpArg(args []string) bool {
-	for _, a := range args {
-		if a == "-h" || a == "--help" || a == "help" {
-			return true
-		}
-	}
-	return false
-}
-
-func shouldShowHelp(args []string) bool {
-	if len(args) == 0 {
-		return false
-	}
-	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help" || args[0] == "help") {
-		return true
-	}
-	return false
 }
 
 func maybePageOutput(stdout io.Writer, text string) bool {

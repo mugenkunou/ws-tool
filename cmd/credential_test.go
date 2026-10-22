@@ -111,7 +111,7 @@ func TestCredentialAliasNoArgs(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit 0 for alias with no args (shows help), got %d", code)
 	}
-	if !strings.Contains(out.String(), "ws git-credential-helper") {
+	if !strings.Contains(out.String(), "ws credential") {
 		t.Fatalf("expected usage in stdout, got: %s", out.String())
 	}
 }
@@ -192,14 +192,18 @@ func TestCredentialDisconnectHelp(t *testing.T) {
 	}
 }
 
-func TestCredentialHelperInTopLevelHelp(t *testing.T) {
+func TestCredentialHelperNotInTopLevelHelp(t *testing.T) {
 	var out, errOut bytes.Buffer
 	code := Execute([]string{"--help"}, strings.NewReader(""), &out, &errOut)
 	if code != 0 {
 		t.Fatalf("expected exit 0, got %d", code)
 	}
-	if !strings.Contains(out.String(), "git-credential-helper") {
-		t.Fatalf("expected git-credential-helper in help output, got: %s", out.String())
+	// Plumbing that git calls stays out of help (spec §5 help).
+	if strings.Contains(out.String(), "git-credential-helper") {
+		t.Fatalf("help must not list the plumbing command, got: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "credential") {
+		t.Fatalf("expected the credential noun in help output, got: %s", out.String())
 	}
 }
 
