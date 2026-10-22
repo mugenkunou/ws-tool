@@ -65,8 +65,8 @@ func TestPathRuleRepoJSONPathsAbsolute(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatalf("invalid json: %v\n%s", err, out.String())
 	}
-	if payload.Schema != 2 {
-		t.Fatalf("expected schema 2, got %d", payload.Schema)
+	if payload.Schema != 3 {
+		t.Fatalf("expected schema 3, got %d", payload.Schema)
 	}
 	if len(payload.Data.Statuses) != 1 || payload.Data.Statuses[0].Path != repoPath {
 		t.Fatalf("expected status path %s, got %+v", repoPath, payload.Data.Statuses)

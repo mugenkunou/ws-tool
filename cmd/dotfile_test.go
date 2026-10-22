@@ -72,8 +72,8 @@ func TestScanExitCodeOnViolation(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "dotfile", "scan"}, strings.NewReader("y\n"), &out, &errOut); code != 2 {
-		t.Fatalf("expected scan exit 2, got %d (stdout=%s stderr=%s)", code, out.String(), errOut.String())
+	if code := Execute([]string{"--workspace", workspace, "dotfile", "scan"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("expected scan exit 0 (listing is not a verdict), got %d (stdout=%s stderr=%s)", code, out.String(), errOut.String())
 	}
 }
 

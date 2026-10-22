@@ -258,32 +258,28 @@ func verboseLog(globals globalFlags, stderr io.Writer, format string, args ...an
 	}
 }
 
-// jsonSchema is the --json envelope schema version. 2: every path in data is
-// absolute (spec "Path Rules").
-const jsonSchema = 2
+// jsonSchema is the --json envelope schema version (spec §4.4). 2: every path
+// in data is absolute. 3: command names are <noun>.<verb>, and repo ls, ignore
+// lint and secret ls return the records the old scan commands returned.
+const jsonSchema = 3
 
-// writeJSON writes a standard JSON envelope to stdout.
+// writeJSON writes a standard JSON envelope to stdout and returns the exit
+// code: 0, or for a write command whose data.actions hold failures, the plan's
+// code (1 when every action failed, 3 when some did). A command that reports
+// failed actions must never exit 0 just because the JSON was written.
 // Every JSON output from ws goes through this to ensure a consistent schema:
 //
-//	{"ws_version": "...", "schema": 2, "command": "...", "data": ...}
+//	{"ws_version": "...", "schema": 3, "command": "...", "data": ...}
 func writeJSON(stdout, stderr io.Writer, command string, data any) int {
-	payload := map[string]any{
-		"ws_version": appVersion,
-		"schema":     jsonSchema,
-		"command":    command,
-		"data":       data,
-	}
-	encoded, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	fmt.Fprintln(stdout, string(encoded))
-	return 0
+	return writeJSONEnvelope(stdout, stderr, command, false, data)
 }
 
 // writeJSONDryRun is like writeJSON but includes "dry_run": true when applicable.
 func writeJSONDryRun(stdout, stderr io.Writer, command string, dryRun bool, data any) int {
+	return writeJSONEnvelope(stdout, stderr, command, dryRun, data)
+}
+
+func writeJSONEnvelope(stdout, stderr io.Writer, command string, dryRun bool, data any) int {
 	payload := map[string]any{
 		"ws_version": appVersion,
 		"schema":     jsonSchema,
@@ -299,6 +295,17 @@ func writeJSONDryRun(stdout, stderr io.Writer, command string, dryRun bool, data
 		return 1
 	}
 	fmt.Fprintln(stdout, string(encoded))
+	return jsonExit(data)
+}
+
+// jsonExit is the exit code a write command's JSON data implies: the exit code
+// of its plan when data.actions is the list of action statuses.
+func jsonExit(data any) int {
+	if m, ok := data.(map[string]any); ok {
+		if actions, ok := m["actions"].([]ActionStatus); ok {
+			return PlanResult{Actions: actions}.ExitCode()
+		}
+	}
 	return 0
 }
 

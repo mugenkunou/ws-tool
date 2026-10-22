@@ -24,8 +24,8 @@ func TestTrashStatusAndSetupFromCLI(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "trash", "status"}, strings.NewReader("y\n"), &out, &errOut); code != 2 {
-		t.Fatalf("expected trash status exit 2 before setup, got=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
+	if code := Execute([]string{"--workspace", workspace, "trash", "status"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("expected trash status exit 0 before setup (reported, not a failure), got=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
 	if !strings.Contains(out.String(), "WARNING") {
 		t.Fatalf("unexpected trash status output: %s", out.String())

@@ -58,8 +58,8 @@ func TestRepoLsAndScan(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "repo", "scan", "--check", "identity"}, strings.NewReader("y\n"), &out, &errOut); code != 2 {
-		t.Fatalf("repo scan expected violation exit 2, got=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
+	if code := Execute([]string{"--workspace", workspace, "repo", "scan", "--check", "identity"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("repo scan expected exit 0 (findings are not an error), got=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
 
 	out.Reset()
@@ -277,8 +277,8 @@ func TestRepoScanHygieneInlineWarnings(t *testing.T) {
 	workspace := initScanFixture(t, false)
 	var out, errOut bytes.Buffer
 	code := Execute([]string{"--workspace", workspace, "--no-color", "repo", "scan", "--no-fetch", "--check", "identity"}, strings.NewReader(""), &out, &errOut)
-	if code != 2 {
-		t.Fatalf("expected exit 2 for identity warnings, got %d stdout=%s stderr=%s", code, out.String(), errOut.String())
+	if code != 0 {
+		t.Fatalf("expected exit 0 for identity warnings, got %d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
 	got := out.String()
 	if !strings.Contains(got, "[identity] user.name not set") || !strings.Contains(got, "[identity] user.email not set") {

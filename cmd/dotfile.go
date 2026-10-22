@@ -324,9 +324,6 @@ func runDotfile(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		} else {
 			printDotfileIssues(out, issues, globals.noColor, false)
 		}
-		if len(issues) > 0 {
-			return 2
-		}
 		return 0
 	case "fix":
 		fs := flag.NewFlagSet("dotfile-fix", flag.ContinueOnError)

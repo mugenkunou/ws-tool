@@ -31,8 +31,8 @@ func TestSecretScanSkipDirConfig(t *testing.T) {
 	out.Reset()
 	errOut.Reset()
 	code := Execute([]string{"--workspace", workspace, "secret", "scan"}, nil, &out, &errOut)
-	if code != 2 {
-		t.Fatalf("expected exit 2 (violations), got %d stdout=%s stderr=%s", code, out.String(), errOut.String())
+	if code != 0 {
+		t.Fatalf("expected exit 0 (listing is not a verdict), got %d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
 
 	// Add vendor to skip_dirs in config.
@@ -84,8 +84,8 @@ func TestSecretScanSkipDirFlag(t *testing.T) {
 	out.Reset()
 	errOut.Reset()
 	code := Execute([]string{"--workspace", workspace, "secret", "scan"}, nil, &out, &errOut)
-	if code != 2 {
-		t.Fatalf("expected exit 2, got %d", code)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
 	}
 
 	// With --skip-dir flag, scan skips.
@@ -155,8 +155,8 @@ func TestSecretScanSkipDirMergesConfigAndFlag(t *testing.T) {
 	out.Reset()
 	errOut.Reset()
 	code := Execute([]string{"--workspace", workspace, "secret", "scan"}, nil, &out, &errOut)
-	if code != 2 {
-		t.Fatalf("expected exit 2 (testdata not skipped), got %d", code)
+	if code != 0 {
+		t.Fatalf("expected exit 0 (testdata not skipped), got %d", code)
 	}
 
 	// With both config + flag, all should be skipped.

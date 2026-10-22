@@ -34,7 +34,7 @@ func TestIgnoreCheckAndSecretScan(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "secret", "scan"}, strings.NewReader("y\n"), &out, &errOut); code != 2 {
-		t.Fatalf("expected secret scan code 2, got %d stdout=%s stderr=%s", code, out.String(), errOut.String())
+	if code := Execute([]string{"--workspace", workspace, "secret", "scan"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+		t.Fatalf("expected secret scan code 0 (listing is not a verdict), got %d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
 }

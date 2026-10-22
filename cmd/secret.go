@@ -222,9 +222,6 @@ func runSecretScan(args []string, globals globalFlags, workspacePath, configPath
 		}
 	}
 
-	if len(violations) > 0 {
-		return 2
-	}
 	return 0
 }
 
@@ -709,9 +706,6 @@ done:
 		return writeJSON(stdout, stderr, "secret.fix", result)
 	}
 
-	if result.Skipped > 0 {
-		return 2
-	}
 	return 0
 }
 

@@ -27,17 +27,6 @@ var ignoreHelp = cmdHelp{
 	Flags: listFlagHelp("scan", ignore.Schema(resource.CLIView(), "").Keys()),
 }
 
-// ignoreScanExit is 2 when an actionable (non-safe-harbor) violation is
-// present, else 0.
-func ignoreScanExit(violations []ignore.Violation) int {
-	for _, v := range violations {
-		if !v.InSafeHarbor {
-			return 2
-		}
-	}
-	return 0
-}
-
 func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	if hasHelpArg(args) {
 		return printCmdHelp(stdout, ignoreHelp)
@@ -158,7 +147,7 @@ func runIgnore(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 			}
 			printIgnoreViolationsSplit(out, absIgnoreViolations(workspacePath, violations), globals.noColor, expandSuppressed)
 		}
-		return ignoreScanExit(violations)
+		return 0
 	case "fix":
 		fs := flag.NewFlagSet("ignore-fix", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)

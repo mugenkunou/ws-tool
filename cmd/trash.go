@@ -464,9 +464,6 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 			}
 		}
 
-		if status.WarningCount() > 0 || scanResult.OverLimit {
-			return 2
-		}
 		return 0
 	default:
 		fmt.Fprintf(stderr, "unknown trash subcommand: %s\n", sub)

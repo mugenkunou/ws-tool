@@ -723,16 +723,11 @@ func renderRepoScan(globals globalFlags, workspacePath string, statuses []repo.R
 			warnCount++
 		}
 	}
-	needsAttention := warnCount > 0
-	for _, s := range statuses {
-		if s.Error != "" || s.Dirty || s.Detached || s.Ahead > 0 || s.Behind > 0 {
-			needsAttention = true
-			break
-		}
-	}
+	// Listing is not a verdict: dirty repos and findings exit 0. Only a fetch
+	// that failed is partial (3).
 	exitCode := 0
-	if needsAttention {
-		exitCode = 2
+	if len(fetchWarnings) > 0 {
+		exitCode = 3
 	}
 
 	if globals.json {

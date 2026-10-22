@@ -68,9 +68,9 @@ func TestIgnoreCheckIgnored(t *testing.T) {
 
 	var out, errOut bytes.Buffer
 	code := Execute([]string{"--workspace", workspace, "ignore", "check", filepath.Join(workspace, "node_modules/lodash.js")}, strings.NewReader(""), &out, &errOut)
-	// exit 2 = ignored
-	if code != 2 {
-		t.Fatalf("expected exit 2 for ignored file, got %d (stdout=%s stderr=%s)", code, out.String(), errOut.String())
+	// An ignored path is an answer, not an error: exit 0.
+	if code != 0 {
+		t.Fatalf("expected exit 0 for ignored file, got %d (stdout=%s stderr=%s)", code, out.String(), errOut.String())
 	}
 	if !strings.Contains(out.String(), "IGNORED") {
 		t.Fatalf("expected IGNORED in output, got: %s", out.String())
@@ -125,9 +125,9 @@ func TestIgnoreCheckExitCodeIgnored(t *testing.T) {
 	var out, errOut bytes.Buffer
 	code := Execute([]string{"--workspace", workspace, "ignore", "check", filepath.Join(workspace, ".env")}, strings.NewReader(""), &out, &errOut)
 	// .env may or may not be in the default rules; just verify the exit code
-	// is 0 (synced) or 2 (ignored) — never 1 (error).
-	if code != 0 && code != 2 {
-		t.Fatalf("expected exit 0 or 2, got %d (stderr=%s)", code, errOut.String())
+	// is 0 (synced or ignored) — never 1 (error).
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d (stderr=%s)", code, errOut.String())
 	}
 }
 

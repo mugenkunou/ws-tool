@@ -258,8 +258,8 @@ func TestSecretFixInteractiveViewThenSkip(t *testing.T) {
 		strings.NewReader("v\ns\n"),
 		&out, &errOut,
 	)
-	if code != 2 {
-		t.Fatalf("interactive fix: expected code=2 (skipped), got code=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
+	if code != 0 {
+		t.Fatalf("interactive fix: expected code=0 (skipped by choice), got code=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
 	// Should show context lines.
 	if !strings.Contains(out.String(), "foo=bar") {
@@ -295,8 +295,8 @@ func TestSecretFixInteractiveQuit(t *testing.T) {
 		strings.NewReader("q\n"),
 		&out, &errOut,
 	)
-	if code != 2 {
-		t.Fatalf("interactive fix quit: expected code=2 (skipped), got code=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
+	if code != 0 {
+		t.Fatalf("interactive fix quit: expected code=0 (skipped by choice), got code=%d stdout=%s stderr=%s", code, out.String(), errOut.String())
 	}
 }
 

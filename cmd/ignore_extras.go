@@ -191,9 +191,7 @@ func runIgnoreCheckPath(engine *ignore.Engine, workspacePath, target string, glo
 		fmt.Fprintf(out, "  File size: %s\n", style.Mutedf(nc, "%s", style.HumanBytes(st.Size())))
 	}
 
-	if !res.Included {
-		return 2
-	}
+	// Listing is not a verdict: an ignored path is a valid answer (exit 0).
 	return 0
 }
 
