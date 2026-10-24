@@ -120,7 +120,7 @@ func fixtures() []tea.Msg {
 		}},
 		trash.LoadedMsg{
 			Status: wstrash.Status{
-				Root: "/home/tester/.Trash", Items: 2, Files: 12, SizeBytes: 3 << 20, WarnSizeBytes: 1 << 30,
+				Root: "/home/tester/.Trash", Items: 2, Files: 12, SizeBytes: 3 << 20, WarnSizeBytes: 10 << 30,
 				Integrations: []wstrash.Integration{
 					{Name: wstrash.ShellRM, Enabled: true}, {Name: wstrash.VSCode, Enabled: true}, {Name: wstrash.FileExplorer},
 				},

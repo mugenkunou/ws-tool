@@ -83,7 +83,7 @@ func New(e env.Env) Model {
 // root's files/ subdirectory — see internal/trash for the on-disk layout).
 func Load(e env.Env) tea.Cmd {
 	return func() tea.Msg {
-		st, err := wstrash.GetStatus()
+		st, err := wstrash.GetStatus(wstrash.WarnBytes(e.Config.Trash.WarnSizeMB))
 		if err != nil {
 			return LoadedMsg{Err: err}
 		}
@@ -206,16 +206,16 @@ var commands = []reslist.Command[Model, Item]{
 	{Name: "disable", Help: "stop routing deletes to the trash", Scope: reslist.Global,
 		Do: func(m Model, _ []Item, _ []string) (Model, tea.Cmd) { return m.openDisable(), nil }},
 	{Name: "status", Help: "integrations and size", Scope: reslist.Global,
-		Do: func(m Model, _ []Item, _ []string) (Model, tea.Cmd) { return m, statusNotice() }},
+		Do: func(m Model, _ []Item, _ []string) (Model, tea.Cmd) { return m, statusNotice(m.env) }},
 }
 
 // Commands implements nav.Commander.
 func (m Model) Commands() []nav.CommandInfo { return reslist.CommandInfos(commands) }
 
 // statusNotice reads `trash status` and says it in one line.
-func statusNotice() tea.Cmd {
+func statusNotice(e env.Env) tea.Cmd {
 	return func() tea.Msg {
-		st, err := wstrash.GetStatus()
+		st, err := wstrash.GetStatus(wstrash.WarnBytes(e.Config.Trash.WarnSizeMB))
 		if err != nil {
 			return nav.NoticeMsg{Text: err.Error(), Level: nav.LevelError}
 		}

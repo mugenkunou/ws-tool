@@ -444,6 +444,7 @@ valid JSON. `ws config edit` checks before saving.
   "ignore": { "warn_size_mb": 5, "crit_size_mb": 10, "max_depth": 6, "muted": [] },
   "ignore_rules": { "schema": 1, "exclude": [], "include": [], "suppress_defaults": [] },
   "session": { "root_dir": "~/Sessions", "max_session_mb": 100 },
+  "trash": { "warn_size_mb": 10240 },
   "symlinks": []
 }
 ```
@@ -464,6 +465,7 @@ valid JSON. `ws config edit` checks before saving.
 | `ignore.muted` | paths whose sync warnings are hidden; they keep syncing | `ignore mute\|unmute` |
 | `ignore_rules.include` | included directories (`<dir>/**`) | `ignore edit` |
 | `session.root_dir`, `max_session_mb` | where recordings are stored (default `~/Sessions`); size at which one recording ends (default 100) | hand |
+| `trash.warn_size_mb` | trash size in MB above which `trash status` warns (default 10240, i.e. 10 GiB) | hand |
 | `symlinks[]` | managed symlinks: `system` (the host path, written with `~` for `$HOME`), `original` (workspace-relative), `dir`, `sudo` | `symlink add\|link\|unlink` |
 
 To use a GUI editor such as `code`, set `editor`.
@@ -3785,7 +3787,7 @@ ws trash status [--json]
 ```
 
 Reports each integration from the live system, not from a state file (decision), along with the
-trash directory and its totals. The size warning is fixed at 1 GB.
+trash directory and its totals. The size warning is `trash.warn_size_mb` (default 10 GiB); outside an initialized workspace the default applies.
 
 ```text
 $ ws trash status

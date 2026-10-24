@@ -47,6 +47,7 @@ type WsConfig struct {
 	Ignore      Ignore           `json:"ignore"`
 	IgnoreRules ignore.UserRules `json:"ignore_rules"`
 	Session     Session          `json:"session"`
+	Trash       Trash            `json:"trash"`
 	Symlinks    []Link           `json:"symlinks"`
 }
 
@@ -86,6 +87,11 @@ type Ignore struct {
 type Session struct {
 	RootDir      string `json:"root_dir"`       // where recordings live; machine-local, never synced
 	MaxSessionMB int    `json:"max_session_mb"` // a recording ends when it reaches this size
+}
+
+// Trash holds trash settings.
+type Trash struct {
+	WarnSizeMB int `json:"warn_size_mb"` // `trash status` warns above this size
 }
 
 // Link is a single entry in the symlinks registry.
@@ -130,6 +136,7 @@ func Default() WsConfig {
 			RootDir:      "~/Sessions",
 			MaxSessionMB: 100,
 		},
+		Trash:    Trash{WarnSizeMB: 10240},
 		Symlinks: []Link{},
 	}
 }

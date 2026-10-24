@@ -15,9 +15,17 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
-// WarnSizeBytes is the trash size above which `trash status` warns. It is fixed
-// at 1 GB.
-const WarnSizeBytes int64 = 1 << 30
+// DefaultWarnSizeBytes is the trash size above which `trash status` warns when
+// trash.warn_size_mb is not set (10 GiB).
+const DefaultWarnSizeBytes int64 = 10 << 30
+
+// WarnBytes converts trash.warn_size_mb to bytes; zero or less means the default.
+func WarnBytes(mb int) int64 {
+	if mb <= 0 {
+		return DefaultWarnSizeBytes
+	}
+	return int64(mb) << 20
+}
 
 // Resolve finds the trash items that args name (spec §5 trash, "Item
 // arguments"). An argument is an item's name (the name column), or the path it

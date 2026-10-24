@@ -136,7 +136,7 @@ func TestTrashStatusJSON(t *testing.T) {
 		t.Fatalf("not JSON: %v\n%s", err, js)
 	}
 	d := env.Data
-	if env.Command != "trash.status" || d.Root != e.root || len(d.Integrations) != 3 || d.Items != 1 || d.Files != 1 || d.SizeBytes != 5 || d.WarnSizeBytes != 1<<30 || d.OverLimit {
+	if env.Command != "trash.status" || d.Root != e.root || len(d.Integrations) != 3 || d.Items != 1 || d.Files != 1 || d.SizeBytes != 5 || d.WarnSizeBytes != 10<<30 || d.OverLimit {
 		t.Fatalf("envelope = %+v", env)
 	}
 }

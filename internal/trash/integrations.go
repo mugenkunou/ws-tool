@@ -69,7 +69,7 @@ func (s Status) WarningCount() int {
 
 // GetStatus reports each integration from the live system, with the trash
 // directory and its totals. It writes nothing.
-func GetStatus() (Status, error) {
+func GetStatus(warnBytes int64) (Status, error) {
 	root, err := Root()
 	if err != nil {
 		return Status{}, err
@@ -80,7 +80,7 @@ func GetStatus() (Status, error) {
 	}
 	st := Status{
 		Root: root, Items: sum.Items, Files: sum.Files, SizeBytes: sum.SizeBytes,
-		WarnSizeBytes: WarnSizeBytes, OverLimit: sum.SizeBytes > WarnSizeBytes,
+		WarnSizeBytes: warnBytes, OverLimit: sum.SizeBytes > warnBytes,
 	}
 	st.Integrations = []Integration{shellRMStatus(), vscodeStatus(), fileExplorerStatus(root)}
 	return st, nil
@@ -362,7 +362,7 @@ type EnableOptions struct {
 // EnableActions builds one action per integration that is off and not left out.
 // An empty result means soft-delete is already on.
 func EnableActions(opts EnableOptions) ([]plan.Action, error) {
-	st, err := GetStatus()
+	st, err := GetStatus(DefaultWarnSizeBytes)
 	if err != nil {
 		return nil, err
 	}

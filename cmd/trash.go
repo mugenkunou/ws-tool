@@ -11,6 +11,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/resource"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/trash"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // runTrash dispatches `ws trash <verb>` (spec §5 trash). None of these commands
@@ -345,7 +346,7 @@ func trashStatus(args []string, globals globalFlags, stdout, stderr io.Writer) i
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	st, err := trash.GetStatus()
+	st, err := trash.GetStatus(trashWarnBytes(globals))
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -377,4 +378,18 @@ func pluralize(n int, noun string) string {
 		return fmt.Sprintf("%d %s", n, noun)
 	}
 	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// trashWarnBytes is the trash.warn_size_mb threshold. The trash is per machine,
+// so outside an initialized workspace it falls back to the default.
+func trashWarnBytes(globals globalFlags) int64 {
+	_, configPath, err := requireWorkspaceInitialized(globals, io.Discard)
+	if err != nil {
+		return trash.DefaultWarnSizeBytes
+	}
+	cfg, err := wsconfig.Load(configPath)
+	if err != nil {
+		return trash.DefaultWarnSizeBytes
+	}
+	return trash.WarnBytes(cfg.Trash.WarnSizeMB)
 }

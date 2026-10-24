@@ -422,11 +422,11 @@ func runAll(t *testing.T, opts EnableOptions) {
 
 func TestStatusReadsTheLiveSystem(t *testing.T) {
 	m := newMachine(t)
-	st, err := GetStatus()
+	st, err := GetStatus(DefaultWarnSizeBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Root != m.root || st.WarnSizeBytes != 1<<30 || st.OverLimit {
+	if st.Root != m.root || st.WarnSizeBytes != 10<<30 || st.OverLimit {
 		t.Fatalf("status = %+v", st)
 	}
 	// Nothing configured on a fresh machine: shell-rm and file-explorer are off,
@@ -440,7 +440,7 @@ func TestStatusReadsTheLiveSystem(t *testing.T) {
 
 	// An explicit false turns VS Code off.
 	write(t, filepath.Join(m.home, ".config", "Code", "User", "settings.json"), "{\n  // keep\n  \"files.enableTrash\": false\n}\n")
-	if st, _ = GetStatus(); st.Enabled(VSCode) {
+	if st, _ = GetStatus(DefaultWarnSizeBytes); st.Enabled(VSCode) {
 		t.Fatal("files.enableTrash false means VS Code is off")
 	}
 }
@@ -466,7 +466,7 @@ func TestEnableShellRM(t *testing.T) {
 	if err != nil || fi.Mode()&0o111 == 0 || !strings.Contains(read(t, script), m.root) {
 		t.Fatalf("the script is executable and names the trash: %v", err)
 	}
-	if st, _ := GetStatus(); !st.Enabled(ShellRM) || !strings.Contains(st.Integrations[0].Detail, ".bashrc") {
+	if st, _ := GetStatus(DefaultWarnSizeBytes); !st.Enabled(ShellRM) || !strings.Contains(st.Integrations[0].Detail, ".bashrc") {
 		t.Fatalf("status after enable: %+v", st.Integrations)
 	}
 
@@ -503,7 +503,7 @@ func TestEnableReplacesTheLegacyAliasAndFollowsSymlinkedRC(t *testing.T) {
 	if err := os.Chmod(filepath.Join(m.home, ".local", "bin", "ws-trash-rm"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if st, _ := GetStatus(); !st.Enabled(ShellRM) {
+	if st, _ := GetStatus(DefaultWarnSizeBytes); !st.Enabled(ShellRM) {
 		t.Fatal("the legacy alias line still counts as enabled")
 	}
 
@@ -535,7 +535,7 @@ func TestEnableVSCodeEditsOnlyTheValue(t *testing.T) {
 	if got := read(t, settings); got != want {
 		t.Fatalf("only the value changes; comments and layout stay:\n%s\nwant\n%s", got, want)
 	}
-	if st, _ := GetStatus(); !st.Enabled(VSCode) {
+	if st, _ := GetStatus(DefaultWarnSizeBytes); !st.Enabled(VSCode) {
 		t.Fatal("VS Code is on after enable")
 	}
 	// A missing file or key means it is on already: nothing to do.
@@ -553,7 +553,7 @@ func TestEnableFileExplorerCreatesDirectories(t *testing.T) {
 			t.Fatalf("%s: %v %v", d, fi, err)
 		}
 	}
-	if st, _ := GetStatus(); !st.Enabled(FileExplorer) {
+	if st, _ := GetStatus(DefaultWarnSizeBytes); !st.Enabled(FileExplorer) {
 		t.Fatal("file-explorer is on after enable")
 	}
 }
@@ -604,7 +604,7 @@ func TestDisableRemovesTheShellIntegration(t *testing.T) {
 	if !exists(filepath.Join(m.root, "files", "keep")) || !strings.Contains(read(t, settings), "false") {
 		t.Fatal("the trash and VS Code's setting are left alone")
 	}
-	if st, _ := GetStatus(); st.Enabled(ShellRM) {
+	if st, _ := GetStatus(DefaultWarnSizeBytes); st.Enabled(ShellRM) {
 		t.Fatal("shell-rm is off after disable")
 	}
 	if got := DisableActions(); len(got) != 0 {
