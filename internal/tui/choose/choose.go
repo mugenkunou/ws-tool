@@ -1,5 +1,6 @@
 // Package choose is a single-choice list in a modal. enter picks the
-// highlighted option; esc cancels. The owner receives a ResultMsg.
+// highlighted option, and so does an option's own letter (Option.Key); esc
+// cancels. The owner receives a ResultMsg.
 package choose
 
 import (
@@ -21,6 +22,7 @@ var nextID atomic.Int64
 type Option struct {
 	Label  string
 	Detail string // muted text after the label
+	Key    string // optional letter that picks this option at once (`r` rebase)
 }
 
 // ResultMsg reports the chosen index, or Cancelled.
@@ -63,6 +65,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 	}
 	id := m.id
+	if k.Text != "" {
+		for i, o := range m.options {
+			if o.Key != "" && o.Key == k.Text {
+				return m, func() tea.Msg { return ResultMsg{ID: id, Index: i} }
+			}
+		}
+	}
 	switch {
 	case key.Matches(k, m.keys.Cancel):
 		return m, func() tea.Msg { return ResultMsg{ID: id, Cancelled: true} }
@@ -90,9 +99,13 @@ func (m Model) View() string {
 
 	var rows []string
 	for i, o := range m.options {
-		line := "  " + o.Label
+		label := o.Label
+		if o.Key != "" {
+			label = "[" + o.Key + "] " + o.Label
+		}
+		line := "  " + label
 		if i == m.cursor {
-			line = theme.Bold.Render("› " + o.Label)
+			line = theme.Bold.Render("› " + label)
 		}
 		if o.Detail != "" {
 			line += "  " + theme.Muted.Render(o.Detail)
