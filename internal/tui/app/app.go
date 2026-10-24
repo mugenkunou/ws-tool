@@ -5,11 +5,12 @@
 //	rule                             1 line
 //	body    (active component)       remaining height
 //	notice  (last NoticeMsg)         0 or 1 line
-//	footer  (help)                   1 line, or more with full help
+//	footer  (help, or the command bar) 1 line, or more with full help
 //
 // Routing: key presses go to the global key map first, then to the active
-// component only. While the active component has a modal open
-// (CapturesKeys), every key except ctrl+c goes straight to it. Every other
+// component only. While the command bar is open, or the active component has
+// a modal open (CapturesKeys), every key except ctrl+c goes straight to it.
+// `:` lines are parsed here (see command.go). Every other
 // message is broadcast to all components, so components can observe each
 // other's outputs (the dashboard summarizes the other screens' LoadedMsg)
 // without reaching into one another.
@@ -31,8 +32,10 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/mugenkunou/ws-tool/internal/tui/clip"
+	"github.com/mugenkunou/ws-tool/internal/tui/cmdbar"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/format"
+	"github.com/mugenkunou/ws-tool/internal/tui/handover"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/cron"
@@ -70,6 +73,7 @@ type Model struct {
 	setup    nav.Component   // shown instead of screens when not initialized
 	active   nav.Screen
 	fullHelp bool
+	bar      *cmdbar.Model // the command bar, while it is open
 	notice   *nav.NoticeMsg
 	frame    int
 
@@ -245,6 +249,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.notice = &msg
 		return m.resize() // notice line changes body height
 
+	case nav.OpenCommandBarMsg:
+		return m.openBar(msg.Prefill).resize()
+
+	case cmdbar.ResultMsg:
+		if m.bar == nil || m.bar.ID() != msg.ID {
+			return m, nil
+		}
+		m.bar = nil
+		if msg.Cancelled || msg.Line == "" {
+			return m.resize()
+		}
+		return m.runLine(msg.Line)
+
+	case handover.DoneMsg:
+		if _, ok := msg.Tag.(configDone); ok {
+			if msg.Err != nil {
+				return m.update(nav.NoticeMsg{Text: msg.Err.Error(), Level: nav.LevelError})
+			}
+			return m.broadcast(nav.RefreshMsg{})
+		}
+
 	case nav.GotoMsg:
 		if m.screens != nil {
 			m.active = msg.Screen
@@ -272,6 +297,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m.broadcast(msg)
 }
 
+// update runs msg through Update and returns the model.
+func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
+	next, cmd := m.Update(msg)
+	return next.(Model), cmd
+}
+
 func (m Model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	hadNotice := m.notice != nil
 	m.notice = nil
@@ -279,6 +310,12 @@ func (m Model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	if key.Matches(msg, m.keys.ForceQuit) {
 		return m, tea.Quit
+	}
+	if m.bar != nil {
+		bar, cmd := m.bar.Update(msg)
+		m.bar = &bar
+		m, resizeCmd := m.afterNotice(hadNotice)
+		return m, tea.Batch(resizeCmd, cmd)
 	}
 	if cur != nil && cur.CapturesKeys() {
 		return m.updateCurrent(msg, hadNotice)
@@ -292,6 +329,10 @@ func (m Model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.screens != nil {
 		switch {
+		case key.Matches(msg, m.keys.Command):
+			return m.openBar("").resize()
+		case key.Matches(msg, m.keys.Refresh):
+			return m.refreshActive(hadNotice)
 		case key.Matches(msg, m.keys.NextTab):
 			m.active = m.active.Next()
 			return m.afterNotice(hadNotice)
@@ -307,6 +348,17 @@ func (m Model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m.updateCurrent(msg, hadNotice)
+}
+
+// refreshActive is ctrl+r: on the Dashboard it refreshes every screen, since
+// the Dashboard summarizes them all; elsewhere only the active screen.
+func (m Model) refreshActive(hadNotice bool) (Model, tea.Cmd) {
+	if m.active == nav.ScreenDashboard {
+		m, resizeCmd := m.afterNotice(hadNotice)
+		m, cmd := m.broadcast(nav.RefreshMsg{})
+		return m, tea.Batch(resizeCmd, cmd)
+	}
+	return m.updateCurrent(nav.RefreshMsg{}, hadNotice)
 }
 
 // showToast displays a short-lived footer message and schedules its expiry.
@@ -501,6 +553,9 @@ func (m Model) noticeLine() string {
 }
 
 func (m Model) footer() string {
+	if m.bar != nil {
+		return m.bar.SetWidth(m.width).View() // the command bar replaces the footer
+	}
 	clip := lipgloss.NewStyle().MaxWidth(m.width)
 	cur := m.current()
 	if cur == nil {
@@ -514,6 +569,8 @@ func (m Model) footer() string {
 	}
 	if cur.CapturesKeys() {
 		km = cur.KeyMap() // global keys are inactive while a modal is open
+	} else if m.fullHelp {
+		return m.withToast(m.fullHelpView())
 	} else if !m.fullHelp {
 		return m.withToast(clip.Render(shortFooter(h, cur.KeyMap(), km.(combinedKeys).global, m.width)))
 	}

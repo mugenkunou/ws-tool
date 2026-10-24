@@ -1,0 +1,30 @@
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+────────────────────────────────────────────────────────────────────────────────────────────────────
+4 repos · 1 dirty · 1 ahead · 1 behind · 1 issue
+ Repo                                           State        ↑    ↓    Issues  Branch
+ Projects/api                                   ✔ clean      ·    ·            main
+ Projects/web                                   ● dirty      2    ·    1       feature/login
+ Projects/old                                   ✔ clean      ·    5            (detached)
+ ~/.password-store                              no upstream  ·    ·            master
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+:▏dashboard   repo · repos · dotfile · dotfiles · scratch · session · sessions · ignore · secret · s

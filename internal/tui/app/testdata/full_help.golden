@@ -12,19 +12,19 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secret
 
 
 
-
-
-
-
-
-
-
-↑/k up        enter details    s sync (merge)      x run command    /          filter             …
-↓/j down      f     fetch      S sync (rebase)     a add root       >          sort by next field
-g   top       esc   back       p pull (ff-only)                     <          reverse sort
-G   bottom                     P pull --rebase                      d          describe
-                                                                    y          json
-                                                                    space      mark
-                                                                    ctrl+space mark range
-                                                                    ctrl+\     clear marks
-                                                                    ctrl+a     mark all/none
+This screen             Lists                            General                     Commands
+enter  details          ↑/k         up                   tab        next screen      :config show  p
+f      fetch            ↓/j         down                 shift+tab  prev screen      :config edit  e
+s      sync (merge)     g           top                  1-9        jump to screen   :help  :q     t
+S      sync (rebase)    G           bottom               ctrl+r     refresh
+p      pull (ff-only)   pgup        page up              :          command
+P      pull --rebase    pgdn        page down            ?          help
+x      run command      /           filter               q          quit
+a      add root         >           sort by next field   esc        back
+                        <           reverse sort
+                        d           describe
+                        y           json
+                        space       mark
+                        ctrl+space  mark range
+                        ctrl+\      clear marks
+                        ctrl+a      mark all/none
