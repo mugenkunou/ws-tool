@@ -1,4 +1,4 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 🚮 ~/.Trash  3.0 MB · 12 files (warns at 1.0 GB)
 
@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷
 
 
 
-e enable soft-delete • D disable • d delete item … • tab/⇧tab screens • ? help • q quit
+e enable soft-delete • D disable • ctrl+d delete item … • tab screens • : command • ? help • q quit

@@ -1,18 +1,16 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Remove 2 dotfiles
+dotfile  ~/.gitconfig
 
-› [x] Remove dotfile /home/tester/.bashrc  (restores the file to its system path)
-  [x] Remove dotfile /home/tester/.gitconfig  (restores the file to its system path)
+System path     ~/.gitconfig
+Workspace copy  configs/dotfiles/gitconfig
+Stored as       configs/dotfiles/gitconfig
+Status          broken
+Problem
+Directory
+Sudo
 
-
-
-
-
-
-
-
-
+esc back
 
 
 
@@ -27,4 +25,6 @@ Remove 2 dotfiles
 
 
 
-space toggle • a all/none • enter apply • esc back
+
+
+↑/k scroll up • ↓/j scroll down • esc back • tab screens • : command • ? help • q quit

@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/mugenkunou/ws-tool/internal/resource"
+	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 )
 
@@ -50,6 +51,8 @@ func kp(s string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeySpace, Mod: tea.ModCtrl}
 	case "ctrl+\\":
 		return tea.KeyPressMsg{Code: '\\', Mod: tea.ModCtrl}
+	case "ctrl+a":
+		return tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl}
 	}
 	return tea.KeyPressMsg{Code: []rune(s)[0], Text: s}
 }
@@ -155,13 +158,13 @@ func TestMarksDriveTargets(t *testing.T) {
 	if len(m.marked()) != 0 {
 		t.Error("esc should clear marks")
 	}
-	m = press(m, "A")
+	m = press(m, "ctrl+a")
 	if len(m.marked()) != 3 {
-		t.Errorf("A marked %d", len(m.marked()))
+		t.Errorf("ctrl+a marked %d", len(m.marked()))
 	}
-	m = press(m, "A")
+	m = press(m, "ctrl+a")
 	if len(m.marked()) != 0 {
-		t.Errorf("second A left %d marked", len(m.marked()))
+		t.Errorf("second ctrl+a left %d marked", len(m.marked()))
 	}
 }
 
@@ -252,7 +255,7 @@ func TestEscWithNothingToClearIsTheScreens(t *testing.T) {
 }
 
 func TestDetailShowsEveryField(t *testing.T) {
-	m := press(newList(), "i")
+	m := press(newList(), "d")
 	if !m.InDetail() {
 		t.Fatal("expected detail pane")
 	}
@@ -353,15 +356,121 @@ func TestRunHandsEachScopeItsRows(t *testing.T) {
 }
 
 func TestStatusLineNamesKeysThatActOnMarks(t *testing.T) {
-	m := newList().Declare([]Decl{
+	m := newList().SetSize(100, 10).Declare([]Decl{
 		{Key: kb("o"), Scope: Cursor}, {Key: kb("d"), Scope: Selected}, {Key: kb("f"), Scope: All},
 	})
-	if v := ansi.Strip(press(m, "space").View()); !strings.Contains(v, "1 marked — d f act on them") {
+	if v := ansi.Strip(press(m, "space").View()); !strings.Contains(v, "1 marked — d do d · f do f act on them") {
 		t.Errorf("marks hint missing:\n%s", v)
 	}
-	if v := ansi.Strip(press(m, "/", "p", "enter").View()); !strings.Contains(v, "f act on these 2") {
+	if v := ansi.Strip(press(m, "/", "p", "enter").View()); !strings.Contains(v, "f do f act on these 2") {
 		t.Errorf("filter hint missing:\n%s", v)
 	}
 }
 
-func kb(k string) key.Binding { return key.NewBinding(key.WithKeys(k), key.WithHelp(k, k)) }
+func kb(k string) key.Binding { return key.NewBinding(key.WithKeys(k), key.WithHelp(k, "do "+k)) }
+
+// ── bottom status line, JSON pane, commands, SetFilter ─────────────
+
+func TestStatusLineIsAlwaysTheLastLine(t *testing.T) {
+	m := newList() // size 40x10
+	lines := func(m Model[fruit]) []string { return strings.Split(ansi.Strip(m.View()), "\n") }
+	idle := lines(m)
+	if len(idle) != 10 {
+		t.Fatalf("view is %d lines, want 10", len(idle))
+	}
+	if strings.TrimSpace(idle[9]) != "" {
+		t.Fatalf("an idle status line is blank: %q", idle[9])
+	}
+	// Marking, filtering and sorting never move a row: the rows of the idle
+	// view stay where they are, and the status line is the last line.
+	for _, keys := range [][]string{{"space"}, {"/", "p", "enter"}, {">"}, {"ctrl+a"}} {
+		got := lines(press(m, keys...))
+		if len(got) != 10 {
+			t.Fatalf("%v: view is %d lines, want 10", keys, len(got))
+		}
+		if strings.TrimSpace(got[0]) == "" || !strings.Contains(got[0], "Name") {
+			t.Fatalf("%v: the title row moved: %q", keys, got[0])
+		}
+		if strings.TrimSpace(got[9]) == "" {
+			t.Fatalf("%v: the status line should say something:\n%s", keys, strings.Join(got, "\n"))
+		}
+	}
+}
+
+func TestJSONPaneIsTheRecord(t *testing.T) {
+	m := press(newList(), "y")
+	if !m.InDetail() {
+		t.Fatal("y opens the JSON pane")
+	}
+	v := ansi.Strip(m.View())
+	for _, want := range []string{`"name": "pear"`, `"price": 3`, `"origin": "farm"`} {
+		if !strings.Contains(v, want) {
+			t.Errorf("JSON pane lacks %q:\n%s", want, v)
+		}
+	}
+	if strings.Index(v, `"name"`) > strings.Index(v, `"origin"`) {
+		t.Errorf("keys are in field order:\n%s", v)
+	}
+	for _, closer := range []string{"y", "d", "esc"} {
+		if press(m, closer).InDetail() {
+			t.Errorf("%s should close the pane", closer)
+		}
+	}
+}
+
+func TestSetFilter(t *testing.T) {
+	m := newList().SetFilter("name=p")
+	if names(m.Shown()) != "pear,apple" || m.Filter() != "name=p" {
+		t.Fatalf("shown %s filter %q", names(m.Shown()), m.Filter())
+	}
+	if v := ansi.Strip(m.View()); !strings.Contains(v, "filter name=p (2 of 3)") {
+		t.Errorf("status line:\n%s", v)
+	}
+	if names(m.SetFilter("").Shown()) != "pear,apple,fig" {
+		t.Error("an empty expression clears the filter")
+	}
+}
+
+func TestRunCommand(t *testing.T) {
+	type model struct{ ran []string }
+	do := func(name string) func(model, []fruit, []string) (model, tea.Cmd) {
+		return func(m model, rows []fruit, args []string) (model, tea.Cmd) {
+			m.ran = append(m.ran, name+":"+names(rows)+":"+strings.Join(args, " "))
+			return m, nil
+		}
+	}
+	cmds := []Command[model, fruit]{
+		{Name: "backup", Scope: Global, Do: do("backup")},
+		{Name: "backup status", Scope: Global, Do: do("status")},
+		{Name: "fetch", Scope: All, Do: do("fetch")},
+		{Name: "rm", Args: "<name>", Scope: Selected, Do: do("rm")},
+	}
+	l := press(newList(), "space", "down") // pear marked, cursor on apple
+	run := func(words ...string) (model, bool) {
+		m, _, ok := RunCommand(model{}, l, cmds, nav.CommandMsg{Words: words})
+		return m, ok
+	}
+	if m, ok := run("backup", "push"); !ok || m.ran[0] != "backup::push" {
+		t.Errorf("backup push: %v %v", m.ran, ok)
+	}
+	if m, ok := run("backup", "status"); !ok || m.ran[0] != "status::" {
+		t.Errorf("the longest name wins: %v %v", m.ran, ok)
+	}
+	if m, ok := run("fetch"); !ok || m.ran[0] != "fetch:pear:" {
+		t.Errorf("scope All covers the marked rows: %v %v", m.ran, ok)
+	}
+	if m, ok := run("rm", "x"); !ok || m.ran[0] != "rm:pear:x" {
+		t.Errorf("scope Selected: %v %v", m.ran, ok)
+	}
+	if _, ok := run("nope"); ok {
+		t.Error("an unknown command is not handled")
+	}
+	if got := CommandInfos(cmds); len(got) != 4 || got[3].Args != "<name>" {
+		t.Errorf("CommandInfos = %v", got)
+	}
+	// A command that needs rows does nothing when there are none.
+	empty := New(schema, []Col[fruit]{{Key: "name", Min: 10}, {Key: "price", Min: 5}}, "none").SetSize(40, 10).SetItems(nil)
+	if m, _, ok := RunCommand(model{}, empty, cmds, nav.CommandMsg{Words: []string{"rm"}}); !ok || len(m.ran) != 0 {
+		t.Errorf("no rows: %v %v", m.ran, ok)
+	}
+}

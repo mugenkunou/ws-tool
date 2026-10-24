@@ -1,4 +1,4 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  System path                                    Workspace copy                  Status         Sudo
  ~/.bashrc                                      configs/dotfiles/bashrc         ✔ ok
@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷
 
 
 
-a add • d remove • x fix links • s sync live→ws • p git push … • tab/⇧tab screens • ? help • q quit
+a add • ctrl+d remove • x fix links • s sync live→ws … • tab screens • : command • ? help • q quit

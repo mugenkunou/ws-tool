@@ -1,8 +1,13 @@
 package reslist
 
 import (
+	"slices"
+	"strings"
+
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 )
 
 // Scope says which rows an action acts on. Every screen action declares
@@ -99,16 +104,65 @@ func Run[M, T any](m M, l Model[T], actions []Action[M, T], k tea.KeyPressMsg) (
 	return m, nil, false
 }
 
-// scopedKeys returns the help keys of the declared actions with one of the
-// given scopes.
+// scopedKeys returns each declared action with one of the given scopes as
+// "key label" (`ctrl+d unlink`), never as a bare letter.
 func (m Model[T]) scopedKeys(scopes ...Scope) []string {
 	var out []string
 	for _, d := range m.decls {
 		for _, s := range scopes {
 			if d.Scope == s {
-				out = append(out, d.Key.Help().Key)
+				h := d.Key.Help()
+				out = append(out, strings.TrimSpace(h.Key+" "+h.Desc))
 			}
 		}
 	}
 	return out
+}
+
+// Command is a `:` command of a screen (spec §6.6): the CLI's words after the
+// noun. A key and a command for one verb share a function: the Do of the Action
+// and of the Command are the same function, and Scope picks the rows as it does
+// for a key.
+type Command[M, T any] struct {
+	Name  string // the words after the noun, e.g. "push" or "backup status"
+	Args  string // their placeholder, e.g. "<dir>"; empty when none
+	Help  string
+	Scope Scope
+	Do    func(m M, rows []T, args []string) (M, tea.Cmd)
+}
+
+// CommandInfos describes commands for completion and help.
+func CommandInfos[M, T any](commands []Command[M, T]) []nav.CommandInfo {
+	out := make([]nav.CommandInfo, len(commands))
+	for i, c := range commands {
+		out[i] = nav.CommandInfo{Name: c.Name, Args: c.Args, Help: c.Help}
+	}
+	return out
+}
+
+// RunCommand handles msg when it starts with one of commands' names: it calls
+// Do with the rows the command's scope covers and the words after the name, and
+// reports true. The longest matching name wins, so `backup status` beats a
+// `backup`. A command that needs rows does nothing when there are none.
+func RunCommand[M, T any](m M, l Model[T], commands []Command[M, T], msg nav.CommandMsg) (M, tea.Cmd, bool) {
+	best := -1
+	for i, c := range commands {
+		name := strings.Fields(c.Name)
+		if len(msg.Words) < len(name) || !slices.Equal(msg.Words[:len(name)], name) {
+			continue
+		}
+		if best < 0 || len(name) > len(strings.Fields(commands[best].Name)) {
+			best = i
+		}
+	}
+	if best < 0 {
+		return m, nil, false
+	}
+	c := commands[best]
+	rows := l.Rows(c.Scope)
+	if c.Scope != Global && len(rows) == 0 {
+		return m, nil, true
+	}
+	next, cmd := c.Do(m, rows, msg.Words[len(strings.Fields(c.Name)):])
+	return next, cmd, true
 }

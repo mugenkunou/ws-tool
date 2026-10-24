@@ -305,8 +305,6 @@ func (m Model) updateList(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 	switch {
 	case key.Matches(k, m.keys.Back):
 		return m, nav.Up
-	case key.Matches(k, m.keys.Refresh):
-		return m.reload()
 	}
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(k)

@@ -1,4 +1,4 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 Pull 2 repos (ff-only)
 
@@ -27,4 +27,4 @@ Pull 2 repos (ff-only)
 
 
 
-space toggle • a all/none • enter apply • esc back
+space toggle • ctrl+a all/none • enter apply • esc back

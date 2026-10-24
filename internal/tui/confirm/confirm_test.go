@@ -21,6 +21,8 @@ func press(s string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
 	case "down":
 		return tea.KeyPressMsg{Code: tea.KeyDown}
+	case "ctrl+a":
+		return tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl}
 	}
 	return tea.KeyPressMsg{Code: []rune(s)[0], Text: s}
 }
@@ -130,13 +132,13 @@ func TestToggleAllAndWithChecked(t *testing.T) {
 
 	ran = nil
 	m = New("T", recorder(&ran, nil, "a", "b")).SetSize(60, 10)
-	m, _ = run(m, "a", "enter") // all checked → none
+	m, _ = run(m, "ctrl+a", "enter") // all checked → none
 	if len(ran) != 0 {
-		t.Fatalf("a (none): ran %v", ran)
+		t.Fatalf("ctrl+a (none): ran %v", ran)
 	}
 	ran = nil
 	m = New("T", recorder(&ran, nil, "a", "b")).WithChecked(func(int, plan.Action) bool { return false }).SetSize(60, 10)
-	m, _ = run(m, "a", "enter") // none → all
+	m, _ = run(m, "ctrl+a", "enter") // none → all
 	if strings.Join(ran, ",") != "a,b" {
 		t.Fatalf("a (all): ran %v", ran)
 	}

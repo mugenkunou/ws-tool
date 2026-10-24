@@ -283,8 +283,6 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 			return m, nil
 		}
 		return m, nav.Up
-	case key.Matches(k, m.keys.Refresh):
-		return m.rescan()
 	}
 
 	// Delegate movement to the active list.

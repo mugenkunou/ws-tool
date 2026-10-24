@@ -164,6 +164,9 @@ func press(s string) tea.KeyPressMsg {
 	case "ctrl+space":
 		return tea.KeyPressMsg{Code: tea.KeySpace, Mod: tea.ModCtrl}
 	}
+	if strings.HasPrefix(s, "ctrl+") && len(s) == len("ctrl+")+1 {
+		return tea.KeyPressMsg{Code: rune(s[len(s)-1]), Mod: tea.ModCtrl}
+	}
 	r := []rune(s)[0]
 	return tea.KeyPressMsg{Code: r, Text: s}
 }
@@ -445,7 +448,7 @@ func TestDashboardOpenFocusesProblem(t *testing.T) {
 		if m.active != nav.ScreenDotfiles {
 			t.Fatalf("%s: active = %v", k, m.active.Title())
 		}
-		m = send(m, press("d"))
+		m = send(m, press("ctrl+d"))
 		if v := tuitest.Plain(view(m)); !strings.Contains(v, "Remove dotfile /home/tester/.gitconfig") {
 			t.Fatalf("%s: problem row not selected:\n%s", k, v)
 		}

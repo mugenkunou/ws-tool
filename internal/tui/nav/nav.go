@@ -16,7 +16,7 @@ const (
 	ScreenRepos
 	ScreenDotfiles
 	ScreenScratch
-	ScreenLogs
+	ScreenSessions
 	ScreenIgnore
 	ScreenSecrets
 	ScreenCron
@@ -45,7 +45,7 @@ func (s Screen) Icon() string {
 		return "🔗"
 	case ScreenScratch:
 		return "🧪"
-	case ScreenLogs:
+	case ScreenSessions:
 		return "📼"
 	case ScreenIgnore:
 		return "🧹"
@@ -71,8 +71,8 @@ func (s Screen) Title() string {
 		return "Dotfiles"
 	case ScreenScratch:
 		return "Scratch"
-	case ScreenLogs:
-		return "Logs"
+	case ScreenSessions:
+		return "Sessions"
 	case ScreenIgnore:
 		return "Ignore"
 	case ScreenSecrets:
@@ -160,6 +160,56 @@ func Up() tea.Msg { return UpMsg{} }
 
 // Goto returns a command that emits GotoMsg for s.
 func Goto(s Screen) tea.Cmd { return func() tea.Msg { return GotoMsg{Screen: s} } }
+
+// Noun is the CLI noun a screen is named after: what `:` takes to switch to it
+// (spec §6.6). The Dashboard has none.
+func (s Screen) Noun() string {
+	switch s {
+	case ScreenRepos:
+		return "repo"
+	case ScreenDotfiles:
+		return "dotfile"
+	case ScreenScratch:
+		return "scratch"
+	case ScreenSessions:
+		return "session"
+	case ScreenIgnore:
+		return "ignore"
+	case ScreenSecrets:
+		return "secret"
+	case ScreenCron:
+		return "cron"
+	case ScreenTrash:
+		return "trash"
+	default:
+		return ""
+	}
+}
+
+// CommandMsg carries a `:` command to a screen: the CLI words after the noun
+// (`backup push` for `:backup push` on Dotfiles) and the same line as typed.
+type CommandMsg struct {
+	Words []string
+	Line  string
+}
+
+// CommandInfo describes one `:` command of a screen, for completion and help.
+// Name is the words after the noun, Args their placeholder (`<dir>`).
+type CommandInfo struct {
+	Name string
+	Args string
+	Help string
+}
+
+// Commander is implemented by screens that have `:` commands. The app asks
+// it to complete the command bar and to list the commands in help.
+type Commander interface {
+	Commands() []CommandInfo
+}
+
+// OpenCommandBarMsg asks the app to open the command bar with text typed in,
+// for the Dashboard's advice rows.
+type OpenCommandBarMsg struct{ Prefill string }
 
 // Refresh is a command that emits RefreshMsg.
 func Refresh() tea.Msg { return RefreshMsg{} }

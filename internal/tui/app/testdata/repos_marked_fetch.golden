@@ -1,7 +1,6 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 Fetching 3 repos…
-3 marked — f p P s S x act on them · ctrl+\ clears
  Repo                                           State        ↑    ↓    Issues  Branch
  Projects/api                                   ✔ clean      ·    ·            main
  Projects/web                                   ● dirty      2    ·    1       feature/login
@@ -27,4 +26,5 @@ Fetching 3 repos…
 
 
 
-enter details • s sync (merge) • p pull (ff-only) • f fetch … • tab/⇧tab screens • ? help • q quit
+3 marked — f fetch · p pull (ff-only) · P pull --rebase · s sync (merge) · S sync (rebase) · x run c
+enter details • s sync (merge) • p pull (ff-only) … • tab screens • : command • ? help • q quit

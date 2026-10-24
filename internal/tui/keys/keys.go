@@ -1,28 +1,30 @@
 // Package keys holds every key binding in the TUI. Bindings are declared here
 // and nowhere else; the app handles Global, and each component handles its own
-// map.
-//
-// Key grammar (the same on every screen):
-//   - ←→↑↓ / h j k l  move within the page (lists: ↑↓; grids: all four)
-//   - enter           open / drill in — the only key that does
-//   - esc             up one level: closes a dialog, leaves a detail view,
-//     returns to the dashboard; does nothing at the dashboard
-//   - tab / shift+tab next / previous screen (global; also ] [ and 1-9)
-//   - r               reload the current screen
-//   - /  > <  i       on every list: filter, sort by the next field, reverse
-//     the sort, show every field of the cursor row (see ListMap)
-//   - space ctrl+space ctrl+\ A   marks, as in k9s: mark the cursor row, mark
-//     the range from the nearest mark to the cursor, clear all marks; A marks
-//     all/none. esc clears an active filter or marks before it goes up a level. Action keys act on the marked rows when
-//     there are marks (see reslist.Scope)
+// map. The grammar is spec §6.3, the same on every screen:
+//   - enter           open the row: drill in, view, or launch
+//   - esc             one level up: closes a dialog, clears the filter, clears
+//     the marks, leaves a detail view, goes to the Dashboard
+//   - :               the command bar, which takes the CLI's own words
+//   - /               filter the list (the CLI's --filter expressions)
 //   - ?               full help · q quit (ctrl+c always quits)
+//   - tab shift+tab ] [ 1-9   next / previous screen; jump to a screen
+//   - ctrl+r          refresh this screen
+//   - d  y            describe the cursor row; show it as JSON
+//   - e  a  ctrl+d    edit, add, delete: the same keys on every screen that has
+//     the verb (screens relabel them with key.WithHelp)
+//   - space ctrl+space ctrl+\ ctrl+a   marks, as in k9s: mark the cursor row
+//     (it does not move), mark the range from the nearest mark to the cursor,
+//     clear all marks, mark all/none. Action keys act on the marked rows when
+//     there are marks (see reslist.Scope)
+//   - > <             sort by the next field, reverse the sort
+//   - ↑↓ j k, g G home end, pgup pgdn ctrl+b ctrl+f   move
 //   - mouse           drag selects text and copies it on release; the wheel
 //     scrolls like ↑↓ (WS_NO_MOUSE=1 leaves the mouse to the terminal)
 //
-// Global bindings must never use keys a page needs for the grammar above
-// (arrows, hjkl, enter, esc, space); TestGlobalKeysLeavePageKeysAlone
-// enforces this. Dialogs (prompts, checklists) capture every key but ctrl+c,
-// so tab completes inside a prompt.
+// There are no shift+letter actions: G is the only uppercase key, and it is
+// movement. Global bindings must never use keys a page needs for the grammar
+// above; TestGlobalKeysLeavePageKeysAlone enforces this. Dialogs (prompts,
+// checklists) capture every key but ctrl+c, so tab completes inside a prompt.
 package keys
 
 import (
@@ -40,6 +42,8 @@ type GlobalMap struct {
 	Quit      key.Binding
 	ForceQuit key.Binding
 	Help      key.Binding
+	Command   key.Binding // opens the command bar
+	Refresh   key.Binding // refresh the active screen
 	NextTab   key.Binding
 	PrevTab   key.Binding
 	Screens   []key.Binding // Screens[i] jumps to screen i
@@ -65,22 +69,24 @@ func Global(n int) GlobalMap {
 		Quit:      key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 		ForceQuit: key.NewBinding(key.WithKeys("ctrl+c")),
 		Help:      key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		Command:   key.NewBinding(key.WithKeys(":"), key.WithHelp(":", "command")),
+		Refresh:   key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "refresh")),
 		NextTab:   key.NewBinding(key.WithKeys("tab", "]"), key.WithHelp("tab", "next screen")),
 		PrevTab:   key.NewBinding(key.WithKeys("shift+tab", "["), key.WithHelp("shift+tab", "prev screen")),
 		Screens:   screens,
 		Navigate:  key.NewBinding(key.WithKeys("1"), key.WithHelp("1-"+ScreenDigit(min(n, 10)-1), "jump to screen")),
-		Switch:    key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab/⇧tab", "screens")),
+		Switch:    key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "screens")),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
 func (k GlobalMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Switch, k.Help, k.Quit}
+	return []key.Binding{k.Switch, k.Command, k.Help, k.Quit}
 }
 
 // FullHelp implements help.KeyMap.
 func (k GlobalMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.NextTab, k.PrevTab, k.Navigate}, {k.Help, k.Quit}}
+	return [][]key.Binding{{k.NextTab, k.PrevTab, k.Navigate, k.Refresh}, {k.Command, k.Help, k.Quit}}
 }
 
 // Table returns the movement bindings shared by every list screen. They are
@@ -89,10 +95,10 @@ func Table() table.KeyMap {
 	return table.KeyMap{
 		LineUp:       key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 		LineDown:     key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
-		PageUp:       key.NewBinding(key.WithKeys("pgup"), key.WithHelp("pgup", "page up")),
-		PageDown:     key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("pgdn", "page down")),
-		HalfPageUp:   key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "½ page up")),
-		HalfPageDown: key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "½ page down")),
+		PageUp:       key.NewBinding(key.WithKeys("pgup", "ctrl+b"), key.WithHelp("pgup", "page up")),
+		PageDown:     key.NewBinding(key.WithKeys("pgdown", "ctrl+f"), key.WithHelp("pgdn", "page down")),
+		HalfPageUp:   key.NewBinding(key.WithDisabled()), // ctrl+u/ctrl+d are not movement: ctrl+d deletes
+		HalfPageDown: key.NewBinding(key.WithDisabled()),
 		GotoTop:      key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("g", "top")),
 		GotoBottom:   key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("G", "bottom")),
 	}
@@ -160,7 +166,6 @@ type ReposMap struct {
 	SyncRebase key.Binding
 	Run        key.Binding
 	AddRoot    key.Binding
-	Refresh    key.Binding
 	Back       key.Binding
 }
 
@@ -176,21 +181,20 @@ func Repos() ReposMap {
 		SyncRebase: key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "sync (rebase)")),
 		Run:        key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "run command")),
 		AddRoot:    key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add root")),
-		Refresh:    refresh(),
 		Back:       back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
 func (k ReposMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Open, k.Sync, k.Pull, k.Fetch, k.Run, k.Refresh}
+	return []key.Binding{k.Open, k.Sync, k.Pull, k.Fetch, k.Run}
 }
 
 // FullHelp implements help.KeyMap.
 func (k ReposMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
-		{k.Open, k.Fetch, k.Refresh, k.Back},
+		{k.Open, k.Fetch, k.Back},
 		{k.Sync, k.SyncRebase, k.Pull, k.PullRebase},
 		{k.Run, k.AddRoot},
 	}
@@ -208,7 +212,6 @@ type DotfilesMap struct {
 	GitView  key.Binding
 	GitSetup key.Binding
 	Migrate  key.Binding
-	Refresh  key.Binding
 	Back     key.Binding
 }
 
@@ -217,7 +220,7 @@ func Dotfiles() DotfilesMap {
 	return DotfilesMap{
 		Table:    Table(),
 		Add:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add")),
-		Remove:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "remove")),
+		Remove:   keyDelete("remove"),
 		Fix:      key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "fix links")),
 		Sync:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync live→ws")),
 		Reset:    key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "reset all")),
@@ -225,14 +228,13 @@ func Dotfiles() DotfilesMap {
 		GitView:  key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "git status/log")),
 		GitSetup: key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "git setup…")),
 		Migrate:  key.NewBinding(key.WithKeys("M"), key.WithHelp("M", "migrate dirs…")),
-		Refresh:  refresh(),
 		Back:     back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
 func (k DotfilesMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Add, k.Remove, k.Fix, k.Sync, k.Push, k.Refresh}
+	return []key.Binding{k.Add, k.Remove, k.Fix, k.Sync, k.Push}
 }
 
 // FullHelp implements help.KeyMap.
@@ -241,7 +243,7 @@ func (k DotfilesMap) FullHelp() [][]key.Binding {
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
 		{k.Add, k.Remove, k.Fix, k.Sync, k.Reset},
 		{k.Push, k.GitView, k.GitSetup, k.Migrate},
-		{k.Refresh, k.Back},
+		{k.Back},
 	}
 }
 
@@ -254,7 +256,6 @@ type ScratchMap struct {
 	AutoTag key.Binding
 	Search  key.Binding
 	Delete  key.Binding
-	Refresh key.Binding
 	Back    key.Binding
 }
 
@@ -267,8 +268,7 @@ func Scratch() ScratchMap {
 		Tag:     key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tag")),
 		AutoTag: key.NewBinding(key.WithKeys("T"), key.WithHelp("T", "auto-tag")),
 		Search:  key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "find")),
-		Delete:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
-		Refresh: refresh(),
+		Delete:  keyDelete("delete"),
 		Back:    back(),
 	}
 }
@@ -282,7 +282,7 @@ func (k ScratchMap) ShortHelp() []key.Binding {
 func (k ScratchMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
-		{k.New, k.Open, k.Search, k.Refresh},
+		{k.New, k.Open, k.Search},
 		{k.Tag, k.AutoTag, k.Delete},
 		{k.Back},
 	}
@@ -298,7 +298,6 @@ type LogsMap struct {
 	Search     key.Binding
 	Delete     key.Binding
 	Prune      key.Binding
-	Refresh    key.Binding
 	Back       key.Binding
 }
 
@@ -311,9 +310,8 @@ func Logs() LogsMap {
 		View:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "view")),
 		ToggleMode: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "commands only")),
 		Search:     key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "find")),
-		Delete:     key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
+		Delete:     keyDelete("delete"),
 		Prune:      key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "prune")),
-		Refresh:    refresh(),
 		Back:       back(),
 	}
 }
@@ -327,7 +325,7 @@ func (k LogsMap) ShortHelp() []key.Binding {
 func (k LogsMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
-		{k.View, k.Search, k.Refresh, k.Back},
+		{k.View, k.Search, k.Back},
 		{k.Start, k.Stop, k.Delete, k.Prune},
 	}
 }
@@ -365,7 +363,6 @@ type IgnoreMap struct {
 	Tree           key.Binding
 	List           key.Binding
 	EditRules      key.Binding
-	Refresh        key.Binding
 	Back           key.Binding
 }
 
@@ -377,21 +374,20 @@ func Ignore() IgnoreMap {
 		Suppress:       key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "suppress warning")),
 		Unsuppress:     key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "remove suppress rule")),
 		Move:           key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "move to scratch")),
-		Delete:         key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
+		Delete:         keyDelete("delete"),
 		ExcludeAll:     key.NewBinding(key.WithKeys("X"), key.WithHelp("X", "megaignore all")),
 		Check:          key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "check path")),
 		ViewSuppressed: key.NewBinding(key.WithKeys("H"), key.WithHelp("H", "view suppressed")),
 		Tree:           key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tree…")),
 		List:           key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "list megaignored…")),
 		EditRules:      key.NewBinding(key.WithKeys("E"), key.WithHelp("E", "edit rules…")),
-		Refresh:        key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rescan")),
 		Back:           back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
 func (k IgnoreMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Exclude, k.Suppress, k.Move, k.Delete, k.Refresh}
+	return []key.Binding{k.Exclude, k.Suppress, k.Move, k.Delete}
 }
 
 // FullHelp implements help.KeyMap.
@@ -400,7 +396,7 @@ func (k IgnoreMap) FullHelp() [][]key.Binding {
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
 		{k.Exclude, k.Suppress, k.Unsuppress, k.Move, k.Delete, k.ExcludeAll},
 		{k.Check, k.ViewSuppressed},
-		{k.Tree, k.List, k.EditRules, k.Refresh, k.Back},
+		{k.Tree, k.List, k.EditRules, k.Back},
 	}
 }
 
@@ -422,7 +418,6 @@ type SecretsMap struct {
 	CredSetup      key.Binding
 	CredStatus     key.Binding
 	CredDisconnect key.Binding
-	Refresh        key.Binding
 	Back           key.Binding
 }
 
@@ -444,20 +439,19 @@ func Secrets() SecretsMap {
 		CredSetup:      key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "credential setup…")),
 		CredStatus:     key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "credential status…")),
 		CredDisconnect: key.NewBinding(key.WithKeys("X"), key.WithHelp("X", "credential disconnect…")),
-		Refresh:        key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "rescan")),
 		Back:           back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
 func (k SecretsMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.View, k.Allowlist, k.Exclude, k.StorePass, k.SkipDir, k.Refresh}
+	return []key.Binding{k.View, k.Allowlist, k.Exclude, k.StorePass, k.SkipDir}
 }
 
 // FullHelp implements help.KeyMap.
 func (k SecretsMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Table.LineUp, k.Table.LineDown, k.View, k.Refresh, k.Back},
+		{k.Table.LineUp, k.Table.LineDown, k.View, k.Back},
 		{k.Allowlist, k.AllowAll, k.Exclude, k.StorePass, k.SkipDir},
 		{k.Audit, k.PassPush, k.PassLog, k.PassRemote, k.Setup},
 		{k.CredStatus, k.CredSetup, k.CredDisconnect},
@@ -467,29 +461,27 @@ func (k SecretsMap) FullHelp() [][]key.Binding {
 // CronMap is the binding set for the cron screen. Actions apply to the
 // selected job.
 type CronMap struct {
-	Table   table.KeyMap
-	Add     key.Binding
-	Remove  key.Binding
-	Log     key.Binding
-	Refresh key.Binding
-	Back    key.Binding
+	Table  table.KeyMap
+	Add    key.Binding
+	Remove key.Binding
+	Log    key.Binding
+	Back   key.Binding
 }
 
 // Cron returns bindings for the cron screen.
 func Cron() CronMap {
 	return CronMap{
-		Table:   Table(),
-		Add:     key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "install")),
-		Remove:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "remove")),
-		Log:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "view log")),
-		Refresh: refresh(),
-		Back:    back(),
+		Table:  Table(),
+		Add:    key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "install")),
+		Remove: keyDelete("remove"),
+		Log:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "view log")),
+		Back:   back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
 func (k CronMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Log, k.Add, k.Remove, k.Refresh}
+	return []key.Binding{k.Log, k.Add, k.Remove}
 }
 
 // FullHelp implements help.KeyMap.
@@ -497,7 +489,7 @@ func (k CronMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
 		{k.Log, k.Add, k.Remove},
-		{k.Refresh, k.Back},
+		{k.Back},
 	}
 }
 
@@ -509,7 +501,6 @@ type TrashMap struct {
 	Empty      key.Binding
 	Purge      key.Binding
 	DeleteItem key.Binding
-	Refresh    key.Binding
 	Back       key.Binding
 }
 
@@ -521,15 +512,14 @@ func Trash() TrashMap {
 		Disable:    key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "disable")),
 		Empty:      key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "empty trash")),
 		Purge:      key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "purge older")),
-		DeleteItem: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete item")),
-		Refresh:    refresh(),
+		DeleteItem: keyDelete("delete item"),
 		Back:       back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
 func (k TrashMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Enable, k.Disable, k.DeleteItem, k.Purge, k.Empty, k.Refresh}
+	return []key.Binding{k.Enable, k.Disable, k.DeleteItem, k.Purge, k.Empty}
 }
 
 // FullHelp implements help.KeyMap.
@@ -537,7 +527,7 @@ func (k TrashMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown},
 		{k.Enable, k.Disable, k.Empty},
-		{k.DeleteItem, k.Purge, k.Refresh, k.Back},
+		{k.DeleteItem, k.Purge, k.Back},
 	}
 }
 
@@ -572,10 +562,10 @@ func Detail() DetailMap {
 		Viewport: viewport.KeyMap{
 			Up:           key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "scroll up")),
 			Down:         key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "scroll down")),
-			PageUp:       key.NewBinding(key.WithKeys("pgup"), key.WithHelp("pgup", "page up")),
-			PageDown:     key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("pgdn", "page down")),
-			HalfPageUp:   key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "½ page up")),
-			HalfPageDown: key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "½ page down")),
+			PageUp:       key.NewBinding(key.WithKeys("pgup", "ctrl+b"), key.WithHelp("pgup", "page up")),
+			PageDown:     key.NewBinding(key.WithKeys("pgdown", "ctrl+f"), key.WithHelp("pgdn", "page down")),
+			HalfPageUp:   key.NewBinding(key.WithDisabled()),
+			HalfPageDown: key.NewBinding(key.WithDisabled()),
 			Left:         key.NewBinding(key.WithDisabled()),
 			Right:        key.NewBinding(key.WithDisabled()),
 		},
@@ -592,7 +582,7 @@ func (k DetailMap) ShortHelp() []key.Binding {
 func (k DetailMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Viewport.Up, k.Viewport.Down, k.Viewport.PageUp, k.Viewport.PageDown},
-		{k.Viewport.HalfPageUp, k.Viewport.HalfPageDown, k.Back},
+		{k.Back},
 	}
 }
 
@@ -613,7 +603,7 @@ func Confirm() ConfirmMap {
 		Up:     key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 		Down:   key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
 		Toggle: key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "toggle")),
-		All:    key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "all/none")),
+		All:    key.NewBinding(key.WithKeys("ctrl+a"), key.WithHelp("ctrl+a", "all/none")),
 		Apply:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply")),
 		Close:  key.NewBinding(key.WithKeys("enter", "esc"), key.WithHelp("enter", "close")),
 		Cancel: back(),
@@ -691,7 +681,8 @@ type ListMap struct {
 	MarkRange key.Binding // k9s: from the nearest mark to the cursor
 	MarkClear key.Binding
 	MarkAll   key.Binding
-	Detail    key.Binding
+	Describe  key.Binding // every field of the cursor row
+	JSON      key.Binding // the cursor row as `ws <noun> ls --json` prints it
 	Clear     key.Binding // esc while a filter or marks are active
 	Apply     key.Binding // while typing a filter
 	Cancel    key.Binding // while typing a filter
@@ -706,8 +697,9 @@ func List() ListMap {
 		Mark:      key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "mark")),
 		MarkRange: key.NewBinding(key.WithKeys("ctrl+space"), key.WithHelp("ctrl+space", "mark range")),
 		MarkClear: key.NewBinding(key.WithKeys("ctrl+\\"), key.WithHelp("ctrl+\\", "clear marks")),
-		MarkAll:   key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "mark all/none")),
-		Detail:    key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "all fields")),
+		MarkAll:   key.NewBinding(key.WithKeys("ctrl+a"), key.WithHelp("ctrl+a", "mark all/none")),
+		Describe:  key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "describe")),
+		JSON:      key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "json")),
 		Clear:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "clear filter/marks")),
 		Apply:     key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "keep filter")),
 		Cancel:    key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
@@ -716,7 +708,7 @@ func List() ListMap {
 
 // Bindings lists the list bindings shown in help.
 func (k ListMap) Bindings() []key.Binding {
-	return []key.Binding{k.Filter, k.Sort, k.Reverse, k.Detail, k.Mark, k.MarkRange, k.MarkClear, k.MarkAll}
+	return []key.Binding{k.Filter, k.Sort, k.Reverse, k.Describe, k.JSON, k.Mark, k.MarkRange, k.MarkClear, k.MarkAll}
 }
 
 // FilterMap is the help shown while a filter is being typed.
@@ -746,8 +738,21 @@ func (w withList) FullHelp() [][]key.Binding {
 	return append(append([][]key.Binding{}, w.KeyMap.FullHelp()...), w.list.Bindings())
 }
 
-func refresh() key.Binding {
-	return key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh"))
+func keyDelete(desc string) key.Binding {
+	return key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", desc))
+}
+
+// Add, Edit and Delete are the verbs every screen binds the same way (spec
+// §6.3). A screen relabels them with key.WithHelp, for example
+// `a` "add", `ctrl+d` "unlink".
+func Add() key.Binding { return key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add")) }
+
+// Edit is `e`.
+func Edit() key.Binding { return key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")) }
+
+// Delete is `ctrl+d`.
+func Delete() key.Binding {
+	return key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "delete"))
 }
 
 func back() key.Binding {

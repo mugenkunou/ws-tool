@@ -1,8 +1,9 @@
 // Package reslist is the list every resource screen shares: a listview over
 // typed items described by a resource.Schema, with filtering (/), sorting
-// (> <), k9s-style marking (space, ctrl+space range, ctrl+\ clear, A all)
-// and an all-fields detail pane (i) built in, so
-// each works the same on every screen. Screens supply the schema, per-column
+// (> <), k9s-style marking (space, ctrl+space range, ctrl+\ clear, ctrl+a
+// all), an all-fields pane (d) and a JSON pane (y) built in, so
+// each works the same on every screen. The status line sits at the bottom and
+// is always reserved, so typing a filter or marking a row never moves a row. Screens supply the schema, per-column
 // sizing and colour, and their actions, each declared with a Scope; Run
 // hands an action the rows its scope covers (see actions.go).
 //
@@ -11,6 +12,7 @@
 package reslist
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -101,12 +103,9 @@ func (m Model[T]) SetSize(width, height int) Model[T] {
 	return m.layout()
 }
 
+// layout gives the list every row but the last, which is the status line.
 func (m Model[T]) layout() Model[T] {
-	h := m.height
-	if m.statusShown() {
-		h--
-	}
-	m.list = m.list.SetSize(m.width, max(h, 0))
+	m.list = m.list.SetSize(m.width, max(m.height-1, 0))
 	return m
 }
 
@@ -202,6 +201,18 @@ func indexOf[T any](items []T, pred func(T) bool) int {
 	return -1
 }
 
+// SetFilter applies a filter expression as if it had been typed and kept, so
+// the Dashboard can open a screen already filtered to the rows that need
+// attention. An empty expression clears the filter.
+func (m Model[T]) SetFilter(expr string) Model[T] {
+	m.editing = false
+	m.filter, m.terms = expr, resource.ParseFilter(expr)
+	return m.refresh()
+}
+
+// Filter returns the filter expression in effect.
+func (m Model[T]) Filter() string { return m.filter }
+
 // Editing reports that the filter is being typed; the screen must then
 // report CapturesKeys so global keys type into the filter.
 func (m Model[T]) Editing() bool { return m.editing }
@@ -216,7 +227,7 @@ func (m Model[T]) HandleKey(k tea.KeyPressMsg) (Model[T], tea.Cmd, bool) {
 		return m.editKey(k), nil, true
 	}
 	if m.showDetail {
-		if key.Matches(k, m.detailKeys.Back, m.keys.Detail) {
+		if key.Matches(k, m.detailKeys.Back, m.keys.Describe, m.keys.JSON) {
 			m.showDetail = false
 			return m, nil, true
 		}
@@ -274,13 +285,22 @@ func (m Model[T]) HandleKey(k tea.KeyPressMsg) (Model[T], tea.Cmd, bool) {
 			}
 		}
 		return m.refresh(), nil, true
-	case key.Matches(k, m.keys.Detail):
+	case key.Matches(k, m.keys.Describe):
 		it, ok := m.Current()
 		if !ok {
 			return m, nil, true
 		}
 		m.showDetail = true
 		m.detail.SetContent(m.detailText(it))
+		m.detail.GotoTop()
+		return m, nil, true
+	case key.Matches(k, m.keys.JSON):
+		it, ok := m.Current()
+		if !ok {
+			return m, nil, true
+		}
+		m.showDetail = true
+		m.detail.SetContent(m.jsonText(it))
 		m.detail.GotoTop()
 		return m, nil, true
 	case key.Matches(k, m.keys.Clear):
@@ -421,15 +441,14 @@ func (m Model[T]) arrow() string {
 	return " ↑"
 }
 
-func (m Model[T]) statusShown() bool {
-	return m.editing || m.filter != "" || m.sortKey >= 0 || len(m.marked()) > 0
-}
-
+// statusLine is the line at the bottom of the list: the filter being typed, or
+// what the filter, sort and marks are doing, with each key named by its label.
+// It is blank when nothing is active.
 func (m Model[T]) statusLine() string {
 	sep := theme.Muted.Render(" · ")
 	if m.editing {
 		return theme.Bold.Render("/") + m.filter + theme.Muted.Render("▏") +
-			theme.Muted.Render("   key=text · key!=text · text   enter keep · esc cancel")
+			theme.Muted.Render("   key=text · key!=text · text   "+m.keys.Apply.Help().Key+" keep · "+m.keys.Cancel.Help().Key+" cancel")
 	}
 	var parts []string
 	nMarked := len(m.marked())
@@ -439,7 +458,7 @@ func (m Model[T]) statusLine() string {
 		if err := m.schema.Validate(resource.Query{Terms: m.terms}); err != nil {
 			part += "  " + theme.Warn.Render(err.Error())
 		} else if ks := m.scopedKeys(All); nMarked == 0 && len(ks) > 0 && len(m.shown) > 0 {
-			part += theme.Muted.Render(fmt.Sprintf(" — %s act on these %d", strings.Join(ks, " "), len(m.shown)))
+			part += theme.Muted.Render(fmt.Sprintf(" — %s act on these %d", strings.Join(ks, " · "), len(m.shown)))
 		}
 		parts = append(parts, part)
 	}
@@ -449,9 +468,9 @@ func (m Model[T]) statusLine() string {
 	if nMarked > 0 {
 		part := theme.Title.Render(fmt.Sprintf("%d marked", nMarked))
 		if ks := m.scopedKeys(Selected, All); len(ks) > 0 {
-			part += theme.Muted.Render(" — " + strings.Join(ks, " ") + " act on them")
+			part += theme.Muted.Render(" — " + strings.Join(ks, " · ") + " act on them")
 		}
-		parts = append(parts, part+theme.Muted.Render(" · "+m.keys.MarkClear.Help().Key+" clears"))
+		parts = append(parts, part+theme.Muted.Render(" · "+m.keys.Clear.Help().Key+" clears"))
 	}
 	return strings.Join(parts, sep)
 }
@@ -474,16 +493,28 @@ func (m Model[T]) detailText(it T) string {
 	return b.String()
 }
 
-// View renders the list (or the detail pane) into the size it was given.
+// jsonText is the cursor row exactly as `ws <noun> ls --json` prints it in its
+// data array. Only a field's display text depends on the view, never its value,
+// so the TUI's schema gives the CLI's JSON.
+func (m Model[T]) jsonText(it T) string {
+	b, err := json.MarshalIndent(m.schema.Record(it), "", "  ")
+	if err != nil {
+		return theme.Error.Render(err.Error())
+	}
+	return string(b) + "\n\n" + theme.Muted.Render(m.keys.Clear.Help().Key+" back")
+}
+
+// View renders the list and its status line (or the detail pane) into the size
+// it was given. The status line is always the last line, blank when idle.
 func (m Model[T]) View() string {
 	if m.showDetail {
 		return m.detail.View()
 	}
-	if !m.statusShown() {
+	if m.height < 1 {
 		return m.list.View()
 	}
 	status := lipgloss.NewStyle().MaxWidth(m.width).Render(m.statusLine())
-	return lipgloss.JoinVertical(lipgloss.Left, status, m.list.View())
+	return lipgloss.JoinVertical(lipgloss.Left, m.list.View(), status)
 }
 
 // Help merges the shared list bindings into the screen's own help, or

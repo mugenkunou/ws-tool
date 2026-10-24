@@ -1,4 +1,4 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  Tag                                       Started           Duration  Cmds  Size       State
  deploy-fix                                2026-09-30 14:05  —         12    40.0 KB    ● recording
@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷
 
 
 
-enter view • s start recording • x stop recording • F find … • tab/⇧tab screens • ? help • q quit
+enter view • s start recording • x stop recording … • tab screens • : command • ? help • q quit

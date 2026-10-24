@@ -1,4 +1,4 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 4 repos · 1 dirty · 1 ahead · 1 behind · 1 issue
  Repo                                           State        ↑    ↓    Issues  Branch
@@ -19,12 +19,12 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷
 
 
 
-
 ↑/k up        enter details    s sync (merge)      x run command    /          filter             …
 ↓/j down      f     fetch      S sync (rebase)     a add root       >          sort by next field
-g   top       r     refresh    p pull (ff-only)                     <          reverse sort
-G   bottom    esc   back       P pull --rebase                      i          all fields
+g   top       esc   back       p pull (ff-only)                     <          reverse sort
+G   bottom                     P pull --rebase                      d          describe
+                                                                    y          json
                                                                     space      mark
                                                                     ctrl+space mark range
                                                                     ctrl+\     clear marks
-                                                                    A          mark all/none
+                                                                    ctrl+a     mark all/none

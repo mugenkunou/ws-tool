@@ -66,7 +66,7 @@ func TestListScreensShareListKeys(t *testing.T) {
 func listScreenKeys() map[nav.Screen]help.KeyMap {
 	return map[nav.Screen]help.KeyMap{
 		nav.ScreenRepos: keys.Repos(), nav.ScreenDotfiles: keys.Dotfiles(), nav.ScreenScratch: keys.Scratch(),
-		nav.ScreenLogs: keys.Logs(), nav.ScreenIgnore: keys.Ignore(), nav.ScreenSecrets: keys.Secrets(),
+		nav.ScreenSessions: keys.Logs(), nav.ScreenIgnore: keys.Ignore(), nav.ScreenSecrets: keys.Secrets(),
 		nav.ScreenCron: keys.Cron(), nav.ScreenTrash: keys.Trash(),
 	}
 }

@@ -1,4 +1,4 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 Reset workspace
 Reverses `ws init`. Tick each step to undo (a selects all).
@@ -27,4 +27,4 @@ Reverses `ws init`. Tick each step to undo (a selects all).
 
 
 
-space toggle • a all/none • enter apply • esc back
+space toggle • ctrl+a all/none • enter apply • esc back

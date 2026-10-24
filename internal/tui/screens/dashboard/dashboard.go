@@ -77,7 +77,7 @@ type area struct {
 // areas in grid order (row-major).
 var areas = []nav.Screen{
 	nav.ScreenRepos, nav.ScreenDotfiles, nav.ScreenScratch,
-	nav.ScreenLogs, nav.ScreenIgnore,
+	nav.ScreenSessions, nav.ScreenIgnore,
 	nav.ScreenSecrets, nav.ScreenCron, nav.ScreenTrash,
 }
 
@@ -169,7 +169,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	case scratch.LoadedMsg:
 		m = m.set(nav.ScreenScratch, msg.Err, scratchArea(msg))
 	case logs.LoadedMsg:
-		m = m.set(nav.ScreenLogs, msg.Err, logsArea(msg))
+		m = m.set(nav.ScreenSessions, msg.Err, logsArea(msg))
 	case ignore.LoadedMsg:
 		m = m.set(nav.ScreenIgnore, msg.Err, ignoreArea(msg))
 	case secrets.LoadedMsg:

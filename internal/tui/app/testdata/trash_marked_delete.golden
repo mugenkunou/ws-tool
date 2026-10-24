@@ -1,24 +1,22 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Delete 2 trash items
+🚮 ~/.Trash  3.0 MB · 12 files (warns at 1.0 GB)
 
-› [x] Permanently delete old-notes.md (2.0 KB)
-  [x] Permanently delete build (3.0 MB)
+  ✔ shell rm       rm moves files here
+  ✔ VS Code        editor deletes go here
+  ✘ file explorer  desktop trash points here
 
+trash item  old-notes.md
 
+Name          old-notes.md
+Deleted from  Notes/old-notes.md
+Size          2.0 KB
+Files         1
+Deleted       3h ago
+Directory
+Trash path
 
-
-
-
-
-
-
-
-
-
-
-
-
+esc back
 
 
 
@@ -27,4 +25,6 @@ Delete 2 trash items
 
 
 
-space toggle • a all/none • enter apply • esc back
+
+
+↑/k scroll up • ↓/j scroll down • esc back • tab screens • : command • ? help • q quit

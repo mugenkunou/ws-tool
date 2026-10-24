@@ -1,4 +1,4 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 4 repos · 1 dirty · 1 ahead · 1 behind · 1 issue
  Repo                                           State        ↑    ↓    Issues  Branch
@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷
 
 
 
-enter details • s sync (merge) • p pull (ff-only) • f fetch … • tab/⇧tab screens • ? help • q quit
+enter details • s sync (merge) • p pull (ff-only) … • tab screens • : command • ? help • q quit

@@ -1,4 +1,4 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 🌅 Good morning  ·  ~/Workspace
 
@@ -19,7 +19,7 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷
 │ ↑ 1 ahead · ↓ 1 behind       │ │ 2 links need fixing          │ │ newest dns-debug.2026-09     │
 ╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
 ╭──────────────────────────────╮ ╭──────────────────────────────╮ ╭──────────────────────────────╮
-│ 📼 Logs                    ✔ │ │ 🧹 Ignore                  ! │ │ 🔐 Secrets                 ✘ │
+│ 📼 Sessions                ✔ │ │ 🧹 Ignore                  ! │ │ 🔐 Secrets                 ✘ │
 │ 2 sessions                   │ │ 2 violations                 │ │ 1 finding                    │
 │ ● recording deploy-fix       │ │ 1 in safe harbors            │ │ pass: 42 entries             │
 ╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷
 │ ⏰ Cron                    ✘ │ │ 🚮 Trash                   ! │
 │ 2 jobs installed             │ │ 3.0 MB · 12 files            │
 │ 1 failing                    │ │ soft-delete off (1 of 3)     │
-←→↑↓ move • enter open • x quick fix • r refresh all • tab/⇧tab screens • ? help • q quit
+←→↑↓ move • enter open • x quick fix • r refresh all • tab screens • : command • ? help • q quit

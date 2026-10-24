@@ -129,7 +129,7 @@ func (m Model) withEnv(e env.Env, loadErr error) Model {
 		m.screens[nav.ScreenRepos] = repos.New(e)
 		m.screens[nav.ScreenDotfiles] = dotfiles.New(e)
 		m.screens[nav.ScreenScratch] = scratch.New(e)
-		m.screens[nav.ScreenLogs] = logs.New(e)
+		m.screens[nav.ScreenSessions] = logs.New(e)
 		m.screens[nav.ScreenIgnore] = ignore.New(e)
 		m.screens[nav.ScreenSecrets] = secrets.New(e)
 		m.screens[nav.ScreenCron] = cron.New(e)

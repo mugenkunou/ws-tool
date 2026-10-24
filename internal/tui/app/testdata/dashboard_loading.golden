@@ -1,4 +1,4 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 🌅 Good morning  ·  ~/Workspace
 
@@ -11,7 +11,7 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷
 │                              │ │                              │ │                              │
 ╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
 ╭──────────────────────────────╮ ╭──────────────────────────────╮ ╭──────────────────────────────╮
-│ 📼 Logs                   🌑 │ │ 🧹 Ignore                 🌑 │ │ 🔐 Secrets                🌑 │
+│ 📼 Sessions               🌑 │ │ 🧹 Ignore                 🌑 │ │ 🔐 Secrets                🌑 │
 │ scanning…                    │ │ scanning…                    │ │ scanning…                    │
 │                              │ │                              │ │                              │
 ╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷
 
 
 
-←→↑↓ move • enter open • x quick fix • r refresh all • tab/⇧tab screens • ? help • q quit
+←→↑↓ move • enter open • x quick fix • r refresh all • tab screens • : command • ? help • q quit

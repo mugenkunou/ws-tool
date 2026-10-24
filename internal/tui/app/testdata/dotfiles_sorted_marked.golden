@@ -1,6 +1,5 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Logs⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-sort System path ↑ · 2 marked — d s x R act on them · ctrl+\ clears
  System path ↑                                  Workspace copy                  Status         Sudo
  /etc/hosts                                     configs/dotfiles/etc/hosts      ⚠ overwritten  yes
  ~/.bashrc                                      configs/dotfiles/bashrc         ✔ ok
@@ -27,4 +26,5 @@ sort System path ↑ · 2 marked — d s x R act on them · ctrl+\ clears
 
 
 
-a add • d remove • x fix links • s sync live→ws • p git push … • tab/⇧tab screens • ? help • q quit
+sort System path ↑ · 2 marked — ctrl+d remove · s sync live→ws · x fix links · R reset all act on th
+a add • ctrl+d remove • x fix links • s sync live→ws … • tab screens • : command • ? help • q quit
