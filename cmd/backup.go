@@ -36,6 +36,10 @@ type backupSpec struct {
 	// hasAutos is true when the settings include auto_commit and auto_push.
 	hasAutos bool
 
+	// requires, when set, is checked before `enable` does anything: it returns
+	// the error that stops it (pass needs an initialized store).
+	requires func() error
+
 	// initialized reports whether the repository exists; initPlan names the
 	// action that creates it and init runs it.
 	initialized func() bool
@@ -147,9 +151,15 @@ func runBackupEnable(spec backupSpec, args []string, globals globalFlags, stdin 
 		fmt.Fprintf(stderr, "usage: ws %s backup enable [--remote <url>] [--pass-entry <entry>]\n", spec.noun)
 		return 1
 	}
-	out := textOut(globals, stdout)
+	out := quietOut(globals, stdout)
 	nc := globals.noColor
 
+	if spec.requires != nil {
+		if err := spec.requires(); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+	}
 	cur, err := spec.load()
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
@@ -274,7 +284,7 @@ func runBackupDisable(spec backupSpec, args []string, globals globalFlags, stdin
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	out := textOut(globals, stdout)
+	out := quietOut(globals, stdout)
 	nc := globals.noColor
 
 	cur, err := spec.load()
@@ -402,7 +412,7 @@ func runBackupStatus(spec backupSpec, args []string, globals globalFlags, stdout
 		return writeJSON(stdout, stderr, spec.command("status"), backupStatusData(spec, st, s))
 	}
 
-	out := textOut(globals, stdout)
+	out := quietOut(globals, stdout)
 	nc := globals.noColor
 	if s.RemoteURL == "" {
 		fmt.Fprintf(out, "%-13s %s\n", "Backup", "disabled")
@@ -459,7 +469,7 @@ func runBackupPush(spec backupSpec, args []string, globals globalFlags, stdin io
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	out := textOut(globals, stdout)
+	out := quietOut(globals, stdout)
 	nc := globals.noColor
 
 	s, err := spec.load()

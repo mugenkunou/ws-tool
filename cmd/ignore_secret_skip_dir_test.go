@@ -113,14 +113,15 @@ func TestSecretScanSkipDirJSON(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d stderr=%s", code, errOut.String())
 	}
 
+	// secret ls returns the findings as a plain array; skipped_dirs moved to
+	// `ws config show` (secret.skip_dirs). The one-run skip hid the finding.
 	var result map[string]any
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatalf("invalid JSON: %v output=%s", err, out.String())
 	}
-	data := result["data"].(map[string]any)
-	dirs, ok := data["skipped_dirs"].([]any)
-	if !ok || len(dirs) != 1 || dirs[0] != filepath.Join(workspace, "vendor") {
-		t.Fatalf("expected skipped_dirs=[<workspace>/vendor] in JSON, got: %v", data["skipped_dirs"])
+	data, ok := result["data"].([]any)
+	if !ok || len(data) != 0 {
+		t.Fatalf("expected data=[] with vendor skipped, got: %v", result["data"])
 	}
 }
 

@@ -1,8 +1,8 @@
 // Package secrets is the secrets screen: pass store and credential helper
-// health, `secret scan` violations with the `secret fix` actions (allowlist,
-// exclude, move to pass, skip dir), a pass store audit, and pass git
-// (push, log, remote). Setup wizards (`secret setup`,
-// `git-credential-helper setup|status|disconnect`) are handed to the CLI.
+// health, `secret ls` findings with the `secret allow`, `ignore add`, `secret store`
+// and `secret mute` actions, a pass store audit, and the pass backup (push, log,
+// remote). The wizards (`pass init`, `credential enable|status|disable`) are
+// handed to the CLI.
 //
 // Navigation levels: list → detail (context, audit, log). esc returns to the
 // list; esc in the list asks the app to go up.
@@ -334,15 +334,15 @@ var actions = func() []reslist.Action[Model, secret.Violation] {
 				prompt.WithValue(m.health.RemoteURL), prompt.WithHint("Use a private repository.")))
 			return m, cmd
 		})},
-		{Key: k.Setup, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) { return m, m.wizard("secret", "setup") })},
+		{Key: k.Setup, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) { return m, m.wizard("pass", "init") })},
 		{Key: k.CredSetup, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
-			return m, m.wizard("git-credential-helper", "setup")
+			return m, m.wizard("credential", "enable")
 		})},
 		{Key: k.CredStatus, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
-			return m, handover.Run(handover.Paged(handover.WS(m.env.Paths, "git-credential-helper", "status")), handoverWizard)
+			return m, handover.Run(handover.Paged(handover.WS(m.env.Paths, "credential", "status")), handoverWizard)
 		})},
 		{Key: k.CredDisconnect, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
-			return m, m.wizard("git-credential-helper", "disconnect")
+			return m, m.wizard("credential", "disable")
 		})},
 	}
 }()

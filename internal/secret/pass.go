@@ -95,7 +95,7 @@ func AuditPassStore(h PassHealth) PassAuditResult {
 	if !h.Initialized {
 		result.Findings = append(result.Findings, PassAuditFinding{
 			Entry:   "",
-			Message: "pass store is not initialized — run `ws secret setup` or `pass init <gpg-id>`",
+			Message: "pass store is not initialized: run `ws pass init`",
 		})
 		return result
 	}
@@ -103,19 +103,19 @@ func AuditPassStore(h PassHealth) PassAuditResult {
 	if !h.GitBacked {
 		result.Findings = append(result.Findings, PassAuditFinding{
 			Entry:   "",
-			Message: "pass store is not git-backed — run `pass git init` for version history",
+			Message: "pass store is not git-backed: run `ws pass init`",
 		})
 	} else if !h.GitRemote {
 		result.Findings = append(result.Findings, PassAuditFinding{
 			Entry:   "",
-			Message: "pass store has no git remote — run `pass git remote add origin <url>` to sync offsite",
+			Message: "pass store has no git remote: run `ws pass backup enable --remote <url>`",
 		})
 	}
 
 	if h.EntryCount == 0 {
 		result.Findings = append(result.Findings, PassAuditFinding{
 			Entry:   "",
-			Message: "pass store is empty — no credentials stored yet",
+			Message: "pass store is empty: no credentials stored yet",
 		})
 	}
 
@@ -219,7 +219,7 @@ func auditEntryMetadata(root string) []PassAuditFinding {
 		if info.Size() > 0 && info.Size() < 450 {
 			findings = append(findings, PassAuditFinding{
 				Entry:   entry,
-				Message: "entry may lack metadata — add `username: <user>` on line 2 for credential helper",
+				Message: "entry may lack metadata: add `username: <user>` on line 2",
 			})
 		}
 		return nil
@@ -289,7 +289,11 @@ func InitGit() error {
 
 // AddGitRemote adds a git remote to the pass store.
 func AddGitRemote(url string) error {
-	cmd := exec.Command("pass", "git", "remote", "add", "origin", url)
+	verb := "add"
+	if GitRemoteURL() != "" {
+		verb = "set-url" // origin exists: point it at the new URL
+	}
+	cmd := exec.Command("pass", "git", "remote", verb, "origin", url)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("pass git remote add failed: %s", strings.TrimSpace(string(out)))
@@ -331,30 +335,44 @@ func GitRemoteURL() string {
 	return strings.TrimSpace(string(out))
 }
 
-// InsertEntry stores a value in the pass store under the given entry name.
-// The value is piped via stdin to avoid command-line exposure.
-// Multi-line values (containing newlines) use pass insert -m; single-line
-// values use pass insert -f (force overwrite, reads from stdin).
+// InsertEntry stores a value in the pass store under the given entry name. It
+// never overwrites: an existing entry is an error, and the caller picks another
+// name (spec §5 secret store). The value goes to `pass insert -m` on stdin,
+// never on a command line. -m reads until EOF, so one call serves single and
+// multi-line values; plain `pass insert` asks for a retyped copy and the old
+// `-f` form (which also overwrote) failed on that second read.
 func InsertEntry(entryName, value string) error {
-	if strings.ContainsAny(value, "\n\r") {
-		// Multi-line: use -m which reads until EOF.
-		cmd := exec.Command("pass", "insert", "-m", entryName)
-		cmd.Stdin = strings.NewReader(value + "\n")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("pass insert failed: %s", strings.TrimSpace(string(out)))
-		}
-		return nil
+	if PassEntryExists(entryName) {
+		return fmt.Errorf("pass entry %s already exists; pick another name", entryName)
 	}
-
-	// Single-line: echo value | pass insert -f <entry>
-	// -f forces overwrite without prompting. pass reads one line from stdin
-	// when piped (non-TTY) and stores it.
-	cmd := exec.Command("pass", "insert", "-f", entryName)
+	cmd := exec.Command("pass", "insert", "-m", entryName)
 	cmd.Stdin = strings.NewReader(value + "\n")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("pass insert failed: %s", strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// WorkspaceCopy reports where the pass store lives inside the workspace, when
+// the store path is a symlink into it (what `ws dotfile add --dir` leaves).
+// ok is false when the store is not such a link.
+func WorkspaceCopy(storePath, workspacePath string) (target string, ok bool) {
+	info, err := os.Lstat(storePath)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return "", false
+	}
+	resolved, err := filepath.EvalSymlinks(storePath)
+	if err != nil {
+		return "", false
+	}
+	ws := workspacePath
+	if r, err := filepath.EvalSymlinks(workspacePath); err == nil {
+		ws = r
+	}
+	rel, err := filepath.Rel(ws, resolved)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return filepath.Join(workspacePath, rel), true
 }

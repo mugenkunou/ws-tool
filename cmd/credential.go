@@ -15,198 +15,170 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
 
-// ── ws git-credential-helper ──
+// ── ws credential ──
 //
-// Two-tier command:
-//   Git plumbing (called by git, not for direct use): get, store, erase
-//   User commands: setup, status, disconnect
+// `credential` is ws acting as git's credential helper (spec §5 credential):
+// enable, disable and status are the user commands. What git itself runs is
+// the hidden plumbing `ws git-credential-helper get|store|erase`.
 
-var credentialHelp = cmdHelp{
-	Usage: "ws git-credential-helper <command>",
-	Subcommands: []string{
-		"",
-		"  User commands:",
-		"  setup        Connect credential helper and create missing pass entries",
-		"  status       Show credential helper config, pass health, and remote coverage",
-		"  disconnect   Remove ws credential helper from git config",
-		"",
-		"  Git plumbing (called by git — not for direct use):",
-		"  get          Look up credentials from pass",
-		"  store        No-op (pass is managed separately)",
-		"  erase        No-op (pass is managed separately)",
-	},
+const credentialUsage = "usage: ws credential <enable|disable|status> …"
+
+// runCredential dispatches `ws credential <verb>`. The old `credential get|
+// store|erase` that git configs written by older versions call are aliases of
+// the plumbing (cmd/aliases.go), so they never reach here.
+func runCredential(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprintln(stderr, credentialUsage)
+		return 1
+	}
+	verb, rest := args[0], args[1:]
+	switch verb {
+	case "enable":
+		return credentialEnable(rest, globals, stdin, stdout, stderr)
+	case "disable":
+		return credentialDisable(rest, globals, stdin, stdout, stderr)
+	case "status":
+		return credentialStatus(rest, globals, stdout, stderr)
+	}
+	fmt.Fprintf(stderr, "unknown command: credential %s\n", verb)
+	fmt.Fprintln(stderr, credentialUsage)
+	return 1
 }
 
+// ── plumbing: ws git-credential-helper get|store|erase ──
+
+// plumbingHelp is what a person who types `ws git-credential-helper --help`
+// sees. git never asks for it.
+const plumbingHelp = "ws git-credential-helper get|store|erase: git's credential helper protocol (called by git, not for direct use).\nTo set it up, run: ws credential enable\n"
+
+// runGitCredentialHelper is the git plumbing (spec §5 credential, Plumbing).
+// It prints nothing but the answer to `get`, and needs no workspace. `store`
+// and `erase` read stdin and do nothing, because pass entries are managed with
+// `ws secret store`, `ws credential enable` or `pass insert`. Any other
+// operation exits 0 silently, so a future git verb never breaks a helper line;
+// only a person at a terminal sees a usage line.
 func runGitCredentialHelper(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	if hasHelpArg(args) {
-		return printCmdHelp(stdout, credentialHelp)
-	}
-
-	if len(args) == 0 {
-		return printCmdHelp(stdout, credentialHelp)
-	}
-
-	switch args[0] {
-	// Git plumbing — called by git, not for direct use.
-	case "get":
-		return runCredentialGet(stdin, stdout)
-	case "store", "erase":
-		// Read and discard stdin to be a well-behaved helper.
-		io.Copy(io.Discard, stdin)
+	if helpRequested(args) {
+		fmt.Fprint(stdout, plumbingHelp)
 		return 0
-
-	// User commands.
-	case "setup":
-		return runCredentialSetup(args[1:], globals, stdin, stdout, stderr)
-	case "status":
-		return runCredentialStatus(args[1:], globals, stdout, stderr)
-	case "disconnect":
-		return runCredentialDisconnect(args[1:], globals, stdin, stdout, stderr)
-
-	default:
-		if isTerminalWriter(stderr) {
-			return printUsageError(stderr, credentialHelp)
+	}
+	if len(args) > 0 {
+		switch args[0] {
+		case "get":
+			return runCredentialGet(stdin, stdout)
+		case "store", "erase":
+			io.Copy(io.Discard, stdin) // be a well-behaved helper
+			return 0
 		}
-		return 0
 	}
+	if isTerminalWriter(stderr) {
+		fmt.Fprintln(stderr, "usage: ws git-credential-helper get|store|erase  (git runs this; to set it up: ws credential enable)")
+		return 1
+	}
+	return 0
 }
 
 func runCredentialGet(stdin io.Reader, stdout io.Writer) int {
 	req := secret.ParseCredentialInput(stdin)
 	resp := secret.LookupCredential(req)
 	if resp.Password == "" {
-		// No credentials found — exit silently so git tries the next helper.
+		// No credentials found: exit silently so git tries the next helper.
 		return 0
 	}
 	secret.FormatCredentialOutput(stdout, resp)
 	return 0
 }
 
-// ── ws git-credential-helper setup (RW) ──
+// insertPassInteractive and stdinIsTerminal are variables so tests can stand
+// in for a person at a terminal.
+var (
+	insertPassInteractive = runPassInsertInteractive
+	stdinIsTerminal       = func() bool { return isTerminalFile(os.Stdin) }
+)
 
-var credentialSetupHelp = cmdHelp{
-	Usage:       "ws git-credential-helper setup",
-	Description: "Connect credential helper to git and create missing pass entries for workspace remotes.",
-}
+// ── enable ─────────────────────────────────────────────────────────
 
-func runCredentialSetup(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	if hasHelpArg(args) {
-		return printCmdHelp(stdout, credentialSetupHelp)
-	}
-
-	fs := flag.NewFlagSet("credential-setup", flag.ContinueOnError)
+func credentialEnable(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("credential-enable", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	dryRun := fs.Bool("dry-run", globals.dryRun, "")
 	registerGlobalFlags(fs, &globals)
 	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	if *dryRun {
-		globals.dryRun = true
+	if len(fs.Args()) > 0 {
+		fmt.Fprintln(stderr, "usage: ws credential enable")
+		return 1
 	}
-
-	out := textOut(globals, stdout)
+	out := quietOut(globals, stdout)
 	nc := globals.noColor
 
-	// Pre-check: pass must be initialized.
-	health := secret.CheckPass()
-	if !health.Initialized {
-		fmt.Fprintln(stderr, style.ResultError(nc, "pass store is not initialized."))
-		fmt.Fprintln(stderr, style.Mutedf(nc, "Run `ws secret setup` first to initialize pass."))
+	if h := secret.CheckPass(); !h.Initialized {
+		fmt.Fprintln(stderr, style.ResultError(nc, "The pass store is not initialized: run ws pass init"))
 		return 1
 	}
 
-	plan := Plan{Command: "git-credential-helper.setup"}
-
-	wsBin, binErr := os.Executable()
-	if binErr != nil {
-		wsBin = "ws"
-	}
-	_ = wsBin // the wrapper script resolves ws from PATH at runtime
-
-	wrapperPath, wrapErr := credentialWrapperPath()
-	if wrapErr != nil {
-		fmt.Fprintln(stderr, style.ResultError(nc, "cannot resolve wrapper path: %v", wrapErr))
+	wrapperPath, err := credentialWrapperPath()
+	if err != nil {
+		fmt.Fprintln(stderr, style.ResultError(nc, "cannot resolve the wrapper path: %v", err))
 		return 1
 	}
-	// The wrapper already execs `ws git-credential-helper`; git appends the
-	// get/store/erase verb, so the value must not repeat the subcommand.
+	// The wrapper execs `ws git-credential-helper`; git appends the verb, so
+	// the configured value is the wrapper alone.
 	helperValue := "!" + wrapperPath
 
-	// Install the wrapper script if missing or stale.
+	plan := Plan{Command: "credential.enable"}
+
 	if needsWrapperInstall(wrapperPath) {
 		plan.Actions = append(plan.Actions, Action{
 			ID:          "install-wrapper",
-			Description: fmt.Sprintf("Install credential helper wrapper at %s", wrapperPath),
-			Execute: func() error {
-				return installCredentialWrapper(wrapperPath)
-			},
+			Description: fmt.Sprintf("Install the helper wrapper %s", wrapperPath),
+			Execute:     func() error { return installCredentialWrapper(wrapperPath) },
 		})
 	}
 
-	// Connect or reconcile global credential helper.
-	currentHelper := gitConfigGet("credential.helper")
-	if !isWsHelper(currentHelper) {
+	current := gitConfigGet("credential.helper")
+	if !isWsHelper(current) {
 		plan.Actions = append(plan.Actions, Action{
 			ID:          "set-credential-helper",
 			Description: fmt.Sprintf("Set global credential.helper to '%s'", helperValue),
-			Execute: func() error {
-				return gitConfigSetGlobal("credential.helper", helperValue)
-			},
+			Execute:     func() error { return gitConfigSetGlobal("credential.helper", helperValue) },
 		})
-	} else {
-		// ws helper is configured — check for stale path.
-		_, detail, _ := helperPathStatus(currentHelper, nc)
-		if detail != "" {
-			plan.Actions = append(plan.Actions, Action{
-				ID:          "update-credential-helper",
-				Description: fmt.Sprintf("Update global credential.helper (%s) to '%s'", detail, helperValue),
-				Execute: func() error {
-					return gitConfigSetGlobal("credential.helper", helperValue)
-				},
-			})
-		}
+	} else if state, detail := helperCheck(current); state == "stale" {
+		// A ws value whose wrapper or binary is gone, or written in an old broken form.
+		plan.Actions = append(plan.Actions, Action{
+			ID:          "update-credential-helper",
+			Description: fmt.Sprintf("Set global credential.helper to '%s' (stale: %s)", helperValue, detail),
+			Execute:     func() error { return gitConfigSetGlobal("credential.helper", helperValue) },
+		})
 	}
 
-	// Enable useHttpPath so git sends the repo path to the helper,
-	// allowing per-repo credential resolution on shared hosts.
+	// git sends the repo path to a helper only with useHttpPath, which lets a
+	// repo token win over the host token.
 	if gitConfigGet("credential.useHttpPath") != "true" {
 		plan.Actions = append(plan.Actions, Action{
 			ID:          "set-use-http-path",
-			Description: "Set credential.useHttpPath = true",
-			Execute: func() error {
-				return gitConfigSetGlobal("credential.useHttpPath", "true")
-			},
+			Description: "Set global credential.useHttpPath = true",
+			Execute:     func() error { return gitConfigSetGlobal("credential.useHttpPath", "true") },
 		})
 	}
 
-	// Discover workspace remotes and offer to create missing pass entries.
-	workspacePath, _, wsErr := requireWorkspaceInitialized(globals)
-	if wsErr == nil {
-		// Reconcile stale local credential.helper overrides in repos.
-		localOverrides := discoverLocalHelperOverrides(workspacePath)
-		for _, lo := range localOverrides {
-			if !lo.IsWs {
-				continue // non-ws local overrides are user-managed, skip
+	if workspacePath, _, wsErr := requireWorkspaceInitialized(globals); wsErr == nil {
+		// Local helper values that are ws's but stale.
+		for _, lo := range discoverLocalHelperOverrides(workspacePath) {
+			if state, _ := helperCheck(lo.Helper); !lo.IsWs || state != "stale" {
+				continue
 			}
-			_, loDetail, _ := helperPathStatus(lo.Helper, false)
-			if loDetail != "" {
-				capturedPath := lo.RepoPath
-				capturedDisplay := lo.RepoPath
-				plan.Actions = append(plan.Actions, Action{
-					ID:          "update-local-helper-" + lo.RepoPath,
-					Description: fmt.Sprintf("Update local credential.helper in %s (%s)", capturedDisplay, loDetail),
-					Execute: func() error {
-						return gitConfigSetLocal(capturedPath, "credential.helper", helperValue)
-					},
-				})
-			}
+			repoPath := lo.RepoPath
+			plan.Actions = append(plan.Actions, Action{
+				ID:          "update-local-helper-" + repoPath,
+				Description: fmt.Sprintf("Update credential.helper in %s", repoPath),
+				Execute:     func() error { return gitConfigSetLocal(repoPath, "credential.helper", helperValue) },
+			})
 		}
 
-		// Setup turns useHttpPath on (above), so resolve as git will after it.
-		// Remotes already covered by a host or repo token need nothing; for
-		// the rest, offer one host-wide entry per host.
+		// Resolve as git will once useHttpPath is on. Remotes that a host or
+		// repo token already covers need nothing; the rest get one host entry.
 		var hosts []string
 		uncovered := make(map[string]int)
 		for _, e := range discoverRemoteEntries(workspacePath) {
@@ -220,72 +192,135 @@ func runCredentialSetup(args []string, globals globalFlags, stdin io.Reader, std
 			uncovered[e.Host]++
 		}
 		for _, host := range hosts {
-			capturedEntry := "git/" + host
+			entry := "git/" + host
+			noun := "remotes"
+			if uncovered[host] == 1 {
+				noun = "remote"
+			}
 			plan.Actions = append(plan.Actions, Action{
-				ID:          "create-pass-entry-" + capturedEntry,
-				Description: fmt.Sprintf("Create pass entry %s (host token for %d remote(s))", capturedEntry, uncovered[host]),
+				ID:          "create-pass-entry-" + entry,
+				Description: fmt.Sprintf("Create pass entry %s (host token for %d %s)", entry, uncovered[host], noun),
 				Execute: func() error {
-					return runPassInsertInteractive(capturedEntry)
+					// pass insert asks for the token on the terminal. Without
+					// one it would read garbage, so the action fails instead.
+					if !stdinIsTerminal() {
+						return fmt.Errorf("needs a terminal to ask for the token; run: pass insert %s", entry)
+					}
+					return insertPassInteractive(entry)
 				},
 			})
 		}
 	}
 
 	if len(plan.Actions) == 0 {
-		fmt.Fprintln(out, style.ResultSuccess(nc, "git credential helper already configured."))
 		if globals.json {
-			return writeJSON(stdout, stderr, "git-credential-helper.setup", map[string]any{
-				"message": "already configured",
-			})
+			return writeJSON(stdout, stderr, "credential.enable", map[string]any{"actions": []ActionStatus{}})
 		}
+		fmt.Fprintln(out, style.ResultSuccess(nc, "The credential helper is already enabled."))
 		return 0
 	}
 
-	planOut := stdout
+	planResult := RunPlan(plan, stdin, stdout, globals)
 	if globals.json {
-		planOut = io.Discard
+		return writeJSONDryRun(stdout, stderr, "credential.enable", globals.dryRun, map[string]any{"actions": planResult.Actions})
 	}
-	planResult := RunPlan(plan, stdin, planOut, globals)
-
-	if globals.json {
-		return writeJSON(stdout, stderr, "git-credential-helper.setup", map[string]any{
-			"actions": planResult.Actions,
-		})
-	}
-
-	if !planResult.HasFailures() {
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, style.ResultSuccess(nc, "git credential helper configured."))
+	if !planResult.HasFailures() && planResult.ExecutedCount() > 0 {
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, style.Mutedf(nc, "  Convention: git/<host> or git/<host>/<owner>/<repo> in pass."))
-		fmt.Fprintln(out, style.Mutedf(nc, "  Entry format: password/token on line 1, username: <user> on line 2."))
+		fmt.Fprintln(out, style.Mutedf(nc, "  Entry format: the token on line 1, username: <user> on line 2."))
 	}
-
 	return planResult.ExitCode()
 }
 
-// ── ws git-credential-helper status (RO) ──
+// ── disable ────────────────────────────────────────────────────────
 
-func runCredentialStatus(args []string, globals globalFlags, stdout, stderr io.Writer) int {
-	if hasHelpArg(args) {
-		return printCmdHelp(stdout, cmdHelp{
-			Usage:       "ws git-credential-helper status",
-			Description: "Show credential helper config, pass health, and workspace remote coverage.",
+func credentialDisable(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("credential-disable", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if len(fs.Args()) > 0 {
+		fmt.Fprintln(stderr, "usage: ws credential disable")
+		return 1
+	}
+	out := quietOut(globals, stdout)
+
+	globalConnected := isWsHelper(gitConfigGet("credential.helper"))
+
+	// ws-managed local overrides in the workspace repos.
+	var wsLocal []localHelperOverride
+	if workspacePath, _, wsErr := requireWorkspaceInitialized(globals); wsErr == nil {
+		for _, lo := range discoverLocalHelperOverrides(workspacePath) {
+			if lo.IsWs {
+				wsLocal = append(wsLocal, lo)
+			}
+		}
+	}
+
+	plan := Plan{Command: "credential.disable"}
+	if globalConnected {
+		plan.Actions = append(plan.Actions, Action{
+			ID:          "unset-credential-helper",
+			Description: "Remove credential.helper from global git config",
+			Execute:     func() error { return gitConfigUnsetGlobal("credential.helper") },
+		})
+		if gitConfigGet("credential.useHttpPath") == "true" {
+			plan.Actions = append(plan.Actions, Action{
+				ID:          "unset-use-http-path",
+				Description: "Remove credential.useHttpPath from global git config",
+				Execute:     func() error { return gitConfigUnsetGlobal("credential.useHttpPath") },
+			})
+		}
+	}
+	for _, lo := range wsLocal {
+		repoPath := lo.RepoPath
+		plan.Actions = append(plan.Actions, Action{
+			ID:          "unset-local-helper-" + repoPath,
+			Description: fmt.Sprintf("Remove credential.helper from %s (local config)", repoPath),
+			Execute:     func() error { return gitConfigUnsetLocal(repoPath, "credential.helper") },
 		})
 	}
 
+	// Not enabled is nothing to do, not an error. The wrapper script stays: it
+	// does nothing on its own.
+	if len(plan.Actions) == 0 {
+		if globals.json {
+			return writeJSON(stdout, stderr, "credential.disable", map[string]any{"actions": []ActionStatus{}})
+		}
+		fmt.Fprintln(out, "The credential helper is not enabled.")
+		return 0
+	}
+
+	planResult := RunPlan(plan, stdin, stdout, globals)
+	if globals.json {
+		return writeJSONDryRun(stdout, stderr, "credential.disable", globals.dryRun, map[string]any{"actions": planResult.Actions})
+	}
+	return planResult.ExitCode()
+}
+
+// ── status ─────────────────────────────────────────────────────────
+
+func credentialStatus(args []string, globals globalFlags, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("credential-status", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
 	out := textOut(globals, stdout)
 	nc := globals.noColor
 
-	health := secret.CheckPass()
-	currentHelper := gitConfigGet("credential.helper")
+	report := gatherPassReport(globals)
+	currentHelper := report.CredValue
 	globalStatus, globalDetail, connected := helperPathStatus(currentHelper, nc)
 
-	var remotes []remoteEntry
-	var localOverrides []localHelperOverride
-
-	workspacePath, _, wsErr := requireWorkspaceInitialized(globals)
-	if wsErr == nil {
+	remotes := []remoteEntry{}
+	localOverrides := []localHelperOverride{}
+	if workspacePath, _, wsErr := requireWorkspaceInitialized(globals); wsErr == nil {
 		useHTTPPath := make(map[string]bool) // per host
 		for _, e := range discoverRemoteEntries(workspacePath) {
 			on, ok := useHTTPPath[e.Host]
@@ -295,31 +330,28 @@ func runCredentialStatus(args []string, globals globalFlags, stdout, stderr io.W
 			}
 			remotes = append(remotes, resolveRemoteEntry(e, on))
 		}
-		localOverrides = discoverLocalHelperOverrides(workspacePath)
+		localOverrides = append(localOverrides, discoverLocalHelperOverrides(workspacePath)...)
 	}
 
 	if globals.json {
-		return writeJSON(stdout, stderr, "git-credential-helper.status", map[string]any{
+		return writeJSON(stdout, stderr, "credential.status", map[string]any{
 			"connected":       connected,
 			"helper":          currentHelper,
-			"pass":            health,
+			"pass":            report.data(),
 			"remotes":         remotes,
 			"local_overrides": localOverrides,
 		})
 	}
 
 	style.Header(out, "Pass Store", nc)
-	printCredentialPassHealth(out, health, nc)
-
-	if !health.Initialized {
+	printCredentialPassHealth(out, report.Health, nc)
+	if !report.Health.Initialized {
 		fmt.Fprintln(out)
-		fmt.Fprintln(out, style.ResultWarning(nc, "pass is not initialized %s run `ws secret setup`", style.Mutedf(nc, "—")))
+		fmt.Fprintln(out, style.ResultWarning(nc, "pass is not initialized %s run `ws pass init`", style.Mutedf(nc, "—")))
 	}
 
 	fmt.Fprintln(out)
 	style.Header(out, "Git Credential Helper", nc)
-
-	// Global config.
 	fmt.Fprintf(out, "  Global config    %s", globalStatus)
 	if globalDetail != "" {
 		fmt.Fprintf(out, "  %s", style.Mutedf(nc, "%s", globalDetail))
@@ -329,7 +361,6 @@ func runCredentialStatus(args []string, globals globalFlags, stdout, stderr io.W
 		fmt.Fprintf(out, "                   %s\n", style.Infof(nc, "%s", currentHelper))
 	}
 
-	// Local overrides.
 	if len(localOverrides) > 0 {
 		fmt.Fprintf(out, "  Local overrides  %s\n", style.Mutedf(nc, "%d repo(s) have local credential.helper set", len(localOverrides)))
 		for _, lo := range localOverrides {
@@ -349,11 +380,6 @@ func runCredentialStatus(args []string, globals globalFlags, stdout, stderr io.W
 		printRemoteEntries(out, remotes, nc)
 	}
 
-	if !connected {
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, style.ResultWarning(nc, "credential helper not connected %s run `ws git-credential-helper setup`", style.Mutedf(nc, "—")))
-	}
-
 	missingCount, ignoredCount := 0, 0
 	for _, r := range remotes {
 		if r.HelperUsed && !r.Exists {
@@ -365,19 +391,20 @@ func runCredentialStatus(args []string, globals globalFlags, stdout, stderr io.W
 	}
 	if missingCount > 0 {
 		fmt.Fprintln(out)
-		fmt.Fprintf(out, "%s %d remote(s) have no credential %s run `ws git-credential-helper setup`\n",
-			style.IconWarning(nc), missingCount, style.Mutedf(nc, "—"))
+		fmt.Fprintf(out, "%s %d remote(s) have no credential\n", style.IconWarning(nc), missingCount)
 	}
 	if ignoredCount > 0 {
 		fmt.Fprintln(out)
-		fmt.Fprintf(out, "%s %d repo token(s) ignored because credential.useHttpPath is off %s run `ws git-credential-helper setup`\n",
-			style.IconWarning(nc), ignoredCount, style.Mutedf(nc, "—"))
+		fmt.Fprintf(out, "%s %d repo token(s) are never asked for, because credential.useHttpPath is off\n", style.IconWarning(nc), ignoredCount)
 	}
 
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, style.Mutedf(nc, "  Convention: git/<host> or git/<host>/<owner>/<repo> in pass."))
-	fmt.Fprintln(out, style.Mutedf(nc, "  Entry format: password/token on line 1, username: <user> on line 2."))
-
+	fmt.Fprintln(out, style.Mutedf(nc, "  Entry format: the token on line 1, username: <user> on line 2."))
+	if !connected || missingCount > 0 || ignoredCount > 0 {
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Next: ws credential enable")
+	}
 	return 0
 }
 
@@ -423,7 +450,7 @@ func printCredentialPassHealth(w io.Writer, h secret.PassHealth, nc bool) {
 	fmt.Fprintf(w, "  %s  pass installed\n", check(h.Installed))
 	fmt.Fprintf(w, "  %s  store initialized", check(h.Initialized))
 	if h.Initialized {
-		fmt.Fprintf(w, "  %s", style.Mutedf(nc, "(%s, %d entries)", h.StorePath, h.EntryCount))
+		fmt.Fprintf(w, "  %s", style.Mutedf(nc, "(%s, %s)", h.StorePath, countEntries(h.EntryCount)))
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "  %s  git-backed\n", check(h.GitBacked))
@@ -434,107 +461,6 @@ func printCredentialPassHealth(w io.Writer, h secret.PassHealth, nc bool) {
 			fmt.Fprintf(w, "  %s  git-remote %s\n", style.IconWarning(nc), style.Mutedf(nc, "(local only, no remote)"))
 		}
 	}
-}
-
-// ── ws git-credential-helper disconnect (RW) ──
-
-func runCredentialDisconnect(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	if hasHelpArg(args) {
-		return printCmdHelp(stdout, cmdHelp{
-			Usage:       "ws git-credential-helper disconnect",
-			Description: "Remove ws credential helper from global git config.",
-		})
-	}
-
-	fs := flag.NewFlagSet("credential-disconnect", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	dryRun := fs.Bool("dry-run", globals.dryRun, "")
-	registerGlobalFlags(fs, &globals)
-	if err := parseInterspersed(fs, args); err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	if *dryRun {
-		globals.dryRun = true
-	}
-
-	out := textOut(globals, stdout)
-	nc := globals.noColor
-
-	currentHelper := gitConfigGet("credential.helper")
-	globalConnected := isWsHelper(currentHelper)
-
-	// Also discover local ws overrides in workspace repos.
-	var localOverrides []localHelperOverride
-	workspacePath, _, wsErr := requireWorkspaceInitialized(globals)
-	if wsErr == nil {
-		localOverrides = discoverLocalHelperOverrides(workspacePath)
-	}
-
-	// Filter to only ws-managed local overrides.
-	var wsLocalOverrides []localHelperOverride
-	for _, lo := range localOverrides {
-		if lo.IsWs {
-			wsLocalOverrides = append(wsLocalOverrides, lo)
-		}
-	}
-
-	if !globalConnected && len(wsLocalOverrides) == 0 {
-		fmt.Fprintln(stderr, "credential helper is not connected")
-		return 1
-	}
-
-	plan := Plan{Command: "git-credential-helper.disconnect"}
-
-	if globalConnected {
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "unset-credential-helper",
-			Description: "Remove credential.helper from global git config",
-			Execute: func() error {
-				return gitConfigUnsetGlobal("credential.helper")
-			},
-		})
-		if gitConfigGet("credential.useHttpPath") == "true" {
-			plan.Actions = append(plan.Actions, Action{
-				ID:          "unset-use-http-path",
-				Description: "Remove credential.useHttpPath from global git config",
-				Execute: func() error {
-					return gitConfigUnsetGlobal("credential.useHttpPath")
-				},
-			})
-		}
-	}
-
-	for _, lo := range wsLocalOverrides {
-		capturedPath := lo.RepoPath
-		capturedDisplay := lo.RepoPath
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "unset-local-helper-" + lo.RepoPath,
-			Description: fmt.Sprintf("Remove credential.helper from %s (local config)", capturedDisplay),
-			Execute: func() error {
-				return gitConfigUnsetLocal(capturedPath, "credential.helper")
-			},
-		})
-	}
-
-	planOut := stdout
-	if globals.json {
-		planOut = io.Discard
-	}
-	planResult := RunPlan(plan, stdin, planOut, globals)
-
-	if globals.json {
-		return writeJSON(stdout, stderr, "git-credential-helper.disconnect", map[string]any{
-			"disconnected": planResult.ExecutedCount() > 0 && !planResult.HasFailures(),
-			"actions":      planResult.Actions,
-		})
-	}
-
-	if !planResult.HasFailures() && planResult.ExecutedCount() > 0 {
-		fmt.Fprintln(out, style.ResultSuccess(nc, "Git credential helper disconnected."))
-	}
-
-	return planResult.ExitCode()
 }
 
 // ── Shared helpers ──
@@ -823,11 +749,23 @@ func isWsHelper(v string) bool {
 // string and whether the helper is functional.
 // Returns: (statusLabel, detail, connected)
 func helperPathStatus(helperValue string, nc bool) (string, string, bool) {
+	state, detail := helperCheck(helperValue)
+	if state == "disconnected" && detail != "" {
+		detail = style.Mutedf(nc, "%s", detail)
+	}
+	return style.Badge(state, nc), detail, state == "connected"
+}
+
+// helperCheck classifies a configured credential.helper value: "connected"
+// (a ws helper whose wrapper or binary exists), "stale" (a ws helper that is
+// missing or written in an old broken form) or "disconnected" (empty, or not
+// ws). detail says why when it is not connected.
+func helperCheck(helperValue string) (state, detail string) {
 	if helperValue == "" {
-		return style.Badge("disconnected", nc), "", false
+		return "disconnected", ""
 	}
 	if !isWsHelper(helperValue) {
-		return style.Badge("disconnected", nc), style.Mutedf(nc, "(not a ws helper)"), false
+		return "disconnected", "(not a ws helper)"
 	}
 
 	// Extract binary/script path from "!<path>" or "!<path> git-credential-helper"
@@ -839,14 +777,14 @@ func helperPathStatus(helperValue string, nc bool) (string, string, bool) {
 	// Older setups wrote "!<wrapper> git-credential-helper"; the wrapper then
 	// passed the subcommand twice and every lookup failed.
 	if strings.HasSuffix(binPath, "ws-credential-helper") && binPath != helperValue[1:] {
-		return style.Badge("stale", nc), "wrapper called with a duplicate subcommand", false
+		return "stale", "wrapper called with a duplicate subcommand"
 	}
 
 	if _, err := os.Stat(binPath); err != nil {
-		return style.Badge("stale", nc), fmt.Sprintf("binary not found: %s", binPath), false
+		return "stale", fmt.Sprintf("binary not found: %s", binPath)
 	}
 
-	return style.Badge("connected", nc), "", true
+	return "connected", ""
 }
 
 // runPassInsertInteractive runs `pass insert <entry>` with the terminal

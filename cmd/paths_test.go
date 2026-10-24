@@ -200,19 +200,17 @@ func TestPathRuleSecretScanViolationsAbsolute(t *testing.T) {
 	var out, errOut bytes.Buffer
 	Execute([]string{"--workspace", workspace, "--json", "secret", "scan"}, strings.NewReader(""), &out, &errOut)
 	var payload struct {
-		Data struct {
-			Violations []struct {
-				Path string `json:"path"`
-			} `json:"violations"`
+		Data []struct {
+			Path string `json:"path"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatalf("invalid json: %v\n%s", err, out.String())
 	}
-	if len(payload.Data.Violations) == 0 {
+	if len(payload.Data) == 0 {
 		t.Fatalf("expected a violation for %s, got: %s", secretFile, out.String())
 	}
-	for _, v := range payload.Data.Violations {
+	for _, v := range payload.Data {
 		if v.Path != secretFile {
 			t.Fatalf("violation path must be absolute %s, got %q", secretFile, v.Path)
 		}
@@ -222,18 +220,26 @@ func TestPathRuleSecretScanViolationsAbsolute(t *testing.T) {
 func TestPathRuleSecretSkipDirResolvesAgainstCwd(t *testing.T) {
 	workspace := initScanFixture(t, true)
 	chdir(t, workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "r1", "creds.env"), []byte("password=letmein\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	var out, errOut bytes.Buffer
-	if code := Execute([]string{"--workspace", workspace, "--json", "secret", "scan", "--skip-dir", "r1"}, strings.NewReader(""), &out, &errOut); code == 1 {
+	Execute([]string{"--workspace", workspace, "--json", "secret", "ls"}, strings.NewReader(""), &out, &errOut)
+	if !strings.Contains(out.String(), filepath.Join(workspace, "r1", "creds.env")) {
+		t.Fatalf("without the skip, the finding in r1 shows: %s", out.String())
+	}
+	out.Reset()
+	if code := Execute([]string{"--workspace", workspace, "--json", "secret", "ls", "--skip-dir", "r1"}, strings.NewReader(""), &out, &errOut); code == 1 {
 		t.Fatalf("cwd-relative --skip-dir failed: %s", errOut.String())
 	}
-	if !strings.Contains(out.String(), filepath.Join(workspace, "r1")) {
-		t.Fatalf("expected absolute skipped dir in JSON, got: %s", out.String())
+	if strings.Contains(out.String(), "creds.env") {
+		t.Fatalf("a cwd-relative --skip-dir r1 should hide the finding in <workspace>/r1, got: %s", out.String())
 	}
 
 	// A directory outside the workspace is rejected with its absolute path.
 	outside := t.TempDir()
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "secret", "scan", "--skip-dir", outside}, strings.NewReader(""), &out, &errOut); code != 1 || !strings.Contains(errOut.String(), outside) {
+	if code := Execute([]string{"--workspace", workspace, "secret", "ls", "--skip-dir", outside}, strings.NewReader(""), &out, &errOut); code != 1 || !strings.Contains(errOut.String(), outside) {
 		t.Fatalf("expected rejection of outside dir, got %d stderr=%s", code, errOut.String())
 	}
 }

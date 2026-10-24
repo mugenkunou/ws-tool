@@ -203,6 +203,11 @@ func TestAliasesReachTheirTarget(t *testing.T) {
 		{{"log", "ls"}, {"session", "ls"}},
 		{{"scratch", "search"}, {"scratch", "ls"}},
 		{{"trash", "setup", "--dry-run"}, {"trash", "enable", "--dry-run"}},
+		{{"secret", "scan"}, {"secret", "ls"}},
+		{{"secret", "scan", "--pass"}, {"pass", "audit"}},
+		{{"secret", "status"}, {"pass", "status"}},
+		{{"secret", "git", "status"}, {"pass", "backup", "status"}},
+		{{"git-credential-helper", "status"}, {"credential", "status"}},
 	}
 	for _, p := range pairs {
 		if !aliasLive[p[0][0]] {

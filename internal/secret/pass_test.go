@@ -150,7 +150,7 @@ func TestAuditPassStoreNotInitialized(t *testing.T) {
 	}
 	found := false
 	for _, f := range result.Findings {
-		if f.Message == "pass store is not initialized — run `ws secret setup` or `pass init <gpg-id>`" {
+		if f.Message == "pass store is not initialized: run `ws pass init`" {
 			found = true
 		}
 	}
@@ -179,7 +179,7 @@ func TestAuditPassStoreNoGit(t *testing.T) {
 	result := AuditPassStore(h)
 	foundGit := false
 	for _, f := range result.Findings {
-		if f.Message == "pass store is not git-backed — run `pass git init` for version history" {
+		if f.Message == "pass store is not git-backed: run `ws pass init`" {
 			foundGit = true
 		}
 	}

@@ -4,7 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os/exec"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -24,71 +24,118 @@ func (s *stringSliceFlag) Set(v string) error {
 	return nil
 }
 
-var secretHelp = cmdHelp{
-	Usage: "ws secret <scan|fix|setup|status|git>",
-	Subcommands: []string{
-		"  scan     Scan for secrets + pass health status (--pass to audit pass store)",
-		"  fix      Interactively resolve secret violations",
-		"  setup    Set up Unix Password Store (pass)",
-		"  status   Show pass store and credential helper health",
-		"  git      Pass git operations (push, log, remote, status)",
-		"",
-		"  For credential helper commands: ws git-credential-helper",
-	},
-	Flags: listFlagHelp("scan", secret.Schema(resource.CLIView(), "").Keys()),
-}
+const secretUsage = "usage: ws secret <ls|show|allow|mute|unmute|store> …"
 
-// secretScanResult is the JSON envelope for ws secret scan.
-type secretScanResult struct {
-	Violations       []resource.Record       `json:"violations"`
-	SkippedDirs      []string                `json:"skipped_dirs,omitempty"`
-	Pass             secret.PassHealth       `json:"pass"`
-	PassAudit        *secret.PassAuditResult `json:"pass_audit,omitempty"`
-	GitCredHelper    bool                    `json:"git_credential_helper"`
-	CredentialHelper string                  `json:"credential_helper_value,omitempty"`
-}
-
+// runSecret dispatches `ws secret <verb>` (spec §5 secret).
 func runSecret(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	if hasHelpArg(args) {
-		return printCmdHelp(stdout, secretHelp)
-	}
 	if len(args) == 0 {
-		return printCmdHelp(stdout, secretHelp)
+		fmt.Fprintln(stderr, secretUsage)
+		return 1
 	}
+	verb, rest := args[0], args[1:]
+	switch verb {
+	case "ls":
+		return secretLs(rest, globals, stdout, stderr)
+	case "show":
+		return secretShow(rest, globals, stdout, stderr)
+	case "allow":
+		return secretAllow(rest, globals, stdin, stdout, stderr)
+	case "mute":
+		return secretMute(rest, globals, stdin, stdout, stderr)
+	case "unmute":
+		return secretUnmute(rest, globals, stdin, stdout, stderr)
+	case "store":
+		return secretStore(rest, globals, stdin, stdout, stderr)
+	}
+	fmt.Fprintf(stderr, "unknown command: secret %s\n", verb)
+	fmt.Fprintln(stderr, secretUsage)
+	return 1
+}
 
+// secretEnv is the workspace a secret command runs in.
+type secretEnv struct {
+	workspace  string
+	configPath string
+	cfg        wsconfig.WsConfig
+}
+
+// loadSecretEnv resolves the workspace and loads ws.json. ok is false after an
+// error has been printed.
+func loadSecretEnv(globals globalFlags, stderr io.Writer) (secretEnv, bool) {
 	workspacePath, configPath, err := requireWorkspaceInitialized(globals, stderr)
-	manifestPath := configPath
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
-		return 1
+		return secretEnv{}, false
 	}
-
-	sub := args[0]
-	subArgs := args[1:]
-
-	switch sub {
-	case "scan":
-		return runSecretScan(subArgs, globals, workspacePath, configPath, manifestPath, stdout, stderr)
-	case "fix":
-		return runSecretFix(subArgs, globals, workspacePath, configPath, manifestPath, stdin, stdout, stderr)
-	case "setup":
-		return runSecretSetup(subArgs, globals, stdin, stdout, stderr)
-	case "status":
-		return runSecretStatus(subArgs, globals, stdout, stderr)
-	case "git":
-		return runSecretGit(subArgs, globals, stdin, stdout, stderr)
-	default:
-		fmt.Fprintf(stderr, "unknown secret subcommand: %s\n", sub)
-		return 1
+	cfg, err := wsconfig.Load(configPath)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return secretEnv{}, false
 	}
+	return secretEnv{workspace: workspacePath, configPath: configPath, cfg: cfg}, true
 }
 
-// ── ws secret scan (RO) ──
+// scanOptions are the scan's inputs: the ignore rules, the muted directories
+// (plus extra ones for one run) and, when withAllow is set, the allowlist.
+func (e secretEnv) scanOptions(extraSkip []string, withAllow bool) (secret.ScanOptions, error) {
+	rules, err := wsconfig.LoadIgnoreRules(e.configPath)
+	if err != nil {
+		return secret.ScanOptions{}, err
+	}
+	opts := secret.ScanOptions{
+		WorkspacePath: e.workspace,
+		Engine:        ignore.BuildEngine(rules),
+		SkipDirs:      secret.MergeSkipDirs(e.workspace, e.cfg.Secret.SkipDirs, extraSkip),
+	}
+	if withAllow {
+		opts.Allowlist = wsconfig.AllowlistMap(e.cfg)
+	}
+	return opts, nil
+}
 
-func runSecretScan(args []string, globals globalFlags, workspacePath, configPath, _ /* manifestPath compat */ string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("secret-scan", flag.ContinueOnError)
+// findings are the current findings: what `secret ls` lists.
+func (e secretEnv) findings(extraSkip []string) ([]secret.Violation, error) {
+	opts, err := e.scanOptions(extraSkip, true)
+	if err != nil {
+		return nil, err
+	}
+	return secret.Scan(opts)
+}
+
+// anchorFindings resolves <file:line> targets to current findings, in order,
+// without repeats. Every target is checked before anything is planned: the
+// first that is not a finding is reported and ok is false.
+func (e secretEnv) anchorFindings(targets []string, stderr io.Writer) (picked []secret.Violation, ok bool) {
+	current, err := e.findings(nil)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return nil, false
+	}
+	seen := map[string]bool{}
+	for _, t := range targets {
+		rel, line, err := secret.ParseAnchor(e.workspace, t)
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return nil, false
+		}
+		v, found := secret.FindingAt(current, rel, line)
+		if !found {
+			fmt.Fprintf(stderr, "no finding at %s:%d\n", filepath.Join(e.workspace, filepath.FromSlash(rel)), line)
+			return nil, false
+		}
+		if key := secret.Anchor(v); !seen[key] {
+			seen[key] = true
+			picked = append(picked, v)
+		}
+	}
+	return picked, true
+}
+
+// ── ls ─────────────────────────────────────────────────────────────
+
+func secretLs(args []string, globals globalFlags, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("secret-ls", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	passAudit := fs.Bool("pass", false, "")
 	var skipDirFlags stringSliceFlag
 	fs.Var(&skipDirFlags, "skip-dir", "")
 	lf := registerListFlags(fs, "")
@@ -97,947 +144,357 @@ func runSecretScan(args []string, globals globalFlags, workspacePath, configPath
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	schema := secret.Schema(resource.CLIView(), workspacePath)
+	if len(fs.Args()) > 0 {
+		fmt.Fprintln(stderr, "usage: ws secret ls [--skip-dir <dir>]… [--filter <expr>] [--sort <fields>] [--wide]")
+		return 1
+	}
+	env, ok := loadSecretEnv(globals, stderr)
+	if !ok {
+		return 1
+	}
+	schema := secret.Schema(resource.CLIView(), env.workspace)
 	if err := schema.Validate(lf.query()); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
+	extra, err := skipDirFlagsToRel(env.workspace, skipDirFlags)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	findings, err := env.findings(extra)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if globals.verbose {
+		if dirs := secret.MergeSkipDirs(env.workspace, env.cfg.Secret.SkipDirs, extra); len(dirs) > 0 {
+			fmt.Fprintf(stderr, "[verbose] secret: skipping directories: %s\n", strings.Join(absPaths(env.workspace, dirs), ", "))
+		}
+	}
+	return renderList(globals, "secret.ls", schema, findings, lf, "No secrets found.", stdout, stderr)
+}
 
-	wscfg, err := wsconfig.Load(configPath)
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	flagSkipDirs, err := skipDirFlagsToRel(workspacePath, skipDirFlags)
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	skipDirs := mergeSkipDirs(workspacePath, wscfg.Secret.SkipDirs, flagSkipDirs)
-	userRules, err := wsconfig.LoadIgnoreRules(configPath)
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	engine := ignore.BuildEngine(userRules)
-	allow := wsconfig.AllowlistMap(wscfg)
+// ── show ───────────────────────────────────────────────────────────
 
-	violations, err := secret.Scan(secret.ScanOptions{
-		WorkspacePath: workspacePath,
-		Engine:        engine,
-		Allowlist:     allow,
-		SkipDirs:      skipDirs,
-	})
+// secretContextLines is how many lines `secret show` prints on each side of
+// the match.
+const secretContextLines = 5
+
+func secretShow(args []string, globals globalFlags, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("secret-show", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if len(fs.Args()) != 1 {
+		fmt.Fprintln(stderr, "usage: ws secret show <file:line>")
+		return 1
+	}
+	env, ok := loadSecretEnv(globals, stderr)
+	if !ok {
+		return 1
+	}
+	picked, ok := env.anchorFindings(fs.Args(), stderr)
+	if !ok {
+		return 1
+	}
+	v := picked[0]
+	abs := filepath.Join(env.workspace, filepath.FromSlash(v.Path))
+	ctx, err := secret.GetFileContext(abs, v.Line, secretContextLines)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
+	if ctx == nil {
+		ctx = []secret.ContextLine{}
+	}
 
-	// Prune stale allowlist entries: re-scan without allowlist to find
-	// which anchors still match a pattern, then remove the rest.
-	if len(wscfg.Secret.Allowlist) > 0 {
-		allViolations, scanErr := secret.Scan(secret.ScanOptions{
-			WorkspacePath: workspacePath,
-			Engine:        engine,
-			Allowlist:     nil,
-			SkipDirs:      skipDirs,
-		})
-		if scanErr == nil {
-			kept, _ := secret.PruneAllowlist(wscfg.Secret.Allowlist, allViolations)
-			if len(kept) != len(wscfg.Secret.Allowlist) {
-				wscfg.Secret.Allowlist = kept
-				if kept == nil {
-					wscfg.Secret.Allowlist = []string{}
-				}
-				_ = wsconfig.Save(configPath, wscfg)
-			}
+	if globals.json {
+		rec := secret.Schema(resource.CLIView(), env.workspace).Record(v)
+		rec = append(rec, resource.KV{Key: "context", Value: ctx})
+		return writeJSON(stdout, stderr, "secret.show", rec)
+	}
+
+	out := textOut(globals, stdout)
+	nc := globals.noColor
+	fmt.Fprintf(out, "%s:%d  %s  %s\n", abs, v.Line, v.Severity, v.Message)
+	width := 3
+	for _, cl := range ctx {
+		if n := len(fmt.Sprint(cl.Number)); n > width {
+			width = n
+		}
+	}
+	for _, cl := range ctx {
+		marker := "   "
+		line := cl.Content
+		if cl.IsMatch {
+			marker = " " + style.Warningf(nc, "→") + " "
+			line = style.Warningf(nc, "%s", line)
+		}
+		fmt.Fprintf(out, "%s%*d  %s\n", marker, width, cl.Number, line)
+	}
+	return 0
+}
+
+// ── allow ──────────────────────────────────────────────────────────
+
+func secretAllow(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("secret-allow", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if len(fs.Args()) == 0 {
+		fmt.Fprintln(stderr, "usage: ws secret allow <file:line…>  (at least one target is required)")
+		return 1
+	}
+	env, ok := loadSecretEnv(globals, stderr)
+	if !ok {
+		return 1
+	}
+	picked, ok := env.anchorFindings(fs.Args(), stderr)
+	if !ok {
+		return 1
+	}
+	opts, err := env.scanOptions(nil, true)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	stale, err := secret.StaleAnchors(opts, env.cfg.Secret.Allowlist)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	p := Plan{Command: "secret.allow", Actions: secret.AllowActions(env.configPath, env.workspace, picked, stale)}
+	planResult := RunPlan(p, stdin, stdout, globals)
+	if globals.json {
+		return writeJSONDryRun(stdout, stderr, "secret.allow", globals.dryRun, map[string]any{"actions": planResult.Actions})
+	}
+	return planResult.ExitCode()
+}
+
+// ── mute / unmute ──────────────────────────────────────────────────
+
+// muteDirs resolves directory arguments to workspace-relative paths. Every
+// argument must be inside the workspace and not the workspace itself.
+func (e secretEnv) muteDirs(args []string, stderr io.Writer) ([]string, bool) {
+	var rels []string
+	for _, a := range args {
+		rel, err := secret.WorkspaceRelDir(e.workspace, a)
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return nil, false
+		}
+		rels = append(rels, rel)
+	}
+	return rels, true
+}
+
+func (e secretEnv) abs(rel string) string { return filepath.Join(e.workspace, filepath.FromSlash(rel)) }
+
+func secretMute(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("secret-mute", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if len(fs.Args()) == 0 {
+		fmt.Fprintln(stderr, "usage: ws secret mute <dir…>")
+		return 1
+	}
+	env, ok := loadSecretEnv(globals, stderr)
+	if !ok {
+		return 1
+	}
+	rels, ok := env.muteDirs(fs.Args(), stderr)
+	if !ok {
+		return 1
+	}
+	for _, rel := range rels {
+		info, err := os.Stat(env.abs(rel))
+		if err != nil || !info.IsDir() {
+			fmt.Fprintf(stderr, "%s is not an existing directory\n", env.abs(rel))
+			return 1
 		}
 	}
 
-	violations, ok := applyList(schema, violations, lf, stderr)
+	out := quietOut(globals, stdout)
+	p := Plan{Command: "secret.mute"}
+	var planned []string
+	for _, rel := range rels {
+		if covered(planned, rel) {
+			continue
+		}
+		if by, exact, muted := secret.MutedBy(env.workspace, env.cfg.Secret.SkipDirs, rel); muted {
+			note := "by itself"
+			if !exact {
+				note = "by " + env.abs(by)
+			}
+			fmt.Fprintf(out, "%s is already muted %s\n", env.abs(rel), note)
+			continue
+		}
+		planned = append(planned, rel)
+		p.Actions = append(p.Actions, secret.MuteAction(env.configPath, env.workspace, rel))
+	}
+	return runSecretPlan(p, "secret.mute", globals, stdin, stdout, stderr)
+}
+
+// covered reports whether rel is one of dirs or lies under one.
+func covered(dirs []string, rel string) bool {
+	for _, d := range dirs {
+		if rel == d || strings.HasPrefix(rel, d+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func secretUnmute(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("secret-unmute", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if len(fs.Args()) == 0 {
+		fmt.Fprintln(stderr, "usage: ws secret unmute <dir…>")
+		return 1
+	}
+	env, ok := loadSecretEnv(globals, stderr)
+	if !ok {
+		return 1
+	}
+	rels, ok := env.muteDirs(fs.Args(), stderr)
 	if !ok {
 		return 1
 	}
 
-	passHealth := secret.CheckPass()
-
-	var auditResult *secret.PassAuditResult
-	if *passAudit {
-		r := secret.AuditPassStore(passHealth)
-		auditResult = &r
+	// A directory muted by a parent cannot be unmuted on its own: name the
+	// parent and change nothing.
+	for _, rel := range rels {
+		if by, exact, muted := secret.MutedBy(env.workspace, env.cfg.Secret.SkipDirs, rel); muted && !exact {
+			fmt.Fprintf(stderr, "%s is muted by %s; unmute that directory instead\n", env.abs(rel), env.abs(by))
+			return 1
+		}
 	}
 
-	credHelper := gitConfigGet("credential.helper")
-	credConnected := isWsHelper(credHelper)
+	out := quietOut(globals, stdout)
+	p := Plan{Command: "secret.unmute"}
+	seen := map[string]bool{}
+	for _, rel := range rels {
+		if seen[rel] {
+			continue
+		}
+		seen[rel] = true
+		if _, _, muted := secret.MutedBy(env.workspace, env.cfg.Secret.SkipDirs, rel); !muted {
+			fmt.Fprintf(out, "%s is not muted\n", env.abs(rel))
+			continue
+		}
+		p.Actions = append(p.Actions, secret.UnmuteAction(env.configPath, env.workspace, rel))
+	}
+	return runSecretPlan(p, "secret.unmute", globals, stdin, stdout, stderr)
+}
 
+// runSecretPlan runs a plan and reports it: the JSON envelope with the actions,
+// or, with no action to run, a note and exit 0.
+func runSecretPlan(p Plan, command string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	planResult := RunPlan(p, stdin, stdout, globals)
 	if globals.json {
-		return writeJSON(stdout, stderr, "secret.scan", secretScanResult{
-			Violations:       schema.Records(violations),
-			SkippedDirs:      absPaths(workspacePath, skipDirs),
-			Pass:             passHealth,
-			PassAudit:        auditResult,
-			GitCredHelper:    credConnected,
-			CredentialHelper: credHelper,
+		return writeJSONDryRun(stdout, stderr, command, globals.dryRun, map[string]any{"actions": planResult.Actions})
+	}
+	return planResult.ExitCode()
+}
+
+// ── store ──────────────────────────────────────────────────────────
+
+func secretStore(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("secret-store", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	pos := fs.Args()
+	if len(pos) < 1 || len(pos) > 2 {
+		fmt.Fprintln(stderr, "usage: ws secret store <file:line> [entry]")
+		return 1
+	}
+	env, ok := loadSecretEnv(globals, stderr)
+	if !ok {
+		return 1
+	}
+	health := secret.CheckPass()
+	if !health.Installed || !health.Initialized {
+		fmt.Fprintln(stderr, "the pass store is not initialized: run ws pass init")
+		return 1
+	}
+	picked, ok := env.anchorFindings(pos[:1], stderr)
+	if !ok {
+		return 1
+	}
+	v := picked[0]
+	abs := secret.AbsAnchor(env.workspace, v)
+	if secret.ExtractSecretValue(v.Snippet) == "" {
+		entry := "<entry>"
+		if len(pos) == 2 {
+			entry = pos[1]
+		}
+		fmt.Fprintf(stderr, "no value to read at %s (it has no key and value); store it with: pass insert %s\n", abs, entry)
+		return 1
+	}
+	entry := secret.SuggestPassEntry(v.Path, v.Snippet)
+	if len(pos) == 2 {
+		entry = strings.TrimSpace(pos[1])
+		if err := validEntryName(entry); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			return 1
+		}
+	}
+
+	p := Plan{Command: "secret.store", Actions: []Action{secret.StoreAction(env.configPath, env.workspace, v, entry)}}
+	planResult := RunPlan(p, stdin, stdout, globals)
+	if globals.json {
+		return writeJSONDryRun(stdout, stderr, "secret.store", globals.dryRun, map[string]any{
+			"actions": planResult.Actions, "entry": entry,
 		})
 	}
-
-	out := textOut(globals, stdout)
-	nc := globals.noColor
-
-	if globals.verbose && len(skipDirs) > 0 {
-		fmt.Fprintf(out, "%s secret: skipping directories: %s\n", style.Mutedf(nc, "[verbose]"), strings.Join(absPaths(workspacePath, skipDirs), ", "))
-	}
-
-	if len(violations) == 0 {
-		fmt.Fprintln(out, style.ResultSuccess(nc, "Secret scan: %s", style.Badge("ok", nc)))
-	} else {
-		printSecretViolations(out, absSecretViolations(workspacePath, violations), nc, false)
-	}
-	fmt.Fprintln(out)
-
-	style.Header(out, "Pass Status", nc)
-	printPassHealth(out, passHealth, nc)
-
-	if !passHealth.Initialized {
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, style.ResultWarning(nc, "pass is not initialized %s run `ws secret setup` to secure your secrets", style.Mutedf(nc, "—")))
-	}
-
-	fmt.Fprintln(out)
-	style.Header(out, "Git Credential Helper", nc)
-	if credConnected {
-		fmt.Fprintf(out, "  %s  connected %s\n", style.IconCheck(nc), style.Mutedf(nc, "(%s)", credHelper))
-	} else {
-		fmt.Fprintf(out, "  %s  not connected %s run `ws secret setup`\n", style.IconCross(nc), style.Mutedf(nc, "—"))
-	}
-
-	if auditResult != nil && len(auditResult.Findings) > 0 {
-		fmt.Fprintln(out)
-		style.Header(out, "Pass Audit", nc)
-		for _, f := range auditResult.Findings {
-			if f.Entry != "" {
-				fmt.Fprintf(out, "  %s  %s  %s\n", style.IconInfo(nc), style.Infof(nc, "%s", f.Entry), f.Message)
-			} else {
-				fmt.Fprintf(out, "  %s  %s\n", style.IconInfo(nc), f.Message)
-			}
-		}
-	}
-
-	return 0
-}
-
-func printPassHealth(w io.Writer, h secret.PassHealth, nc bool) {
-	check := func(ok bool) string {
-		if ok {
-			return style.IconCheck(nc)
-		}
-		return style.IconCross(nc)
-	}
-	fmt.Fprintf(w, "  %s  gpg available\n", check(h.GPGAvailable))
-	fmt.Fprintf(w, "  %s  pass installed\n", check(h.Installed))
-	fmt.Fprintf(w, "  %s  store initialized", check(h.Initialized))
-	if h.Initialized {
-		fmt.Fprintf(w, "  %s", style.Mutedf(nc, "(%s, %d entries)", h.StorePath, h.EntryCount))
-	}
-	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  %s  git-backed\n", check(h.GitBacked))
-	if h.GitBacked {
-		if h.GitRemote {
-			fmt.Fprintf(w, "  %s  git-remote\n", check(true))
-		} else {
-			fmt.Fprintf(w, "  %s  git-remote %s\n", style.IconWarning(nc), style.Mutedf(nc, "(local only, no remote)"))
-		}
-	}
-}
-
-// ── ws secret status (RO) ──
-
-func runSecretStatus(args []string, globals globalFlags, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("secret-status", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	registerGlobalFlags(fs, &globals)
-	if err := parseInterspersed(fs, args); err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-
-	nc := globals.noColor
-	health := secret.CheckPass()
-
-	// Git details.
-	remoteURL := ""
-	if health.GitBacked && health.GitRemote {
-		remoteURL = secret.GitRemoteURL()
-	}
-
-	// Credential helper check.
-	credHelperConfigured := false
-	credHelperValue := ""
-	if out, err := gitConfigValue("credential.helper"); err == nil && strings.TrimSpace(out) != "" {
-		credHelperValue = strings.TrimSpace(out)
-		credHelperConfigured = strings.Contains(credHelperValue, "ws") || strings.Contains(credHelperValue, "git-credential-helper")
-	}
-
-	result := map[string]any{
-		"gpg_available":     health.GPGAvailable,
-		"pass_installed":    health.Installed,
-		"initialized":       health.Initialized,
-		"store_path":        health.StorePath,
-		"entry_count":       health.EntryCount,
-		"git_backed":        health.GitBacked,
-		"git_remote":        health.GitRemote,
-		"remote_url":        remoteURL,
-		"cred_helper":       credHelperConfigured,
-		"cred_helper_value": credHelperValue,
-	}
-	if globals.json {
-		return writeJSON(stdout, stderr, "secret.status", result)
-	}
-
-	out := textOut(globals, stdout)
-	printPassHealth(out, health, nc)
-	fmt.Fprintln(out)
-
-	if health.GitBacked {
-		if health.GitRemote {
-			style.KV(out, "Remote", style.Infof(nc, "%s", remoteURL), nc)
-		}
-	}
-
-	if credHelperConfigured {
-		fmt.Fprintf(out, "  %s  credential helper configured\n", style.IconCheck(nc))
-	} else {
-		fmt.Fprintf(out, "  %s  credential helper %s\n", style.IconCross(nc), style.Mutedf(nc, "(not configured)"))
-		fmt.Fprintln(out, style.Mutedf(nc, "  Run: ws git-credential-helper setup"))
-	}
-
-	// Actionable warnings.
-	if !health.Installed {
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, style.Mutedf(nc, "  Install pass: sudo apt install pass"))
-	} else if !health.Initialized {
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, style.Mutedf(nc, "  Run: ws secret setup"))
-	} else if !health.GitBacked {
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, style.Mutedf(nc, "  Enable git: ws secret setup"))
-	} else if !health.GitRemote {
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, style.ResultWarning(nc, "No git remote. Secrets only exist on this machine."))
-		fmt.Fprintln(out, style.Mutedf(nc, "  Add one with: ws secret git remote <url>"))
-	}
-
-	return 0
-}
-
-// gitConfigValue reads a git config value.
-func gitConfigValue(key string) (string, error) {
-	cmd := exec.Command("git", "config", "--global", key)
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return string(out), nil
-}
-
-// ── ws secret fix (RW) ──
-
-var secretFixHelp = cmdHelp{
-	Usage: "ws secret fix [--secret-mode allowlist|exclude|pass]",
-	Flags: []string{
-		"      --secret-mode string   Batch fix mode (interactive if omitted)",
-	},
-}
-
-func runSecretFix(args []string, globals globalFlags, workspacePath, configPath, manifestPath string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if hasHelpArg(args) {
-		return printCmdHelp(stdout, secretFixHelp)
-	}
-
-	fs := flag.NewFlagSet("secret-fix", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	secretMode := fs.String("secret-mode", "", "")
-	dryRun := fs.Bool("dry-run", false, "")
-	var skipDirFlags stringSliceFlag
-	fs.Var(&skipDirFlags, "skip-dir", "")
-	registerGlobalFlags(fs, &globals)
-	if err := parseInterspersed(fs, args); err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	if *dryRun {
-		globals.dryRun = true
-	}
-
-	wscfg2, err := wsconfig.Load(configPath)
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	flagSkipDirs, err := skipDirFlagsToRel(workspacePath, skipDirFlags)
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	skipDirs := mergeSkipDirs(workspacePath, wscfg2.Secret.SkipDirs, flagSkipDirs)
-
-	userRules2, err := wsconfig.LoadIgnoreRules(configPath)
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	engine := ignore.BuildEngine(userRules2)
-	allow := wsconfig.AllowlistMap(wscfg2)
-
-	violations, err := secret.Scan(secret.ScanOptions{
-		WorkspacePath: workspacePath,
-		Engine:        engine,
-		Allowlist:     allow,
-		SkipDirs:      skipDirs,
-	})
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-
-	if len(violations) == 0 {
-		if globals.json {
-			return writeJSON(stdout, stderr, "secret.fix", secret.FixResult{
-				Mode: "none", Messages: []string{"No violations found."},
-			})
-		}
-		fmt.Fprintln(textOut(globals, stdout), style.ResultSuccess(globals.noColor, "No secret violations found."))
-		return 0
-	}
-
-	megaignorePath := filepath.Join(workspacePath, ".megaignore")
-	passHealth := secret.CheckPass()
-
-	// Batch mode — use Plan pattern for per-action consent.
-	if *secretMode != "" {
-		return runSecretFixBatch(violations, *secretMode, workspacePath, manifestPath, megaignorePath, passHealth, globals, stdin, stdout, stderr)
-	}
-
-	// Interactive mode — per-violation menu.
-	if globals.dryRun {
+	if planResult.ExecutedCount() > 0 && !planResult.HasFailures() {
 		out := textOut(globals, stdout)
-		nc := globals.noColor
-		fmt.Fprintln(out, style.Mutedf(nc, "[dry-run] %d secret violations found. Run without --dry-run to fix interactively.", len(violations)))
-		for _, v := range violations {
-			fmt.Fprintf(out, "  %s  %s:%d\n", style.Mutedf(nc, "[dry-run]"), style.AbsPath(workspacePath, v.Path), v.Line)
-		}
-		if globals.json {
-			return writeJSON(stdout, stderr, "secret.fix", secret.FixResult{
-				Mode: "interactive", Processed: len(violations), DryRun: true,
-			})
-		}
-		return 0
+		fmt.Fprintln(out)
+		fmt.Fprintf(out, "  The secret is still in %s.\n", filepath.Join(env.workspace, filepath.FromSlash(v.Path)))
+		fmt.Fprintf(out, "  Replace the value with $(pass show %s) or an environment variable,\n", entry)
+		fmt.Fprintln(out, "  and rotate the credential if the file has already synced.")
 	}
-
-	return runSecretFixInteractive(violations, workspacePath, configPath, manifestPath, megaignorePath, passHealth, globals, stdin, stdout, stderr)
-}
-
-func runSecretFixBatch(violations []secret.Violation, mode string, workspacePath, manifestPath, megaignorePath string, passHealth secret.PassHealth, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	if mode != "allowlist" && mode != "exclude" && mode != "pass" {
-		fmt.Fprintf(stderr, "unknown secret-mode: %s (valid: allowlist, exclude, pass)\n", mode)
-		return 1
-	}
-
-	if mode == "pass" && !passHealth.Initialized {
-		fmt.Fprintln(stderr, "pass store is not initialized. Run `ws secret setup` first.")
-		return 1
-	}
-
-	plan := Plan{Command: "secret.fix"}
-	excludeSeen := make(map[string]bool) // dedup file-level excludes
-
-	for _, v := range violations {
-		v := v
-		anchor := fmt.Sprintf("%s:%d", v.Path, v.Line) // stored form (workspace-relative)
-		absFile := style.AbsPath(workspacePath, v.Path)
-		absAnchor := fmt.Sprintf("%s:%d", absFile, v.Line)
-
-		switch mode {
-		case "allowlist":
-			plan.Actions = append(plan.Actions, Action{
-				ID:          "allowlist-" + absAnchor,
-				Description: fmt.Sprintf("Allowlist %s", absAnchor),
-				Execute: func() error {
-					return addToAllowlist(manifestPath, anchor)
-				},
-			})
-		case "exclude":
-			if excludeSeen[v.Path] {
-				continue
-			}
-			excludeSeen[v.Path] = true
-			plan.Actions = append(plan.Actions, Action{
-				ID:          "exclude-" + absFile,
-				Description: fmt.Sprintf("Add exclude rule for %s", absFile),
-				Execute: func() error {
-					_, err := wsconfig.AddIgnoreExclude(manifestPath, v.Path, "secret: excluded by ws secret fix")
-					if err != nil {
-						return err
-					}
-					ur, err := wsconfig.LoadIgnoreRules(manifestPath)
-					if err != nil {
-						return err
-					}
-					return ignore.WriteMegaignore(megaignorePath, ur)
-				},
-			})
-		case "pass":
-			entryName := secret.SuggestPassEntry(v.Path, v.Snippet)
-			value := secret.ExtractSecretValue(v.Snippet)
-			plan.Actions = append(plan.Actions, Action{
-				ID:          "pass-" + absAnchor,
-				Description: fmt.Sprintf("Store in pass as %s (from %s)", entryName, absAnchor),
-				Execute: func() error {
-					if value == "" {
-						return fmt.Errorf("could not extract secret value from %s", absAnchor)
-					}
-					return secret.InsertEntry(entryName, value)
-				},
-			})
-		}
-	}
-
-	planOut := stdout
-	if globals.json {
-		planOut = io.Discard
-	}
-	planResult := RunPlan(plan, stdin, planOut, globals)
-
-	if globals.json {
-		return writeJSON(stdout, stderr, "secret.fix", map[string]any{
-			"mode":    mode,
-			"actions": planResult.Actions,
-		})
-	}
-
 	return planResult.ExitCode()
 }
 
-func runSecretFixInteractive(violations []secret.Violation, workspacePath, configPath, manifestPath, megaignorePath string, passHealth secret.PassHealth, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	out := textOut(globals, stdout)
-	nc := globals.noColor
-
-	var result secret.FixResult
-	result.Mode = "interactive"
-	result.Processed = len(violations)
-
-	excludedFiles := make(map[string]bool)
-	skippedDirs := make(map[string]bool)
-	passAvailable := passHealth.Initialized
-
-	for _, v := range violations {
-		// Skip violations in directories already skipped.
-		if isInSkippedDir(v.Path, skippedDirs) {
-			result.DirSkipped++
-			continue
-		}
-
-		// Skip violations in files already excluded.
-		if excludedFiles[v.Path] {
-			result.Excluded++
-			result.Added = append(result.Added, "excluded:"+style.AbsPath(workspacePath, v.Path)+" (file already excluded)")
-			continue
-		}
-
-		anchor := fmt.Sprintf("%s:%d", v.Path, v.Line) // stored form (workspace-relative)
-		absPath := style.AbsPath(workspacePath, v.Path)
-		absAnchor := fmt.Sprintf("%s:%d", absPath, v.Line)
-
-		// Show violation header.
-		fmt.Fprintf(out, "\n%s  %s:%d: %s\n",
-			severityLabel(v.Severity, nc),
-			style.Infof(nc, "%s", absPath), v.Line,
-			style.Mutedf(nc, "%s", strings.TrimSpace(v.Snippet)))
-
-		for {
-			// Build prompt based on available options.
-			var choiceLabels, validKeys string
-			if passAvailable {
-				choiceLabels = "[v]iew [p]ass [a]dd .megaignore [l]allowlist [d]ir-skip [s]kip [q]uit"
-				validKeys = "vpaldsq"
-			} else {
-				choiceLabels = "[v]iew [a]dd .megaignore [l]allowlist [d]ir-skip [s]kip [q]uit"
-				validKeys = "valdsq"
-			}
-			choice := promptChoice(stdin, stdout, globals, "  Action?", choiceLabels, validKeys, "s")
-
-			switch choice {
-			case "v":
-				ctx, err := secret.GetFileContext(absPath, v.Line, 3)
-				if err != nil {
-					fmt.Fprintf(out, "  %s could not read context: %s\n", style.IconCross(nc), err)
-				} else {
-					fmt.Fprintln(out)
-					for _, cl := range ctx {
-						marker := "   "
-						if cl.IsMatch {
-							marker = " " + style.Warningf(nc, "%s", "→") + " "
-						}
-						fmt.Fprintf(out, "%s%4d  %s\n", marker, cl.Number, cl.Content)
-					}
-					fmt.Fprintln(out)
-				}
-				continue // re-prompt
-
-			case "p":
-				suggested := secret.SuggestPassEntry(v.Path, v.Snippet)
-				entryName := promptLine(stdin, stdout, globals, "  Pass entry name", suggested)
-				value := secret.ExtractSecretValue(v.Snippet)
-				if value == "" {
-					fmt.Fprintf(out, "  %s could not extract secret value — store manually with `pass insert %s`\n",
-						style.IconWarning(nc), entryName)
-					result.Skipped++
-				} else {
-					err := secret.InsertEntry(entryName, value)
-					if err != nil {
-						fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
-						result.Skipped++
-					} else {
-						fmt.Fprintf(out, "  %s Stored in pass as %s\n", style.IconCheck(nc), style.Infof(nc, "%s", entryName))
-						fmt.Fprintf(out, "  %s Replace hardcoded value with `pass show %s` or env var reference\n",
-							style.IconInfo(nc), entryName)
-						result.PassStored++
-						result.Added = append(result.Added, "pass:"+entryName)
-						// Also add to manifest to track which violations were resolved via pass.
-						trackPassEntry(manifestPath, anchor)
-					}
-				}
-
-			case "a":
-				ok, err := wsconfig.AddIgnoreExclude(manifestPath, v.Path, "secret: excluded by ws secret fix")
-				if err != nil {
-					fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
-					result.Skipped++
-				} else if ok {
-					// Regenerate .megaignore.
-					ur, loadErr := wsconfig.LoadIgnoreRules(manifestPath)
-					if loadErr == nil {
-						_ = ignore.WriteMegaignore(megaignorePath, ur)
-					}
-					excludedFiles[v.Path] = true
-					fmt.Fprintf(out, "  %s Added exclude rule for %s\n", style.IconCheck(nc), absPath)
-					fmt.Fprintf(out, "  %s Rotate any real credentials in this file\n", style.IconWarning(nc))
-					result.Excluded++
-					result.Added = append(result.Added, "exclude:"+absPath)
-				} else {
-					fmt.Fprintf(out, "  %s Rule already exists for %s\n", style.Mutedf(nc, ""), absPath)
-					result.Skipped++
-				}
-
-			case "l":
-				err := addToAllowlist(manifestPath, anchor)
-				if err != nil {
-					fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
-					result.Skipped++
-				} else {
-					fmt.Fprintf(out, "  %s Allowlisted %s\n", style.IconCheck(nc), absAnchor)
-					result.Allowlisted++
-					result.Added = append(result.Added, "allowlist:"+absAnchor)
-				}
-
-			case "d":
-				// Prompt shows an absolute default; the answer resolves like any
-				// path input (absolute, ~, or cwd-relative) and is stored in
-				// config workspace-relative.
-				suggested := filepath.Dir(absPath)
-				answer := strings.TrimSpace(promptLine(stdin, stdout, globals, "  Skip directory", suggested))
-				if answer == "" {
-					result.Skipped++
-					break
-				}
-				rel, err := workspaceRelDir(workspacePath, answer)
-				if err != nil {
-					fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
-					result.Skipped++
-					break
-				}
-				absDir := style.AbsPath(workspacePath, rel)
-				if err := addSkipDirToConfig(configPath, rel); err != nil {
-					fmt.Fprintf(out, "  %s %s\n", style.IconCross(nc), err)
-					result.Skipped++
-				} else {
-					skippedDirs[rel] = true
-					fmt.Fprintf(out, "  %s Added %s to secret.skip_dirs in %s\n", style.IconCheck(nc), absDir, configPath)
-					result.DirSkipped++
-					result.Added = append(result.Added, "skip-dir:"+absDir)
-				}
-
-			case "s":
-				result.Skipped++
-
-			case "q":
-				// Count remaining as skipped.
-				result.Skipped += len(violations) - result.Allowlisted - result.Excluded - result.PassStored - result.Skipped
-				goto done
-			}
-			break // exit inner re-prompt loop
+// validEntryName rejects an entry name that would leave the pass store.
+func validEntryName(entry string) error {
+	if entry == "" {
+		return fmt.Errorf("the pass entry name is empty")
+	}
+	if strings.HasPrefix(entry, "/") || strings.HasPrefix(entry, "~") {
+		return fmt.Errorf("pass entry %q must be a name inside the store, such as myapp/password", entry)
+	}
+	for _, part := range strings.Split(entry, "/") {
+		if part == ".." || part == "." || part == "" {
+			return fmt.Errorf("pass entry %q is not a valid name", entry)
 		}
 	}
-
-done:
-	// Print summary.
-	fmt.Fprintln(out)
-	parts := []string{}
-	if result.Allowlisted > 0 {
-		parts = append(parts, fmt.Sprintf("%d allowlisted", result.Allowlisted))
-	}
-	if result.Excluded > 0 {
-		parts = append(parts, fmt.Sprintf("%d excluded", result.Excluded))
-	}
-	if result.PassStored > 0 {
-		parts = append(parts, fmt.Sprintf("%d stored in pass", result.PassStored))
-	}
-	if result.DirSkipped > 0 {
-		parts = append(parts, fmt.Sprintf("%d dir-skipped", result.DirSkipped))
-	}
-	if result.Skipped > 0 {
-		parts = append(parts, fmt.Sprintf("%d skipped", result.Skipped))
-	}
-	if len(parts) > 0 {
-		fmt.Fprintf(out, "%s %d violations processed: %s\n",
-			style.IconCheck(nc), result.Processed, strings.Join(parts, ", "))
-	}
-
-	if globals.json {
-		return writeJSON(stdout, stderr, "secret.fix", result)
-	}
-
-	return 0
+	return nil
 }
 
-// ── ws secret setup (RW) ──
-
-var secretSetupHelp = cmdHelp{
-	Usage:       "ws secret setup [--git-remote <url>]",
-	Description: "Set up Unix Password Store (pass). For credential helper: ws git-credential-helper setup",
-	Flags: []string{
-		"      --git-remote string   Git remote URL for pass store backup",
-	},
-}
-
-func runSecretSetup(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	if hasHelpArg(args) {
-		return printCmdHelp(stdout, secretSetupHelp)
-	}
-
-	fs := flag.NewFlagSet("secret-setup", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	gitRemote := fs.String("git-remote", "", "")
-	dryRun := fs.Bool("dry-run", false, "")
-	registerGlobalFlags(fs, &globals)
-	if err := parseInterspersed(fs, args); err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	if *dryRun {
-		globals.dryRun = true
-	}
-
-	out := textOut(globals, stdout)
-	nc := globals.noColor
-
-	health := secret.CheckPass()
-
-	// Pre-checks: hard requirements.
-	if !health.GPGAvailable {
-		fmt.Fprintln(stderr, style.ResultError(nc, "GPG not found. Install with: sudo apt install gnupg"))
-		return 1
-	}
-	if !health.Installed {
-		fmt.Fprintln(stderr, style.ResultError(nc, "pass not found. Install with: sudo apt install pass"))
-		return 1
-	}
-
-	// Determine GPG key for pass init.
-	var gpgID string
-	if !health.Initialized {
-		keys, err := secret.ListGPGKeys()
-		if err != nil || len(keys) == 0 {
-			fmt.Fprintln(stderr, style.ResultError(nc, "No GPG secret keys found."))
-			fmt.Fprintln(stderr, style.Mutedf(nc, "Generate one with: gpg --full-generate-key"))
-			fmt.Fprintln(stderr, style.Mutedf(nc, "Then re-run: ws secret setup"))
-			return 1
-		}
-		if len(keys) == 1 {
-			gpgID = keys[0].ID
-			fmt.Fprintf(out, "  %s Using GPG key: %s %s\n",
-				style.IconInfo(nc), keys[0].ID, style.Mutedf(nc, "(%s)", keys[0].Name))
-		} else {
-			fmt.Fprintln(out, "  Available GPG keys:")
-			for i, k := range keys {
-				fmt.Fprintf(out, "    %d) %s  %s\n", i+1, k.ID, style.Mutedf(nc, "%s", k.Name))
-			}
-			choice := promptLine(stdin, stdout, globals, "  Select key number", "1")
-			idx := 0
-			for i := 0; i < len(choice); i++ {
-				if choice[i] >= '0' && choice[i] <= '9' {
-					idx = idx*10 + int(choice[i]-'0')
-				}
-			}
-			idx-- // 1-indexed to 0-indexed
-			if idx < 0 || idx >= len(keys) {
-				idx = 0
-			}
-			gpgID = keys[idx].ID
-		}
-	}
-
-	// Build plan.
-	plan := Plan{Command: "secret.setup"}
-
-	if !health.Initialized {
-		capturedGPGID := gpgID
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "pass-init",
-			Description: fmt.Sprintf("Initialize pass store with GPG key %s", capturedGPGID),
-			Execute: func() error {
-				return secret.InitStore(capturedGPGID)
-			},
-		})
-	}
-
-	if !health.GitBacked {
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "pass-git-init",
-			Description: "Enable git versioning for pass store",
-			Execute: func() error {
-				return secret.InitGit()
-			},
-		})
-	}
-
-	remoteURL := *gitRemote
-	if remoteURL == "" && !health.GitRemote {
-		// Interactive prompt for remote when not provided via flag.
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, style.Mutedf(nc, "  A private git remote provides off-machine backup for your secrets."))
-		fmt.Fprintln(out, style.Mutedf(nc, "  Create a PRIVATE repo first, then paste the URL below."))
-		remoteURL = promptLine(stdin, stdout, globals, "  Remote URL (blank to skip)", "")
-	}
-	if remoteURL != "" {
-		capturedRemote := remoteURL
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "pass-git-remote",
-			Description: fmt.Sprintf("Add git remote: %s", capturedRemote),
-			Execute: func() error {
-				return secret.AddGitRemote(capturedRemote)
-			},
-		})
-	}
-
-	if len(plan.Actions) == 0 {
-		fmt.Fprintln(out, style.ResultSuccess(nc, "pass store already set up."))
-		printPassHealth(out, health, nc)
-		fmt.Fprintln(out)
-		fmt.Fprintln(out, style.Mutedf(nc, "  To connect git credential helper: ws git-credential-helper setup"))
-		if globals.json {
-			return writeJSON(stdout, stderr, "secret.setup", map[string]any{
-				"message": "already set up",
-				"pass":    health,
-			})
-		}
-		return 0
-	}
-
-	planOut := stdout
-	if globals.json {
-		planOut = io.Discard
-	}
-	planResult := RunPlan(plan, stdin, planOut, globals)
-
-	if globals.json {
-		return writeJSON(stdout, stderr, "secret.setup", map[string]any{
-			"actions": planResult.Actions,
-			"pass":    secret.CheckPass(),
-		})
-	}
-
-	// Show final status.
-	if !planResult.HasFailures() {
-		fmt.Fprintln(out)
-		finalHealth := secret.CheckPass()
-		printPassHealth(out, finalHealth, nc)
-		fmt.Fprintln(out)
-		if finalHealth.GitBacked && !finalHealth.GitRemote {
-			fmt.Fprintln(out, style.ResultWarning(nc, "No git remote. Secrets only exist on this machine."))
-			fmt.Fprintln(out, style.Mutedf(nc, "  To add one later: ws secret setup --git-remote <url>"))
-			fmt.Fprintln(out, style.Mutedf(nc, "  Use a PRIVATE repo — never push pass to a public repo."))
-			fmt.Fprintln(out)
-		}
-		fmt.Fprintln(out, style.Mutedf(nc, "  To connect git credential helper: ws git-credential-helper setup"))
-	}
-
-	return planResult.ExitCode()
-}
-
-// ── ws secret git ──
-
-var secretGitHelp = cmdHelp{
-	Usage: "ws secret git <push|log|remote|status>",
-	Subcommands: []string{
-		"  push           Push pass store to git remote",
-		"  log            Show pass store git log",
-		"  remote <url>   Set the git remote for pass store",
-		"  status         Show git status of pass store",
-	},
-}
-
-func runSecretGit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	if hasHelpArg(args) || len(args) == 0 {
-		return printCmdHelp(stdout, secretGitHelp)
-	}
-
-	nc := globals.noColor
-	out := textOut(globals, stdout)
-
-	health := secret.CheckPass()
-
-	// Pre-check: pass must be installed, initialized, and git-backed.
-	if !health.Installed {
-		fmt.Fprintln(stderr, style.ResultError(nc, "pass not found. Install with: sudo apt install pass"))
-		return 1
-	}
-	if !health.Initialized {
-		fmt.Fprintln(stderr, style.ResultError(nc, "pass store not initialized. Run: ws secret setup"))
-		return 1
-	}
-	if !health.GitBacked {
-		fmt.Fprintln(stderr, style.ResultError(nc, "pass store has no git. Run: ws secret setup"))
-		return 1
-	}
-
-	switch args[0] {
-	case "push":
-		if !health.GitRemote {
-			fmt.Fprintln(stderr, style.ResultError(nc, "No remote configured. Run: ws secret git remote <url>"))
-			return 1
-		}
-		if err := secret.GitPush(); err != nil {
-			fmt.Fprintln(stderr, style.ResultError(nc, "push failed: %s", err))
-			return 1
-		}
-		fmt.Fprintln(out, style.ResultSuccess(nc, "Pushed to %s", secret.GitRemoteURL()))
-		return 0
-
-	case "log":
-		fs := flag.NewFlagSet("secret-git-log", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		count := fs.Int("n", 20, "number of commits to show")
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, args[1:]); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-
-		logOut, err := secret.GitLog(*count)
-		if err != nil {
-			fmt.Fprintln(stderr, style.ResultError(nc, "git log: %s", err))
-			return 1
-		}
-		if globals.json {
-			return writeJSON(stdout, stderr, "secret.git.log", map[string]any{
-				"log": logOut,
-			})
-		}
-		if logOut == "" {
-			fmt.Fprintln(out, style.Mutedf(nc, "No commits yet."))
-		} else {
-			fmt.Fprintln(out, logOut)
-		}
-		return 0
-
-	case "remote":
-		fs := flag.NewFlagSet("secret-git-remote", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		dryRun := fs.Bool("dry-run", globals.dryRun, "preview only")
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, args[1:]); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if *dryRun {
-			globals.dryRun = true
-		}
-		if len(fs.Args()) != 1 {
-			fmt.Fprintln(stderr, "usage: ws secret git remote <url>")
-			return 1
-		}
-		remoteURL := strings.TrimSpace(fs.Args()[0])
-
-		if health.GitRemote {
-			// Update existing remote.
-			fmt.Fprintln(out, style.Mutedf(nc, "Updating existing remote to %s", remoteURL))
-		}
-
-		plan := Plan{Command: "secret.git.remote"}
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "add-remote",
-			Description: fmt.Sprintf("Set pass git remote to %s", remoteURL),
-			Execute: func() error {
-				return secret.AddGitRemote(remoteURL)
-			},
-		})
-		planResult := RunPlan(plan, stdin, stdout, globals)
-		if globals.json {
-			return writeJSONDryRun(stdout, stderr, "secret.git.remote", globals.dryRun, map[string]any{
-				"remote_url": remoteURL,
-				"actions":    planResult.Actions,
-			})
-		}
-		if planResult.WasExecuted("add-remote") {
-			fmt.Fprintln(out, style.ResultSuccess(nc, "Remote set to %s", remoteURL))
-		}
-		return planResult.ExitCode()
-
-	case "status":
-		remoteURL := secret.GitRemoteURL()
-		result := map[string]any{
-			"git_backed":  health.GitBacked,
-			"git_remote":  health.GitRemote,
-			"remote_url":  remoteURL,
-			"store_path":  health.StorePath,
-			"entry_count": health.EntryCount,
-		}
-		if globals.json {
-			return writeJSON(stdout, stderr, "secret.git.status", result)
-		}
-		style.KV(out, "Store", health.StorePath, nc)
-		style.KV(out, "Git", style.Badge("enabled", nc), nc)
-		if health.GitRemote {
-			style.KV(out, "Remote", style.Infof(nc, "%s", remoteURL), nc)
-		} else {
-			style.KV(out, "Remote", style.ResultWarning(nc, "none"), nc)
-		}
-		style.KV(out, "Entries", fmt.Sprintf("%d", health.EntryCount), nc)
-
-		if !health.GitRemote {
-			fmt.Fprintln(out)
-			fmt.Fprintln(out, style.ResultWarning(nc, "No git remote. Secrets only exist on this machine."))
-			fmt.Fprintln(out, style.Mutedf(nc, "  Add one with: ws secret git remote <url>"))
-			fmt.Fprintln(out, style.Mutedf(nc, "  Use a PRIVATE repo — never push pass to a public repo."))
-		}
-		return 0
-
-	default:
-		fmt.Fprintf(stderr, "unknown secret git subcommand: %s\n", args[0])
-		return printUsageError(stderr, secretGitHelp)
-	}
-}
-
-// ── Helpers (secret) ──
-
-func addToAllowlist(configPath, anchor string) error {
-	return wsconfig.AddToAllowlist(configPath, anchor)
-}
-
-func trackPassEntry(configPath, anchor string) {
-	_ = wsconfig.AddToAllowlist(configPath, anchor)
-}
+// ── helpers ────────────────────────────────────────────────────────
 
 // promptLine reads a full line of input with a default value.
 // Returns defaultValue on EOF, --quiet, or --json.
@@ -1058,13 +515,6 @@ func promptLine(stdin io.Reader, stdout io.Writer, globals globalFlags, prompt, 
 	return strings.TrimSpace(line)
 }
 
-// workspaceRelDir resolves a user-supplied directory (absolute, ~, or relative
-// to cwd) and returns it workspace-relative, forward-slashed, for skip_dirs
-// matching and storage. It fails for directories outside the workspace.
-func workspaceRelDir(workspacePath, input string) (string, error) {
-	return secret.WorkspaceRelDir(workspacePath, input)
-}
-
 // skipDirFlagsToRel resolves --skip-dir values per spec "Path Rules" and
 // converts them to the workspace-relative form used for matching.
 func skipDirFlagsToRel(workspacePath string, flags []string) ([]string, error) {
@@ -1073,35 +523,11 @@ func skipDirFlagsToRel(workspacePath string, flags []string) ([]string, error) {
 		if strings.TrimSpace(f) == "" {
 			continue
 		}
-		rel, err := workspaceRelDir(workspacePath, f)
+		rel, err := secret.WorkspaceRelDir(workspacePath, f)
 		if err != nil {
 			return nil, fmt.Errorf("--skip-dir: %w", err)
 		}
 		out = append(out, rel)
 	}
 	return out, nil
-}
-
-// mergeSkipDirs combines config and flag skip dirs, deduplicating and
-// normalizing to forward-slash workspace-relative paths. Config values follow
-// the config path convention (relative, absolute, or ~); flag values have
-// already been resolved by skipDirFlagsToRel.
-func mergeSkipDirs(workspacePath string, configDirs, flagDirs []string) []string {
-	return secret.MergeSkipDirs(workspacePath, configDirs, flagDirs)
-}
-
-// addSkipDirToConfig loads config, appends dir to secret.skip_dirs if not
-// already present, and saves.
-func addSkipDirToConfig(configPath, dir string) error {
-	return secret.AddSkipDir(configPath, dir)
-}
-
-// isInSkippedDir returns true if the file path is under any of the skipped directories.
-func isInSkippedDir(filePath string, skippedDirs map[string]bool) bool {
-	for d := range skippedDirs {
-		if strings.HasPrefix(filePath, d+"/") || filePath == d {
-			return true
-		}
-	}
-	return false
 }

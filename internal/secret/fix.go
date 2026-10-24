@@ -8,36 +8,6 @@ import (
 	"strings"
 )
 
-type FixMode string
-
-const (
-	FixModeAllowlist FixMode = "allowlist"
-	FixModeExclude   FixMode = "exclude"
-	FixModePass      FixMode = "pass"
-)
-
-type FixOptions struct {
-	WorkspacePath  string
-	ManifestPath   string
-	MegaignorePath string
-	Violations     []Violation
-	Mode           FixMode
-	DryRun         bool
-}
-
-type FixResult struct {
-	Mode        string   `json:"mode"`
-	Added       []string `json:"added"`
-	Messages    []string `json:"messages"`
-	Processed   int      `json:"processed"`
-	Allowlisted int      `json:"allowlisted"`
-	Excluded    int      `json:"excluded"`
-	PassStored  int      `json:"pass_stored"`
-	DirSkipped  int      `json:"dir_skipped"`
-	Skipped     int      `json:"skipped"`
-	DryRun      bool     `json:"dry_run"`
-}
-
 // ContextLine represents a single line of file context around a violation.
 type ContextLine struct {
 	Number  int    `json:"number"`

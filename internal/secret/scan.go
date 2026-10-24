@@ -49,6 +49,11 @@ var patterns = []*regexp.Regexp{
 // isCommentLine returns true if the trimmed line is a comment in common formats.
 func isCommentLine(line string) bool {
 	trimmed := strings.TrimSpace(line)
+	// A PEM header starts with "--" but is not an SQL comment: a private key
+	// header is a finding (spec §5 secret).
+	if strings.HasPrefix(trimmed, "-----BEGIN") {
+		return false
+	}
 	return strings.HasPrefix(trimmed, "#") ||
 		strings.HasPrefix(trimmed, "//") ||
 		strings.HasPrefix(trimmed, "--") ||

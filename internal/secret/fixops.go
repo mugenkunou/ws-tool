@@ -9,28 +9,10 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
-// Mutations behind `ws secret fix`, shared by the CLI and the TUI.
+// Helpers behind `ws secret allow|mute|unmute`, shared by the CLI and the TUI.
 
 // Anchor is the stored (workspace-relative) allowlist form of a violation.
 func Anchor(v Violation) string { return fmt.Sprintf("%s:%d", v.Path, v.Line) }
-
-// AllowlistMap builds the scan allowlist from the config.
-// Deprecated: use wsconfig.AllowlistMap directly.
-func AllowlistMap(cfg wsconfig.WsConfig) map[string]struct{} {
-	return wsconfig.AllowlistMap(cfg)
-}
-
-// AddToAllowlist records anchor in the config allowlist (idempotent).
-// Deprecated: use wsconfig.AddToAllowlist directly.
-func AddToAllowlist(configPath, anchor string) error {
-	return wsconfig.AddToAllowlist(configPath, anchor)
-}
-
-// TrackPassEntry records that anchor was resolved by storing it in the allowlist.
-// (In the new layout there is no separate PassEntries field — we reuse the allowlist.)
-func TrackPassEntry(configPath, anchor string) error {
-	return wsconfig.AddToAllowlist(configPath, anchor)
-}
 
 // WorkspaceRelDir resolves a user-supplied directory (absolute, ~, or
 // relative to the cwd) to its workspace-relative form; it must be inside the

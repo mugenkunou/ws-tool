@@ -1,0 +1,367 @@
+package secret
+
+import (
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
+)
+
+func newConfig(t *testing.T) (ws, cfgPath string) {
+	t.Helper()
+	ws = filepath.Join(t.TempDir(), "Workspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath = filepath.Join(ws, "ws.json")
+	if err := wsconfig.Save(cfgPath, wsconfig.Default()); err != nil {
+		t.Fatal(err)
+	}
+	return ws, cfgPath
+}
+
+func TestParseAnchor(t *testing.T) {
+	ws := filepath.Join(t.TempDir(), "Workspace")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	rel, line, err := ParseAnchor(ws, filepath.Join(ws, "configs", "a.properties")+":3")
+	if err != nil || rel != "configs/a.properties" || line != 3 {
+		t.Fatalf("absolute: %q %d %v", rel, line, err)
+	}
+	// ~ resolves against HOME.
+	t.Setenv("HOME", filepath.Dir(ws))
+	if rel, _, err = ParseAnchor(ws, "~/Workspace/x/y.env:12"); err != nil || rel != "x/y.env" {
+		t.Fatalf("~: %q %v", rel, err)
+	}
+	// Relative to the current directory.
+	if err := os.MkdirAll(filepath.Join(ws, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prev, _ := os.Getwd()
+	if err := os.Chdir(filepath.Join(ws, "sub")); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(prev)
+	if rel, _, err = ParseAnchor(ws, "./f.txt:1"); err != nil || rel != "sub/f.txt" {
+		t.Fatalf("relative: %q %v", rel, err)
+	}
+	// A path with a colon in it keeps everything before the last one.
+	if rel, line, err = ParseAnchor(ws, "./a:b.txt:7"); err != nil || rel != "sub/a:b.txt" || line != 7 {
+		t.Fatalf("colon in the name: %q %d %v", rel, line, err)
+	}
+
+	for _, bad := range []string{"", "file", ":3", "file:", "file:0", "file:-1", "file:x", "/etc/passwd:1", ws + ":1"} {
+		if _, _, err := ParseAnchor(ws, bad); err == nil {
+			t.Errorf("ParseAnchor(%q) should fail", bad)
+		}
+	}
+}
+
+func TestFindingAtAndAnchors(t *testing.T) {
+	vs := []Violation{{Path: "a.env", Line: 1}, {Path: "b/c.env", Line: 4}}
+	if v, ok := FindingAt(vs, "b/c.env", 4); !ok || v.Line != 4 {
+		t.Fatal("finding not found")
+	}
+	if _, ok := FindingAt(vs, "b/c.env", 5); ok {
+		t.Fatal("line 5 is no finding")
+	}
+	if got := Anchor(vs[1]); got != "b/c.env:4" {
+		t.Fatalf("Anchor = %q", got)
+	}
+	if got := AbsAnchor("/ws", vs[1]); got != "/ws/b/c.env:4" {
+		t.Fatalf("AbsAnchor = %q", got)
+	}
+}
+
+func TestAllowActionsOrderAndStaleDrop(t *testing.T) {
+	ws, cfg := newConfig(t)
+	findings := []Violation{{Path: "a.env", Line: 1}, {Path: "b.env", Line: 2}}
+	acts := AllowActions(cfg, ws, findings, []string{"gone:1", "gone:2"})
+	if len(acts) != 3 {
+		t.Fatalf("want 2 allow actions and one drop, got %d", len(acts))
+	}
+	if !strings.HasPrefix(acts[0].Description, "Allow "+ws+"/a.env:1") || acts[2].Description != "Drop 2 stale anchors from secret.allowlist" {
+		t.Fatalf("descriptions: %q, %q", acts[0].Description, acts[2].Description)
+	}
+	if one := AllowActions(cfg, ws, nil, []string{"gone:1"}); one[0].Description != "Drop 1 stale anchor from secret.allowlist" {
+		t.Fatalf("singular: %q", one[0].Description)
+	}
+
+	// Seed the stale ones, run everything, only the new anchors remain.
+	c, _ := wsconfig.Load(cfg)
+	c.Secret.Allowlist = []string{"gone:1", "gone:2"}
+	if err := wsconfig.Save(cfg, c); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range acts {
+		if err := a.Execute(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c, _ = wsconfig.Load(cfg)
+	if !slices.Equal(c.Secret.Allowlist, []string{"a.env:1", "b.env:2"}) {
+		t.Fatalf("allowlist: %v", c.Secret.Allowlist)
+	}
+}
+
+func TestStaleAnchors(t *testing.T) {
+	ws, _ := newConfig(t)
+	if err := os.MkdirAll(filepath.Join(ws, "vendor", "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(rel, body string) {
+		if err := os.WriteFile(filepath.Join(ws, rel), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("a.env", "x=1\npassword=hunter2\n")
+	write("vendor/lib/v.env", "password=hunter2\n")
+
+	opts := ScanOptions{WorkspacePath: ws, SkipDirs: []string{"vendor"}}
+	allow := []string{
+		"a.env:2",            // still a finding: current
+		"a.env:1",            // no pattern matches that line: stale
+		"deleted.env:3",      // the file is gone: stale
+		"vendor/lib/v.env:1", // in a muted directory: out of sight, kept
+		"vendor:1",           // a file named like a muted directory: kept
+		"nocolon",            // malformed: stale
+	}
+	stale, err := StaleAnchors(opts, allow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(stale)
+	if want := []string{"a.env:1", "deleted.env:3", "nocolon"}; !slices.Equal(stale, want) {
+		t.Fatalf("stale = %v, want %v", stale, want)
+	}
+	if got, _ := StaleAnchors(opts, nil); got != nil {
+		t.Fatalf("an empty allowlist has nothing stale: %v", got)
+	}
+}
+
+func TestMutedBy(t *testing.T) {
+	ws := filepath.Join(t.TempDir(), "Workspace")
+	t.Setenv("HOME", filepath.Dir(ws))
+	dirs := []string{"configs", filepath.Join(ws, "abs/dir"), "~/Workspace/tilde"}
+
+	for rel, want := range map[string]struct {
+		by    string
+		exact bool
+		ok    bool
+	}{
+		"configs":       {"configs", true, true},
+		"configs/app":   {"configs", false, true},
+		"abs/dir":       {"abs/dir", true, true},
+		"abs/dir/x/y":   {"abs/dir", false, true},
+		"tilde":         {"tilde", true, true},
+		"tilde/deeper":  {"tilde", false, true},
+		"configs2":      {"", false, false},
+		"other/configs": {"", false, false},
+	} {
+		by, exact, ok := MutedBy(ws, dirs, rel)
+		if by != want.by || exact != want.exact || ok != want.ok {
+			t.Errorf("MutedBy(%q) = %q %v %v, want %+v", rel, by, exact, ok, want)
+		}
+	}
+}
+
+func TestMuteUnmuteActions(t *testing.T) {
+	ws, cfg := newConfig(t)
+	home := filepath.Dir(ws)
+	t.Setenv("HOME", home)
+	if err := MuteAction(cfg, ws, "vendor").Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if err := MuteAction(cfg, ws, "vendor").Execute(); err != nil { // idempotent
+		t.Fatal(err)
+	}
+	c, _ := wsconfig.Load(cfg)
+	if !slices.Equal(c.Secret.SkipDirs, []string{"vendor"}) {
+		t.Fatalf("skip_dirs: %v", c.Secret.SkipDirs)
+	}
+	c.Secret.SkipDirs = []string{"vendor", filepath.Join(ws, "vendor"), "~/Workspace/vendor", "other"}
+	if err := wsconfig.Save(cfg, c); err != nil {
+		t.Fatal(err)
+	}
+	if a := UnmuteAction(cfg, ws, "vendor"); a.Description != "Unmute "+filepath.Join(ws, "vendor")+" in secret scans" {
+		t.Fatalf("description %q", a.Description)
+	} else if err := a.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	c, _ = wsconfig.Load(cfg)
+	if !slices.Equal(c.Secret.SkipDirs, []string{"other"}) {
+		t.Fatalf("only the other entry should stay: %v", c.Secret.SkipDirs)
+	}
+}
+
+// shimPass puts a pass(1) stand-in on PATH: plain files under
+// $PASSWORD_STORE_DIR, never overwriting, never touching the real store.
+func shimPass(t *testing.T) (store, log string) {
+	t.Helper()
+	dir := t.TempDir()
+	store = filepath.Join(dir, "store")
+	log = filepath.Join(dir, "calls.log")
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(store, ".gpg-id"), []byte("K\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\necho \"$*\" >> \"$PASS_SHIM_LOG\"\nif [ \"$1\" != insert ]; then exit 1; fi\nshift\n[ \"$1\" = -m ] && shift\nf=\"$PASSWORD_STORE_DIR/$1.gpg\"\n[ -e \"$f\" ] && exit 1\nmkdir -p \"$(dirname \"$f\")\"\ncat > \"$f\"\n"
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "pass"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PASSWORD_STORE_DIR", store)
+	t.Setenv("PASS_SHIM_LOG", log)
+	return store, log
+}
+
+func TestInsertEntryNeverOverwrites(t *testing.T) {
+	store, log := shimPass(t)
+	if err := InsertEntry("a/b", "first"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(store, "a", "b.gpg")); string(got) != "first\n" {
+		t.Fatalf("stored %q", got)
+	}
+	err := InsertEntry("a/b", "second")
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("want an already-exists error, got %v", err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(store, "a", "b.gpg")); string(got) != "first\n" {
+		t.Fatalf("the entry was overwritten: %q", got)
+	}
+	calls, _ := os.ReadFile(log)
+	if strings.Count(string(calls), "insert") != 1 || strings.Contains(string(calls), "-f") {
+		t.Fatalf("pass calls: %q", calls)
+	}
+}
+
+func TestInsertEntryMultiline(t *testing.T) {
+	store, _ := shimPass(t)
+	if err := InsertEntry("k", "line1\nline2"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(store, "k.gpg")); string(got) != "line1\nline2\n" {
+		t.Fatalf("stored %q", got)
+	}
+}
+
+func TestStoreActionAllowsOnlyAfterInsert(t *testing.T) {
+	ws, cfg := newConfig(t)
+	shimPass(t)
+	v := Violation{Path: "configs/app.env", Line: 3, Snippet: "password=hunter2"}
+
+	a := StoreAction(cfg, ws, v, "app/password")
+	if want := "Store the value of " + ws + "/configs/app.env:3 in pass as app/password, then allow it"; a.Description != want {
+		t.Fatalf("description %q", a.Description)
+	}
+	if err := a.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := wsconfig.Load(cfg)
+	if !slices.Equal(c.Secret.Allowlist, []string{"configs/app.env:3"}) {
+		t.Fatalf("allowlist: %v", c.Secret.Allowlist)
+	}
+
+	// The entry exists now: the action fails and must not allow anything new.
+	v2 := Violation{Path: "configs/other.env", Line: 1, Snippet: "password=hunter3"}
+	if err := StoreAction(cfg, ws, v2, "app/password").Execute(); err == nil {
+		t.Fatal("storing over an existing entry must fail")
+	}
+	c, _ = wsconfig.Load(cfg)
+	if len(c.Secret.Allowlist) != 1 {
+		t.Fatalf("a failed insert must not allow the finding: %v", c.Secret.Allowlist)
+	}
+
+	// No value to read (a key header): the action fails.
+	v3 := Violation{Path: "k.pem", Line: 1, Snippet: "-----BEGIN RSA PRIVATE KEY-----"}
+	if err := StoreAction(cfg, ws, v3, "k/pem").Execute(); err == nil || !strings.Contains(err.Error(), "pass insert k/pem") {
+		t.Fatalf("want a pointer to pass insert, got %v", err)
+	}
+}
+
+func TestWorkspaceCopy(t *testing.T) {
+	root := t.TempDir()
+	ws := filepath.Join(root, "Workspace")
+	target := filepath.Join(ws, "secrets", "dotfiles", "password-store")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := filepath.Join(root, ".password-store")
+
+	if _, ok := WorkspaceCopy(store, ws); ok {
+		t.Fatal("a missing store is no copy")
+	}
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := WorkspaceCopy(store, ws); ok {
+		t.Fatal("a plain directory is no copy")
+	}
+	if err := os.Remove(store); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, store); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := WorkspaceCopy(store, ws); !ok || got != target {
+		t.Fatalf("a link into the workspace: %q %v", got, ok)
+	}
+
+	outside := filepath.Join(root, "elsewhere")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(root, "link2")
+	if err := os.Symlink(outside, other); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := WorkspaceCopy(other, ws); ok {
+		t.Fatal("a link outside the workspace is no copy")
+	}
+	// The workspace itself is not a copy.
+	third := filepath.Join(root, "link3")
+	if err := os.Symlink(ws, third); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := WorkspaceCopy(third, ws); ok {
+		t.Fatal("the workspace root is not a copy")
+	}
+}
+
+func TestScanFindsPrivateKeyHeaders(t *testing.T) {
+	ws, _ := newConfig(t)
+	if err := os.WriteFile(filepath.Join(ws, "id.txt"), []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-- password=hunter2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	vs, err := Scan(ScanOptions{WorkspacePath: ws})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The header is a finding; an SQL-style "--" comment still is not.
+	if len(vs) != 1 || vs[0].Line != 1 {
+		t.Fatalf("findings: %+v", vs)
+	}
+}
+
+func TestAuditMessagesNameCurrentCommands(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PASSWORD_STORE_DIR", filepath.Join(dir, "none"))
+	for _, f := range AuditPassStore(CheckPass()).Findings {
+		for _, old := range []string{"ws secret setup", "secret git", "pass git"} {
+			if strings.Contains(f.Message, old) {
+				t.Errorf("audit message %q names the old command %q", f.Message, old)
+			}
+		}
+	}
+}

@@ -75,7 +75,11 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runCron(commandArgs, globals, stdin, stdout, stderr)
 	case "tui":
 		return runTUI(commandArgs, globals, stdin, stdout, stderr)
-	case "credential", "git-credential-helper":
+	case "pass":
+		return runPass(commandArgs, globals, stdin, stdout, stderr)
+	case "credential":
+		return runCredential(commandArgs, globals, stdin, stdout, stderr)
+	case "git-credential-helper":
 		return runGitCredentialHelper(commandArgs, globals, stdin, stdout, stderr)
 	case "completion":
 		return runCompletion(commandArgs, globals, stdin, stdout, stderr)

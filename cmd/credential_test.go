@@ -2,136 +2,497 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestCredentialHelperHelp(t *testing.T) {
-	// --help is an unknown git credential operation → silent exit 0.
-	var out, errOut bytes.Buffer
-	code := Execute([]string{"git-credential-helper", "--help"}, strings.NewReader(""), &out, &errOut)
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d: %s", code, errOut.String())
+// ── plumbing: git-credential-helper get|store|erase ──
+
+// runPlumbing runs the plumbing with git's request on stdin and returns the
+// exact bytes of stdout and stderr.
+func runPlumbing(t *testing.T, stdin string, args ...string) (code int, out, errOut string) {
+	t.Helper()
+	var o, e bytes.Buffer
+	code = Execute(args, strings.NewReader(stdin), &o, &e)
+	return code, o.String(), e.String()
+}
+
+func TestPlumbingGetIsByteForByte(t *testing.T) {
+	shims := newPassShims(t)
+	shims.initStore(t)
+	shims.entry(t, "git/example.com", "tok-host\nusername: bob\nnotes: ignored\n")
+
+	req := "protocol=https\nhost=example.com\n\n"
+	code, out, errOut := runPlumbing(t, req, "git-credential-helper", "get")
+	if code != 0 || errOut != "" {
+		t.Fatalf("code=%d stderr=%q", code, errOut)
+	}
+	// password first, then username, one "key=value\n" each, nothing else.
+	if out != "password=tok-host\nusername=bob\n" {
+		t.Fatalf("stdout %q", out)
 	}
 }
 
-func TestCredentialGetEmptyStdin(t *testing.T) {
-	var out, errOut bytes.Buffer
-	code := Execute([]string{"git-credential-helper", "get"}, strings.NewReader("\n"), &out, &errOut)
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d", code)
+func TestPlumbingGetLookupOrder(t *testing.T) {
+	shims := newPassShims(t)
+	shims.initStore(t)
+	shims.entry(t, "git/example.com", "host-token\nuser: hostuser\n")
+	shims.entry(t, "git/example.com/team/api", "repo-token\nlogin: repouser\n")
+
+	// git sends the path only with useHttpPath; the repo token wins then.
+	_, out, _ := runPlumbing(t, "protocol=https\nhost=example.com\npath=team/api.git\n\n", "git-credential-helper", "get")
+	if out != "password=repo-token\nusername=repouser\n" {
+		t.Fatalf("repo token: %q", out)
+	}
+	// Another repo falls back to the host token.
+	_, out, _ = runPlumbing(t, "protocol=https\nhost=example.com\npath=team/other\n\n", "git-credential-helper", "get")
+	if out != "password=host-token\nusername=hostuser\n" {
+		t.Fatalf("host token: %q", out)
+	}
+	// Without a path, the host token.
+	_, out, _ = runPlumbing(t, "protocol=https\nhost=example.com\n\n", "git-credential-helper", "get")
+	if out != "password=host-token\nusername=hostuser\n" {
+		t.Fatalf("no path: %q", out)
 	}
 }
 
-func TestCredentialStoreNoop(t *testing.T) {
-	var out, errOut bytes.Buffer
-	stdin := "protocol=https\nhost=example.com\nusername=bob\npassword=secret\n\n"
-	code := Execute([]string{"git-credential-helper", "store"}, strings.NewReader(stdin), &out, &errOut)
-	if code != 0 {
-		t.Fatalf("expected exit 0 for store (noop), got %d", code)
-	}
-	if out.Len() != 0 {
-		t.Fatalf("expected no output for store, got: %s", out.String())
-	}
-}
-
-func TestCredentialEraseNoop(t *testing.T) {
-	var out, errOut bytes.Buffer
-	stdin := "protocol=https\nhost=example.com\n\n"
-	code := Execute([]string{"git-credential-helper", "erase"}, strings.NewReader(stdin), &out, &errOut)
-	if code != 0 {
-		t.Fatalf("expected exit 0 for erase (noop), got %d", code)
-	}
-	if out.Len() != 0 {
-		t.Fatalf("expected no output for erase, got: %s", out.String())
+func TestPlumbingGetNothingFoundPrintsNothing(t *testing.T) {
+	shims := newPassShims(t)
+	shims.initStore(t)
+	for _, req := range []string{"protocol=https\nhost=nowhere.example\n\n", "\n", ""} {
+		code, out, errOut := runPlumbing(t, req, "git-credential-helper", "get")
+		if code != 0 || out != "" || errOut != "" {
+			t.Errorf("request %q: code=%d stdout=%q stderr=%q, want silence", req, code, out, errOut)
+		}
 	}
 }
 
-func TestCredentialUnknownOpSilent(t *testing.T) {
-	var out, errOut bytes.Buffer
-	code := Execute([]string{"git-credential-helper", "future-op"}, strings.NewReader(""), &out, &errOut)
-	if code != 0 {
-		t.Fatalf("expected exit 0 for unknown op (silent ignore), got %d", code)
+func TestPlumbingNeedsNoWorkspace(t *testing.T) {
+	shims := newPassShims(t)
+	shims.initStore(t)
+	shims.entry(t, "git/example.com", "tok\n")
+	t.Setenv("WS_WORKSPACE", filepath.Join(t.TempDir(), "nothing-here"))
+	if _, out, _ := runPlumbing(t, "host=example.com\n\n", "git-credential-helper", "get"); out != "password=tok\n" {
+		t.Fatalf("stdout %q", out)
 	}
 }
 
-func TestCredentialNoArgs(t *testing.T) {
-	var out, errOut bytes.Buffer
-	code := Execute([]string{"git-credential-helper"}, strings.NewReader(""), &out, &errOut)
-	if code != 0 {
-		t.Fatalf("expected exit 0 for no args (shows help), got %d", code)
+func TestPlumbingStoreAndEraseDoNothing(t *testing.T) {
+	shims := newPassShims(t)
+	shims.initStore(t)
+	req := "protocol=https\nhost=example.com\nusername=bob\npassword=secret\n\n"
+	for _, verb := range []string{"store", "erase"} {
+		code, out, errOut := runPlumbing(t, req, "git-credential-helper", verb)
+		if code != 0 || out != "" || errOut != "" {
+			t.Errorf("%s: code=%d stdout=%q stderr=%q", verb, code, out, errOut)
+		}
 	}
-	if !strings.Contains(out.String(), "ws git-credential-helper") {
-		t.Fatalf("expected usage in stdout, got: %s", out.String())
+	if strings.Contains(shims.calls(t), "insert") {
+		t.Fatalf("store must not write to pass: %q", shims.calls(t))
 	}
-}
-
-func TestCredentialHelperUnknownSubcommand(t *testing.T) {
-	// Unknown subcommands are silently ignored per git credential helper spec.
-	var out, errOut bytes.Buffer
-	code := Execute([]string{"git-credential-helper", "future-op-v2"}, strings.NewReader(""), &out, &errOut)
-	if code != 0 {
-		t.Fatalf("expected exit 0 for unknown op (silent ignore), got %d", code)
-	}
-}
-
-func TestCredentialLegacyAlias(t *testing.T) {
-	// "ws credential get" should still work (backward compat).
-	var out, errOut bytes.Buffer
-	code := Execute([]string{"credential", "get"}, strings.NewReader("\n"), &out, &errOut)
-	if code != 0 {
-		t.Fatalf("expected exit 0 for legacy alias, got %d", code)
+	entries, _ := os.ReadDir(shims.store)
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".gpg") || e.Name() == "git" {
+			t.Fatalf("store created %s", e.Name())
+		}
 	}
 }
 
-func TestCredentialNoArgsExitsNonZero(t *testing.T) {
-	var out, errOut bytes.Buffer
-	code := Execute([]string{"git-credential-helper"}, strings.NewReader(""), &out, &errOut)
-	if code != 0 {
-		t.Fatalf("expected exit 0 (shows help), got %d", code)
-	}
-	if !strings.Contains(out.String(), "ws git-credential-helper") {
-		t.Fatalf("expected usage in stdout, got: %s", out.String())
-	}
-}
-
-func TestCredentialNoArgsStdoutEmpty(t *testing.T) {
-	var out, errOut bytes.Buffer
-	Execute([]string{"git-credential-helper"}, strings.NewReader(""), &out, &errOut)
-	if out.Len() == 0 {
-		t.Fatalf("expected help in stdout, got empty output")
+func TestPlumbingUnknownOperationIsSilent(t *testing.T) {
+	for _, args := range [][]string{
+		{"git-credential-helper", "future-op"},
+		{"git-credential-helper"},
+	} {
+		code, out, errOut := runPlumbing(t, "", args...)
+		if code != 0 || out != "" || errOut != "" {
+			t.Errorf("%v: code=%d stdout=%q stderr=%q, want exit 0 and silence", args, code, out, errOut)
+		}
 	}
 }
 
-func TestCredentialAliasNoArgs(t *testing.T) {
+func TestPlumbingIsHiddenFromHelpAndTable(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := Execute([]string{"--help"}, strings.NewReader(""), &out, &errOut); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if strings.Contains(out.String(), "git-credential-helper") {
+		t.Fatalf("help must not list the plumbing:\n%s", out.String())
+	}
+	if _, ok := findCommand([]string{"git-credential-helper", "get"}); ok {
+		t.Fatal("the plumbing is not a table command")
+	}
+}
+
+func TestPlumbingExplicitHelp(t *testing.T) {
+	code, out, _ := runPlumbing(t, "", "git-credential-helper", "--help")
+	if code != 0 || !strings.Contains(out, "ws credential enable") {
+		t.Fatalf("code=%d out=%q", code, out)
+	}
+}
+
+// TestLegacyCredentialVerbsAreSilentPlumbing: git configs written by older
+// versions say `!ws credential`, and those must keep working without a word.
+func TestLegacyCredentialVerbsAreSilentPlumbing(t *testing.T) {
+	shims := newPassShims(t)
+	shims.initStore(t)
+	shims.entry(t, "git/example.com", "tok\nusername: bob\n")
+	code, out, errOut := runPlumbing(t, "host=example.com\n\n", "credential", "get")
+	if code != 0 || out != "password=tok\nusername=bob\n" || errOut != "" {
+		t.Fatalf("credential get: code=%d stdout=%q stderr=%q", code, out, errOut)
+	}
+	for _, verb := range []string{"store", "erase"} {
+		if code, out, errOut := runPlumbing(t, "host=example.com\n\n", "credential", verb); code != 0 || out != "" || errOut != "" {
+			t.Errorf("credential %s: code=%d stdout=%q stderr=%q", verb, code, out, errOut)
+		}
+	}
+}
+
+func TestCredentialNounWithoutVerbShowsHelp(t *testing.T) {
 	var out, errOut bytes.Buffer
 	code := Execute([]string{"credential"}, strings.NewReader(""), &out, &errOut)
-	if code != 0 {
-		t.Fatalf("expected exit 0 for alias with no args (shows help), got %d", code)
+	for _, want := range []string{"ws credential <verb>", "enable", "disable", "status"} {
+		if code != 0 || !strings.Contains(out.String(), want) {
+			t.Fatalf("want %q: code=%d out=%q err=%q", want, code, out.String(), errOut.String())
+		}
 	}
-	if !strings.Contains(out.String(), "ws credential") {
-		t.Fatalf("expected usage in stdout, got: %s", out.String())
-	}
-}
-
-func TestCredentialStatusHelp(t *testing.T) {
-	var out, errOut bytes.Buffer
-	code := Execute([]string{"git-credential-helper", "status", "--help"}, strings.NewReader(""), &out, &errOut)
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d: stderr=%s", code, errOut.String())
-	}
-	if !strings.Contains(out.String(), "status") {
-		t.Fatalf("expected status help text, got: %s", out.String())
+	if code := Execute([]string{"credential", "frobnicate"}, strings.NewReader(""), &out, &errOut); code != 1 {
+		t.Fatalf("unknown verb: exit %d", code)
 	}
 }
 
-func TestCredentialDisconnectNotConnected(t *testing.T) {
-	var out, errOut bytes.Buffer
-	code := Execute([]string{"git-credential-helper", "disconnect"}, strings.NewReader("y\n"), &out, &errOut)
-	if code != 1 {
-		t.Fatalf("expected exit 1 for disconnect when not connected, got %d", code)
+// ── enable / disable / status ──
+
+// credWorkspace is a workspace with one repo whose remote is HTTPS.
+func credWorkspace(t *testing.T, shims *passShims, remote string) (workspace, repoDir string) {
+	t.Helper()
+	workspace = initWorkspace(t)
+	t.Setenv("PASSWORD_STORE_DIR", shims.store) // initWorkspace gave the test a fresh one
+	repoDir = filepath.Join(workspace, "experiments", "api")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGitLocal(t, repoDir, "init", "-q")
+	runGitLocal(t, repoDir, "remote", "add", "origin", remote)
+	return workspace, repoDir
+}
+
+// gitGlobal reads a key of the temp global git config ("" when unset).
+func gitGlobal(t *testing.T, shims *passShims, key string) string {
+	t.Helper()
+	out, _ := execGit(shims.gitCf, key)
+	return out
+}
+
+func execGit(cfg, key string) (string, error) {
+	var o bytes.Buffer
+	cmd := gitCmd("config", "--file", cfg, "--get", key)
+	cmd.Stdout = &o
+	err := cmd.Run()
+	return strings.TrimSpace(o.String()), err
+}
+
+func TestCredentialEnableNeedsAnInitializedStore(t *testing.T) {
+	shims := newPassShims(t)
+	code, _, errOut := runPlumbing(t, "", "credential", "enable", "--quiet")
+	if code != 1 || !strings.Contains(errOut, "ws pass init") {
+		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+	if gitGlobal(t, shims, "credential.helper") != "" {
+		t.Fatal("nothing should be configured")
+	}
+}
+
+func TestCredentialEnableWritesWrapperAndConfig(t *testing.T) {
+	shims := newPassShims(t)
+	shims.initStore(t)
+	wrapper := filepath.Join(shims.home, ".local", "bin", "ws-credential-helper")
+
+	code, out, errOut := runPlumbing(t, "", "credential", "enable", "--dry-run", "--no-color")
+	if code != 0 {
+		t.Fatalf("dry-run: %d %s", code, errOut)
+	}
+	for _, want := range []string{
+		"Install the helper wrapper " + wrapper,
+		"Set global credential.helper to '!" + wrapper + "'",
+		"Set global credential.useHttpPath = true",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("plan lacks %q:\n%s", want, out)
+		}
+	}
+	if _, err := os.Stat(wrapper); err == nil {
+		t.Fatal("--dry-run installed the wrapper")
+	}
+
+	if code, out, errOut = runPlumbing(t, "", "credential", "enable", "--quiet"); code != 0 {
+		t.Fatalf("enable: %d %s%s", code, out, errOut)
+	}
+	script, err := os.ReadFile(wrapper)
+	if err != nil || string(script) != "#!/bin/sh\nexec ws git-credential-helper \"$@\"\n" {
+		t.Fatalf("wrapper: %q (%v)", script, err)
+	}
+	if info, _ := os.Stat(wrapper); info.Mode()&0o111 == 0 {
+		t.Fatal("the wrapper must be executable")
+	}
+	if got := gitGlobal(t, shims, "credential.helper"); got != "!"+wrapper {
+		t.Fatalf("credential.helper = %q", got)
+	}
+	if got := gitGlobal(t, shims, "credential.useHttpPath"); got != "true" {
+		t.Fatalf("credential.useHttpPath = %q", got)
+	}
+
+	// Already enabled: nothing to do.
+	code, out, _ = runPlumbing(t, "", "credential", "enable")
+	if code != 0 || !strings.Contains(out, "already enabled") {
+		t.Fatalf("second enable: code=%d out=%q", code, out)
+	}
+}
+
+func TestCredentialEnableReplacesAStaleValue(t *testing.T) {
+	shims := newPassShims(t)
+	shims.initStore(t)
+	// The old broken form: the wrapper called with a duplicate subcommand.
+	stale := "!" + filepath.Join(shims.home, ".local", "bin", "ws-credential-helper") + " git-credential-helper"
+	if err := shims.setGlobal("credential.helper", stale); err != nil {
+		t.Fatal(err)
+	}
+	_, out, _ := runPlumbing(t, "", "credential", "enable", "--dry-run", "--no-color")
+	if !strings.Contains(out, "Set global credential.helper to '!") || !strings.Contains(out, "stale") {
+		t.Fatalf("a stale ws value is replaced:\n%s", out)
+	}
+}
+
+func TestCredentialEnableLeavesAForeignHelperAlone(t *testing.T) {
+	shims := newPassShims(t)
+	shims.initStore(t)
+	if err := shims.setGlobal("credential.helper", "store"); err != nil {
+		t.Fatal(err)
+	}
+	// Not a ws helper: enable sets ws's (the plan names it); disable leaves the foreign one.
+	_, out, _ := runPlumbing(t, "", "credential", "disable", "--no-color")
+	if !strings.Contains(out, "not enabled") {
+		t.Fatalf("disable should find nothing to do:\n%s", out)
+	}
+	if got := gitGlobal(t, shims, "credential.helper"); got != "store" {
+		t.Fatalf("a foreign helper was touched: %q", got)
+	}
+}
+
+func TestCredentialEnableCreatesHostEntriesNeedingATerminal(t *testing.T) {
+	shims := newPassShims(t)
+	shims.initStore(t)
+	workspace, _ := credWorkspace(t, shims, "https://gitlab.work.com/team/api.git")
+
+	// One action per host whose HTTPS remotes resolve to no entry.
+	_, out, _ := wsRun(t, workspace, "", "credential", "enable", "--dry-run", "--no-color")
+	if !strings.Contains(out, "Create pass entry git/gitlab.work.com (host token for 1 remote)") {
+		t.Fatalf("plan:\n%s", out)
+	}
+
+	// Without a terminal, the action fails (it would read garbage as the token).
+	called := false
+	oldInsert, oldTerm := insertPassInteractive, stdinIsTerminal
+	t.Cleanup(func() { insertPassInteractive, stdinIsTerminal = oldInsert, oldTerm })
+	insertPassInteractive = func(string) error { called = true; return nil }
+	stdinIsTerminal = func() bool { return false }
+
+	code, _, errOut := wsRun(t, workspace, "", "credential", "enable", "--quiet")
+	if code != 3 {
+		t.Fatalf("the helper actions ran and the entry failed: exit %d, want 3\n%s", code, errOut)
+	}
+	if called {
+		t.Fatal("pass insert must not run without a terminal")
+	}
+	env := runJSON(t, workspace, []string{"credential", "enable"})
+	var data struct {
+		Actions []ActionStatus `json:"actions"`
+	}
+	_ = json.Unmarshal(env.Data, &data)
+	failed := false
+	for _, a := range data.Actions {
+		if a.ID == "create-pass-entry-git/gitlab.work.com" && a.Status == "failed" && strings.Contains(a.Error, "needs a terminal") {
+			failed = true
+		}
+	}
+	if !failed {
+		t.Fatalf("expected the entry action to fail for want of a terminal: %s", env.Data)
+	}
+
+	// With a terminal, pass insert asks for the token.
+	stdinIsTerminal = func() bool { return true }
+	insertPassInteractive = func(entry string) error { called = true; shims.entry(t, entry, "tok\n"); return nil }
+	if code, _, errOut = wsRun(t, workspace, "", "credential", "enable", "--quiet"); code != 0 || !called {
+		t.Fatalf("with a terminal: exit %d called=%v\n%s", code, called, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(shims.store, "git", "gitlab.work.com.gpg")); err != nil {
+		t.Fatalf("the host entry should exist: %v", err)
+	}
+}
+
+func TestCredentialEnableSkipsCoveredAndSSHRemotes(t *testing.T) {
+	shims := newPassShims(t)
+	shims.initStore(t)
+	shims.entry(t, "git/gitlab.work.com", "tok\n")
+	workspace, repoDir := credWorkspace(t, shims, "https://gitlab.work.com/team/api.git")
+	runGitLocal(t, repoDir, "remote", "add", "ssh", "git@github.com:me/x.git")
+	_, out, _ := wsRun(t, workspace, "", "credential", "enable", "--dry-run", "--no-color")
+	if strings.Contains(out, "Create pass entry") {
+		t.Fatalf("a covered host and an SSH remote need no entry:\n%s", out)
+	}
+}
+
+func TestCredentialEnableUpdatesStaleLocalHelper(t *testing.T) {
+	shims := newPassShims(t)
+	shims.initStore(t)
+	shims.entry(t, "git/gitlab.work.com", "tok\n")
+	workspace, repoDir := credWorkspace(t, shims, "https://gitlab.work.com/team/api.git")
+	runGitLocal(t, repoDir, "config", "credential.helper", "!/nowhere/ws-credential-helper")
+	_, out, _ := wsRun(t, workspace, "", "credential", "enable", "--dry-run", "--no-color")
+	if !strings.Contains(out, "Update credential.helper in "+repoDir) {
+		t.Fatalf("plan:\n%s", out)
+	}
+	// A foreign local helper is the user's: left alone.
+	runGitLocal(t, repoDir, "config", "credential.helper", "cache")
+	_, out, _ = wsRun(t, workspace, "", "credential", "enable", "--dry-run", "--no-color")
+	if strings.Contains(out, "Update credential.helper in") {
+		t.Fatalf("a non-ws local helper must not be updated:\n%s", out)
+	}
+}
+
+func TestCredentialDisable(t *testing.T) {
+	shims := newPassShims(t)
+	shims.initStore(t)
+	workspace, repoDir := credWorkspace(t, shims, "https://gitlab.work.com/team/api.git")
+	shims.entry(t, "git/gitlab.work.com", "tok\n")
+	if code, o, e := wsRun(t, workspace, "", "credential", "enable", "--quiet"); code != 0 {
+		t.Fatalf("enable: %d %s%s", code, o, e)
+	}
+	wrapper := filepath.Join(shims.home, ".local", "bin", "ws-credential-helper")
+	runGitLocal(t, repoDir, "config", "credential.helper", "!"+wrapper)
+
+	_, out, _ := wsRun(t, workspace, "", "credential", "disable", "--dry-run", "--no-color")
+	for _, want := range []string{
+		"Remove credential.helper from global git config",
+		"Remove credential.useHttpPath from global git config",
+		"Remove credential.helper from " + repoDir + " (local config)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("plan lacks %q:\n%s", want, out)
+		}
+	}
+	if code, _, e := wsRun(t, workspace, "", "credential", "disable", "--quiet"); code != 0 {
+		t.Fatalf("disable: %d %s", code, e)
+	}
+	if gitGlobal(t, shims, "credential.helper") != "" || gitGlobal(t, shims, "credential.useHttpPath") != "" {
+		t.Fatal("the global settings should be gone")
+	}
+	if gitConfigGetLocal(repoDir, "credential.helper") != "" {
+		t.Fatal("the local override should be gone")
+	}
+	if _, err := os.Stat(wrapper); err != nil {
+		t.Fatal("the wrapper script stays")
+	}
+
+	// Not enabled: nothing to do, exit 0 (it used to exit 1).
+	code, out, _ := wsRun(t, workspace, "", "credential", "disable")
+	if code != 0 || !strings.Contains(out, "not enabled") {
+		t.Fatalf("second disable: code=%d out=%q", code, out)
+	}
+	env := runJSON(t, workspace, []string{"credential", "disable"})
+	if env.Command != "credential.disable" {
+		t.Fatalf("command %q", env.Command)
+	}
+}
+
+func TestCredentialStatusJSON(t *testing.T) {
+	shims := newPassShims(t)
+	shims.initStore(t)
+	workspace, repoDir := credWorkspace(t, shims, "https://gitlab.work.com/team/api.git")
+	runGitLocal(t, repoDir, "remote", "add", "ssh", "git@github.com:me/x.git")
+	shims.entry(t, "git/gitlab.work.com/team/api", "tok\n")
+
+	env := runJSON(t, workspace, []string{"credential", "status"})
+	if env.Command != "credential.status" {
+		t.Fatalf("command %q", env.Command)
+	}
+	var data struct {
+		Connected      bool           `json:"connected"`
+		Helper         string         `json:"helper"`
+		Pass           map[string]any `json:"pass"`
+		Remotes        []remoteEntry  `json:"remotes"`
+		LocalOverrides []any          `json:"local_overrides"`
+	}
+	if err := json.Unmarshal(env.Data, &data); err != nil {
+		t.Fatal(err)
+	}
+	if data.Connected || data.Helper != "" {
+		t.Fatalf("not enabled yet: %+v", data)
+	}
+	if data.Pass["initialized"] != true || data.Pass["pass_installed"] != true {
+		t.Fatalf("pass health: %v", data.Pass)
+	}
+	if len(data.Remotes) != 2 || data.LocalOverrides == nil {
+		t.Fatalf("remotes/overrides: %s", env.Data)
+	}
+	var https, ssh remoteEntry
+	for _, r := range data.Remotes {
+		if r.Transport == "https" {
+			https = r
+		} else {
+			ssh = r
+		}
+	}
+	// useHttpPath is off, so the repo token is never asked for: it is ignored.
+	if !https.HelperUsed || https.Exists || https.IgnoredEntry != "git/gitlab.work.com/team/api" {
+		t.Fatalf("https remote: %+v", https)
+	}
+	if ssh.HelperUsed {
+		t.Fatalf("ssh remote: %+v", ssh)
+	}
+}
+
+func TestCredentialStatusText(t *testing.T) {
+	shims := newPassShims(t)
+	shims.initStore(t)
+	workspace, _ := credWorkspace(t, shims, "https://gitlab.work.com/team/api.git")
+	_, out, _ := wsRun(t, workspace, "", "credential", "status", "--no-color")
+	for _, want := range []string{"DISCONNECTED", "no credential", "Next: ws credential enable"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "git-credential-helper setup") || strings.Contains(out, "ws secret setup") {
+		t.Fatalf("status names an old command:\n%s", out)
+	}
+
+	shims.entry(t, "git/gitlab.work.com", "tok\n")
+	if code, o, e := wsRun(t, workspace, "", "credential", "enable", "--quiet"); code != 0 {
+		t.Fatalf("enable: %d %s%s", code, o, e)
+	}
+	_, out, _ = wsRun(t, workspace, "", "credential", "status", "--no-color")
+	if strings.Contains(out, "Next:") || !strings.Contains(out, "CONNECTED") {
+		t.Fatalf("a fully enabled setup has nothing next:\n%s", out)
+	}
+}
+
+func TestOldCredentialCommandsAreAliases(t *testing.T) {
+	shims := newPassShims(t)
+	shims.initStore(t)
+	for old, want := range map[string]string{
+		"setup":      `"credential setup" is now "credential enable"`,
+		"disconnect": `"credential disconnect" is now "credential disable"`,
+	} {
+		_, _, errOut := runPlumbing(t, "", "credential", old, "--dry-run")
+		if !strings.Contains(errOut, want) {
+			t.Errorf("credential %s: stderr %q lacks %q", old, errOut, want)
+		}
+	}
+	_, _, errOut := runPlumbing(t, "", "git-credential-helper", "status", "--no-color")
+	if !strings.Contains(errOut, `"git-credential-helper status" is now "credential status"`) {
+		t.Errorf("stderr %q", errOut)
 	}
 }
 
@@ -178,48 +539,6 @@ func TestExtractRepoPath(t *testing.T) {
 				t.Errorf("extractRepoPath(%q) = %q, want %q", tt.url, got, tt.want)
 			}
 		})
-	}
-}
-
-func TestCredentialDisconnectHelp(t *testing.T) {
-	var out, errOut bytes.Buffer
-	code := Execute([]string{"git-credential-helper", "disconnect", "--help"}, strings.NewReader(""), &out, &errOut)
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d: stderr=%s", code, errOut.String())
-	}
-	if !strings.Contains(out.String(), "disconnect") {
-		t.Fatalf("expected disconnect help text, got: %s", out.String())
-	}
-}
-
-func TestCredentialHelperNotInTopLevelHelp(t *testing.T) {
-	var out, errOut bytes.Buffer
-	code := Execute([]string{"--help"}, strings.NewReader(""), &out, &errOut)
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d", code)
-	}
-	// Plumbing that git calls stays out of help (spec §5 help).
-	if strings.Contains(out.String(), "git-credential-helper") {
-		t.Fatalf("help must not list the plumbing command, got: %s", out.String())
-	}
-	if !strings.Contains(out.String(), "credential") {
-		t.Fatalf("expected the credential noun in help output, got: %s", out.String())
-	}
-}
-
-func TestCredentialHelperHelpOutput(t *testing.T) {
-	var out, errOut bytes.Buffer
-	code := Execute([]string{"git-credential-helper", "--help"}, strings.NewReader(""), &out, &errOut)
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d: stderr=%s", code, errOut.String())
-	}
-	output := out.String()
-	// Should show both user commands and git plumbing.
-	if !strings.Contains(output, "User commands") {
-		t.Fatalf("expected 'User commands' in help, got: %s", output)
-	}
-	if !strings.Contains(output, "Git plumbing") {
-		t.Fatalf("expected 'Git plumbing' in help, got: %s", output)
 	}
 }
 
@@ -412,6 +731,10 @@ func TestPrintRemoteEntriesIgnoredRepoToken(t *testing.T) {
 func TestUseHTTPPathFor(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), "gitconfig")
 	t.Setenv("GIT_CONFIG_GLOBAL", cfg)
+	// Not in a git checkout: in a worktree, .git points outside the test container.
+	dir := t.TempDir()
+	chdir(t, dir)
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
 
 	if useHTTPPathFor("github.com") {
 		t.Fatal("expected false with no config")

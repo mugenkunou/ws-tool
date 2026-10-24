@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/mugenkunou/ws-tool/internal/secret"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
@@ -35,13 +36,16 @@ type alias struct {
 // noun's rows go live in the commit that implements its new commands, so the
 // old and new handlers never disagree about which names exist.
 var aliasLive = map[string]bool{
-	"dotfile": true,
-	"log":     true,
-	"scratch": true,
-	"trash":   true,
-	"cron":    true,
-	"ignore":  true,
-	"repo":    true,
+	"dotfile":               true,
+	"log":                   true,
+	"scratch":               true,
+	"trash":                 true,
+	"cron":                  true,
+	"ignore":                true,
+	"repo":                  true,
+	"secret":                true,
+	"git-credential-helper": true,
+	"credential":            true,
 	// Workspace commands.
 	"config":      true,
 	"completions": true,
@@ -83,7 +87,12 @@ var aliases = []alias{
 	{Old: []string{"ignore", "scan"}, New: []string{"ignore", "lint"}, Hint: "ignore lint", Rewrite: ignoreScanRewrite},
 	{Old: []string{"ignore", "fix"}, Removed: `ws: "ignore fix" is gone: use ws ignore add, ws ignore mute, ws scratch add, or rm`},
 
+	{Old: []string{"secret", "scan"}, New: []string{"pass", "audit"}, Rewrite: secretScanPassRewrite},
 	{Old: []string{"secret", "scan"}, New: []string{"secret", "ls"}, Rewrite: secretScanRewrite},
+	// The batch forms of `secret fix` stay as aliases (spec §3.5); without
+	// --secret-mode the interactive command is gone (the row after this one).
+	{Old: []string{"secret", "fix"}, New: []string{"secret", "allow"}, Hint: "secret allow <each finding>", Rewrite: secretFixRewrite("allowlist")},
+	{Old: []string{"secret", "fix"}, New: []string{"ignore", "add"}, Hint: "ignore add <file of each finding>", Rewrite: secretFixRewrite("exclude")},
 	{Old: []string{"secret", "fix"}, Removed: `ws: "secret fix" is gone: use ws secret allow, ws ignore add, ws secret mute, or ws secret store`},
 	{Old: []string{"secret", "setup"}, New: []string{"pass", "init"}},
 	{Old: []string{"secret", "status"}, New: []string{"pass", "status"}},
@@ -327,13 +336,83 @@ func ignoreScanRewrite(rest []string, _ *globalFlags) ([]string, bool) {
 	return append([]string{"ignore", "lint"}, rest...), true
 }
 
-// secretScanRewrite: `secret scan --pass` inspected the pass store, which is
-// now `pass audit`.
+// secretScanPassRewrite: `secret scan --pass` inspected the pass store, which
+// is now `pass audit`. Without --pass this row does not apply (the next one).
+func secretScanPassRewrite(rest []string, _ *globalFlags) ([]string, bool) {
+	if slices.Contains(rest, "--pass") {
+		return []string{"pass", "audit"}, true
+	}
+	return nil, false
+}
+
+// secretScanRewrite: `secret scan` is `secret ls`; `--pass` is `pass audit`.
 func secretScanRewrite(rest []string, _ *globalFlags) ([]string, bool) {
 	if slices.Contains(rest, "--pass") {
 		return []string{"pass", "audit"}, true
 	}
 	return append([]string{"secret", "ls"}, rest...), true
+}
+
+// secretFixRewrite: `secret fix --secret-mode allowlist` is `secret allow` on
+// every current finding, and `--secret-mode exclude` is `ignore add` on the
+// file of each. `--skip-dir` hides directories from the scan that picks the
+// findings. With no findings (or no workspace) it is `secret ls`, which says
+// so. The `pass` mode has no batch successor: `secret store` takes exactly one
+// finding, so it is not covered and prints the removed-command line.
+func secretFixRewrite(mode string) func([]string, *globalFlags) ([]string, bool) {
+	return func(rest []string, g *globalFlags) ([]string, bool) {
+		var got string
+		var skip, others []string
+		for i := 0; i < len(rest); i++ {
+			a := rest[i]
+			switch {
+			case a == "--secret-mode" && i+1 < len(rest):
+				i++
+				got = rest[i]
+			case strings.HasPrefix(a, "--secret-mode="):
+				got = strings.TrimPrefix(a, "--secret-mode=")
+			case a == "--skip-dir" && i+1 < len(rest):
+				i++
+				skip = append(skip, rest[i])
+			case strings.HasPrefix(a, "--skip-dir="):
+				skip = append(skip, strings.TrimPrefix(a, "--skip-dir="))
+			default:
+				others = append(others, a)
+			}
+		}
+		if got != mode {
+			return nil, false
+		}
+		fallback := append([]string{"secret", "ls"}, others...)
+		env, ok := loadSecretEnv(*g, io.Discard)
+		if !ok {
+			return fallback, true
+		}
+		extra, err := skipDirFlagsToRel(env.workspace, skip)
+		if err != nil {
+			return fallback, true
+		}
+		findings, err := env.findings(extra)
+		if err != nil || len(findings) == 0 {
+			return fallback, true
+		}
+		words := []string{"secret", "allow"}
+		if mode == "exclude" {
+			words = []string{"ignore", "add"}
+		}
+		seen := map[string]bool{}
+		for _, v := range findings {
+			target := secret.AbsAnchor(env.workspace, v)
+			if mode == "exclude" {
+				target = filepath.Join(env.workspace, filepath.FromSlash(v.Path))
+			}
+			if !seen[target] {
+				seen[target] = true
+				words = append(words, target)
+			}
+		}
+		return append(words, others...), true
+	}
 }
 
 // cronStatusRewrite: `cron status <job>` is `cron ls --filter name=<job>`.
