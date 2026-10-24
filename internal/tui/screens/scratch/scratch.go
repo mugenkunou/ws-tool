@@ -137,6 +137,9 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		m.list = m.list.SetSize(msg.Width, msg.Height)
 		m.modal = m.modal.SetSize(msg.Width, msg.Height)
 		return m, nil
+	case nav.FilterMsg:
+		m.list = m.list.SetFilter(msg.Filter)
+		return m, nil
 	case nav.RefreshMsg:
 		return m.reload()
 	case nav.CommandMsg:
