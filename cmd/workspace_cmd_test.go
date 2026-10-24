@@ -299,3 +299,57 @@ func TestResetAndRestoreArePointers(t *testing.T) {
 		}
 	}
 }
+
+// ── ws.json has every key ──────────────────────────────────────────
+
+// TestWsJSONHasEveryKey: spec §2.3. ws init writes the complete file, and every
+// command that rewrites ws.json leaves every key in it, even when the file was
+// written by an older ws that lacked some.
+func TestWsJSONHasEveryKey(t *testing.T) {
+	ws := initWorkspace(t)
+	cfgPath := filepath.Join(ws, "ws.json")
+	lacks := func(when string) {
+		t.Helper()
+		content, err := os.ReadFile(cfgPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if missing, err := wsconfig.MissingKeys(content); err != nil || len(missing) != 0 {
+			t.Fatalf("after %s ws.json lacks %v (%v):\n%s", when, missing, err, content)
+		}
+	}
+	lacks("init")
+
+	// An old ws.json with few keys: a write fills the rest in.
+	if err := os.WriteFile(cfgPath, []byte(`{"schema": 1, "repo": {"roots": ["."]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(ws, "datasets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := execArgs(t, "--workspace", ws, "--quiet", "ignore", "add", filepath.Join(ws, "datasets")); code != 0 {
+		t.Fatalf("ignore add: %d %s", code, errOut)
+	}
+	lacks("ignore add")
+
+	if err := os.WriteFile(cfgPath, []byte(`{"schema": 1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(ws, "notes")
+	if code, _, errOut := execArgs(t, "--workspace", ws, "--quiet", "repo", "root", "add", dir); code != 0 {
+		t.Fatalf("repo root add: %d %s", code, errOut)
+	}
+	lacks("repo root add")
+
+	// ws init fills in the keys of an older file and keeps its values.
+	if err := os.WriteFile(cfgPath, []byte(`{"schema": 1, "scratch": {"root_dir": "~/Elsewhere"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := execArgs(t, "--workspace", ws, "--quiet", "init"); code != 0 {
+		t.Fatalf("init: %d %s", code, errOut)
+	}
+	lacks("init on an old file")
+	if cfg, _ := wsconfig.Load(cfgPath); cfg.Scratch.RootDir != "~/Elsewhere" {
+		t.Fatalf("init keeps the values already set: %q", cfg.Scratch.RootDir)
+	}
+}
