@@ -249,6 +249,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.notice = &msg
 		return m.resize() // notice line changes body height
 
+	case nav.FilterMsg:
+		if m.screens == nil {
+			return m, nil
+		}
+		m.active = msg.Screen
+		m, resizeCmd := m.resize()
+		m, cmd := m.updateCurrent(msg, false)
+		return m, tea.Batch(resizeCmd, cmd)
+
 	case nav.OpenCommandBarMsg:
 		return m.openBar(msg.Prefill).resize()
 

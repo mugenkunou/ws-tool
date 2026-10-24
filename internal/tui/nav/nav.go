@@ -207,6 +207,14 @@ type Commander interface {
 	Commands() []CommandInfo
 }
 
+// FilterMsg asks a screen to apply a filter expression, as if it had been
+// typed and kept, so the Dashboard can open a screen filtered to the rows that
+// need attention. The app switches to Screen and sends it the message.
+type FilterMsg struct {
+	Screen Screen
+	Filter string
+}
+
 // OpenCommandBarMsg asks the app to open the command bar with text typed in,
 // for the Dashboard's advice rows.
 type OpenCommandBarMsg struct{ Prefill string }

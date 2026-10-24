@@ -24,7 +24,7 @@ type Coverage struct {
 
 // CLICoverage is every CLI subcommand and its TUI counterpart.
 var CLICoverage = func() []Coverage {
-	d, rp, sc, lg := keys.Dashboard(), keys.Repos(), keys.Scratch(), keys.Logs()
+	rp, sc, lg := keys.Repos(), keys.Scratch(), keys.Logs()
 	df, ig, se, cr, tr := keys.Dotfiles(), keys.Ignore(), keys.Secrets(), keys.Cron(), keys.Trash()
 	none := key.Binding{}
 	shell := "shell integration; nothing to show in a TUI"
@@ -41,8 +41,8 @@ var CLICoverage = func() []Coverage {
 		{"completion fish", nav.ScreenDashboard, none, shell},
 		{"completion enable", nav.ScreenDashboard, none, shell},
 		{"completion disable", nav.ScreenDashboard, none, shell},
-		{"config show", nav.ScreenDashboard, d.Config, ""},
-		{"config edit", nav.ScreenDashboard, none, pending},
+		{"config show", nav.ScreenDashboard, none, ":config show in the command bar (paged)"},
+		{"config edit", nav.ScreenDashboard, none, ":config edit in the command bar (hands over to your editor)"},
 
 		{"cron ls", nav.ScreenCron, none, ""},
 		{"cron add", nav.ScreenCron, cr.Add, ""},

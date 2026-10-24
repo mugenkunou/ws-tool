@@ -217,7 +217,6 @@ func TestSnapshots(t *testing.T) {
 	}{
 		{"dashboard", nil},
 		{"dashboard_grid_cursor", []string{"down", "down", "down", "down", "down", "down", "down", "down", "down", "right", "down"}},
-		{"dashboard_reset_checklist", []string{"R"}},
 		{"repos", []string{"2"}},
 		{"repos_detail", []string{"2", "down", "enter"}},
 		{"repos_pull_checklist", []string{"2", "p"}},
@@ -414,47 +413,55 @@ func apply(m Model, cmd tea.Cmd) Model {
 	return m
 }
 
-// TestDashboardQuickFix: x on a row with a fix opens that screen's checklist.
-func TestDashboardQuickFix(t *testing.T) {
-	m := dashboardTo(t, loaded(t, 100, 30), "dotfile links broken")
-	m, cmd := sendRun(m, press("x"))
-	m = apply(m, cmd)
-	if m.active != nav.ScreenDotfiles || !m.current().CapturesKeys() {
-		t.Fatalf("quick fix: active = %v, dialog open = %v", m.active.Title(), m.current().CapturesKeys())
+// collect runs cmd and returns every message it produces, batches expanded.
+func collect(cmd tea.Cmd) []tea.Msg {
+	var out []tea.Msg
+	queue := []tea.Cmd{cmd}
+	for len(queue) > 0 {
+		c := queue[0]
+		queue = queue[1:]
+		if c == nil {
+			continue
+		}
+		switch msg := c().(type) {
+		case nil:
+		case tea.BatchMsg:
+			queue = append(queue, msg...)
+		default:
+			out = append(out, msg)
+		}
 	}
-	if v := tuitest.Plain(view(m)); !strings.Contains(v, "Link dotfiles") || !strings.Contains(v, "~/.gitconfig") {
-		t.Fatalf("fix checklist not shown:\n%s", v)
-	}
+	return out
+}
 
-	m = dashboardTo(t, loaded(t, 100, 30), "Cron job repo-sync failing")
-	m, cmd = sendRun(m, press("x"))
-	m = apply(m, cmd)
-	if m.active != nav.ScreenCron || !strings.Contains(tuitest.Plain(view(m)), "Cron log: repo-sync") {
-		t.Fatalf("view-log fix:\n%s", tuitest.Plain(view(m)))
-	}
-
-	// Rows without a fix say so instead of doing nothing.
-	m = dashboardTo(t, loaded(t, 100, 30), "sync hygiene violation")
-	_, cmd = sendRun(m, press("x"))
-	if msg, ok := cmd().(nav.NoticeMsg); !ok || !strings.Contains(msg.Text, "No quick fix") {
-		t.Fatalf("x without a fix: %#v", msg)
+// TestDashboardHasNoActionKeys: the Dashboard has no verbs of its own (spec
+// §6.5): x, r, c, O and R do nothing there.
+func TestDashboardHasNoActionKeys(t *testing.T) {
+	for _, k := range []string{"x", "r", "c", "O", "R", "a", "d"} {
+		m := dashboardTo(t, loaded(t, 100, 30), "dotfile links broken")
+		m2, cmd := sendRun(m, press(k))
+		if cmds := collect(cmd); len(cmds) != 0 || m2.active != nav.ScreenDashboard || m2.current().CapturesKeys() {
+			t.Errorf("%s on the Dashboard produced %v (active %v)", k, cmds, m2.active.Title())
+		}
 	}
 }
 
-// TestDashboardOpenFocusesProblem: enter opens the screen with the
-// problem selected — proven by acting on the selection.
-func TestDashboardOpenFocusesProblem(t *testing.T) {
-	for _, k := range []string{"enter"} {
-		m := dashboardTo(t, loaded(t, 100, 30), "dotfile links broken")
-		m, cmd := sendRun(m, press(k))
-		m = apply(m, cmd)
-		if m.active != nav.ScreenDotfiles {
-			t.Fatalf("%s: active = %v", k, m.active.Title())
+// TestDashboardOpensTheScreenFiltered: enter on a problem opens its screen
+// filtered to the affected rows, so the screen's own key acts on exactly those.
+func TestDashboardOpensTheScreenFiltered(t *testing.T) {
+	m := dashboardTo(t, loaded(t, 100, 30), "dotfile links broken")
+	_, cmd := sendRun(m, press("enter"))
+	var gotoDotfiles, filtered bool
+	for _, msg := range collect(cmd) {
+		switch msg := msg.(type) {
+		case nav.GotoMsg:
+			gotoDotfiles = msg.Screen == nav.ScreenDotfiles
+		case nav.FilterMsg:
+			filtered = msg.Screen == nav.ScreenDotfiles && msg.Filter == "status!=ok"
 		}
-		m = send(m, press("ctrl+d"))
-		if v := tuitest.Plain(view(m)); !strings.Contains(v, "Remove dotfile /home/tester/.gitconfig") {
-			t.Fatalf("%s: problem row not selected:\n%s", k, v)
-		}
+	}
+	if !gotoDotfiles || !filtered {
+		t.Fatalf("goto %v filter %v", gotoDotfiles, filtered)
 	}
 }
 
@@ -618,16 +625,9 @@ func TestQuit(t *testing.T) {
 
 func TestRefreshFromDashboard(t *testing.T) {
 	m := loaded(t, 80, 24)
-	m, cmd := sendRun(m, press("r"))
+	_, cmd := sendRun(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
 	if cmd == nil {
-		t.Fatal("r on dashboard returned no command")
-	}
-	msg := cmd()
-	if _, ok := msg.(nav.RefreshMsg); !ok {
-		t.Fatalf("r produced %T, want nav.RefreshMsg", msg)
-	}
-	if _, cmd = sendRun(m, msg); cmd == nil {
-		t.Fatal("RefreshMsg broadcast returned no reload commands")
+		t.Fatal("ctrl+r on the Dashboard returned no reload commands")
 	}
 }
 

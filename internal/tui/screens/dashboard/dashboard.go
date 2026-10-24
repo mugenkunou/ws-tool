@@ -1,24 +1,19 @@
 // Package dashboard is the top-level screen and the workspace's home.
 //
 // Layout, top to bottom: a greeting, the "Needs attention" list (problems,
-// most severe first), and an overview grid with one card per area. ↑↓ move
-// through the list; in the grid all four arrows move between cards, and ↑
-// from the top row returns to the list. Only enter opens a screen —
-// positioned at the problem for attention rows. x runs a quick fix: it opens
-// the target screen's own checklist via the request messages that screen
-// exports. The dashboard never touches another screen's state.
+// most severe first, then advice), and an overview grid with one card per
+// area. ↑↓ move through the list; in the grid all four arrows move between
+// cards, and ↑ from the top row returns to the list. The dashboard has no
+// actions of its own: enter opens the screen that has the verb, filtered to the
+// affected rows (or with the problem selected). Advice rows are not
+// problems: enter opens the command bar with the suggested command typed in,
+// to run, edit or dismiss. The dashboard never touches another screen's state.
 //
-// Workspace-wide operations live here too: view config, the restore wizard
-// (handed to the CLI), and reset (a checklist; afterwards the app reloads
-// its environment because the workspace is no longer initialized).
-//
-// This is the top navigation level, so esc does nothing here (except close
-// a dialog).
+// This is the top navigation level, so esc does nothing here.
 package dashboard
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -27,16 +22,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/mugenkunou/ws-tool/internal/dotfile"
-	"github.com/mugenkunou/ws-tool/internal/plan"
 	"github.com/mugenkunou/ws-tool/internal/style"
-	wstrash "github.com/mugenkunou/ws-tool/internal/trash"
-	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/format"
-	"github.com/mugenkunou/ws-tool/internal/tui/handover"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
-	"github.com/mugenkunou/ws-tool/internal/tui/modal"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/cron"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/dotfiles"
@@ -59,12 +48,17 @@ const (
 
 // issue is one "Needs attention" row.
 type issue struct {
-	sev      severity
-	text     string
-	screen   nav.Screen
-	focus    tea.Msg // optional: sent with the switch so the screen selects the problem
-	fixLabel string  // optional quick fix shown as "x <label>"
-	fix      tea.Msg // the screen's request message for the fix
+	sev    severity
+	text   string
+	screen nav.Screen
+	focus  tea.Msg // optional: sent with the switch so the screen selects the problem
+	// filter is a filter expression (`status!=ok`) the screen opens with, so its
+	// own keys act on exactly the affected rows.
+	filter string
+	// advice rows are not problems: they are listed last at info level, never
+	// count towards a card's status, and open the command bar with prefill.
+	advice  bool
+	prefill string
 }
 
 // area is what the dashboard knows about one screen's subsystem.
@@ -95,19 +89,10 @@ const (
 	sectionGrid
 )
 
-type step int
-
-const stepReset step = iota
-
-type handoverTag int
-
-const handoverWizard handoverTag = iota
-
 // Model is the dashboard state.
 type Model struct {
 	env     env.Env
 	keys    keys.DashboardMap
-	modal   modal.Model
 	areas   map[nav.Screen]area
 	section section
 	att     int  // cursor in the attention list
@@ -127,41 +112,20 @@ func New(e env.Env) Model {
 // Init implements nav.Component. The dashboard loads nothing itself.
 func (m Model) Init() tea.Cmd { return nil }
 
-// CapturesKeys implements nav.Component.
-func (m Model) CapturesKeys() bool { return m.modal.Open() }
+// CapturesKeys implements nav.Component: the dashboard has no dialogs.
+func (m Model) CapturesKeys() bool { return false }
 
 // Update implements nav.Component.
 func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
-	if _, ok := m.modal.Match(msg); ok {
-		m.modal = m.modal.Close()
-		done := msg.(confirm.DoneMsg)
-		if done.Result.Aborted {
-			return m, nil
-		}
-		notice := nav.Notify(nav.LevelSuccess, confirm.Summary(done.Result))
-		if done.Result.HasFailures() {
-			notice = nav.Notify(nav.LevelWarn, confirm.Summary(done.Result))
-		}
-		if done.Result.WasExecuted("remove-ws-dir") {
-			return m, tea.Batch(notice, nav.ReloadEnv)
-		}
-		return m, tea.Batch(notice, nav.Refresh)
-	}
-
 	switch msg := msg.(type) {
 	case nav.ResizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.modal = m.modal.SetSize(msg.Width, msg.Height)
 		return m, nil
 	case nav.FrameMsg:
 		m.frame = msg.N
 		m.hour = m.env.Now().Hour()
 	case nav.RefreshMsg:
 		m.areas = map[nav.Screen]area{}
-	case handover.DoneMsg:
-		if _, ok := msg.Tag.(handoverTag); ok {
-			return m, nav.Refresh
-		}
 	case repos.LoadedMsg:
 		m = m.set(nav.ScreenRepos, msg.Err, reposArea(msg))
 	case dotfiles.LoadedMsg:
@@ -179,17 +143,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	case trash.LoadedMsg:
 		m = m.set(nav.ScreenTrash, msg.Err, trashArea(msg))
 	case tea.KeyPressMsg:
-		if m.modal.Open() {
-			var cmd tea.Cmd
-			m.modal, cmd = m.modal.Update(msg)
-			return m, cmd
-		}
 		return m.updateKey(msg)
-	}
-	if m.modal.Open() {
-		var cmd tea.Cmd
-		m.modal, cmd = m.modal.Update(msg)
-		return m, cmd
 	}
 	return m, nil
 }
@@ -211,14 +165,6 @@ func (m Model) updateKey(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 	issues := m.issues()
 	n, c := len(areas), m.cols()
 	switch {
-	case key.Matches(k, m.keys.Refresh):
-		return m, nav.Refresh
-	case key.Matches(k, m.keys.Config):
-		return m, handover.Run(handover.Paged(handover.WS(m.env.Paths, "config", "view")), handoverWizard)
-	case key.Matches(k, m.keys.Restore):
-		return m, handover.Run(handover.Pause(handover.WS(m.env.Paths, "restore")), handoverWizard)
-	case key.Matches(k, m.keys.Reset):
-		return m.openReset(), nil
 	case key.Matches(k, m.keys.Top):
 		if len(issues) > 0 {
 			m.section, m.att = sectionAttention, 0
@@ -238,13 +184,7 @@ func (m Model) updateKey(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 				m.section, m.cell = sectionGrid, 0
 			}
 		case key.Matches(k, m.keys.Open):
-			is := issues[m.att]
-			if is.focus != nil {
-				return m, tea.Batch(nav.Goto(is.screen), send(is.focus))
-			}
-			return m, nav.Goto(is.screen)
-		case key.Matches(k, m.keys.Fix):
-			return m, m.fix(issues[m.att], issues[m.att].screen)
+			return m, open(issues[m.att])
 		}
 	default: // grid
 		row, col := m.cell/c, m.cell%c
@@ -271,24 +211,24 @@ func (m Model) updateKey(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 			}
 		case key.Matches(k, m.keys.Open):
 			return m, nav.Goto(areas[m.cell])
-		case key.Matches(k, m.keys.Fix):
-			s := areas[m.cell]
-			for _, is := range m.areas[s].issues {
-				if is.fix != nil {
-					return m, m.fix(&is, s)
-				}
-			}
-			return m, m.fix(nil, s)
 		}
 	}
 	return m, nil
 }
 
-func (m Model) fix(is *issue, s nav.Screen) tea.Cmd {
-	if is == nil || is.fix == nil {
-		return nav.Notify(nav.LevelInfo, "No quick fix here — press enter to open "+s.Title())
+// open is enter on an attention row: advice opens the command bar with the
+// suggested command; a problem opens its screen, filtered to the affected rows
+// or with the problem selected.
+func open(is *issue) tea.Cmd {
+	switch {
+	case is.advice:
+		return send(nav.OpenCommandBarMsg{Prefill: is.prefill})
+	case is.filter != "":
+		return tea.Batch(nav.Goto(is.screen), send(nav.FilterMsg{Screen: is.screen, Filter: is.filter}))
+	case is.focus != nil:
+		return tea.Batch(nav.Goto(is.screen), send(is.focus))
 	}
-	return tea.Batch(nav.Goto(is.screen), send(is.fix))
+	return nav.Goto(is.screen)
 }
 
 func send(msg tea.Msg) tea.Cmd { return func() tea.Msg { return msg } }
@@ -326,7 +266,12 @@ func (m Model) issues() []*issue {
 			out = append(out, &a.issues[i])
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].sev < out[j].sev })
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].advice != out[j].advice {
+			return !out[i].advice // advice is listed last
+		}
+		return out[i].sev < out[j].sev
+	})
 	return out
 }
 
@@ -337,44 +282,6 @@ func (m Model) allLoaded() bool {
 		}
 	}
 	return true
-}
-
-// openReset reverses `ws init`: resets dotfiles and trash, then removes
-// ws.json. Nothing is pre-checked — this is destructive.
-func (m Model) openReset() Model {
-	p := m.env.Paths
-	pl := plan.Plan{Command: "reset", Actions: []plan.Action{
-		{
-			ID:          "reset-dotfiles",
-			Description: "Reset dotfiles (restore originals, remove symlinks)",
-			Execute: func() error {
-				_, err := dotfile.Reset(dotfile.ResetOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config})
-				return err
-			},
-		},
-		{
-			ID:          "reset-trash",
-			Description: "Reset trash setup (remove script and aliases)",
-			Execute: func() error {
-				_, err := wstrash.Disable()
-				return err
-			},
-		},
-		{
-			ID:          "remove-config",
-			Description: "Remove " + p.Config,
-			Execute: func() error {
-				if err := os.Remove(p.Config); err != nil && !os.IsNotExist(err) {
-					return err
-				}
-				return nil
-			},
-		},
-	}}
-	note := "Reverses `ws init`. Tick each step to undo (a selects all)."
-	c := confirm.New("Reset workspace", pl).WithNote(note).WithChecked(func(int, plan.Action) bool { return false })
-	m.modal = m.modal.Confirm(stepReset, c)
-	return m
 }
 
 // ── per-area derivation ─────────────────────────────────────────────────────
@@ -400,8 +307,8 @@ func reposArea(msg repos.LoadedMsg) area {
 	}
 	if len(failed) > 0 {
 		a.issues = append(a.issues, issue{sev: sevError, screen: nav.ScreenRepos,
-			text:  format.Plural(len(failed), "repo") + " failed to scan",
-			focus: repos.SelectMsg{Path: failed[0]}})
+			text:   format.Plural(len(failed), "repo") + " failed to scan",
+			filter: "state=error"})
 	}
 	if len(outOfSync) > 0 {
 		var parts []string
@@ -416,7 +323,7 @@ func reposArea(msg repos.LoadedMsg) area {
 		}
 		a.issues = append(a.issues, issue{sev: sevWarn, screen: nav.ScreenRepos,
 			text:  fmt.Sprintf("%s out of sync (%s)", format.Plural(len(outOfSync), "repo"), strings.Join(parts, ", ")),
-			focus: repos.SelectMsg{Path: outOfSync[0]}, fixLabel: "sync", fix: repos.RequestSyncMsg{}})
+			focus: repos.SelectMsg{Path: outOfSync[0]}})
 	}
 	if s.Findings > 0 {
 		a.issues = append(a.issues, issue{sev: sevInfo, screen: nav.ScreenRepos,
@@ -436,17 +343,10 @@ func dirtyNote(n int) string {
 func dotfilesArea(msg dotfiles.LoadedMsg) area {
 	a := area{lines: []string{format.Plural(len(msg.Entries), "dotfile") + " managed"}}
 	if n := msg.Issues(); n > 0 {
-		first := ""
-		for _, e := range msg.Entries {
-			if e.Status != "" {
-				first = e.Link.System
-				break
-			}
-		}
 		a.lines = append(a.lines, theme.Error.Render(format.Plural(n, "link")+" need fixing"))
 		a.issues = append(a.issues, issue{sev: sevError, screen: nav.ScreenDotfiles,
-			text:  format.Plural(n, "dotfile link") + " broken or overwritten",
-			focus: dotfiles.SelectMsg{System: first}, fixLabel: "fix links", fix: dotfiles.RequestFixMsg{}})
+			text:   format.Plural(n, "dotfile link") + " broken or overwritten",
+			filter: "status!=ok"})
 	} else if len(msg.Entries) > 0 {
 		a.lines = append(a.lines, theme.OK.Render("all links healthy"))
 	}
@@ -514,7 +414,7 @@ func cronArea(msg cron.LoadedMsg) area {
 	for _, j := range failing {
 		a.issues = append(a.issues, issue{sev: sevError, screen: nav.ScreenCron,
 			text:  fmt.Sprintf("Cron job %s failing (exit %d)", j.Name, j.LastRun.ExitCode),
-			focus: cron.SelectJobMsg{Name: j.Name}, fixLabel: "view log", fix: cron.RequestLogMsg{Name: j.Name}})
+			focus: cron.SelectJobMsg{Name: j.Name}})
 	}
 	switch {
 	case msg.CronErr != nil:
@@ -536,13 +436,11 @@ func trashArea(msg trash.LoadedMsg) area {
 	} else {
 		a.lines = append(a.lines, theme.Warn.Render(fmt.Sprintf("soft-delete off (%d of 3)", off)))
 		a.issues = append(a.issues, issue{sev: sevWarn, screen: nav.ScreenTrash,
-			text:     fmt.Sprintf("Soft-delete is off for %d of 3 integrations", off),
-			fixLabel: "enable", fix: trash.RequestEnableMsg{}})
+			text: fmt.Sprintf("Soft-delete is off for %d of 3 integrations", off)})
 	}
 	if msg.Status.OverLimit {
 		a.issues = append(a.issues, issue{sev: sevWarn, screen: nav.ScreenTrash,
-			text:     fmt.Sprintf("Trash holds %s (over %s)", style.HumanBytes(msg.Status.SizeBytes), style.HumanBytes(msg.Status.WarnSizeBytes)),
-			fixLabel: "empty", fix: trash.RequestEmptyMsg{}})
+			text: fmt.Sprintf("Trash holds %s (over %s)", style.HumanBytes(msg.Status.SizeBytes), style.HumanBytes(msg.Status.WarnSizeBytes))})
 	}
 	return a
 }
@@ -551,9 +449,6 @@ func trashArea(msg trash.LoadedMsg) area {
 
 // View implements nav.Component.
 func (m Model) View() string {
-	if m.modal.Open() {
-		return m.modal.View()
-	}
 	if m.width <= 0 || m.height <= 0 {
 		return ""
 	}
@@ -666,17 +561,14 @@ func (m Model) issueLine(is *issue, selected bool) string {
 		mark = theme.Error.Render("✘")
 	case sevWarn:
 		mark = theme.Warn.Render("!")
-	default:
+	case sevInfo:
 		mark = theme.Muted.Render("·")
+		if is.advice {
+			mark = theme.Muted.Render("ℹ")
+		}
 	}
 	where := theme.Muted.Render(theme.Icon(is.screen.Icon()) + is.screen.Title())
 	hint := ""
-	if is.fixLabel != "" {
-		hint = theme.Muted.Render("x " + is.fixLabel)
-		if selected {
-			hint = theme.Title.Render("x " + is.fixLabel)
-		}
-	}
 	lead := "  "
 	text := is.text
 	if selected {
@@ -706,7 +598,9 @@ func (m Model) columns(left, where, hint string) string {
 func worst(is []issue) severity {
 	w := sevInfo + 1
 	for _, i := range is {
-		w = min(w, i.sev)
+		if !i.advice {
+			w = min(w, i.sev)
+		}
 	}
 	return w
 }
@@ -719,9 +613,4 @@ func firstLine(s string) string {
 }
 
 // KeyMap implements nav.Component.
-func (m Model) KeyMap() help.KeyMap {
-	if m.modal.Open() {
-		return m.modal.KeyMap()
-	}
-	return m.keys
-}
+func (m Model) KeyMap() help.KeyMap { return m.keys }

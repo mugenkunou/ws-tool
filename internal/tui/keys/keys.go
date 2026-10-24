@@ -107,35 +107,25 @@ func Table() table.KeyMap {
 // DashboardMap is the binding set for the dashboard: the attention list
 // (↑↓) above a grid of area cards (←→↑↓).
 type DashboardMap struct {
-	Up      key.Binding
-	Down    key.Binding
-	Left    key.Binding
-	Right   key.Binding
-	Top     key.Binding
-	Bottom  key.Binding
-	Open    key.Binding
-	Fix     key.Binding
-	Refresh key.Binding
-	Config  key.Binding
-	Restore key.Binding
-	Reset   key.Binding
+	Up     key.Binding
+	Down   key.Binding
+	Left   key.Binding
+	Right  key.Binding
+	Top    key.Binding
+	Bottom key.Binding
+	Open   key.Binding
 }
 
 // Dashboard returns bindings for the dashboard.
 func Dashboard() DashboardMap {
 	return DashboardMap{
-		Up:      key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
-		Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
-		Left:    key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "left")),
-		Right:   key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "right")),
-		Top:     key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("g", "top")),
-		Bottom:  key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("G", "bottom")),
-		Open:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
-		Fix:     key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "quick fix")),
-		Refresh: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh all")),
-		Config:  key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "view config…")),
-		Restore: key.NewBinding(key.WithKeys("O"), key.WithHelp("O", "restore wizard…")),
-		Reset:   key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "reset workspace")),
+		Up:     key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+		Down:   key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+		Left:   key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "left")),
+		Right:  key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "right")),
+		Top:    key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("g", "top")),
+		Bottom: key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("G", "bottom")),
+		Open:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
 	}
 }
 
@@ -146,12 +136,12 @@ func (k DashboardMap) Arrows() key.Binding {
 
 // ShortHelp implements help.KeyMap.
 func (k DashboardMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Arrows(), k.Open, k.Fix, k.Refresh}
+	return []key.Binding{k.Arrows(), k.Open}
 }
 
 // FullHelp implements help.KeyMap.
 func (k DashboardMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.Up, k.Down, k.Left, k.Right}, {k.Top, k.Bottom}, {k.Open, k.Fix, k.Refresh}, {k.Config, k.Restore, k.Reset}}
+	return [][]key.Binding{{k.Up, k.Down, k.Left, k.Right}, {k.Top, k.Bottom}, {k.Open}}
 }
 
 // ReposMap is the binding set for the repo fleet screen. Fleet actions
