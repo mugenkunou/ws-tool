@@ -1567,7 +1567,9 @@ asks which to take (Enter for everything but catalog secrets, `all`, `none`, or 
 not with `--files` or the file list. A path on the never-suggested list can still be added.
 
 There is no secret question at add time: a private key goes to `symlinks/home/.ssh/` like any
-other file.
+other file. `secret ls` scans `symlinks/` like the rest of the workspace, so a private key
+shows up as a finding there. Mark each expected key with `ws secret allow <file:line>`;
+nothing under `symlinks/` is skipped, so a real leak in a config file still shows.
 
 A path that cannot be added (the destination exists, the path is a link elsewhere, nothing
 is there) is reported on stderr and counts as a failed action, so the exit code follows the
