@@ -11,7 +11,7 @@
 #
 # The demo has: dotfiles (one broken, one overwritten), repos (clean, dirty,
 # ahead, behind, diverged, no upstream, detached HEAD), scratch directories,
-# a big log and deep paths for the Ignore screen, a fake secret, cron jobs
+# a big dump and deep paths for the Ignore screen, fake secrets in a deploy script, cron jobs
 # and a few trashed items.
 set -euo pipefail
 
@@ -27,8 +27,12 @@ else
 fi
 demo=$(cd "$demo" && pwd)
 
-# ── the isolated environment ──────────────────────────────────────
+# Build first, with your own Go environment: the demo's HOME has no module cache.
 mkdir -p "$demo"/{home,bin,xdg/config,xdg/state,xdg/data,remotes}
+echo "building ws…"
+(cd "$here" && go build -o "$demo/bin/ws" .)
+
+# ── the isolated environment ──────────────────────────────────────
 cat > "$demo/env.sh" <<ENV
 # source this to use the demo workspace; nothing outside $demo is touched
 export HOME="$demo/home"
@@ -51,8 +55,6 @@ git config --global user.email "demo@example.invalid"
 git config --global init.defaultBranch main
 : > "$WS_CRONTAB_FILE"
 
-echo "building ws…"
-(cd "$here" && go build -o "$demo/bin/ws" .)
 ws() { "$demo/bin/ws" "$@"; }
 
 ws init --quiet
@@ -107,11 +109,11 @@ mkrepo sketch noupstream
 mkrepo old detached
 
 # ── ignore and secrets ────────────────────────────────────────────
-truncate -s 30M "$W/experiments/api/dump.log"
+head -c 30000000 /dev/zero > "$W/experiments/api/dump.sql"
 mkdir -p "$W/experiments/blog/node_modules/left-pad"
 echo "module.exports = 1" > "$W/experiments/blog/node_modules/left-pad/index.js"
 mkdir -p "$W/notes/a/b/c/d/e/f/g" && echo deep > "$W/notes/a/b/c/d/e/f/g/note.md"
-printf 'DB_HOST=localhost\npassword=hunter2hunter2\n' > "$W/experiments/api/.env"
+printf 'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n-----BEGIN RSA PRIVATE KEY-----\nabc\n' > "$W/notes/deploy.sh"
 
 # ── scratch and trash ─────────────────────────────────────────────
 for s in dns-debug proxy-timeout old-idea; do ws scratch new "$s" --quiet >/dev/null 2>&1 || true; done

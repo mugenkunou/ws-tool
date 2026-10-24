@@ -9,9 +9,8 @@ over the same `internal/` packages: the CLI (`ws <noun> <verb>`) and a full-scre
 
 This document is the authoritative spec. It describes the intended behaviour. The
 command grammar in Part 3 was adopted on 2026-10-22 (see
-[docs/adr/0002](docs/adr/0002-one-command-grammar-for-cli-and-tui.md)). Until
-[docs/plans/0002-command-grammar.md](docs/plans/0002-command-grammar.md) is done, the
-code still uses some old command names, and those are listed in §3.5.
+[docs/adr/0002](docs/adr/0002-one-command-grammar-for-cli-and-tui.md)). The old command
+names still work as hidden aliases, listed in §3.5.
 
 Contents:
 
