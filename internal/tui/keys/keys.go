@@ -336,57 +336,87 @@ func (k ViewerMap) FullHelp() [][]key.Binding {
 	return append(k.Detail.FullHelp(), []key.Binding{k.ToggleMode})
 }
 
-// IgnoreMap is the binding set for the sync-hygiene (ignore) screen.
-// Fix actions apply to the selected violation (or all marked violations when
-// marks are set), except MegaignoreAll which always covers everything.
-// The screen has two levels: live violations and suppressed warnings.
+// IgnoreView is one of the Ignore screen's three views (spec §6.5), cycled
+// by NextView.
+type IgnoreView int
+
+const (
+	IgnoreWarnings IgnoreView = iota // `ignore lint`: where the screen opens
+	IgnoreMuted                      // `ignore ls --muted`
+	IgnoreIgnored                    // `ignore ls`
+)
+
+// IgnoreMap is the binding set for the ignore screen. Which keys a view
+// offers is in For; the map itself lists every key of every view.
 type IgnoreMap struct {
-	Table          table.KeyMap
-	Exclude        key.Binding // add selected/marked to .megaignore
-	Suppress       key.Binding // suppress warning for parent dir (was Harbor/h, now s)
-	Unsuppress     key.Binding // remove suppress rule (when in suppressed level)
-	Move           key.Binding
-	Delete         key.Binding
-	ExcludeAll     key.Binding // megaignore all violations at once
-	Check          key.Binding
-	ViewSuppressed key.Binding // switch to suppressed-warnings screen
-	Tree           key.Binding
-	List           key.Binding
-	EditRules      key.Binding
-	Back           key.Binding
+	Table        table.KeyMap
+	Ignore       key.Binding // Warnings, Muted: stop syncing the path
+	Mute         key.Binding // Warnings: hide the warning, the path keeps syncing
+	Scratch      key.Binding // Warnings: move to scratch
+	Delete       key.Binding // Warnings: delete the path (to trash)
+	Unmute       key.Binding // Muted
+	StopIgnoring key.Binding // Ignored: `ignore rm`, sync it again
+	EditRules    key.Binding // any view
+	NextView     key.Binding // any view
+	Back         key.Binding
 }
 
 // Ignore returns bindings for the ignore screen.
 func Ignore() IgnoreMap {
+	del := Delete()
+	del.SetHelp("ctrl+d", "delete")
+	stop := Delete()
+	stop.SetHelp("ctrl+d", "stop ignoring")
+	edit := Edit()
+	edit.SetHelp("e", "edit rules")
 	return IgnoreMap{
-		Table:          Table(),
-		Exclude:        key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add to .megaignore")),
-		Suppress:       key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "suppress warning")),
-		Unsuppress:     key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "remove suppress rule")),
-		Move:           key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "move to scratch")),
-		Delete:         keyDelete("delete"),
-		ExcludeAll:     key.NewBinding(key.WithKeys("X"), key.WithHelp("X", "megaignore all")),
-		Check:          key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "check path")),
-		ViewSuppressed: key.NewBinding(key.WithKeys("H"), key.WithHelp("H", "view suppressed")),
-		Tree:           key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tree…")),
-		List:           key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "list megaignored…")),
-		EditRules:      key.NewBinding(key.WithKeys("E"), key.WithHelp("E", "edit rules…")),
-		Back:           back(),
+		Table:        Table(),
+		Ignore:       key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "ignore")),
+		Mute:         key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mute")),
+		Scratch:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "scratch")),
+		Delete:       del,
+		Unmute:       key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "unmute")),
+		StopIgnoring: stop,
+		EditRules:    edit,
+		NextView:     key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "next view")),
+		Back:         back(),
 	}
 }
 
-// ShortHelp implements help.KeyMap.
-func (k IgnoreMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Exclude, k.Suppress, k.Move, k.Delete}
+// viewKeys returns the screen keys of one view, in footer order.
+func (k IgnoreMap) viewKeys(v IgnoreView) []key.Binding {
+	switch v {
+	case IgnoreMuted:
+		return []key.Binding{k.Ignore, k.Unmute, k.EditRules, k.NextView}
+	case IgnoreIgnored:
+		return []key.Binding{k.StopIgnoring, k.EditRules, k.NextView}
+	}
+	return []key.Binding{k.Ignore, k.Mute, k.Scratch, k.Delete, k.EditRules, k.NextView}
 }
 
-// FullHelp implements help.KeyMap.
+// For is the help of one view: its keys and no other view's.
+func (k IgnoreMap) For(v IgnoreView) help.KeyMap { return ignoreViewHelp{k, v} }
+
+type ignoreViewHelp struct {
+	k IgnoreMap
+	v IgnoreView
+}
+
+func (h ignoreViewHelp) ShortHelp() []key.Binding { return h.k.viewKeys(h.v) }
+
+func (h ignoreViewHelp) FullHelp() [][]key.Binding {
+	t := h.k.Table
+	return [][]key.Binding{{t.LineUp, t.LineDown, t.GotoTop, t.GotoBottom}, h.k.viewKeys(h.v)}
+}
+
+// ShortHelp implements help.KeyMap: the Warnings view.
+func (k IgnoreMap) ShortHelp() []key.Binding { return k.viewKeys(IgnoreWarnings) }
+
+// FullHelp implements help.KeyMap: every key of every view.
 func (k IgnoreMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
-		{k.Exclude, k.Suppress, k.Unsuppress, k.Move, k.Delete, k.ExcludeAll},
-		{k.Check, k.ViewSuppressed},
-		{k.Tree, k.List, k.EditRules, k.Back},
+		{k.Ignore, k.Mute, k.Scratch, k.Delete, k.Unmute, k.StopIgnoring, k.EditRules, k.NextView},
 	}
 }
 

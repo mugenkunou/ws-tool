@@ -97,6 +97,9 @@ func fixtures() []tea.Msg {
 			{Type: "bloat", Severity: "CRITICAL", Path: "Projects/web/dump.log", SizeBytes: 220 << 20},
 			{Type: "depth", Severity: "WARNING", Path: "Notes/a/b/c/d/e/f/g", Depth: 7},
 			{Type: "bloat", Severity: "WARNING", Path: "Data/bruno/node_modules", SizeBytes: 40 << 20, Muted: true},
+		}, Ignored: []wsignore.IgnoredPath{
+			{Path: "Projects/web/.env.local", SizeBytes: 412, Rule: "-g:.env*", RuleSource: "builtin"},
+			{Path: "Projects/web/node_modules/.bin/vite", SizeBytes: 1 << 20, Rule: "node_modules/", RuleSource: "user"},
 		}},
 		secrets.LoadedMsg{
 			Violations: []secret.Violation{{Severity: "CRITICAL", Path: "Projects/api/.env", Line: 3, Snippet: "password=hunter2"}},
@@ -236,8 +239,9 @@ func TestSnapshots(t *testing.T) {
 		{"scratch_tag_prompt", []string{"4", "t", "n"}},
 		{"logs", []string{"5"}},
 		{"ignore", []string{"6"}},
-		{"ignore_harbors_shown", []string{"6", "H"}},
-		{"ignore_marked_exclude", []string{"6", "space", "down", "space", "a"}},
+		{"ignore_muted", []string{"6", "v"}},
+		{"ignore_ignored", []string{"6", "v", "v"}},
+		{"ignore_marked", []string{"6", "space", "down", "space"}},
 		{"secrets", []string{"7"}},
 		{"secrets_detail", []string{"7", "d"}},
 		{"cron", []string{"8"}},

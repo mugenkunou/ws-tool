@@ -61,14 +61,14 @@ var CLICoverage = func() []Coverage {
 		{"dotfile backup status", nav.ScreenDotfiles, df.GitView, ""},
 		{"dotfile backup push", nav.ScreenDotfiles, none, pending},
 
-		{"ignore ls", nav.ScreenIgnore, ig.List, ""},
-		{"ignore lint", nav.ScreenIgnore, none, ""},
-		{"ignore add", nav.ScreenIgnore, ig.Exclude, ""},
-		{"ignore rm", nav.ScreenIgnore, none, pending},
-		{"ignore mute", nav.ScreenIgnore, none, pending},
-		{"ignore unmute", nav.ScreenIgnore, none, pending},
-		{"ignore check", nav.ScreenIgnore, ig.Check, ""},
-		{"ignore tree", nav.ScreenIgnore, ig.Tree, ""},
+		{"ignore ls", nav.ScreenIgnore, ig.NextView, ""},     // the Muted and Ignored views
+		{"ignore lint", nav.ScreenIgnore, none, ""},          // the Warnings view; :lint <path>
+		{"ignore add", nav.ScreenIgnore, ig.Ignore, ""},      // Warnings, Muted
+		{"ignore rm", nav.ScreenIgnore, ig.StopIgnoring, ""}, // Ignored view; :rm <path>
+		{"ignore mute", nav.ScreenIgnore, ig.Mute, ""},       // Warnings
+		{"ignore unmute", nav.ScreenIgnore, ig.Unmute, ""},   // Muted view
+		{"ignore check", nav.ScreenIgnore, none, ""},         // :check <path>
+		{"ignore tree", nav.ScreenIgnore, none, ""},          // :tree [dir], paged
 		{"ignore edit", nav.ScreenIgnore, ig.EditRules, ""},
 
 		{"session ls", nav.ScreenSessions, none, ""},
@@ -137,6 +137,11 @@ var CLICoverage = func() []Coverage {
 // four-field literals.)
 var CoverageCmds = map[string]string{
 	"cron apply": "apply",
+
+	"ignore lint":  "lint",
+	"ignore rm":    "rm",
+	"ignore check": "check",
+	"ignore tree":  "tree",
 
 	"trash empty":   "empty",
 	"trash enable":  "enable",

@@ -1,11 +1,9 @@
 ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Add to .megaignore
-
-› [x] Add to .megaignore: /home/tester/Workspace/Projects/web/dump.log
-  [x] Add to .megaignore: /home/tester/Workspace/Notes/a/b/c/d/e/f/g
-
-
+Warnings 2 · Muted 1 · Ignored 2
+ Severity    Type          Size       Path
+ CRITICAL    bloat         220.0 MB   Projects/web/dump.log
+ WARNING     depth         7 lvl      Notes/a/b/c/d/e/f/g
 
 
 
@@ -27,4 +25,6 @@ Add to .megaignore
 
 
 
-space toggle • ctrl+a all/none • enter apply • esc back
+
+2 marked — i ignore · m mute · s scratch · ctrl+d delete act on them · esc clears
+i ignore • m mute • s scratch • ctrl+d delete … • tab screens • : command • ? help • q quit

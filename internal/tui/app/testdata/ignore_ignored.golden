@@ -1,0 +1,30 @@
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Warnings 2 · Muted 1 · Ignored 2
+ Size       Path                                                                     Rule
+ 412 B      Projects/web/.env.local                                                  -g:.env*
+ 1.0 MB     Projects/web/node_modules/.bin/vite                                      node_modules/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ctrl+d stop ignoring • e edit rules • v next view … • tab screens • : command • ? help • q quit

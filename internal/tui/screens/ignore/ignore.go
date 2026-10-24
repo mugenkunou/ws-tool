@@ -1,16 +1,16 @@
-// Package ignore is the sync-hygiene screen: `ignore scan` violations with
-// the `ignore fix` actions (exclude rule, suppress warning, move to scratch,
-// delete) applied per violation through the plan checklist, plus `ignore check`
-// for any path. The screen has two levels: live violations and suppressed
-// warnings. The tree view, excluded-file listing, and rule editor are handed
-// to the CLI.
+// Package ignore is the sync-hygiene screen (spec §6.5). Three views, cycled by
+// the next-view key: Warnings (`ignore lint`, where it opens), Muted
+// (`ignore ls --muted`) and Ignored (`ignore ls`). Each key builds the plan the
+// CLI's command of the same verb builds and shows it as a checklist; the CLI's
+// own words (`rm`, `check`, `tree`, `lint`) are `:` commands. The tree view and
+// the rule editor are handed the terminal.
 package ignore
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/help"
@@ -20,6 +20,8 @@ import (
 
 	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/plan"
+	"github.com/mugenkunou/ws-tool/internal/repo"
+	wsscratch "github.com/mugenkunou/ws-tool/internal/scratch"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui/complete"
@@ -36,10 +38,12 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
-// LoadedMsg carries scan violations. Other components (the dashboard) may
-// observe it.
+// LoadedMsg carries what the three views show: the scan's violations (the
+// muted ones are the Muted view) and the paths that do not sync. Other
+// components (the dashboard) may observe it.
 type LoadedMsg struct {
 	Violations []wsignore.Violation
+	Ignored    []wsignore.IgnoredPath
 	Err        error
 }
 
@@ -62,16 +66,8 @@ type checkMsg struct {
 type step int
 
 const (
-	stepFix step = iota
-	stepExcludeAll
+	stepPlan step = iota
 	stepCheckPath
-)
-
-type screenLevel int
-
-const (
-	levelLive       screenLevel = iota // live violations
-	levelSuppressed                    // suppressed warnings
 )
 
 type handoverTag int
@@ -82,11 +78,14 @@ const handoverRules handoverTag = iota
 type Model struct {
 	env      env.Env
 	keys     keys.IgnoreMap
-	liveList reslist.Model[wsignore.Violation] // actionable (not in safe harbor)
-	suppList reslist.Model[wsignore.Violation] // suppressed (in safe harbor)
+	warn     reslist.Model[wsignore.Violation]   // Warnings
+	muted    reslist.Model[wsignore.Violation]   // Muted
+	ignored  reslist.Model[wsignore.IgnoredPath] // Ignored
 	modal    modal.Model
 	all      []wsignore.Violation
-	level    screenLevel
+	allPaths []wsignore.IgnoredPath
+	view     keys.IgnoreView
+	under    []string // absolute paths `:lint <path>` narrowed the views to
 	scanning bool
 	width    int
 	height   int
@@ -106,19 +105,25 @@ func New(e env.Env) Model {
 			return t
 		}},
 	}
+	ignoredCols := []reslist.Col[wsignore.IgnoredPath]{
+		{Key: "size_bytes", Min: 9},
+		{Key: "path", Min: 20, Weight: 1},
+		{Key: "rule", Min: 14, Style: func(_ wsignore.IgnoredPath, t string) string { return theme.Muted.Render(t) }},
+	}
 	return Model{
 		env:      e,
 		keys:     keys.Ignore(),
 		scanning: true,
-		liveList: reslist.New(schema, cols, theme.Icon(theme.IconBroom)+"Squeaky clean — no sync hygiene violations.").Declare(reslist.Decls(liveActions)),
-		suppList: reslist.New(schema, cols, theme.Icon(theme.IconBroom)+"No suppressed warnings.").Declare(reslist.Decls(suppActions)),
+		warn:     reslist.New(schema, cols, theme.Icon(theme.IconBroom)+"Squeaky clean — no sync hygiene warnings.").Declare(reslist.Decls(warnActions)),
+		muted:    reslist.New(schema, cols, theme.Icon(theme.IconBroom)+"No muted warnings.").Declare(reslist.Decls(mutedActions)),
+		ignored:  reslist.New(wsignore.IgnoredSchema(e.View(), e.Paths.Workspace), ignoredCols, "Nothing is ignored.").Declare(reslist.Decls(ignoredActions)),
 	}
 }
 
 func severityStyle(v wsignore.Violation, t string) string {
 	switch {
 	case v.Muted:
-		return theme.Muted.Render("suppressed")
+		return theme.Muted.Render("muted")
 	case v.Severity == "CRITICAL":
 		return theme.Error.Render(t)
 	case v.Severity == "WARNING":
@@ -135,8 +140,15 @@ func engine(e env.Env) (*wsignore.Engine, error) {
 	return wsignore.BuildEngine(rules), nil
 }
 
-// mutedList is ws.json ignore.muted as it is now on disk (a mute made on this
-// screen is not in the config the TUI started with).
+// config is ws.json as it is now on disk (a change made on this screen is not
+// in the config the TUI started with).
+func (m Model) config() wsconfig.WsConfig {
+	if cfg, err := wsconfig.Load(m.env.Paths.Config); err == nil {
+		return cfg
+	}
+	return m.env.Config
+}
+
 func mutedList(e env.Env) []string {
 	if cfg, err := wsconfig.Load(e.Paths.Config); err == nil {
 		return cfg.Ignore.Muted
@@ -144,7 +156,8 @@ func mutedList(e env.Env) []string {
 	return e.Config.Ignore.Muted
 }
 
-// Load runs `ignore lint`.
+// Load runs `ignore lint` (whose muted warnings are `ignore ls --muted`) and
+// `ignore ls`.
 func Load(e env.Env) tea.Cmd {
 	return func() tea.Msg {
 		eng, err := engine(e)
@@ -159,7 +172,7 @@ func Load(e env.Env) tea.Cmd {
 			Engine:        eng,
 			Muted:         mutedList(e),
 		})
-		return LoadedMsg{Violations: vs, Err: err}
+		return LoadedMsg{Violations: vs, Ignored: wsignore.ListIgnored(eng, e.Paths.Workspace, nil), Err: err}
 	}
 }
 
@@ -197,34 +210,63 @@ func check(e env.Env, input string) tea.Cmd {
 // Init starts the first scan.
 func (m Model) Init() tea.Cmd { return Load(m.env) }
 
-// Declared lists the actions of both levels and their scopes.
+// Declared lists the actions of every view and their scopes.
 func (m Model) Declared() []reslist.Decl {
-	return append(m.liveList.Declared(), m.suppList.Declared()...)
+	return append(append(m.warn.Declared(), m.muted.Declared()...), m.ignored.Declared()...)
 }
 
 // CapturesKeys implements nav.Component.
-func (m Model) CapturesKeys() bool { return m.modal.Open() || m.activeList().Editing() }
+func (m Model) CapturesKeys() bool { return m.modal.Open() || m.activeEditing() }
+
+func (m Model) activeEditing() bool {
+	switch m.view {
+	case keys.IgnoreMuted:
+		return m.muted.Editing()
+	case keys.IgnoreIgnored:
+		return m.ignored.Editing()
+	}
+	return m.warn.Editing()
+}
 
 func (m Model) rescan() (Model, tea.Cmd) {
 	m.scanning = true
-	m.liveList = m.liveList.SetLoading()
-	m.suppList = m.suppList.SetLoading()
+	m.warn = m.warn.SetLoading()
+	m.muted = m.muted.SetLoading()
+	m.ignored = m.ignored.SetLoading()
 	return m, Load(m.env)
 }
 
-// split puts actionable violations in the live list and safe-harbor ones in
-// the suppressed list.
+// within reports whether abs is at or under one of m.under, or m.under is empty.
+func (m Model) within(abs string) bool {
+	if len(m.under) == 0 {
+		return true
+	}
+	return slices.ContainsFunc(m.under, func(d string) bool { return repo.IsWithin(abs, d) })
+}
+
+// split puts the live warnings in Warnings, the muted ones in Muted, and the
+// paths that do not sync in Ignored; `:lint <path>` keeps what is under it.
 func (m Model) split() Model {
-	var live, supp []wsignore.Violation
+	var live, muted []wsignore.Violation
 	for _, v := range m.all {
+		if !m.within(m.abs(v.Path)) {
+			continue
+		}
 		if v.Muted {
-			supp = append(supp, v)
+			muted = append(muted, v)
 		} else {
 			live = append(live, v)
 		}
 	}
-	m.liveList = m.liveList.SetItems(live)
-	m.suppList = m.suppList.SetItems(supp)
+	var ignored []wsignore.IgnoredPath
+	for _, p := range m.allPaths {
+		if m.within(m.abs(p.Path)) {
+			ignored = append(ignored, p)
+		}
+	}
+	m.warn = m.warn.SetItems(live)
+	m.muted = m.muted.SetItems(muted)
+	m.ignored = m.ignored.SetItems(ignored)
 	return m
 }
 
@@ -239,8 +281,9 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	case nav.ResizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		listH := max(msg.Height-1, 0)
-		m.liveList = m.liveList.SetSize(msg.Width, listH)
-		m.suppList = m.suppList.SetSize(msg.Width, listH)
+		m.warn = m.warn.SetSize(msg.Width, listH)
+		m.muted = m.muted.SetSize(msg.Width, listH)
+		m.ignored = m.ignored.SetSize(msg.Width, listH)
 		m.modal = m.modal.SetSize(msg.Width, msg.Height)
 		return m, nil
 	case nav.RefreshMsg:
@@ -248,10 +291,10 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	case LoadedMsg:
 		m.scanning = false
 		if msg.Err != nil {
-			m.liveList = m.liveList.SetError(msg.Err)
+			m.warn = m.warn.SetError(msg.Err)
 			return m, nil
 		}
-		m.all = msg.Violations
+		m.all, m.allPaths = msg.Violations, msg.Ignored
 		return m.split(), nil
 	case checkMsg:
 		return m, nav.Notify(msg.level, msg.text)
@@ -260,6 +303,12 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 			return m.rescan()
 		}
 		return m, nil
+	case nav.CommandMsg:
+		if m.modal.Open() {
+			return m, nil
+		}
+		next, cmd, _ := reslist.RunCommand(m, m.warn, commands, msg)
+		return next, cmd
 	}
 
 	if m.modal.Open() {
@@ -271,130 +320,437 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	return m.handleKey(k)
+}
 
-	if l, cmd, ok := m.activeList().HandleKey(k); ok {
-		return m.setActiveList(l), cmd
+// handleKey runs a key on the active view: the list's own keys, then the
+// view's actions, then esc, then movement.
+func (m Model) handleKey(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
+	switch m.view {
+	case keys.IgnoreMuted:
+		if l, cmd, ok := m.muted.HandleKey(k); ok {
+			m.muted = l
+			return m, cmd
+		}
+		if next, cmd, ok := reslist.Run(m, m.muted, mutedActions, k); ok {
+			return next, cmd
+		}
+	case keys.IgnoreIgnored:
+		if l, cmd, ok := m.ignored.HandleKey(k); ok {
+			m.ignored = l
+			return m, cmd
+		}
+		if next, cmd, ok := reslist.Run(m, m.ignored, ignoredActions, k); ok {
+			return next, cmd
+		}
+	default:
+		if l, cmd, ok := m.warn.HandleKey(k); ok {
+			m.warn = l
+			return m, cmd
+		}
+		if next, cmd, ok := reslist.Run(m, m.warn, warnActions, k); ok {
+			return next, cmd
+		}
 	}
-
-	acts := liveActions
-	if m.level == levelSuppressed {
-		acts = suppActions
-	}
-	if next, cmd, ok := reslist.Run(m, m.activeList(), acts, k); ok {
-		return next, cmd
-	}
-	switch {
-	case key.Matches(k, m.keys.Back):
-		if m.level == levelSuppressed {
-			m.level = levelLive
-			return m, nil
+	if key.Matches(k, m.keys.Back) {
+		if len(m.under) > 0 { // leave the `:lint <path>` narrowing
+			m.under = nil
+			return m.split(), nil
 		}
 		return m, nav.Up
 	}
-
-	// Delegate movement to the active list.
 	var cmd tea.Cmd
-	if m.level == levelSuppressed {
-		m.suppList, cmd = m.suppList.Update(k)
-	} else {
-		m.liveList, cmd = m.liveList.Update(k)
+	switch m.view {
+	case keys.IgnoreMuted:
+		m.muted, cmd = m.muted.Update(k)
+	case keys.IgnoreIgnored:
+		m.ignored, cmd = m.ignored.Update(k)
+	default:
+		m.warn, cmd = m.warn.Update(k)
 	}
 	return m, cmd
 }
 
-// fix opens one checklist with each row's action from build; a row build
-// skips (ok false) is left out, and none at all notifies empty instead.
-// Actions sharing an ID (two rows in the same directory) collapse to one.
-func fix(title, empty string, build func(Model, wsignore.Violation) (plan.Action, bool)) func(Model, []wsignore.Violation) (Model, tea.Cmd) {
-	return func(m Model, rows []wsignore.Violation) (Model, tea.Cmd) {
-		var actions []plan.Action
-		seen := make(map[string]bool)
-		for _, v := range rows {
-			a, ok := build(m, v)
-			if !ok || seen[a.ID] {
-				continue
-			}
-			seen[a.ID] = true
-			actions = append(actions, a)
-		}
-		if len(actions) == 0 {
-			return m, nav.Notify(nav.LevelInfo, empty)
-		}
-		return m.openFixMulti(title, actions), nil
-	}
-}
+// ── actions ───────────────────────────────────────────────────────
 
-func always(f func(Model, wsignore.Violation) plan.Action) func(Model, wsignore.Violation) (plan.Action, bool) {
-	return func(m Model, v wsignore.Violation) (plan.Action, bool) { return f(m, v), true }
-}
-
-// commonActions are the keys both levels share; none acts on rows.
-func commonActions() []reslist.Action[Model, wsignore.Violation] {
+// common are the keys every view has; neither acts on rows.
+func common[T any]() []reslist.Action[Model, T] {
 	k := keys.Ignore()
-	run := func(f func(Model) tea.Cmd) func(Model, []wsignore.Violation) (Model, tea.Cmd) {
-		return func(m Model, _ []wsignore.Violation) (Model, tea.Cmd) { return m, f(m) }
-	}
-	return []reslist.Action[Model, wsignore.Violation]{
-		{Key: k.Check, Scope: reslist.Global, Do: func(m Model, _ []wsignore.Violation) (Model, tea.Cmd) {
-			var cmd tea.Cmd
-			m.modal, cmd = m.modal.Prompt(stepCheckPath, prompt.New("Will this path sync?",
-				prompt.WithValue(m.env.Paths.Workspace+"/"), prompt.WithCompleter(complete.Paths)))
-			return m, cmd
+	return []reslist.Action[Model, T]{
+		{Key: k.EditRules, Scope: reslist.Global, Do: func(m Model, _ []T) (Model, tea.Cmd) {
+			return m, handover.Run(handover.WS(m.env.Paths, "ignore", "edit"), handoverRules)
 		}},
-		{Key: k.Tree, Scope: reslist.Global, Do: run(func(m Model) tea.Cmd {
-			return handover.Run(handover.Paged(handover.WS(m.env.Paths, "ignore", "tree")), handoverRules)
-		})},
-		{Key: k.List, Scope: reslist.Global, Do: run(func(m Model) tea.Cmd {
-			return handover.Run(handover.Paged(handover.WS(m.env.Paths, "ignore", "ls")), handoverRules)
-		})},
-		{Key: k.EditRules, Scope: reslist.Global, Do: run(func(m Model) tea.Cmd {
-			return handover.Run(handover.WS(m.env.Paths, "ignore", "edit"), handoverRules)
-		})},
-	}
-}
-
-// liveActions is every key on the violations level and the rows it acts on.
-var liveActions = func() []reslist.Action[Model, wsignore.Violation] {
-	k := keys.Ignore()
-	return append([]reslist.Action[Model, wsignore.Violation]{
-		{Key: k.Exclude, Scope: reslist.Selected, Do: fix("Add to .megaignore", "", always(Model.excludeAction))},
-		{Key: k.Suppress, Scope: reslist.Selected, Do: fix("Suppress warning", "Top-level path has no parent to suppress", Model.harborAction)},
-		{Key: k.Move, Scope: reslist.Selected, Do: fix("Move to scratch", "Only bloat can be moved to scratch",
-			func(m Model, v wsignore.Violation) (plan.Action, bool) { return m.moveAction(v), v.Type == "bloat" })},
-		{Key: k.Delete, Scope: reslist.Selected, Do: fix("Delete", "", always(Model.deleteAction))},
-		{Key: k.ExcludeAll, Scope: reslist.All, Do: func(m Model, rows []wsignore.Violation) (Model, tea.Cmd) {
-			return m.openExcludeAll(rows), nil
-		}},
-		{Key: k.ViewSuppressed, Scope: reslist.Global, Do: func(m Model, _ []wsignore.Violation) (Model, tea.Cmd) {
-			m.level = levelSuppressed
+		{Key: k.NextView, Scope: reslist.Global, Do: func(m Model, _ []T) (Model, tea.Cmd) {
+			m.view = (m.view + 1) % 3
 			return m, nil
 		}},
-	}, commonActions()...)
-}()
-
-// suppActions is every key on the suppressed-warnings level.
-var suppActions = func() []reslist.Action[Model, wsignore.Violation] {
-	k := keys.Ignore()
-	return append([]reslist.Action[Model, wsignore.Violation]{
-		{Key: k.Unsuppress, Scope: reslist.Selected, Do: fix("Remove suppress rules", "Cannot determine suppress rule for selected items", Model.unsuppressAction)},
-	}, commonActions()...)
-}()
-
-// activeList returns the list model for the current level.
-func (m Model) activeList() reslist.Model[wsignore.Violation] {
-	if m.level == levelSuppressed {
-		return m.suppList
 	}
-	return m.liveList
 }
 
-func (m Model) setActiveList(l reslist.Model[wsignore.Violation]) Model {
-	if m.level == levelSuppressed {
-		m.suppList = l
-	} else {
-		m.liveList = l
+// pathsOf is the rows' absolute paths: what the CLI commands take.
+func (m Model) pathsOf(rows []wsignore.Violation) []string {
+	out := make([]string, len(rows))
+	for i, v := range rows {
+		out[i] = m.abs(v.Path)
 	}
-	return m
+	return out
+}
+
+// warnActions is every key of the Warnings view and the rows it acts on.
+var warnActions = func() []reslist.Action[Model, wsignore.Violation] {
+	k := keys.Ignore()
+	return append([]reslist.Action[Model, wsignore.Violation]{
+		{Key: k.Ignore, Scope: reslist.Selected, Do: func(m Model, rows []wsignore.Violation) (Model, tea.Cmd) {
+			return m.ignorePaths(m.pathsOf(rows))
+		}},
+		{Key: k.Mute, Scope: reslist.Selected, Do: func(m Model, rows []wsignore.Violation) (Model, tea.Cmd) {
+			return m.mutePaths(m.pathsOf(rows))
+		}},
+		{Key: k.Scratch, Scope: reslist.Selected, Do: func(m Model, rows []wsignore.Violation) (Model, tea.Cmd) {
+			return m.scratchPaths(m.pathsOf(rows))
+		}},
+		{Key: k.Delete, Scope: reslist.Selected, Do: Model.deleteRows},
+	}, common[wsignore.Violation]()...)
+}()
+
+// mutedActions is every key of the Muted view.
+var mutedActions = func() []reslist.Action[Model, wsignore.Violation] {
+	k := keys.Ignore()
+	return append([]reslist.Action[Model, wsignore.Violation]{
+		{Key: k.Ignore, Scope: reslist.Selected, Do: func(m Model, rows []wsignore.Violation) (Model, tea.Cmd) {
+			return m.ignorePaths(m.pathsOf(rows))
+		}},
+		{Key: k.Unmute, Scope: reslist.Selected, Do: Model.unmuteRows},
+	}, common[wsignore.Violation]()...)
+}()
+
+// ignoredActions is every key of the Ignored view.
+var ignoredActions = func() []reslist.Action[Model, wsignore.IgnoredPath] {
+	k := keys.Ignore()
+	return append([]reslist.Action[Model, wsignore.IgnoredPath]{
+		{Key: k.StopIgnoring, Scope: reslist.Selected, Do: func(m Model, rows []wsignore.IgnoredPath) (Model, tea.Cmd) {
+			paths := make([]string, len(rows))
+			for i, p := range rows {
+				paths[i] = m.abs(p.Path)
+			}
+			return m.rmPaths(paths)
+		}},
+	}, common[wsignore.IgnoredPath]()...)
+}()
+
+// commands are the `:` commands: the CLI's words after `ignore`. rm shares
+// rmPaths with the Ignored view's stop-ignoring key.
+var commands = []reslist.Command[Model, wsignore.Violation]{
+	{Name: "rm", Args: "<path…>", Help: "stop ignoring paths: sync them again", Scope: reslist.Global,
+		Do: func(m Model, _ []wsignore.Violation, args []string) (Model, tea.Cmd) {
+			if len(args) == 0 {
+				return m, nav.Notify(nav.LevelWarn, "usage: rm <path…>")
+			}
+			return m.rmPaths(args)
+		}},
+	{Name: "check", Args: "<path>", Help: "will this path sync?", Scope: reslist.Global,
+		Do: func(m Model, _ []wsignore.Violation, args []string) (Model, tea.Cmd) {
+			if len(args) == 0 {
+				var cmd tea.Cmd
+				m.modal, cmd = m.modal.Prompt(stepCheckPath, prompt.New("Will this path sync?",
+					prompt.WithValue(m.env.Paths.Workspace+"/"), prompt.WithCompleter(complete.Paths)))
+				return m, cmd
+			}
+			return m, check(m.env, args[0])
+		}},
+	{Name: "tree", Args: "[dir]", Help: "what syncs, as a tree (paged)", Scope: reslist.Global,
+		Do: func(m Model, _ []wsignore.Violation, args []string) (Model, tea.Cmd) {
+			argv := append([]string{"ignore", "tree"}, args...)
+			return m, handover.Run(handover.Paged(handover.WS(m.env.Paths, argv...)), handoverRules)
+		}},
+	{Name: "lint", Args: "<path>", Help: "warnings under a path", Scope: reslist.Global,
+		Do: func(m Model, _ []wsignore.Violation, args []string) (Model, tea.Cmd) { return m.lint(args) }},
+}
+
+// Commands implements nav.Commander.
+func (m Model) Commands() []nav.CommandInfo { return reslist.CommandInfos(commands) }
+
+// lint is `ignore lint <path…>`: the Warnings view, narrowed to what is under
+// the paths (none: everything). esc leaves the narrowing.
+func (m Model) lint(args []string) (Model, tea.Cmd) {
+	var under []string
+	for _, raw := range args {
+		abs, err := wsconfig.ExpandUserPath(raw)
+		if err != nil {
+			return m, nav.Notify(nav.LevelError, fmt.Sprintf("invalid path %q: %s", raw, err))
+		}
+		if !repo.IsWithin(abs, m.env.Paths.Workspace) {
+			return m, nav.Notify(nav.LevelError, fmt.Sprintf("path is outside the workspace %s: %s", m.env.Paths.Workspace, abs))
+		}
+		if _, err := os.Stat(abs); err != nil {
+			return m, nav.Notify(nav.LevelError, "path does not exist: "+abs)
+		}
+		under = append(under, abs)
+	}
+	m.under, m.view = under, keys.IgnoreWarnings
+	return m.split(), nil
+}
+
+// ── plans: the CLI's, as checklists ───────────────────────────────
+
+func (m Model) abs(rel string) string { return style.AbsPath(m.env.Paths.Workspace, rel) }
+
+// target resolves one path argument (spec §4.5): inside the workspace, never
+// the workspace itself. When mustExist is false a missing path is accepted.
+func (m Model) target(raw string, mustExist bool) (abs, rel string, isDir bool, err error) {
+	abs, err = wsconfig.ExpandUserPath(raw)
+	if err != nil {
+		return "", "", false, fmt.Errorf("invalid path %q: %w", raw, err)
+	}
+	ws := m.env.Paths.Workspace
+	if !repo.IsWithin(abs, ws) {
+		return "", "", false, fmt.Errorf("path is outside the workspace %s: %s", ws, abs)
+	}
+	r, err := filepath.Rel(ws, abs)
+	if err != nil {
+		return "", "", false, err
+	}
+	rel = wsignore.NormalizeRel(r)
+	if rel == "" {
+		return "", "", false, fmt.Errorf("%s is the workspace itself", abs)
+	}
+	st, statErr := os.Stat(abs)
+	if statErr != nil {
+		if mustExist {
+			return "", "", false, fmt.Errorf("path does not exist: %s", abs)
+		}
+		return abs, rel, false, nil
+	}
+	return abs, rel, st.IsDir(), nil
+}
+
+// regenerate rewrites .megaignore from the rules now in ws.json.
+func regenerate(e env.Env) error {
+	rules, err := wsconfig.LoadIgnoreRules(e.Paths.Config)
+	if err != nil {
+		return err
+	}
+	return wsignore.WriteMegaignore(filepath.Join(e.Paths.Workspace, ".megaignore"), rules)
+}
+
+// open shows actions as a checklist, or says empty when there are none. A
+// refusal that left some paths out is the checklist's note.
+func (m Model) open(title, empty, note string, actions []plan.Action) (Model, tea.Cmd) {
+	if len(actions) == 0 {
+		return m, nav.Notify(nav.LevelInfo, empty)
+	}
+	c := confirm.New(title, plan.Plan{Command: "ignore", Actions: actions})
+	if note != "" {
+		c = c.WithNote(note)
+	}
+	m.modal = m.modal.Confirm(stepPlan, c)
+	return m, nil
+}
+
+// ignorePaths is `ignore add`: stop syncing the paths. One bad path changes
+// nothing, as in the CLI.
+func (m Model) ignorePaths(paths []string) (Model, tea.Cmd) {
+	cfg, e := m.config(), m.env
+	var actions []plan.Action
+	seen := map[string]bool{}
+	for _, raw := range paths {
+		abs, rel, isDir, err := m.target(raw, true)
+		if err == nil && strings.Contains(rel, "*") {
+			err = fmt.Errorf("%s: a name with * would be read as a pattern", abs)
+		}
+		if err == nil {
+			for _, l := range cfg.Links {
+				orig := filepath.Join(e.Paths.Workspace, filepath.FromSlash(l.Original))
+				if repo.IsWithin(abs, orig) || repo.IsWithin(orig, abs) {
+					err = fmt.Errorf("%s is the workspace copy of the dotfile %s: it must sync for dotfile link on your other machines", abs, l.System)
+					break
+				}
+			}
+		}
+		if err != nil {
+			return m, nav.Notify(nav.LevelError, err.Error())
+		}
+		if seen[rel] || !wsignore.BuildEngine(cfg.IgnoreRules).Evaluate(rel, isDir).Included {
+			continue // listed twice, or already ignored
+		}
+		seen[rel] = true
+		actions = append(actions, plan.Action{
+			ID:          "ignore-add-" + abs,
+			Description: fmt.Sprintf("Ignore %s (ws.json ignore_rules.exclude)", abs),
+			Execute: func() error {
+				if _, err := wsconfig.AddIgnoreExclude(e.Paths.Config, rel, ""); err != nil {
+					return err
+				}
+				return regenerate(e)
+			},
+		})
+	}
+	return m.open("Ignore "+format.Plural(len(actions), "path"), "Already ignored.", "", actions)
+}
+
+// rmPaths is `ignore rm`: stop ignoring the paths, so they sync again. A path
+// ignored by a wider or built-in rule cannot be undone here: the whole command
+// is refused and says why.
+func (m Model) rmPaths(paths []string) (Model, tea.Cmd) {
+	cfg, e := m.config(), m.env
+	var actions []plan.Action
+	seen := map[string]bool{}
+	for _, raw := range paths {
+		abs, rel, isDir, err := m.target(raw, false)
+		if err != nil {
+			return m, nav.Notify(nav.LevelError, err.Error())
+		}
+		v := wsignore.ClassifyRm(cfg.IgnoreRules, rel, isDir)
+		switch v.Kind {
+		case wsignore.RmNotIgnored:
+			continue
+		case wsignore.RmWider:
+			return m, nav.Notify(nav.LevelError, fmt.Sprintf("%s is ignored by your rule `%s`, not by an entry of its own: remove that rule, or change it with %s",
+				abs, v.Rule, m.keys.EditRules.Help().Key+" "+m.keys.EditRules.Help().Desc))
+		case wsignore.RmBuiltin:
+			return m, nav.Notify(nav.LevelError, fmt.Sprintf("%s is ignored by the built-in rule `%s`: ws does not edit built-in rules for one path", abs, v.Rule))
+		}
+		if seen[v.Entry] {
+			continue
+		}
+		seen[v.Entry] = true
+		entry, still := v.Entry, v.Rule
+		desc := fmt.Sprintf("Sync again: %s (remove %q from ignore_rules.exclude)", abs, entry)
+		if still != "" {
+			desc += fmt.Sprintf("; still ignored by `%s`", still)
+		}
+		actions = append(actions, plan.Action{
+			ID:          "ignore-rm-" + abs,
+			Description: desc,
+			Execute: func() error {
+				if _, err := wsconfig.RemoveIgnoreExclude(e.Paths.Config, entry); err != nil {
+					return err
+				}
+				return regenerate(e)
+			},
+		})
+	}
+	return m.open("Stop ignoring "+format.Plural(len(actions), "path"), "Not ignored: nothing to do.", "", actions)
+}
+
+// mutePaths is `ignore mute`: hide the paths' warnings; they keep syncing.
+func (m Model) mutePaths(paths []string) (Model, tea.Cmd) {
+	cfg, e := m.config(), m.env
+	eng := wsignore.BuildEngine(cfg.IgnoreRules)
+	muted := wsignore.NormalizeMuted(e.Paths.Workspace, cfg.Ignore.Muted)
+	var actions []plan.Action
+	seen := map[string]bool{}
+	for _, raw := range paths {
+		abs, rel, isDir, err := m.target(raw, true)
+		if err != nil {
+			return m, nav.Notify(nav.LevelError, err.Error())
+		}
+		if seen[rel] || wsignore.MuteStateOf(eng, muted, rel, isDir).Muted {
+			continue // listed twice, or already muted
+		}
+		seen[rel] = true
+		actions = append(actions, plan.Action{
+			ID:          "ignore-mute-" + abs,
+			Description: fmt.Sprintf("Mute %s (it keeps syncing)", abs),
+			Execute: func() error {
+				_, err := wsconfig.AddIgnoreMuted(e.Paths.Config, rel)
+				return err
+			},
+		})
+	}
+	return m.open("Mute "+format.Plural(len(actions), "path"), "Already muted.", "", actions)
+}
+
+// unmuteRows is `ignore unmute` for Muted rows. A row muted through a parent
+// directory unmutes that entry, once however many of its rows are chosen; a row
+// muted by an always-sync directory cannot be unmuted here.
+func (m Model) unmuteRows(rows []wsignore.Violation) (Model, tea.Cmd) {
+	cfg, e := m.config(), m.env
+	eng := wsignore.BuildEngine(cfg.IgnoreRules)
+	muted := wsignore.NormalizeMuted(e.Paths.Workspace, cfg.Ignore.Muted)
+	var actions []plan.Action
+	seen := map[string]bool{}
+	for _, v := range rows {
+		abs := m.abs(v.Path)
+		st := wsignore.MuteStateOf(eng, muted, wsignore.NormalizeRel(v.Path), false)
+		switch {
+		case !st.Muted:
+			continue
+		case st.Entry == "":
+			return m, nav.Notify(nav.LevelError, fmt.Sprintf("%s is under the always-sync directory `%s`: its warnings stay muted. To change it, use %s",
+				abs, st.Rule, m.keys.EditRules.Help().Key+" "+m.keys.EditRules.Help().Desc))
+		case seen[st.Entry]:
+			continue
+		}
+		entry := st.Entry
+		seen[entry] = true
+		desc := "Unmute " + m.abs(entry)
+		if entry != wsignore.NormalizeRel(v.Path) {
+			desc += " (its warnings include " + abs + ")"
+		}
+		actions = append(actions, plan.Action{
+			ID:          "ignore-unmute-" + m.abs(entry),
+			Description: desc,
+			Execute: func() error {
+				_, err := wsconfig.RemoveIgnoreMuted(e.Paths.Config, e.Paths.Workspace, entry)
+				return err
+			},
+		})
+	}
+	return m.open("Unmute "+format.Plural(len(actions), "path"), "Not muted: nothing to do.", "", actions)
+}
+
+// scratchPaths is `scratch add`: move the paths into the scratch directory.
+func (m Model) scratchPaths(paths []string) (Model, tea.Cmd) {
+	e := m.env
+	var abs []string
+	for _, raw := range paths {
+		a, _, _, err := m.target(raw, true)
+		if err != nil {
+			return m, nav.Notify(nav.LevelError, err.Error())
+		}
+		abs = append(abs, a)
+	}
+	plans, err := wsscratch.PlanAdd(wsscratch.AddOptions{
+		RootDir: e.ScratchDir, WorkspacePath: e.Paths.Workspace, ConfigPath: e.Paths.Config,
+		Links: m.config().Links, Paths: abs,
+	})
+	if err != nil {
+		return m, nav.Notify(nav.LevelError, err.Error())
+	}
+	var actions []plan.Action
+	for _, ap := range plans {
+		ap := ap
+		actions = append(actions, plan.Action{
+			ID:          "scratch-add-" + ap.Source,
+			Description: fmt.Sprintf("Move %s → %s", ap.Source, ap.Dest),
+			Execute:     func() error { return wsscratch.Add(ap) },
+		})
+	}
+	return m.open("Move "+format.Plural(len(actions), "path")+" to scratch", "Nothing to move.", "", actions)
+}
+
+// deleteRows deletes the rows' paths to the trash.
+func (m Model) deleteRows(rows []wsignore.Violation) (Model, tea.Cmd) {
+	var actions []plan.Action
+	seen := map[string]bool{}
+	for _, v := range rows {
+		p := m.abs(v.Path)
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		desc := "Delete " + p
+		if v.SizeBytes > 0 {
+			desc += " (" + style.HumanBytes(v.SizeBytes) + ")"
+		}
+		actions = append(actions, plan.Action{
+			ID:          "delete-" + p,
+			Description: desc + " (to trash)",
+			Execute:     func() error { return trash.SoftDelete(p) },
+		})
+	}
+	return m.open("Delete "+format.Plural(len(actions), "path")+" (to trash)", "Nothing to delete.", "", actions)
 }
 
 func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
@@ -409,8 +765,9 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 	if done.Result.Aborted {
 		return m, nil
 	}
-	m.liveList = m.liveList.ClearMarks() // the marks were for this action
-	m.suppList = m.suppList.ClearMarks() // the marks were for this action
+	m.warn = m.warn.ClearMarks() // the marks were for this action
+	m.muted = m.muted.ClearMarks()
+	m.ignored = m.ignored.ClearMarks()
 	level := nav.LevelSuccess
 	if done.Result.HasFailures() {
 		level = nav.LevelWarn
@@ -419,137 +776,52 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 	return m, tea.Batch(nav.Notify(level, confirm.Summary(done.Result)), cmd)
 }
 
-func (m Model) abs(v wsignore.Violation) string { return style.AbsPath(m.env.Paths.Workspace, v.Path) }
-
-// regenerate rewrites .megaignore from the manifest's rules, as `ignore fix`
-// does after adding rules.
-func regenerate(e env.Env) error {
-	rules, err := wsconfig.LoadIgnoreRules(e.Paths.Config)
-	if err != nil {
-		return err
+// thousands writes n with a comma between each group of three digits.
+func thousands(n int) string {
+	s := fmt.Sprint(n)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
 	}
-	return wsignore.WriteMegaignore(filepath.Join(e.Paths.Workspace, ".megaignore"), rules)
+	return s
 }
 
-func (m Model) excludeAction(v wsignore.Violation) plan.Action {
-	e, rel := m.env, v.Path
-	return plan.Action{
-		ID:          "exclude-" + rel,
-		Description: "Add to .megaignore: " + m.abs(v),
-		Execute: func() error {
-			if _, err := wsconfig.AddIgnoreExclude(e.Paths.Config, rel, ""); err != nil {
-				return err
-			}
-			return regenerate(e)
-		},
-	}
-}
-
-// harborAction mutes the row's path (`ignore mute`): its warnings are hidden and
-// it keeps syncing. No rule is added and .megaignore is not rewritten.
-func (m Model) harborAction(v wsignore.Violation) (plan.Action, bool) {
-	e, rel := m.env, wsignore.NormalizeRel(v.Path)
-	if rel == "" {
-		return plan.Action{}, false
-	}
-	abs := style.AbsPath(e.Paths.Workspace, rel)
-	return plan.Action{
-		ID:          "mute-" + abs,
-		Description: "Mute " + abs + " (it keeps syncing)",
-		Execute: func() error {
-			added, err := wsconfig.AddIgnoreMuted(e.Paths.Config, rel)
-			if err != nil {
-				return err
-			}
-			if !added {
-				return errors.New("already muted")
-			}
-			return nil
-		},
-	}, true
-}
-
-// unsuppressAction unmutes the ignore.muted entry that mutes the row (`ignore
-// unmute`). A row muted only by an always-sync directory has no entry to remove.
-func (m Model) unsuppressAction(v wsignore.Violation) (plan.Action, bool) {
-	e := m.env
-	entry, ok := wsignore.MutedBy(wsignore.NormalizeMuted(e.Paths.Workspace, mutedList(e)), v.Path)
-	if !ok {
-		return plan.Action{}, false
-	}
-	abs := style.AbsPath(e.Paths.Workspace, entry)
-	return plan.Action{
-		ID:          "unmute-" + abs,
-		Description: "Unmute " + abs,
-		Execute: func() error {
-			_, err := wsconfig.RemoveIgnoreMuted(e.Paths.Config, e.Paths.Workspace, entry)
-			return err
-		},
-	}, true
-}
-
-func (m Model) moveAction(v wsignore.Violation) plan.Action {
-	src := m.abs(v)
-	dest := filepath.Join(m.env.ScratchDir, filepath.Base(v.Path))
-	return plan.Action{
-		ID:          "move-" + v.Path,
-		Description: fmt.Sprintf("Move %s → %s", src, dest),
-		Execute: func() error {
-			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-				return err
-			}
-			return os.Rename(src, dest)
-		},
-	}
-}
-
-func (m Model) deleteAction(v wsignore.Violation) plan.Action {
-	p := m.abs(v)
-	size := ""
-	if v.SizeBytes > 0 {
-		size = " (" + style.HumanBytes(v.SizeBytes) + ")"
-	}
-	return plan.Action{
-		ID:          "delete-" + v.Path,
-		Description: "Move to the trash: " + p + size,
-		Execute:     func() error { return trash.SoftDelete(p) },
-	}
-}
-
-func (m Model) openFixMulti(title string, actions []plan.Action) Model {
-	p := plan.Plan{Command: "ignore.fix", Actions: actions}
-	m.modal = m.modal.Confirm(stepFix, confirm.New(title, p))
-	return m
-}
-
-func (m Model) openExcludeAll(rows []wsignore.Violation) Model {
-	p := plan.Plan{Command: "ignore.fix"}
-	for _, v := range rows {
-		p.Actions = append(p.Actions, m.excludeAction(v))
-	}
-	title := "Add " + format.Plural(len(p.Actions), "violation") + " to .megaignore"
-	m.modal = m.modal.Confirm(stepExcludeAll, confirm.New(title, p))
-	return m
-}
-
-func (m Model) statusLine() string {
+// header is the view line: `Warnings 12 · Muted 47 · Ignored 3,210`, the
+// current view in bold.
+func (m Model) header() string {
 	if m.scanning {
 		return theme.Muted.Render("Scanning workspace…")
 	}
-	live, supp := len(m.liveList.Items()), len(m.suppList.Items())
-	if m.level == levelSuppressed {
-		parts := []string{
-			theme.Title.Render("Suppressed warnings"),
-			theme.Muted.Render(fmt.Sprintf("%d item(s)", supp)),
-			theme.Muted.Render("u unsuppress · esc back"),
+	tab := func(v keys.IgnoreView, name string, n int) string {
+		text := fmt.Sprintf("%s %s", name, thousands(n))
+		if m.view == v {
+			return theme.Title.Render(text)
 		}
-		return lipgloss.NewStyle().MaxWidth(m.width).Render(strings.Join(parts, theme.Muted.Render(" · ")))
+		return theme.Muted.Render(text)
 	}
-	parts := []string{format.Plural(live, "violation")}
-	if supp > 0 {
-		parts = append(parts, theme.Muted.Render(fmt.Sprintf("%d suppressed (H to view)", supp)))
+	parts := []string{
+		tab(keys.IgnoreWarnings, "Warnings", len(m.warn.Items())),
+		tab(keys.IgnoreMuted, "Muted", len(m.muted.Items())),
+		tab(keys.IgnoreIgnored, "Ignored", len(m.ignored.Items())),
 	}
-	return lipgloss.NewStyle().MaxWidth(m.width).Render(strings.Join(parts, theme.Muted.Render(" · ")))
+	line := strings.Join(parts, theme.Muted.Render(" · "))
+	if len(m.under) > 0 {
+		var rel []string
+		for _, u := range m.under {
+			rel = append(rel, m.env.Rel(u))
+		}
+		line += theme.Muted.Render("  under " + strings.Join(rel, ", ") + " — " + m.keys.Back.Help().Key + " clears")
+	}
+	return lipgloss.NewStyle().MaxWidth(m.width).Render(line)
+}
+
+func (m Model) activeList() string {
+	switch m.view {
+	case keys.IgnoreMuted:
+		return m.muted.View()
+	case keys.IgnoreIgnored:
+		return m.ignored.View()
+	}
+	return m.warn.View()
 }
 
 // View implements nav.Component.
@@ -557,7 +829,7 @@ func (m Model) View() string {
 	if m.modal.Open() {
 		return m.modal.View()
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, m.statusLine(), m.activeList().View())
+	return lipgloss.JoinVertical(lipgloss.Left, m.header(), m.activeList())
 }
 
 // KeyMap implements nav.Component.
@@ -565,5 +837,12 @@ func (m Model) KeyMap() help.KeyMap {
 	if m.modal.Open() {
 		return m.modal.KeyMap()
 	}
-	return m.activeList().Help(m.keys)
+	screen := m.keys.For(m.view)
+	switch m.view {
+	case keys.IgnoreMuted:
+		return m.muted.Help(screen)
+	case keys.IgnoreIgnored:
+		return m.ignored.Help(screen)
+	}
+	return m.warn.Help(screen)
 }

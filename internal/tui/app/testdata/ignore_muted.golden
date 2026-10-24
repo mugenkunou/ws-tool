@@ -1,8 +1,8 @@
 ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Suppressed warnings · 1 item(s) · u unsuppress · esc back
+Warnings 2 · Muted 1 · Ignored 2
  Severity    Type          Size       Path
- suppressed  bloat         40.0 MB    Data/bruno/node_modules
+ muted       bloat         40.0 MB    Data/bruno/node_modules
 
 
 
@@ -27,4 +27,4 @@ Suppressed warnings · 1 item(s) · u unsuppress · esc back
 
 
 
-a add to .megaignore • s suppress warning … • tab screens • : command • ? help • q quit
+i ignore • u unmute • e edit rules • v next view … • tab screens • : command • ? help • q quit
