@@ -49,7 +49,7 @@ func TestIgnoreCheckSynced(t *testing.T) {
 		t.Fatalf("expected Reason line in output, got: %s", out.String())
 	}
 	// File size line must be present.
-	if !strings.Contains(out.String(), "File size") {
+	if !strings.Contains(out.String(), "Size:") {
 		t.Fatalf("expected File size line in output, got: %s", out.String())
 	}
 }

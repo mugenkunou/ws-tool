@@ -62,7 +62,7 @@ func printIgnoreViolationsSplit(w io.Writer, violations []ignore.Violation, nc b
 	var actionable, suppressed []ignore.Violation
 	var suppressedBytes int64
 	for _, v := range violations {
-		if v.InSafeHarbor {
+		if v.Muted {
 			suppressed = append(suppressed, v)
 			suppressedBytes += v.SizeBytes
 		} else {

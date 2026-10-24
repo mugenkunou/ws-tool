@@ -145,8 +145,17 @@ var commands = []command{
 		Flags: []flagDoc{olderThan, allFlag("every finished session")}},
 
 	{Path: []string{"ignore", "ls"}, Summary: "every path that doesn't sync, and its rule; --muted: muted warnings", RO: true,
-		Flags:  []flagDoc{{Name: "--muted", Desc: "the muted warnings instead of the ignored paths"}},
-		Fields: fieldsOf(func() resource.Schema[ignore.Violation] { return ignore.Schema(resource.CLIView(), "") })},
+		Flags: []flagDoc{{Name: "--muted", Desc: "the muted warnings instead of the ignored paths"}},
+		Fields: func() []string {
+			// The ignored paths' fields, then the warning fields --muted adds.
+			keys := ignore.IgnoredSchema(resource.CLIView(), "").Keys()
+			for _, k := range ignore.Schema(resource.CLIView(), "").Keys() {
+				if !slices.Contains(keys, k) {
+					keys = append(keys, k)
+				}
+			}
+			return keys
+		}},
 	{Path: []string{"ignore", "lint"}, Args: "[path…]", Summary: "check synced files and warn about the unhygienic ones", RO: true,
 		Fields: fieldsOf(func() resource.Schema[ignore.Violation] { return ignore.Schema(resource.CLIView(), "") })},
 	{Path: []string{"ignore", "add"}, Args: "<path…>", Summary: "stop syncing a path"},

@@ -81,7 +81,7 @@ func TestScanSplitsLiveAndSuppressed(t *testing.T) {
 		if v.Path != "artifacts/big.pdf" && v.Path != "notes/big.pdf" {
 			continue
 		}
-		if v.InSafeHarbor {
+		if v.Muted {
 			supp++
 			if v.Severity != "INFO" {
 				t.Fatalf("harbor violation should be INFO, got %s", v.Severity)

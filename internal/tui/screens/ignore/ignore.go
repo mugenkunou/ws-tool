@@ -21,6 +21,7 @@ import (
 	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/plan"
 	"github.com/mugenkunou/ws-tool/internal/style"
+	"github.com/mugenkunou/ws-tool/internal/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui/complete"
 	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
@@ -46,7 +47,7 @@ type LoadedMsg struct {
 func (m LoadedMsg) Actionable() int {
 	n := 0
 	for _, v := range m.Violations {
-		if !v.InSafeHarbor {
+		if !v.Muted {
 			n++
 		}
 	}
@@ -99,7 +100,7 @@ func New(e env.Env) Model {
 		{Key: "type", Min: 12},
 		{Key: "size_bytes", Min: 9},
 		{Key: "path", Min: 20, Weight: 1, Style: func(v wsignore.Violation, t string) string {
-			if v.InSafeHarbor {
+			if v.Muted {
 				return theme.Muted.Render(t)
 			}
 			return t
@@ -116,7 +117,7 @@ func New(e env.Env) Model {
 
 func severityStyle(v wsignore.Violation, t string) string {
 	switch {
-	case v.InSafeHarbor:
+	case v.Muted:
 		return theme.Muted.Render("suppressed")
 	case v.Severity == "CRITICAL":
 		return theme.Error.Render(t)
@@ -134,7 +135,16 @@ func engine(e env.Env) (*wsignore.Engine, error) {
 	return wsignore.BuildEngine(rules), nil
 }
 
-// Load runs `ignore scan`.
+// mutedList is ws.json ignore.muted as it is now on disk (a mute made on this
+// screen is not in the config the TUI started with).
+func mutedList(e env.Env) []string {
+	if cfg, err := wsconfig.Load(e.Paths.Config); err == nil {
+		return cfg.Ignore.Muted
+	}
+	return e.Config.Ignore.Muted
+}
+
+// Load runs `ignore lint`.
 func Load(e env.Env) tea.Cmd {
 	return func() tea.Msg {
 		eng, err := engine(e)
@@ -147,6 +157,7 @@ func Load(e env.Env) tea.Cmd {
 			CritSizeMB:    e.Config.Ignore.CritSizeMB,
 			MaxDepth:      e.Config.Ignore.MaxDepth,
 			Engine:        eng,
+			Muted:         mutedList(e),
 		})
 		return LoadedMsg{Violations: vs, Err: err}
 	}
@@ -174,11 +185,7 @@ func check(e env.Env, input string) tea.Cmd {
 		case !res.Included:
 			return checkMsg{level: nav.LevelWarn, text: fmt.Sprintf("✘ IGNORED  %s — excluded by rule `%s`", abs, res.Rule)}
 		case res.SafeHarbor:
-			rule := res.OverriddenBy
-			if rule == "" {
-				rule = res.Rule
-			}
-			return checkMsg{level: nav.LevelSuccess, text: fmt.Sprintf("✔ SYNCED  %s — suppressed by `%s` (warning hidden, still syncing)", abs, rule)}
+			return checkMsg{level: nav.LevelSuccess, text: fmt.Sprintf("✔ SYNCED  %s — always-sync directory `%s`", abs, res.Rule)}
 		case res.Rule == "<default>":
 			return checkMsg{level: nav.LevelSuccess, text: fmt.Sprintf("✔ SYNCED  %s — no matching exclude rule", abs)}
 		default:
@@ -210,7 +217,7 @@ func (m Model) rescan() (Model, tea.Cmd) {
 func (m Model) split() Model {
 	var live, supp []wsignore.Violation
 	for _, v := range m.all {
-		if v.InSafeHarbor {
+		if v.Muted {
 			supp = append(supp, v)
 		} else {
 			live = append(live, v)
@@ -438,43 +445,45 @@ func (m Model) excludeAction(v wsignore.Violation) plan.Action {
 	}
 }
 
+// harborAction mutes the row's path (`ignore mute`): its warnings are hidden and
+// it keeps syncing. No rule is added and .megaignore is not rewritten.
 func (m Model) harborAction(v wsignore.Violation) (plan.Action, bool) {
-	dir := filepath.ToSlash(filepath.Dir(v.Path))
-	if dir == "." || dir == "" {
+	e, rel := m.env, wsignore.NormalizeRel(v.Path)
+	if rel == "" {
 		return plan.Action{}, false
 	}
-	e, pattern := m.env, dir+"/**"
+	abs := style.AbsPath(e.Paths.Workspace, rel)
 	return plan.Action{
-		ID:          "harbor-" + dir,
-		Description: "Suppress warnings for " + style.AbsPath(e.Paths.Workspace, dir) + "/**",
+		ID:          "mute-" + abs,
+		Description: "Mute " + abs + " (it keeps syncing)",
 		Execute: func() error {
-			added, err := wsconfig.AddIgnoreSafeHarbor(e.Paths.Config, pattern, "")
+			added, err := wsconfig.AddIgnoreMuted(e.Paths.Config, rel)
 			if err != nil {
 				return err
 			}
 			if !added {
-				// Already suppressed — report it instead of passing silently.
-				return errors.New("already suppressed")
+				return errors.New("already muted")
 			}
-			return regenerate(e)
+			return nil
 		},
 	}, true
 }
 
+// unsuppressAction unmutes the ignore.muted entry that mutes the row (`ignore
+// unmute`). A row muted only by an always-sync directory has no entry to remove.
 func (m Model) unsuppressAction(v wsignore.Violation) (plan.Action, bool) {
-	dir := filepath.ToSlash(filepath.Dir(v.Path))
-	if dir == "." || dir == "" {
+	e := m.env
+	entry, ok := wsignore.MutedBy(wsignore.NormalizeMuted(e.Paths.Workspace, mutedList(e)), v.Path)
+	if !ok {
 		return plan.Action{}, false
 	}
-	e, pattern := m.env, dir+"/**"
+	abs := style.AbsPath(e.Paths.Workspace, entry)
 	return plan.Action{
-		ID:          "unsuppress-" + dir,
-		Description: "Remove suppress rule for " + style.AbsPath(e.Paths.Workspace, dir) + "/**",
+		ID:          "unmute-" + abs,
+		Description: "Unmute " + abs,
 		Execute: func() error {
-			if _, err := wsconfig.RemoveIgnoreSafeHarbor(e.Paths.Config, pattern); err != nil {
-				return err
-			}
-			return regenerate(e)
+			_, err := wsconfig.RemoveIgnoreMuted(e.Paths.Config, e.Paths.Workspace, entry)
+			return err
 		},
 	}, true
 }
@@ -502,8 +511,8 @@ func (m Model) deleteAction(v wsignore.Violation) plan.Action {
 	}
 	return plan.Action{
 		ID:          "delete-" + v.Path,
-		Description: "Delete " + p + size,
-		Execute:     func() error { return os.RemoveAll(p) },
+		Description: "Move to the trash: " + p + size,
+		Execute:     func() error { return trash.SoftDelete(p) },
 	}
 }
 

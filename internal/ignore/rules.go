@@ -1,15 +1,12 @@
 package ignore
 
 import (
-	"encoding/json"
-	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
-// UserRules represents the user-managed ignore rules stored in ws/ignore.json.
-// This is the only file users edit — .megaignore is a generated output.
+// UserRules represents the user-managed ignore rules stored in ws.json under
+// ignore_rules. .megaignore is a generated output.
 type UserRules struct {
 	Schema           int         `json:"schema"`
 	Exclude          []RuleEntry `json:"exclude"`
@@ -37,149 +34,69 @@ func DefaultUserRules() UserRules {
 	}
 }
 
-// UserRulesPath returns the path to ws/ignore.json in the workspace.
-func UserRulesPath(workspacePath string) string {
-	return filepath.Join(workspacePath, "ws", "ignore.json")
-}
-
-// LoadUserRules loads ws/ignore.json. Returns default rules if the file
-// does not exist.
-func LoadUserRules(path string) (UserRules, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return DefaultUserRules(), nil
-		}
-		return UserRules{}, err
+// builtinExcludes is the built-in exclude template minus suppress_defaults,
+// each rule tagged SourceBuiltin.
+func builtinExcludes(u UserRules) []Rule {
+	off := make(map[string]bool, len(u.SuppressDefaults))
+	for _, s := range u.SuppressDefaults {
+		off[s] = true
 	}
-
-	rules := DefaultUserRules()
-	if err := json.Unmarshal(data, &rules); err != nil {
-		return UserRules{}, err
-	}
-
-	if rules.Schema > UserRulesSchema {
-		return UserRules{}, errors.New("unsupported ignore.json schema: upgrade ws binary")
-	}
-
-	return rules, nil
-}
-
-// SaveUserRules writes ws/ignore.json.
-func SaveUserRules(path string, rules UserRules) error {
-	if rules.Schema == 0 {
-		rules.Schema = UserRulesSchema
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-
-	data, err := json.MarshalIndent(rules, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o644)
-}
-
-// AddUserExclude adds an exclude pattern to user rules if not already present.
-// Returns true if the rule was actually added (not a duplicate).
-func AddUserExclude(path string, pattern, note string) (bool, error) {
-	rules, err := LoadUserRules(path)
-	if err != nil {
-		return false, err
-	}
-
-	for _, e := range rules.Exclude {
-		if e.Pattern == pattern {
-			return false, nil
-		}
-	}
-
-	rules.Exclude = append(rules.Exclude, RuleEntry{Pattern: pattern, Note: note})
-	return true, SaveUserRules(path, rules)
-}
-
-// AddUserSafeHarbor adds a safe harbor pattern to user rules if not already present.
-// Rejects the layout harbors (configs/**, secrets/**, ...), which are built in.
-func AddUserSafeHarbor(path string, pattern, note string) (bool, error) {
-	for _, hr := range defaultHarborRules {
-		if pattern == hr.Pattern {
-			return false, errors.New(pattern + " is a built-in safe harbor and cannot be modified via user rules")
-		}
-	}
-
-	rules, err := LoadUserRules(path)
-	if err != nil {
-		return false, err
-	}
-
-	for _, h := range rules.SafeHarbors {
-		if h.Pattern == pattern {
-			return false, nil
-		}
-	}
-
-	rules.SafeHarbors = append(rules.SafeHarbors, RuleEntry{Pattern: pattern, Note: note})
-	return true, SaveUserRules(path, rules)
-}
-
-// BuildEngine creates an Engine from built-in defaults + user rules.
-// The generated rule set follows megaignore evaluation order:
-//  1. Built-in exclude rules (minus suppress_defaults)
-//  2. User exclude rules
-//  3. Built-in safe harbors (minus suppress_harbors)
-//  4. User safe harbors
-//
-// Last-match-wins semantics apply.
-func BuildEngine(userRules UserRules) *Engine {
-	suppressedDefaults := make(map[string]bool)
-	for _, s := range userRules.SuppressDefaults {
-		suppressedDefaults[s] = true
-	}
-
-	suppressedHarbors := make(map[string]bool)
-	for _, s := range userRules.SuppressHarbors {
-		suppressedHarbors[s] = true
-	}
-
-	var rules []Rule
-
-	// 1. Built-in exclude rules (filtered by suppress_defaults).
-	for _, dr := range defaultExcludeRules {
-		if suppressedDefaults[dr.Pattern] {
+	var out []Rule
+	for _, r := range defaultExcludeRules {
+		if off[r.Pattern] {
 			continue
 		}
-		rules = append(rules, dr)
+		r.Source = SourceBuiltin
+		out = append(out, r)
 	}
+	return out
+}
 
-	// 2. User exclude rules.
-	for _, e := range userRules.Exclude {
+// builtinHarbors is the built-in always-sync directories minus
+// suppress_harbors, each rule tagged SourceBuiltin.
+func builtinHarbors(u UserRules) []Rule {
+	off := make(map[string]bool, len(u.SuppressHarbors))
+	for _, s := range u.SuppressHarbors {
+		off[s] = true
+	}
+	var out []Rule
+	for _, r := range defaultHarborRules {
+		if off[r.Pattern] {
+			continue
+		}
+		r.Source = SourceBuiltin
+		out = append(out, r)
+	}
+	return out
+}
+
+// userRulesOf converts entries to rules, skipping blank patterns.
+func userRulesOf(entries []RuleEntry, include bool) []Rule {
+	var out []Rule
+	for _, e := range entries {
 		p := strings.TrimSpace(e.Pattern)
 		if p == "" {
 			continue
 		}
-		rules = append(rules, userPatternToRule(p, false))
+		r := userPatternToRule(p, include)
+		r.Source = SourceUser
+		out = append(out, r)
 	}
+	return out
+}
 
-	// 3. Built-in safe harbors (filtered by suppress_harbors).
-	for _, hr := range defaultHarborRules {
-		if suppressedHarbors[hr.Pattern] {
-			continue
-		}
-		rules = append(rules, hr)
-	}
-
-	// 4. User safe harbors.
-	for _, h := range userRules.SafeHarbors {
-		p := strings.TrimSpace(h.Pattern)
-		if p == "" {
-			continue
-		}
-		rules = append(rules, userPatternToRule(p, true))
-	}
-
+// BuildEngine creates an Engine from built-in defaults + user rules, in the
+// order MEGA reads .megaignore (the last matching rule decides):
+//  1. built-in excludes (minus suppress_defaults)
+//  2. built-in always-sync directories (minus suppress_harbors)
+//  3. user always-sync directories (safe_harbors)
+//  4. user excludes (ignore_rules.exclude): last, so `ignore add` always wins
+func BuildEngine(userRules UserRules) *Engine {
+	var rules []Rule
+	rules = append(rules, builtinExcludes(userRules)...)
+	rules = append(rules, builtinHarbors(userRules)...)
+	rules = append(rules, userRulesOf(userRules.SafeHarbors, true)...)
+	rules = append(rules, userRulesOf(userRules.Exclude, false)...)
 	return &Engine{Rules: rules}
 }
 
@@ -207,86 +124,73 @@ func userPatternToRule(pattern string, include bool) Rule {
 	}
 }
 
-// GenerateMegaignore produces the .megaignore file content from defaults + user rules.
-// The output is a generated file with a header comment.
+// GenerateMegaignore produces the .megaignore file content from defaults + user
+// rules, in the same order BuildEngine evaluates them.
 func GenerateMegaignore(userRules UserRules) string {
 	var sb strings.Builder
 
 	sb.WriteString("# Generated by ws — do not edit manually.\n")
-	sb.WriteString("# Edit user rules: ws ignore edit\n")
+	sb.WriteString("# Edit the rules: ws ignore edit\n")
 	sb.WriteString("# Source: ws.json (ignore_rules)\n")
 	sb.WriteString("\n")
 
-	suppressedDefaults := make(map[string]bool)
-	for _, s := range userRules.SuppressDefaults {
-		suppressedDefaults[s] = true
-	}
-	suppressedHarbors := make(map[string]bool)
-	for _, s := range userRules.SuppressHarbors {
-		suppressedHarbors[s] = true
+	sb.WriteString("# Built-in rules\n")
+	for _, r := range builtinExcludes(userRules) {
+		sb.WriteString(r.Raw + "\n")
 	}
 
-	// Default .megaignore rules.
-	sb.WriteString("# Default .megaignore rules\n")
-	for _, dr := range defaultExcludeRules {
-		if suppressedDefaults[dr.Pattern] {
-			continue
-		}
-		sb.WriteString(dr.Raw + "\n")
+	sb.WriteString("\n# Built-in always-sync directories\n")
+	for _, r := range builtinHarbors(userRules) {
+		sb.WriteString(r.Raw + "\n")
 	}
 
-	// User .megaignore rules.
-	if len(userRules.Exclude) > 0 {
-		sb.WriteString("\n# User .megaignore rules\n")
-		for _, e := range userRules.Exclude {
-			p := strings.TrimSpace(e.Pattern)
-			if p == "" {
-				continue
-			}
-			r := userPatternToRule(p, false)
-			if e.Note != "" {
-				sb.WriteString("# " + e.Note + "\n")
-			}
-			sb.WriteString(r.Raw + "\n")
-		}
-	}
-
-	// Suppress overrides (override ALL excludes above).
-	sb.WriteString("\n# Suppress overrides\n")
-	for _, hr := range defaultHarborRules {
-		if suppressedHarbors[hr.Pattern] {
-			continue
-		}
-		sb.WriteString(hr.Raw + "\n")
-	}
-
-	// User suppress overrides.
 	if len(userRules.SafeHarbors) > 0 {
-		sb.WriteString("\n# User suppress overrides\n")
-		for _, h := range userRules.SafeHarbors {
-			p := strings.TrimSpace(h.Pattern)
-			if p == "" {
-				continue
-			}
-			r := userPatternToRule(p, true)
-			if h.Note != "" {
-				sb.WriteString("# " + h.Note + "\n")
-			}
-			sb.WriteString(r.Raw + "\n")
-		}
+		sb.WriteString("\n# Always-sync directories (ws.json safe_harbors)\n")
+		writeEntries(&sb, userRules.SafeHarbors, true)
 	}
 
-	// Final sentinel.
+	// Ignored paths come last so they win over every always-sync directory.
+	if len(userRules.Exclude) > 0 {
+		sb.WriteString("\n# Ignored paths (ws ignore add)\n")
+		writeEntries(&sb, userRules.Exclude, false)
+	}
+
 	sb.WriteString("\n# Never sync symlinks (s = symlink target)\n")
 	sb.WriteString("-s:*\n")
 
 	return sb.String()
 }
 
+func writeEntries(sb *strings.Builder, entries []RuleEntry, include bool) {
+	for _, e := range entries {
+		p := strings.TrimSpace(e.Pattern)
+		if p == "" {
+			continue
+		}
+		if e.Note != "" {
+			sb.WriteString("# " + strings.ReplaceAll(e.Note, "\n", " ") + "\n")
+		}
+		sb.WriteString(userPatternToRule(p, include).Raw + "\n")
+	}
+}
+
 // WriteMegaignore generates and writes the .megaignore file from user rules.
 func WriteMegaignore(megaignorePath string, userRules UserRules) error {
 	content := GenerateMegaignore(userRules)
 	return os.WriteFile(megaignorePath, []byte(content), 0o644)
+}
+
+// Stale reports whether the file at megaignorePath differs from what the rules
+// generate. A missing file is stale.
+func Stale(megaignorePath string, userRules UserRules) (bool, error) {
+	data, err := os.ReadFile(megaignorePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return true, nil
+		}
+		return false, err
+	}
+	return string(data) != GenerateMegaignore(userRules), nil
 }
 
 // DefaultRuleStats returns counts of default and user rules for display.

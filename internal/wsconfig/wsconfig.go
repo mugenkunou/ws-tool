@@ -220,6 +220,70 @@ func AddIgnoreExclude(configPath, pattern, note string) (bool, error) {
 	return true, Save(configPath, cfg)
 }
 
+// RemoveIgnoreExclude atomically removes the exclude entry whose pattern is
+// pattern. Returns true if one was found and removed.
+func RemoveIgnoreExclude(configPath, pattern string) (bool, error) {
+	cfg, err := Load(configPath)
+	if err != nil {
+		return false, err
+	}
+	updated := make([]ignore.RuleEntry, 0, len(cfg.IgnoreRules.Exclude))
+	found := false
+	for _, e := range cfg.IgnoreRules.Exclude {
+		if e.Pattern == pattern {
+			found = true
+			continue
+		}
+		updated = append(updated, e)
+	}
+	if !found {
+		return false, nil
+	}
+	cfg.IgnoreRules.Exclude = updated
+	return true, Save(configPath, cfg)
+}
+
+// AddIgnoreMuted atomically adds a workspace-relative path to ignore.muted.
+// Returns true if it was added (not already listed).
+func AddIgnoreMuted(configPath, rel string) (bool, error) {
+	cfg, err := Load(configPath)
+	if err != nil {
+		return false, err
+	}
+	for _, m := range cfg.Ignore.Muted {
+		if m == rel {
+			return false, nil
+		}
+	}
+	cfg.Ignore.Muted = append(cfg.Ignore.Muted, rel)
+	return true, Save(configPath, cfg)
+}
+
+// RemoveIgnoreMuted atomically removes the ignore.muted entry that names rel
+// (in any written form: relative, absolute or with ~). Returns true if one was
+// removed.
+func RemoveIgnoreMuted(configPath, workspacePath, rel string) (bool, error) {
+	cfg, err := Load(configPath)
+	if err != nil {
+		return false, err
+	}
+	updated := make([]string, 0, len(cfg.Ignore.Muted))
+	found := false
+	for _, m := range cfg.Ignore.Muted {
+		n := ignore.NormalizeMuted(workspacePath, []string{m})
+		if len(n) == 1 && n[0] == rel {
+			found = true
+			continue
+		}
+		updated = append(updated, m)
+	}
+	if !found {
+		return false, nil
+	}
+	cfg.Ignore.Muted = updated
+	return true, Save(configPath, cfg)
+}
+
 // AddIgnoreSafeHarbor atomically adds a safe-harbor pattern.
 // Returns true if the pattern was added.
 func AddIgnoreSafeHarbor(configPath, pattern, note string) (bool, error) {

@@ -7,48 +7,6 @@ import (
 	"testing"
 )
 
-func TestUserRulesLoadSaveRoundTrip(t *testing.T) {
-	tmp := t.TempDir()
-	path := filepath.Join(tmp, "ws", "ignore.json")
-
-	rules := DefaultUserRules()
-	rules.Exclude = append(rules.Exclude, RuleEntry{Pattern: "datasets/", Note: "too large"})
-	rules.SafeHarbors = append(rules.SafeHarbors, RuleEntry{Pattern: "Backups/**"})
-	rules.SuppressDefaults = append(rules.SuppressDefaults, "*.log")
-
-	if err := SaveUserRules(path, rules); err != nil {
-		t.Fatalf("save failed: %v", err)
-	}
-
-	loaded, err := LoadUserRules(path)
-	if err != nil {
-		t.Fatalf("load failed: %v", err)
-	}
-
-	if len(loaded.Exclude) != 1 || loaded.Exclude[0].Pattern != "datasets/" {
-		t.Fatalf("expected exclude datasets/, got %+v", loaded.Exclude)
-	}
-	if len(loaded.SafeHarbors) != 1 || loaded.SafeHarbors[0].Pattern != "Backups/**" {
-		t.Fatalf("expected harbor Backups/**, got %+v", loaded.SafeHarbors)
-	}
-	if len(loaded.SuppressDefaults) != 1 || loaded.SuppressDefaults[0] != "*.log" {
-		t.Fatalf("expected suppress *.log, got %+v", loaded.SuppressDefaults)
-	}
-}
-
-func TestLoadUserRulesMissingFileReturnsDefault(t *testing.T) {
-	rules, err := LoadUserRules("/nonexistent/ignore.json")
-	if err != nil {
-		t.Fatalf("expected default on missing file, got error: %v", err)
-	}
-	if rules.Schema != UserRulesSchema {
-		t.Fatalf("expected schema %d, got %d", UserRulesSchema, rules.Schema)
-	}
-	if len(rules.Exclude) != 0 {
-		t.Fatalf("expected empty exclude, got %+v", rules.Exclude)
-	}
-}
-
 func TestBuildEngineWithDefaults(t *testing.T) {
 	engine := BuildEngine(DefaultUserRules())
 
@@ -138,14 +96,6 @@ func TestBuildEngineUserSafeHarbor(t *testing.T) {
 	}
 }
 
-func TestBuildEngineSuppressHarbor(t *testing.T) {
-	// A built-in layout harbor cannot be added as a user safe harbor.
-	_, err := AddUserSafeHarbor("/tmp/fake-ignore.json", "secrets/**", "")
-	if err == nil {
-		t.Fatal("expected error when trying to add secrets/** as user safe harbor")
-	}
-}
-
 func TestGenerateMegaignore(t *testing.T) {
 	rules := DefaultUserRules()
 	rules.Exclude = append(rules.Exclude, RuleEntry{Pattern: "datasets/", Note: "too large"})
@@ -170,31 +120,6 @@ func TestGenerateMegaignore(t *testing.T) {
 	}
 	if !strings.Contains(content, "+g:secrets/**") || strings.Contains(content, "+:ws\n") {
 		t.Fatal("expected the layout safe harbors, not the old ws/ harbor")
-	}
-}
-
-func TestAddUserExcludeDeduplicate(t *testing.T) {
-	tmp := t.TempDir()
-	path := filepath.Join(tmp, "ws", "ignore.json")
-
-	if err := SaveUserRules(path, DefaultUserRules()); err != nil {
-		t.Fatal(err)
-	}
-
-	ok1, err := AddUserExclude(path, "big.bin", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok1 {
-		t.Fatal("expected first add to succeed")
-	}
-
-	ok2, err := AddUserExclude(path, "big.bin", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ok2 {
-		t.Fatal("expected duplicate add to return false")
 	}
 }
 

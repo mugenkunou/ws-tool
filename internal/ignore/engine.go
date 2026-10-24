@@ -7,11 +7,18 @@ import (
 	"strings"
 )
 
+// Rule sources: where a rule comes from.
+const (
+	SourceBuiltin = "builtin" // the ws binary's template
+	SourceUser    = "user"    // ws.json ignore_rules
+)
+
 type Rule struct {
 	Raw     string
 	Include bool
 	Glob    bool
 	Pattern string
+	Source  string // SourceBuiltin or SourceUser; empty for rules read from a file
 }
 
 type Engine struct {
@@ -20,14 +27,15 @@ type Engine struct {
 
 // EvalResult reports whether relPath syncs, and why. The final matching rule
 // wins (last-match-wins): an exclude rule blocks sync, and a later include
-// rule (safe harbor) can hand the path back. SafeHarbor is true when an
-// include override is the reason the path syncs — the path lives inside a
-// suppressed directory, whose violations `ws ignore scan` downgrades and the
-// TUI shows on its suppressed-warnings level. OverriddenBy is the harbor
-// rule that last matched.
+// rule (an always-sync directory) can hand the path back. SafeHarbor is true
+// when such an include rule is the reason the path syncs; its warnings count
+// as muted. OverriddenBy is the include rule that last matched. RuleSource is
+// where the deciding rule comes from (SourceBuiltin, SourceUser, or empty when
+// no rule matches).
 type EvalResult struct {
 	Included     bool   `json:"included"`
 	Rule         string `json:"rule"`
+	RuleSource   string `json:"rule_source,omitempty"`
 	SafeHarbor   bool   `json:"safe_harbor,omitempty"`
 	OverriddenBy string `json:"overridden_by,omitempty"`
 }
@@ -77,6 +85,7 @@ func (e *Engine) Evaluate(relPath string, isDir bool) EvalResult {
 			}
 			result.Included = rule.Include
 			result.Rule = rule.Raw
+			result.RuleSource = rule.Source
 		}
 	}
 	// Suppressed = included by a safe-harbor include override, even when no

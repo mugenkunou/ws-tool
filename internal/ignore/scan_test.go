@@ -224,10 +224,10 @@ func TestScanSafeHarborDowngradesToInfo(t *testing.T) {
 
 	var harborViolation, normalViolation *Violation
 	for i, v := range violations {
-		if v.Type == "bloat" && v.InSafeHarbor {
+		if v.Type == "bloat" && v.Muted {
 			harborViolation = &violations[i]
 		}
-		if v.Type == "bloat" && !v.InSafeHarbor {
+		if v.Type == "bloat" && !v.Muted {
 			normalViolation = &violations[i]
 		}
 	}
@@ -266,7 +266,7 @@ func TestScanSafeHarborDowngradesToInfo(t *testing.T) {
 	}
 
 	for _, v := range violations {
-		if v.Type == "depth" && v.InSafeHarbor {
+		if v.Type == "depth" && v.Muted {
 			if v.Severity != "INFO" {
 				t.Fatalf("safe harbor depth violation should be INFO, got %s", v.Severity)
 			}

@@ -40,6 +40,7 @@ var aliasLive = map[string]bool{
 	"scratch": true,
 	"trash":   true,
 	"cron":    true,
+	"ignore":  true,
 	// Workspace commands.
 	"config":      true,
 	"completions": true,

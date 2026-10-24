@@ -10,14 +10,14 @@ import (
 )
 
 type Violation struct {
-	Group        string `json:"group"`
-	Type         string `json:"type"`
-	Severity     string `json:"severity"`
-	Path         string `json:"path"`
-	Message      string `json:"message"`
-	SizeBytes    int64  `json:"size_bytes,omitempty"`
-	Depth        int    `json:"depth,omitempty"`
-	InSafeHarbor bool   `json:"in_safe_harbor,omitempty"`
+	Group     string `json:"group"`
+	Type      string `json:"type"`
+	Severity  string `json:"severity"`
+	Path      string `json:"path"`
+	Message   string `json:"message"`
+	SizeBytes int64  `json:"size_bytes,omitempty"`
+	Depth     int    `json:"depth,omitempty"`
+	Muted     bool   `json:"muted,omitempty"`
 }
 
 type ScanOptions struct {
@@ -26,10 +26,14 @@ type ScanOptions struct {
 	CritSizeMB    int
 	MaxDepth      int
 	Engine        *Engine
+	// Muted is ws.json ignore.muted: paths whose warnings are hidden. Entries
+	// are workspace-relative (see NormalizeMuted).
+	Muted []string
 }
 
 func Scan(opts ScanOptions) ([]Violation, error) {
 	violations := make([]Violation, 0)
+	opts.Muted = NormalizeMuted(opts.WorkspacePath, opts.Muted)
 
 	err := filepath.WalkDir(opts.WorkspacePath, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -48,8 +52,10 @@ func Scan(opts ScanOptions) ([]Violation, error) {
 		}
 		rel = filepath.ToSlash(rel)
 
-		// Evaluate inclusion and safe harbor status in a single pass.
-		inSafeHarbor := false
+		// Evaluate inclusion and muted status in a single pass. A warning is
+		// muted when the path lies under an always-sync directory or under an
+		// ignore.muted entry.
+		muted := false
 		if opts.Engine != nil {
 			eval := opts.Engine.Evaluate(rel, d.IsDir())
 			if !eval.Included {
@@ -58,23 +64,26 @@ func Scan(opts ScanOptions) ([]Violation, error) {
 				}
 				return nil
 			}
-			inSafeHarbor = eval.SafeHarbor
+			muted = eval.SafeHarbor
+		}
+		if !muted {
+			_, muted = MutedBy(opts.Muted, rel)
 		}
 
 		depth := countDepth(rel)
 		if depth > opts.MaxDepth {
 			sev := "WARNING"
-			if inSafeHarbor {
+			if muted {
 				sev = "INFO"
 			}
 			violations = append(violations, Violation{
-				Group:        "Ignore",
-				Type:         "depth",
-				Severity:     sev,
-				Path:         rel,
-				Message:      fmt.Sprintf("depth %d exceeds max %d", depth, opts.MaxDepth),
-				Depth:        depth,
-				InSafeHarbor: inSafeHarbor,
+				Group:    "Ignore",
+				Type:     "depth",
+				Severity: sev,
+				Path:     rel,
+				Message:  fmt.Sprintf("depth %d exceeds max %d", depth, opts.MaxDepth),
+				Depth:    depth,
+				Muted:    muted,
 			})
 		}
 
@@ -88,31 +97,31 @@ func Scan(opts ScanOptions) ([]Violation, error) {
 		}
 		if opts.CritSizeMB > 0 && info.Size() > int64(opts.CritSizeMB)*1024*1024 {
 			sev := "CRITICAL"
-			if inSafeHarbor {
+			if muted {
 				sev = "INFO"
 			}
 			violations = append(violations, Violation{
-				Group:        "Ignore",
-				Type:         "bloat",
-				Severity:     sev,
-				Path:         rel,
-				Message:      fmt.Sprintf("%s exceeds critical threshold %s", style.HumanBytes(info.Size()), style.HumanBytes(int64(opts.CritSizeMB)*1024*1024)),
-				SizeBytes:    info.Size(),
-				InSafeHarbor: inSafeHarbor,
+				Group:     "Ignore",
+				Type:      "bloat",
+				Severity:  sev,
+				Path:      rel,
+				Message:   fmt.Sprintf("%s exceeds critical threshold %s", style.HumanBytes(info.Size()), style.HumanBytes(int64(opts.CritSizeMB)*1024*1024)),
+				SizeBytes: info.Size(),
+				Muted:     muted,
 			})
 		} else if opts.WarnSizeMB > 0 && info.Size() > int64(opts.WarnSizeMB)*1024*1024 {
 			sev := "WARNING"
-			if inSafeHarbor {
+			if muted {
 				sev = "INFO"
 			}
 			violations = append(violations, Violation{
-				Group:        "Ignore",
-				Type:         "bloat",
-				Severity:     sev,
-				Path:         rel,
-				Message:      fmt.Sprintf("%s exceeds warning threshold %s", style.HumanBytes(info.Size()), style.HumanBytes(int64(opts.WarnSizeMB)*1024*1024)),
-				SizeBytes:    info.Size(),
-				InSafeHarbor: inSafeHarbor,
+				Group:     "Ignore",
+				Type:      "bloat",
+				Severity:  sev,
+				Path:      rel,
+				Message:   fmt.Sprintf("%s exceeds warning threshold %s", style.HumanBytes(info.Size()), style.HumanBytes(int64(opts.WarnSizeMB)*1024*1024)),
+				SizeBytes: info.Size(),
+				Muted:     muted,
 			})
 		}
 
@@ -132,8 +141,11 @@ func Check(engine *Engine, workspacePath, path string, isDir bool) (EvalResult, 
 		return EvalResult{}, "", err
 	}
 	rel = filepath.ToSlash(rel)
-	if strings.HasPrefix(rel, "../") {
-		return EvalResult{}, rel, nil
+	if rel == ".." || strings.HasPrefix(rel, "../") {
+		return EvalResult{}, rel, fmt.Errorf("path is outside the workspace %s: %s", workspacePath, path)
+	}
+	if rel == "." {
+		rel = ""
 	}
 	if engine == nil {
 		return EvalResult{Included: true, Rule: "<default>"}, rel, nil
@@ -160,14 +172,15 @@ func detectProjectMeta(opts ScanOptions) []Violation {
 		root := filepath.Dir(path)
 		if name == "go.mod" {
 			candidate := filepath.Join(root, "bin")
-			if includePath(opts, candidate) && exists(candidate) {
+			if ok, muted := includePath(opts, candidate); ok && exists(candidate) {
 				rel, _ := filepath.Rel(opts.WorkspacePath, candidate)
 				violations = append(violations, Violation{
 					Group:    "Ignore",
 					Type:     "project-meta",
-					Severity: "WARNING",
+					Severity: metaSeverity(muted),
 					Path:     filepath.ToSlash(rel),
 					Message:  "Go project build output directory should be excluded",
+					Muted:    muted,
 				})
 			}
 		}
@@ -175,14 +188,15 @@ func detectProjectMeta(opts ScanOptions) []Violation {
 		if name == "package.json" {
 			for _, dir := range []string{"dist", "build", "node_modules"} {
 				candidate := filepath.Join(root, dir)
-				if includePath(opts, candidate) && exists(candidate) {
+				if ok, muted := includePath(opts, candidate); ok && exists(candidate) {
 					rel, _ := filepath.Rel(opts.WorkspacePath, candidate)
 					violations = append(violations, Violation{
 						Group:    "Ignore",
 						Type:     "project-meta",
-						Severity: "WARNING",
+						Severity: metaSeverity(muted),
 						Path:     filepath.ToSlash(rel),
 						Message:  "Node project build artifact directory should be excluded",
+						Muted:    muted,
 					})
 				}
 			}
@@ -194,21 +208,40 @@ func detectProjectMeta(opts ScanOptions) []Violation {
 	return dedupe(violations)
 }
 
-func includePath(opts ScanOptions, absPath string) bool {
+// metaSeverity is a project-meta finding's severity: muted ones are INFO.
+func metaSeverity(muted bool) string {
+	if muted {
+		return "INFO"
+	}
+	return "WARNING"
+}
+
+// includePath reports whether absPath syncs and whether its warnings are muted
+// (under an always-sync directory or an ignore.muted entry).
+func includePath(opts ScanOptions, absPath string) (included, muted bool) {
 	rel, err := filepath.Rel(opts.WorkspacePath, absPath)
 	if err != nil {
-		return false
+		return false, false
 	}
 	rel = filepath.ToSlash(rel)
 	if strings.HasPrefix(rel, "../") {
-		return false
+		return false, false
 	}
 	if opts.Engine == nil {
-		return true
+		_, muted = MutedBy(opts.Muted, rel)
+		return true, muted
 	}
 	st, err := os.Stat(absPath)
 	isDir := err == nil && st.IsDir()
-	return opts.Engine.Evaluate(rel, isDir).Included
+	eval := opts.Engine.Evaluate(rel, isDir)
+	if !eval.Included {
+		return false, false
+	}
+	muted = eval.SafeHarbor
+	if !muted {
+		_, muted = MutedBy(opts.Muted, rel)
+	}
+	return true, muted
 }
 
 func exists(path string) bool {
