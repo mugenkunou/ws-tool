@@ -405,6 +405,11 @@ func secretsArea(msg secrets.LoadedMsg) area {
 		a.issues = append(a.issues, issue{sev: sevWarn, screen: nav.ScreenSecrets,
 			text: "Pass store has no git remote — secrets live only on this machine"})
 	}
+	if h.Initialized && msg.Health.CopyCommand != "" {
+		a.issues = append(a.issues, issue{sev: sevInfo, screen: nav.ScreenSecrets, advice: true,
+			text:    "Your pass store syncs only through its own git remote. A copy in the workspace would sync with MEGA too.",
+			prefill: msg.Health.CopyCommand})
+	}
 	return a
 }
 

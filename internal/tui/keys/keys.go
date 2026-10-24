@@ -420,61 +420,41 @@ func (k IgnoreMap) FullHelp() [][]key.Binding {
 	}
 }
 
-// SecretsMap is the binding set for the secrets screen. Fix actions apply
-// to the selected violation, except AllowAll.
+// SecretsMap is the binding set for the secrets screen (spec §6.5). `a` is
+// allow here: the one screen where a global letter takes the screen's own verb.
 type SecretsMap struct {
-	Table          table.KeyMap
-	View           key.Binding
-	Allowlist      key.Binding
-	AllowAll       key.Binding
-	Exclude        key.Binding
-	StorePass      key.Binding
-	SkipDir        key.Binding
-	Audit          key.Binding
-	PassPush       key.Binding
-	PassLog        key.Binding
-	PassRemote     key.Binding
-	Setup          key.Binding
-	CredSetup      key.Binding
-	CredStatus     key.Binding
-	CredDisconnect key.Binding
-	Back           key.Binding
+	Table  table.KeyMap
+	View   key.Binding // enter: the finding in context (cursor)
+	Allow  key.Binding // a: allow, a false positive (selected)
+	Ignore key.Binding // i: ignore the file (selected)
+	Mute   key.Binding // m: mute a directory (cursor)
+	Store  key.Binding // s: store the value in pass (cursor)
+	Back   key.Binding
 }
 
 // Secrets returns bindings for the secrets screen.
 func Secrets() SecretsMap {
 	return SecretsMap{
-		Table:          Table(),
-		View:           key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "view context")),
-		Allowlist:      key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "allowlist")),
-		AllowAll:       key.NewBinding(key.WithKeys("L"), key.WithHelp("L", "allowlist all")),
-		Exclude:        key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "exclude file")),
-		StorePass:      key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "move to pass")),
-		SkipDir:        key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "skip dir")),
-		Audit:          key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "audit pass store")),
-		PassPush:       key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "push pass store")),
-		PassLog:        key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "pass git log")),
-		PassRemote:     key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "set pass remote")),
-		Setup:          key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "pass setup…")),
-		CredSetup:      key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "credential setup…")),
-		CredStatus:     key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "credential status…")),
-		CredDisconnect: key.NewBinding(key.WithKeys("X"), key.WithHelp("X", "credential disconnect…")),
-		Back:           back(),
+		Table:  Table(),
+		View:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "show")),
+		Allow:  key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "allow")),
+		Ignore: key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "ignore")),
+		Mute:   key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mute")),
+		Store:  key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "store")),
+		Back:   back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
 func (k SecretsMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.View, k.Allowlist, k.Exclude, k.StorePass, k.SkipDir}
+	return []key.Binding{k.View, k.Allow, k.Ignore, k.Mute, k.Store}
 }
 
 // FullHelp implements help.KeyMap.
 func (k SecretsMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.View, k.Back},
-		{k.Allowlist, k.AllowAll, k.Exclude, k.StorePass, k.SkipDir},
-		{k.Audit, k.PassPush, k.PassLog, k.PassRemote, k.Setup},
-		{k.CredStatus, k.CredSetup, k.CredDisconnect},
+		{k.Allow, k.Ignore, k.Mute, k.Store},
 	}
 }
 

@@ -1,10 +1,12 @@
-// Package secrets is the secrets screen: pass store and credential helper
-// health, `secret ls` findings with the `secret allow`, `ignore add`, `secret store`
-// and `secret mute` actions, a pass store audit, and the pass backup (push, log,
-// remote). The wizards (`pass init`, `credential enable|status|disable`) are
-// handed to the CLI.
+// Package secrets is the secrets screen (spec §6.5): pass store and credential
+// helper health above the `secret ls` findings, with the keys allow, ignore the
+// file, mute a directory and store in pass. The `pass` and `credential` commands
+// are `:` commands: views (`pass status`, `pass audit`, `pass backup status`)
+// and checklists run here, the wizards (`pass init`, `pass backup enable`,
+// `credential enable|disable`) and the paged `credential status` are handed to
+// the CLI.
 //
-// Navigation levels: list → detail (context, audit, log). esc returns to the
+// Navigation levels: list → detail (context, status, audit). esc returns to the
 // list; esc in the list asks the app to go up.
 package secrets
 
@@ -42,6 +44,10 @@ type Health struct {
 	Pass       secret.PassHealth
 	RemoteURL  string
 	CredHelper bool
+	// CopyCommand is the `dotfile add` command that would put the pass store
+	// into the workspace, what `ws pass status` shows as its tip. Empty when the
+	// store is already there or there is no store to copy.
+	CopyCommand string
 }
 
 // LoadedMsg carries scan violations and health. Other components (the
@@ -68,9 +74,7 @@ type step int
 const (
 	stepFix step = iota
 	stepPassEntryName
-	stepSkipDirInput
-	stepRemoteURL
-	stepPassGit
+	stepMuteDirInput
 )
 
 type handoverTag int
@@ -128,6 +132,12 @@ func Load(e env.Env) tea.Cmd {
 		if h.Pass.GitBacked && h.Pass.GitRemote {
 			h.RemoteURL = secret.GitRemoteURL()
 		}
+		if h.Pass.Initialized && h.Pass.StorePath != "" {
+			if _, ok := secret.WorkspaceCopy(h.Pass.StorePath, e.Paths.Workspace); !ok {
+				h.CopyCommand = fmt.Sprintf("dotfile add %s --dir --to %s", h.Pass.StorePath,
+					filepath.Join(e.Paths.Workspace, "secrets", "dotfiles", "password-store"))
+			}
+		}
 		if out, err := exec.Command("git", "config", "--global", "credential.helper").Output(); err == nil {
 			v := strings.TrimSpace(string(out))
 			h.CredHelper = strings.Contains(v, "ws") || strings.Contains(v, "git-credential-helper")
@@ -173,26 +183,46 @@ func audit() tea.Cmd {
 	return func() tea.Msg {
 		res := secret.AuditPassStore(secret.CheckPass())
 		if len(res.Findings) == 0 {
-			return detailMsg{title: "Pass store audit", text: theme.OK.Render("✔ No findings.")}
+			return detailMsg{title: "Pass store audit", text: theme.OK.Render("✔ No problems found in the pass store.")}
 		}
 		var b strings.Builder
 		for _, f := range res.Findings {
+			if f.Entry == "" {
+				b.WriteString(theme.Warn.Render("⚠ ") + f.Message + "\n")
+				continue
+			}
 			b.WriteString(theme.Warn.Render("⚠ ") + theme.Bold.Render(f.Entry) + "  " + f.Message + "\n")
 		}
 		return detailMsg{title: "Pass store audit", text: strings.TrimRight(b.String(), "\n")}
 	}
 }
 
-func passLog() tea.Cmd {
+// viewCLI shows what a read-only CLI command prints, so the view is the CLI's
+// own output and cannot drift from it.
+func viewCLI(e env.Env, title string, args ...string) tea.Cmd {
 	return func() tea.Msg {
-		out, err := secret.GitLog(30)
+		c := handover.WS(e.Paths, append(args, "--no-color")...)
+		out, err := c.CombinedOutput()
+		text := strings.TrimRight(string(out), "\n")
+		if err != nil && text == "" {
+			text = theme.Error.Render(err.Error())
+		}
+		return detailMsg{title: title, text: text}
+	}
+}
+
+// runCLI is a checklist action that runs a CLI command without its own prompt
+// (`--quiet` accepts it), the checklist having asked already.
+func runCLI(e env.Env, args ...string) func() error {
+	return func() error {
+		out, err := handover.WS(e.Paths, append(args, "--quiet")...).CombinedOutput()
 		if err != nil {
-			return detailMsg{title: "Pass store git log", text: theme.Error.Render(err.Error())}
+			if msg := strings.TrimSpace(string(out)); msg != "" {
+				return fmt.Errorf("%s", msg)
+			}
+			return err
 		}
-		if strings.TrimSpace(out) == "" {
-			out = theme.Muted.Render("(no commits)")
-		}
-		return detailMsg{title: "Pass store git log", text: strings.TrimRight(out, "\n")}
+		return nil
 	}
 }
 
@@ -209,10 +239,6 @@ func (m Model) rescan() (Model, tea.Cmd) {
 	m.scanning = true
 	m.list = m.list.SetLoading()
 	return m, Load(m.env)
-}
-
-func (m Model) wizard(args ...string) tea.Cmd {
-	return handover.Run(handover.Pause(handover.WS(m.env.Paths, args...)), handoverWizard)
 }
 
 // Update implements nav.Component.
@@ -241,6 +267,13 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		}
 		m.list = m.list.SetItems(msg.Violations)
 		return m, nil
+	case nav.FilterMsg:
+		m.list = m.list.SetFilter(msg.Filter)
+		return m, nil
+	case nav.CommandMsg:
+		m.level = levelList
+		next, cmd, _ := reslist.RunCommand(m, m.list, commands, msg)
+		return next, cmd
 	case detailMsg:
 		m.detailTitle = msg.title
 		m.detail.SetContent(msg.text)
@@ -281,71 +314,161 @@ func (m Model) openDetail(title string, cmd tea.Cmd) (Model, tea.Cmd) {
 	return m, cmd
 }
 
+// The functions below are shared by the keys and the `:` commands.
+
+// show opens the finding in context (enter).
+func (m Model) show(rows []secret.Violation) (Model, tea.Cmd) {
+	return m.openDetail("", viewContext(m.env, rows[0]))
+}
+
+// allow allowlists the findings as false positives (a).
+func (m Model) allow(rows []secret.Violation) (Model, tea.Cmd) {
+	acts := secret.AllowActions(m.env.Paths.Config, m.env.Paths.Workspace, rows, nil)
+	return m.confirmActions("secret.allow", "Allow", acts), nil
+}
+
+// ignoreFiles stops syncing the findings' files (i), as `ignore add` does.
+func (m Model) ignoreFiles(rows []secret.Violation) (Model, tea.Cmd) {
+	var acts []plan.Action
+	seen := map[string]bool{}
+	for _, v := range rows {
+		if a := m.ignoreAction(v); !seen[a.ID] {
+			seen[a.ID] = true
+			acts = append(acts, a)
+		}
+	}
+	return m.confirmActions("ignore.add", "Ignore", acts), nil
+}
+
+// muteDir asks which directory to mute, starting from the file's (m).
+func (m Model) muteDir(rows []secret.Violation) (Model, tea.Cmd) {
+	var cmd tea.Cmd
+	m.modal, cmd = m.modal.Prompt(stepMuteDirInput, prompt.New("Mute a directory in secret scans",
+		prompt.WithHint("Saved to secret.skip_dirs in config."),
+		prompt.WithValue(filepath.Dir(m.abs(rows[0])))))
+	return m, cmd
+}
+
+// store asks for the pass entry name for the finding's value (s).
+func (m Model) store(rows []secret.Violation) (Model, tea.Cmd) {
+	if h := m.health.Pass; !h.Installed || !h.Initialized {
+		return m, nav.Notify(nav.LevelWarn, "The pass store is not initialized: run :pass init")
+	}
+	v := rows[0]
+	m.pending = v
+	var cmd tea.Cmd
+	m.modal, cmd = m.modal.Prompt(stepPassEntryName, prompt.New("Store this secret in pass",
+		prompt.WithHint(fmt.Sprintf("Entry name for %s:%d", m.abs(v), v.Line)),
+		prompt.WithValue(secret.SuggestPassEntry(v.Path, v.Snippet))))
+	return m, cmd
+}
+
 // actions is every secrets key and the rows it acts on.
 var actions = func() []reslist.Action[Model, secret.Violation] {
 	k := keys.Secrets()
-	global := func(f func(Model) (Model, tea.Cmd)) func(Model, []secret.Violation) (Model, tea.Cmd) {
-		return func(m Model, _ []secret.Violation) (Model, tea.Cmd) { return f(m) }
-	}
-	each := func(title string, build func(Model, secret.Violation) plan.Action) func(Model, []secret.Violation) (Model, tea.Cmd) {
-		return func(m Model, rows []secret.Violation) (Model, tea.Cmd) {
-			return m.confirmEach(stepFix, title, rows, build), nil
-		}
-	}
 	return []reslist.Action[Model, secret.Violation]{
-		{Key: k.View, Scope: reslist.Cursor, Do: func(m Model, rows []secret.Violation) (Model, tea.Cmd) {
-			return m.openDetail("", viewContext(m.env, rows[0]))
-		}},
-		{Key: k.Allowlist, Scope: reslist.Selected, Do: each("Allowlist", Model.allowAction)},
-		{Key: k.AllowAll, Scope: reslist.All, Do: each("Allowlist", Model.allowAction)},
-		{Key: k.Exclude, Scope: reslist.Selected, Do: each("Exclude from sync", Model.excludeAction)},
-		{Key: k.StorePass, Scope: reslist.Cursor, Do: Model.promptStorePass},
-		{Key: k.SkipDir, Scope: reslist.Cursor, Do: func(m Model, rows []secret.Violation) (Model, tea.Cmd) {
-			m.pending = rows[0]
-			var cmd tea.Cmd
-			m.modal, cmd = m.modal.Prompt(stepSkipDirInput, prompt.New("Skip a directory in secret scans",
-				prompt.WithHint("Saved to secret.skip_dirs in config."),
-				prompt.WithValue(filepath.Dir(m.abs(rows[0])))))
-			return m, cmd
-		}},
-		{Key: k.Audit, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
-			return m.openDetail("Pass store audit", audit())
-		})},
-		{Key: k.PassLog, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
-			if !m.health.Pass.GitBacked {
-				return m, nav.Notify(nav.LevelWarn, "Pass store is not git-backed — press S to run setup")
-			}
-			return m.openDetail("Pass store git log", passLog())
-		})},
-		{Key: k.PassPush, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
-			if ph := m.health.Pass; !ph.GitBacked || !ph.GitRemote {
-				return m, nav.Notify(nav.LevelWarn, "Pass store has no git remote — press o to set one")
-			}
-			return m.confirmOne(stepPassGit, "Push pass store", plan.Action{
-				ID: "pass-push", Description: "Push pass store to " + m.health.RemoteURL, Execute: secret.GitPush,
-			}), nil
-		})},
-		{Key: k.PassRemote, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
-			if !m.health.Pass.GitBacked {
-				return m, nav.Notify(nav.LevelWarn, "Pass store is not git-backed — press S to run setup")
-			}
-			var cmd tea.Cmd
-			m.modal, cmd = m.modal.Prompt(stepRemoteURL, prompt.New("Set pass store git remote",
-				prompt.WithValue(m.health.RemoteURL), prompt.WithHint("Use a private repository.")))
-			return m, cmd
-		})},
-		{Key: k.Setup, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) { return m, m.wizard("pass", "init") })},
-		{Key: k.CredSetup, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
-			return m, m.wizard("credential", "enable")
-		})},
-		{Key: k.CredStatus, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
-			return m, handover.Run(handover.Paged(handover.WS(m.env.Paths, "credential", "status")), handoverWizard)
-		})},
-		{Key: k.CredDisconnect, Scope: reslist.Global, Do: global(func(m Model) (Model, tea.Cmd) {
-			return m, m.wizard("credential", "disable")
-		})},
+		{Key: k.View, Scope: reslist.Cursor, Do: Model.show},
+		{Key: k.Allow, Scope: reslist.Selected, Do: Model.allow},
+		{Key: k.Ignore, Scope: reslist.Selected, Do: Model.ignoreFiles},
+		{Key: k.Mute, Scope: reslist.Cursor, Do: Model.muteDir},
+		{Key: k.Store, Scope: reslist.Cursor, Do: Model.store},
 	}
 }()
+
+// wizard hands the terminal to the CLI, then refreshes.
+func (m Model) wizard(args ...string) tea.Cmd {
+	return handover.Run(handover.Pause(handover.WS(m.env.Paths, args...)), handoverWizard)
+}
+
+type commandFn = func(Model, []secret.Violation, []string) (Model, tea.Cmd)
+
+// viewCommand opens a view of what the CLI prints.
+func viewCommand(title string, args ...string) commandFn {
+	return func(m Model, _ []secret.Violation, _ []string) (Model, tea.Cmd) {
+		return m.openDetail(title, viewCLI(m.env, title, args...))
+	}
+}
+
+// wizardCommand hands the terminal to the CLI command.
+func wizardCommand(args ...string) commandFn {
+	return func(m Model, _ []secret.Violation, _ []string) (Model, tea.Cmd) { return m, m.wizard(args...) }
+}
+
+// cliChecklist is a checklist with one action that runs the CLI command.
+func cliChecklist(command, title, desc string, args ...string) commandFn {
+	return func(m Model, _ []secret.Violation, _ []string) (Model, tea.Cmd) {
+		return m.confirmActions(command, title, []plan.Action{{
+			ID: command, Description: desc, Execute: runCLI(m.env, args...),
+		}}), nil
+	}
+}
+
+// backupPush commits and pushes the pass store: needs the git remote.
+func (m Model) backupPush(rows []secret.Violation, args []string) (Model, tea.Cmd) {
+	if ph := m.health.Pass; !ph.GitBacked || !ph.GitRemote {
+		return m, nav.Notify(nav.LevelWarn, "Pass backup is not enabled: run :pass backup enable")
+	}
+	return cliChecklist("pass.backup.push", "Push the pass store",
+		"Commit pending changes and push the pass store to "+m.health.RemoteURL, "pass", "backup", "push")(m, rows, args)
+}
+
+// unmute scans directories again: `unmute <dir>`. A directory muted by a parent
+// is refused, as the CLI does.
+func (m Model) unmute(_ []secret.Violation, args []string) (Model, tea.Cmd) {
+	if len(args) == 0 {
+		return m, nav.Notify(nav.LevelWarn, "usage: unmute <dir>")
+	}
+	cfg, err := wsconfig.Load(m.env.Paths.Config)
+	if err != nil {
+		return m, nav.Notify(nav.LevelError, err.Error())
+	}
+	var acts []plan.Action
+	seen := map[string]bool{}
+	for _, a := range args {
+		rel, err := secret.WorkspaceRelDir(m.env.Paths.Workspace, a)
+		if err != nil {
+			return m, nav.Notify(nav.LevelError, err.Error())
+		}
+		by, exact, muted := secret.MutedBy(m.env.Paths.Workspace, cfg.Secret.SkipDirs, rel)
+		switch {
+		case seen[rel]:
+		case !muted:
+			return m, nav.Notify(nav.LevelWarn, style.AbsPath(m.env.Paths.Workspace, rel)+" is not muted")
+		case !exact:
+			return m, nav.Notify(nav.LevelWarn, fmt.Sprintf("%s is muted by %s; unmute that directory instead",
+				style.AbsPath(m.env.Paths.Workspace, rel), style.AbsPath(m.env.Paths.Workspace, by)))
+		default:
+			acts = append(acts, secret.UnmuteAction(m.env.Paths.Config, m.env.Paths.Workspace, rel))
+		}
+		seen[rel] = true
+	}
+	return m.confirmActions("secret.unmute", "Unmute", acts), nil
+}
+
+// commands are the screen's `:` commands (spec §6.5): the CLI's words.
+var commands = []reslist.Command[Model, secret.Violation]{
+	{Name: "unmute", Args: "<dir>", Help: "scan a muted directory again", Scope: reslist.Global, Do: Model.unmute},
+	{Name: "pass init", Help: "set up the pass store (hands over to the CLI)", Scope: reslist.Global, Do: wizardCommand("pass", "init")},
+	{Name: "pass status", Help: "pass store and credential helper health", Scope: reslist.Global, Do: viewCommand("Pass status", "pass", "status")},
+	{Name: "pass audit", Help: "check the pass store for weak spots", Scope: reslist.Global,
+		Do: func(m Model, _ []secret.Violation, _ []string) (Model, tea.Cmd) {
+			return m.openDetail("Pass store audit", audit())
+		}},
+	{Name: "pass backup enable", Help: "back the pass store up to a git remote (hands over to the CLI)", Scope: reslist.Global, Do: wizardCommand("pass", "backup", "enable")},
+	{Name: "pass backup disable", Help: "stop backing the pass store up", Scope: reslist.Global,
+		Do: cliChecklist("pass.backup.disable", "Disable the pass backup", "Remove the pass backup remote and its cron job", "pass", "backup", "disable")},
+	{Name: "pass backup status", Help: "remote, ahead/behind, recent commits", Scope: reslist.Global, Do: viewCommand("Pass backup", "pass", "backup", "status")},
+	{Name: "pass backup push", Help: "commit and push the pass store", Scope: reslist.Global, Do: Model.backupPush},
+	{Name: "credential enable", Help: "set up the git credential helper (hands over to the CLI)", Scope: reslist.Global, Do: wizardCommand("credential", "enable")},
+	{Name: "credential disable", Help: "remove the git credential helper (hands over to the CLI)", Scope: reslist.Global, Do: wizardCommand("credential", "disable")},
+	{Name: "credential status", Help: "credential helper per remote (paged)", Scope: reslist.Global,
+		Do: func(m Model, _ []secret.Violation, _ []string) (Model, tea.Cmd) {
+			return m, handover.Run(handover.Paged(handover.WS(m.env.Paths, "credential", "status")), handoverWizard)
+		}},
+}
+
+// Commands implements nav.Commander.
+func (m Model) Commands() []nav.CommandInfo { return reslist.CommandInfos(commands) }
 
 func (m Model) updateList(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 	if l, cmd, ok := m.list.HandleKey(k); ok {
@@ -364,19 +487,6 @@ func (m Model) updateList(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) promptStorePass(rows []secret.Violation) (Model, tea.Cmd) {
-	if !m.health.Pass.Initialized {
-		return m, nav.Notify(nav.LevelWarn, "Pass store not initialized — press S to run setup")
-	}
-	v := rows[0]
-	m.pending = v
-	var cmd tea.Cmd
-	m.modal, cmd = m.modal.Prompt(stepPassEntryName, prompt.New("Store this secret in pass",
-		prompt.WithHint(fmt.Sprintf("Entry name for %s:%d", m.abs(v), v.Line)),
-		prompt.WithValue(secret.SuggestPassEntry(v.Path, v.Snippet))))
-	return m, cmd
-}
-
 func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 	switch st {
 	case stepPassEntryName:
@@ -384,8 +494,13 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 		if r.Cancelled {
 			return m, nil
 		}
-		return m.confirmOne(stepFix, "Move to pass", m.passAction(m.pending, r.Value)), nil
-	case stepSkipDirInput:
+		entry := strings.TrimSpace(r.Value)
+		if err := validEntryName(entry); err != nil {
+			return m, nav.Notify(nav.LevelError, err.Error())
+		}
+		return m.confirmActions("secret.store", "Store in pass",
+			[]plan.Action{secret.StoreAction(m.env.Paths.Config, m.env.Paths.Workspace, m.pending, entry)}), nil
+	case stepMuteDirInput:
 		r := msg.(prompt.ResultMsg)
 		if r.Cancelled {
 			return m, nil
@@ -394,22 +509,8 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 		if err != nil {
 			return m, nav.Notify(nav.LevelError, err.Error())
 		}
-		cfgPath := m.env.Paths.Config
-		return m.confirmOne(stepFix, "Skip directory", plan.Action{
-			ID:          "skip-dir-" + rel,
-			Description: "Skip " + style.AbsPath(m.env.Paths.Workspace, rel) + " in secret scans",
-			Execute:     func() error { return secret.AddSkipDir(cfgPath, rel) },
-		}), nil
-	case stepRemoteURL:
-		r := msg.(prompt.ResultMsg)
-		if r.Cancelled {
-			return m, nil
-		}
-		url := r.Value
-		return m.confirmOne(stepPassGit, "Pass store remote", plan.Action{
-			ID: "add-remote", Description: "Set pass git remote to " + url,
-			Execute: func() error { return secret.AddGitRemote(url) },
-		}), nil
+		return m.confirmActions("secret.mute", "Mute",
+			[]plan.Action{secret.MuteAction(m.env.Paths.Config, m.env.Paths.Workspace, rel)}), nil
 	}
 	done := msg.(confirm.DoneMsg)
 	if done.Result.Aborted {
@@ -424,45 +525,40 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 	return m, tea.Batch(nav.Notify(level, confirm.Summary(done.Result)), cmd)
 }
 
-func (m Model) abs(v secret.Violation) string { return style.AbsPath(m.env.Paths.Workspace, v.Path) }
-
-func (m Model) confirmOne(st step, title string, a plan.Action) Model {
-	m.modal = m.modal.Confirm(st, confirm.New(title, plan.Plan{Command: "secret.fix", Actions: []plan.Action{a}}))
-	return m
-}
-
-// confirmEach opens a checklist with one action per row. Findings in one
-// file share an exclude.
-func (m Model) confirmEach(st step, title string, rows []secret.Violation, action func(Model, secret.Violation) plan.Action) Model {
-	p := plan.Plan{Command: "secret.fix"}
-	seen := map[string]bool{}
-	for _, v := range rows {
-		a := action(m, v)
-		if !seen[a.ID] {
-			seen[a.ID] = true
-			p.Actions = append(p.Actions, a)
+// validEntryName rejects an entry name that would leave the pass store, as
+// `secret store` does.
+func validEntryName(entry string) error {
+	if entry == "" {
+		return fmt.Errorf("the pass entry name is empty")
+	}
+	if strings.HasPrefix(entry, "/") || strings.HasPrefix(entry, "~") {
+		return fmt.Errorf("pass entry %q must be a name inside the store, such as myapp/password", entry)
+	}
+	for _, part := range strings.Split(entry, "/") {
+		if part == ".." || part == "." || part == "" {
+			return fmt.Errorf("pass entry %q is not a valid name", entry)
 		}
 	}
-	m.modal = m.modal.Confirm(st, confirm.New(title, p))
+	return nil
+}
+
+func (m Model) abs(v secret.Violation) string { return style.AbsPath(m.env.Paths.Workspace, v.Path) }
+
+// confirmActions opens the checklist for a plan.
+func (m Model) confirmActions(command, title string, acts []plan.Action) Model {
+	m.modal = m.modal.Confirm(stepFix, confirm.New(title, plan.Plan{Command: command, Actions: acts}))
 	return m
 }
 
-func (m Model) allowAction(v secret.Violation) plan.Action {
-	mp, anchor := m.env.Paths.Config, secret.Anchor(v)
-	return plan.Action{
-		ID:          "allowlist-" + anchor,
-		Description: fmt.Sprintf("Allowlist %s:%d", m.abs(v), v.Line),
-		Execute:     func() error { return wsconfig.AddToAllowlist(mp, anchor) },
-	}
-}
-
-func (m Model) excludeAction(v secret.Violation) plan.Action {
+// ignoreAction stops syncing the finding's file, as `ignore add` does.
+func (m Model) ignoreAction(v secret.Violation) plan.Action {
 	p, rel := m.env.Paths, v.Path
+	abs := m.abs(v)
 	return plan.Action{
-		ID:          "exclude-" + rel,
-		Description: "Exclude " + m.abs(v) + " from sync (.megaignore)",
+		ID:          "ignore-add-" + abs,
+		Description: fmt.Sprintf("Ignore %s (ws.json ignore_rules.exclude)", abs),
 		Execute: func() error {
-			if _, err := wsconfig.AddIgnoreExclude(p.Config, rel, "secret: excluded by ws secret fix"); err != nil {
+			if _, err := wsconfig.AddIgnoreExclude(p.Config, rel, ""); err != nil {
 				return err
 			}
 			rules, err := wsconfig.LoadIgnoreRules(p.Config)
@@ -470,26 +566,6 @@ func (m Model) excludeAction(v secret.Violation) plan.Action {
 				return err
 			}
 			return wsignore.WriteMegaignore(filepath.Join(p.Workspace, ".megaignore"), rules)
-		},
-	}
-}
-
-// passAction stores the matched value in pass, as `secret fix` [p] does. The
-// file itself is not rewritten (same as the CLI).
-func (m Model) passAction(v secret.Violation, entry string) plan.Action {
-	mp, anchor := m.env.Paths.Config, secret.Anchor(v)
-	value := secret.ExtractSecretValue(v.Snippet)
-	return plan.Action{
-		ID:          "pass-" + anchor,
-		Description: fmt.Sprintf("Insert pass entry %s from %s:%d", entry, m.abs(v), v.Line),
-		Execute: func() error {
-			if value == "" {
-				return fmt.Errorf("could not extract a value from the match")
-			}
-			if err := secret.InsertEntry(entry, value); err != nil {
-				return err
-			}
-			return wsconfig.AddToAllowlist(mp, anchor)
 		},
 	}
 }
@@ -521,6 +597,9 @@ func (m Model) healthLine() string {
 		}
 	}
 	parts = append(parts, mark(m.health.CredHelper, "credential helper"))
+	if m.health.CopyCommand != "" {
+		parts = append(parts, theme.Muted.Render("ℹ no workspace copy"))
+	}
 	return strings.Join(parts, "  ")
 }
 
