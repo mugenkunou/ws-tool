@@ -40,6 +40,11 @@ var aliasLive = map[string]bool{
 	"scratch": true,
 	"trash":   true,
 	"cron":    true,
+	// Workspace commands.
+	"config":      true,
+	"completions": true,
+	"reset":       true,
+	"restore":     true,
 }
 
 // aliases is every row of spec §3.5.

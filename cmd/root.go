@@ -56,7 +56,7 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "init":
 		return runInit(commandArgs, globals, stdin, stdout, stderr)
 	case "config":
-		return runConfig(commandArgs, globals, stdout, stderr)
+		return runConfig(commandArgs, globals, stdin, stdout, stderr)
 	case "dotfile":
 		return runDotfile(commandArgs, globals, stdin, stdout, stderr)
 	case "ignore":
@@ -77,8 +77,8 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runTUI(commandArgs, globals, stdin, stdout, stderr)
 	case "credential", "git-credential-helper":
 		return runGitCredentialHelper(commandArgs, globals, stdin, stdout, stderr)
-	case "completions":
-		return runCompletions(commandArgs, globals, stdin, stdout, stderr)
+	case "completion":
+		return runCompletion(commandArgs, globals, stdin, stdout, stderr)
 	case "__complete":
 		return runComplete(commandArgs, globals, stdout, stderr)
 	default:
@@ -374,96 +374,6 @@ func requireWorkspaceInitialized(globals globalFlags, stderr ...io.Writer) (stri
 	}
 
 	return resolvedWorkspace, configPath, nil
-}
-
-var configHelp = cmdHelp{
-	Usage: "ws config <view|defaults>",
-	Subcommands: []string{
-		"  view       Print resolved config",
-		"  defaults   Print built-in default config",
-	},
-}
-
-func runConfig(args []string, globals globalFlags, stdout, stderr io.Writer) int {
-	if hasHelpArg(args) {
-		return printCmdHelp(stdout, configHelp)
-	}
-
-	if len(args) == 0 {
-		return printCmdHelp(stdout, configHelp)
-	}
-
-	subcommand := strings.TrimSpace(args[0])
-
-	if subcommand == "defaults" || subcommand == "--defaults" {
-		fs := flag.NewFlagSet("config-defaults", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, args[1:]); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		// Printed in stored (config-file) form so it can be redirected into
-		// ws.json; the one documented exception to absolute output (spec
-		// "Path Rules"). `ws config view` shows resolved absolute values.
-		defaults := wsconfig.Default()
-		if globals.json {
-			return writeJSON(stdout, stderr, "config.defaults", defaults)
-		}
-		encoded, err := json.MarshalIndent(defaults, "", "  ")
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		fmt.Fprintln(textOut(globals, stdout), string(encoded))
-		return 0
-	}
-
-	if subcommand != "view" {
-		fmt.Fprintf(stderr, "unknown config subcommand: %s\n", subcommand)
-		return printUsageError(stderr, configHelp)
-	}
-
-	fs := flag.NewFlagSet("config-view", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	registerGlobalFlags(fs, &globals)
-	if err := parseInterspersed(fs, args[1:]); err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-
-	workspacePath, configPath, err := requireWorkspaceInitialized(globals, stderr)
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-
-	cfg, err := wsconfig.Load(configPath)
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-
-	// "Resolved config": every path value shown absolute (spec "Path Rules"),
-	// annotated with the absolute workspace path.
-	type viewPayload struct {
-		wsconfig.WsConfig
-		Workspace string `json:"workspace"`
-	}
-	view := viewPayload{WsConfig: wsconfig.WithAbsPaths(cfg, workspacePath), Workspace: workspacePath}
-
-	if globals.json {
-		return writeJSON(stdout, stderr, "config.view", view)
-	}
-
-	encoded, err := json.MarshalIndent(view, "", "  ")
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-
-	fmt.Fprintln(textOut(globals, stdout), string(encoded))
-	return 0
 }
 
 func maybePageOutput(stdout io.Writer, text string) bool {

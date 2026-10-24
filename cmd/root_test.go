@@ -107,7 +107,7 @@ func TestInitAndConfigView(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	exit = Execute([]string{"--workspace", workspace, "config", "view"}, strings.NewReader("y\n"), &out, &errOut)
+	exit = Execute([]string{"--workspace", workspace, "config", "show"}, strings.NewReader("y\n"), &out, &errOut)
 	if exit != 0 {
 		t.Fatalf("config view failed: exit=%d stderr=%s", exit, errOut.String())
 	}
@@ -124,7 +124,7 @@ func TestConfigViewRequiresInit(t *testing.T) {
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 
-	exit := Execute([]string{"--workspace", workspace, "config", "view"}, strings.NewReader("y\n"), &out, &errOut)
+	exit := Execute([]string{"--workspace", workspace, "config", "show"}, strings.NewReader("y\n"), &out, &errOut)
 	if exit == 0 {
 		t.Fatal("expected non-zero exit for uninitialized workspace")
 	}
@@ -195,7 +195,7 @@ func TestConfigDumpIsRejected(t *testing.T) {
 	if code := Execute([]string{"--workspace", workspace, "config", "dump"}, strings.NewReader("y\n"), &out, &errOut); code == 0 {
 		t.Fatalf("config dump should fail, got code=%d stdout=%s", code, out.String())
 	}
-	if !strings.Contains(errOut.String(), "unknown config subcommand") {
+	if !strings.Contains(errOut.String(), "unknown command: config dump") {
 		t.Fatalf("unexpected dump error output: %s", errOut.String())
 	}
 }

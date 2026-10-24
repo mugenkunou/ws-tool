@@ -278,7 +278,7 @@ func TestPathRuleInitStoresAbsoluteWorkspace(t *testing.T) {
 	want := filepath.Join(parent, "Workspace")
 	var payload struct {
 		Data struct {
-			WorkspacePath string `json:"workspace_path"`
+			WorkspacePath string `json:"workspace"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {

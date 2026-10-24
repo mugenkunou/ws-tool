@@ -9,8 +9,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
-// layoutDirs are the workspace directories created by `ws init`.
-// They follow the phase-1 layout defined in phase-1.md.
+// layoutDirs are the workspace directories created by `ws init` (spec §2.2).
 var layoutDirs = []string{
 	"notes",
 	"experiments",
@@ -29,84 +28,111 @@ var layoutDirs = []string{
 	"archive",
 }
 
-type InitOptions struct {
-	WorkspacePath string
-	DryRun        bool
+// InitPlan is what `ws init` finds and what it would change. Everything is an
+// absolute path. Nothing is written until the Create, Write and Fill methods run.
+type InitPlan struct {
+	Workspace   string
+	Config      string
+	Megaignore  string
+	MissingDirs []string
+	Existing    []string // layout directories, ws.json and .megaignore that are already there
+	// ConfigMissing is true when ws.json does not exist. Otherwise MissingKeys
+	// lists the keys an older ws.json lacks.
+	ConfigMissing     bool
+	MissingKeys       []string
+	MegaignoreMissing bool
 }
 
-type InitResult struct {
-	WorkspacePath string   `json:"workspace_path"`
-	DryRun        bool     `json:"dry_run"`
-	Created       []string `json:"created"`
-	Skipped       []string `json:"skipped"`
-	Messages      []string `json:"messages"`
+// Empty reports whether the workspace is already fully initialized.
+func (p InitPlan) Empty() bool {
+	return len(p.MissingDirs) == 0 && !p.ConfigMissing && len(p.MissingKeys) == 0 && !p.MegaignoreMissing
 }
 
-func Init(opts InitOptions) (InitResult, error) {
-	result := InitResult{
-		WorkspacePath: opts.WorkspacePath,
-		DryRun:        opts.DryRun,
-		Created:       []string{},
-		Skipped:       []string{},
-		Messages:      []string{},
+// PlanInit reads the workspace and reports what is missing. It fails when an
+// existing ws.json cannot be parsed, since init never replaces one.
+func PlanInit(workspacePath, configPath string) (InitPlan, error) {
+	if workspacePath == "" {
+		return InitPlan{}, fmt.Errorf("workspace path is required")
 	}
-
-	if opts.WorkspacePath == "" {
-		return result, fmt.Errorf("workspace path is required")
+	if configPath == "" {
+		configPath = wsconfig.ConfigPath(workspacePath)
 	}
-
-	configPath := wsconfig.ConfigPath(opts.WorkspacePath)
-	megaignorePath := filepath.Join(opts.WorkspacePath, ".megaignore")
-
-	if opts.DryRun {
-		for _, d := range layoutDirs {
-			result.Messages = append(result.Messages, "Would create dir: "+filepath.Join(opts.WorkspacePath, d))
-		}
-		result.Messages = append(result.Messages,
-			"Would create: "+configPath,
-			"Would create: "+megaignorePath,
-		)
-		result.DryRun = true
-		return result, nil
+	p := InitPlan{
+		Workspace:   workspacePath,
+		Config:      configPath,
+		Megaignore:  filepath.Join(workspacePath, ".megaignore"),
+		MissingDirs: []string{},
+		Existing:    []string{},
+		MissingKeys: []string{},
 	}
-
-	// Create layout directories.
 	for _, d := range layoutDirs {
-		abs := filepath.Join(opts.WorkspacePath, filepath.FromSlash(d))
-		if err := os.MkdirAll(abs, 0o755); err != nil {
-			return result, fmt.Errorf("creating %s: %w", abs, err)
+		abs := filepath.Join(workspacePath, filepath.FromSlash(d))
+		if info, err := os.Stat(abs); err == nil && info.IsDir() {
+			p.Existing = append(p.Existing, abs)
+		} else {
+			p.MissingDirs = append(p.MissingDirs, abs)
 		}
-		result.Created = append(result.Created, abs)
 	}
-
-	// Write ws.json if missing.
-	if err := writeFileIfMissing(configPath, func() error {
-		return wsconfig.Save(configPath, wsconfig.Default())
-	}, &result); err != nil {
-		return result, err
+	if ConfigExists(configPath) {
+		content, err := os.ReadFile(configPath)
+		if err != nil {
+			return p, err
+		}
+		if _, err := wsconfig.Load(configPath); err != nil {
+			return p, err
+		}
+		if p.MissingKeys, err = wsconfig.MissingKeys(content); err != nil {
+			return p, err
+		}
+		p.Existing = append(p.Existing, configPath)
+	} else {
+		p.ConfigMissing = true
 	}
-
-	// Write .megaignore if missing.
-	if err := writeFileIfMissing(megaignorePath, func() error {
-		return ignore.WriteMegaignore(megaignorePath, ignore.DefaultUserRules())
-	}, &result); err != nil {
-		return result, err
+	if _, err := os.Stat(p.Megaignore); err == nil {
+		p.Existing = append(p.Existing, p.Megaignore)
+	} else {
+		p.MegaignoreMissing = true
 	}
-
-	result.Messages = append(result.Messages, "Workspace initialized: "+opts.WorkspacePath)
-	return result, nil
+	return p, nil
 }
 
-func writeFileIfMissing(path string, write func() error, result *InitResult) error {
-	if _, err := os.Stat(path); err == nil {
-		result.Skipped = append(result.Skipped, path)
-		result.Messages = append(result.Messages, "Skipped (already exists): "+path)
-		return nil
+// CreateDirs creates the missing layout directories.
+func (p InitPlan) CreateDirs() error {
+	for _, abs := range p.MissingDirs {
+		if err := os.MkdirAll(abs, 0o755); err != nil {
+			return fmt.Errorf("creating %s: %w", abs, err)
+		}
 	}
-	if err := write(); err != nil {
+	return nil
+}
+
+// WriteConfig writes a complete ws.json of defaults. It never replaces a file.
+func (p InitPlan) WriteConfig() error {
+	if ConfigExists(p.Config) {
+		return fmt.Errorf("%s already exists", p.Config)
+	}
+	return wsconfig.Save(p.Config, wsconfig.Default())
+}
+
+// FillConfig adds the missing keys to an existing ws.json, keeping every value
+// already set.
+func (p InitPlan) FillConfig() error {
+	cfg, err := wsconfig.Load(p.Config)
+	if err != nil {
 		return err
 	}
-	result.Created = append(result.Created, path)
-	result.Messages = append(result.Messages, "Created: "+path)
-	return nil
+	return wsconfig.Save(p.Config, cfg)
+}
+
+// WriteMegaignore generates .megaignore from ws.json's ignore rules. It never
+// replaces a file.
+func (p InitPlan) WriteMegaignore() error {
+	if _, err := os.Stat(p.Megaignore); err == nil {
+		return fmt.Errorf("%s already exists", p.Megaignore)
+	}
+	rules, err := wsconfig.LoadIgnoreRules(p.Config)
+	if err != nil {
+		rules = ignore.DefaultUserRules()
+	}
+	return ignore.WriteMegaignore(p.Megaignore, rules)
 }
