@@ -65,16 +65,13 @@ var Catalog = []Item{
 	{"claude", "~/.claude/commands", KindFolder, false, false, OSAny},
 	{"claude", "~/.claude/rules", KindFolder, false, false, OSAny}, // M: the path varies by version or setup
 	{"claude", "~/.claude/settings.json", KindFile, false, false, OSAny},
-	{"claude", "~/.claude/skills", KindFolder, false, false, OSAny},
 	{"codex", "~/.codex/AGENTS.md", KindFile, false, false, OSAny},
 	{"codex", "~/.codex/config.toml", KindFile, false, false, OSAny},
-	{"codex", "~/.codex/skills", KindFolder, false, false, OSAny}, // M: the Codex docs list only ~/.agents/skills; this older path is kept because ws only suggests paths that exist
 	{"conda", "~/.condarc", KindFile, false, false, OSAny},
 	{"continue", "~/.continue/.continuerc.json", KindFile, false, false, OSAny},
 	{"continue", "~/.continue/config.yaml", KindFile, false, false, OSAny},
 	{"copilot", "~/.copilot/agents", KindFolder, false, false, OSAny},
 	{"copilot", "~/.copilot/mcp-config.json", KindFile, true, false, OSAny}, // M: the path varies by version or setup
-	{"copilot", "~/.copilot/skills", KindFolder, false, false, OSAny},
 	{"curl", "~/.netrc", KindFile, true, false, OSAny},
 	{"cursor", "~/.config/Cursor/User/keybindings.json", KindFile, false, false, OSLinux},
 	{"cursor", "~/.config/Cursor/User/settings.json", KindFile, false, false, OSLinux},

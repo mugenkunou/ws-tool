@@ -508,6 +508,37 @@ func (k TrashMap) FullHelp() [][]key.Binding {
 	}
 }
 
+// SkillsMap is the binding set for the skills screen (spec §6.5).
+type SkillsMap struct {
+	Table     table.KeyMap
+	Install   key.Binding
+	Uninstall key.Binding
+	Back      key.Binding
+}
+
+// Skills returns bindings for the skills screen.
+func Skills() SkillsMap {
+	return SkillsMap{
+		Table:     Table(),
+		Install:   key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "install")),
+		Uninstall: key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "uninstall")),
+		Back:      back(),
+	}
+}
+
+// ShortHelp implements help.KeyMap.
+func (k SkillsMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Install, k.Uninstall}
+}
+
+// FullHelp implements help.KeyMap.
+func (k SkillsMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
+		k.ShortHelp(),
+	}
+}
+
 // SetupMap is the binding set for the not-initialized setup screen.
 type SetupMap struct {
 	Init key.Binding

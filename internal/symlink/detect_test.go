@@ -203,11 +203,11 @@ func TestDetectCatalogFolderFoundOnce(t *testing.T) {
 
 func TestDetectFileInsideAFolderEntryIsNotFound(t *testing.T) {
 	m := newMachine(t)
-	m.file(t, m.home_(".claude/skills/a/SKILL.md"), "x")
+	m.file(t, m.home_(".claude/commands/a.md"), "x")
 	m.file(t, m.home_(".claude/CLAUDE.md"), "x")
 	entry := wsconfig.Link{System: m.home_(".claude"), Original: "symlinks/home/.claude", Dir: true}
 	r := m.detect("linux", false, entry)
-	if has(r, m.home_(".claude/CLAUDE.md")) || has(r, m.home_(".claude/skills")) {
+	if has(r, m.home_(".claude/CLAUDE.md")) || has(r, m.home_(".claude/commands")) {
 		t.Fatalf("inside a folder entry nothing is suggested: %+v", r.Records)
 	}
 	// An entry for the folder itself is not suggested again either.

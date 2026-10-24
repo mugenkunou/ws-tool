@@ -30,6 +30,7 @@ type Coverage struct {
 var CLICoverage = func() []Coverage {
 	rp, sc, lg := keys.Repos(), keys.Scratch(), keys.Sessions()
 	df, ig, se, cr, tr := keys.Symlinks(), keys.Ignore(), keys.Secrets(), keys.Cron(), keys.Trash()
+	sk := keys.Skills()
 	none := key.Binding{}
 	shell := "shell integration; nothing to show in a TUI"
 	plumbing := "git plumbing, called by git itself"
@@ -59,9 +60,9 @@ var CLICoverage = func() []Coverage {
 		{"symlink link", nav.ScreenSymlinks, df.Link, "", "link"},
 		{"symlink unlink", nav.ScreenSymlinks, df.Unlink, "", "unlink --all"},
 
-		{CLI: "skill scan", Screen: nav.ScreenDashboard, Note: "CLI-only for now; skills are linked from the shell"},
-		{CLI: "skill install", Screen: nav.ScreenDashboard, Note: "CLI-only for now; skills are linked from the shell"},
-		{CLI: "skill uninstall", Screen: nav.ScreenDashboard, Note: "CLI-only for now; skills are linked from the shell"},
+		{"skill scan", nav.ScreenSkills, none, "", ""}, // the list itself: every skill and the tools that have it
+		{"skill install", nav.ScreenSkills, sk.Install, "", "install"},
+		{"skill uninstall", nav.ScreenSkills, sk.Uninstall, "", "uninstall"},
 
 		{"ignore ls", nav.ScreenIgnore, ig.NextView, "", ""},       // the Muted and Ignored views
 		{"ignore lint", nav.ScreenIgnore, none, "", "lint"},        // the Warnings view; :lint <path>

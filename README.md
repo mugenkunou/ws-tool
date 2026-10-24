@@ -41,6 +41,7 @@ That's it. `~/.gitconfig` (and the rest you ticked) now lives in `~/Workspace/sy
 | 📦 **Repos** | `ws repo ls`, `ws repo save` | the whole fleet at a glance; commit + pull + push in one go |
 | 🧪 **Scratch** | `ws scratch new proxy-bug` | a named throwaway dir, opened in your editor |
 | 🗑️ **Trash** | `ws trash enable` | `rm` becomes undoable, everywhere |
+| 🧩 **Skills** | `ws skill install` | agent skills kept in `agent/skills/`, linked into Claude Code, Codex, Cursor and more |
 | ⏰ **Cron** | `ws cron add sync` | managed jobs with logs and missed-run catch-up |
 
 Everything is `ws <noun> <verb>`. `ls` lists, `add` adopts, `rm` deletes, `prune` cleans.

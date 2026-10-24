@@ -28,6 +28,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/scratch"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/secrets"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/sessions"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/skills"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/symlinks"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
@@ -111,6 +112,11 @@ func fixtures() []tea.Msg {
 			{Name: "repo-sync", Schedule: "*/30 * * * *", Description: "sync repo fleet", Installed: true, CrontabOK: true,
 				Interval: 30 * time.Minute, LastRun: wscron.RunRecord{Job: "repo-sync", Time: fixedClock().Add(-40 * time.Minute), ExitCode: 2}},
 			{Name: "all", Preset: true, CrontabOK: true, Description: "installs: pass-backup, repo-sync"},
+		}},
+		skills.LoadedMsg{Home: "/home/tester", Entries: []skills.Entry{
+			{Name: "review-pr", Path: ws + "/agent/skills/review-pr", Tools: []string{"claude", "cursor"}},
+			{Name: "sql-style", Path: ws + "/agent/skills/sql-style", Tools: []string{}},
+			{Name: "old-link", Path: ws + "/agent/skills/old-link", Broken: true, Tools: []string{}},
 		}},
 		trash.LoadedMsg{
 			Status: wstrash.Status{
@@ -255,6 +261,9 @@ func TestSnapshots(t *testing.T) {
 		{"trash_purge_prompt", []string{"9", "p"}},
 		{"trash_marked_delete", []string{"9", "ctrl+a", "ctrl+d"}},
 		{"trash_marked_restore", []string{"9", "space", "r"}},
+		{"skills", []string{"0"}},
+		{"skills_install_chooser", []string{"0", "i"}},
+		{"skills_marked_uninstall", []string{"0", "ctrl+a", "u"}},
 		{"full_help", []string{"2", "?"}},
 		{"repos_json", []string{"2", "down", "y"}},
 		{"command_bar", []string{"3", ":", "d", "o"}},
@@ -344,9 +353,10 @@ func TestScreenSwitching(t *testing.T) {
 		}
 	}
 	for _, k := range []string{"shift+tab", "["} {
-		if m = send(m, press(k)); m.active != nav.ScreenTrash {
-			t.Fatalf("%s from dashboard: active = %v, want Trash", k, m.active.Title())
+		if last := nav.Screens()[len(nav.Screens())-1]; send(m, press(k)).active != last {
+			t.Fatalf("%s from dashboard: want %v", k, last.Title())
 		}
+		m = send(m, press(k))
 		m = send(m, press("1"))
 	}
 	for i, s := range nav.Screens() {

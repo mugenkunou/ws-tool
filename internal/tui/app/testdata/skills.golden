@@ -1,0 +1,30 @@
+ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹  Skills⁰
+────────────────────────────────────────────────────────────────────────────────────────────────────
+🧩 agent/skills  3 skills
+● no tool detected  ○ 13 not detected
+
+ Skill                          Installed in                              Path
+ review-pr                      claude, cursor                            agent/skills/review-pr
+ sql-style                                                                agent/skills/sql-style
+ old-link                                                                 agent/skills/old-link
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+i install • u uninstall • space mark … • tab screens • : command • ? help • q quit

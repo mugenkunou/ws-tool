@@ -36,7 +36,7 @@ import (
 // listScreens are the screens that are a reslist.
 var listScreens = []nav.Screen{
 	nav.ScreenRepos, nav.ScreenSymlinks, nav.ScreenScratch, nav.ScreenSessions,
-	nav.ScreenIgnore, nav.ScreenSecrets, nav.ScreenCron, nav.ScreenTrash,
+	nav.ScreenIgnore, nav.ScreenSecrets, nav.ScreenCron, nav.ScreenTrash, nav.ScreenSkills,
 }
 
 // everyBinding is every binding of the TUI that a key can reach: each screen

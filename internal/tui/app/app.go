@@ -46,6 +46,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/secrets"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/sessions"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/setup"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/skills"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/symlinks"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui/selection"
@@ -138,6 +139,7 @@ func (m Model) withEnv(e env.Env, loadErr error) Model {
 		m.screens[nav.ScreenSecrets] = secrets.New(e)
 		m.screens[nav.ScreenCron] = cron.New(e)
 		m.screens[nav.ScreenTrash] = trash.New(e)
+		m.screens[nav.ScreenSkills] = skills.New(e)
 	}
 	return m
 }

@@ -144,15 +144,15 @@ func TestSymlinkAddDryRunChangesNothing(t *testing.T) {
 // per file, an unknown folder asks, and --dir forces one entry.
 func TestSymlinkAddFolderRules(t *testing.T) {
 	e := newDfEnv(t)
-	skills := e.file(t, ".claude/skills/a/SKILL.md", "a")
-	e.file(t, ".claude/skills/b/SKILL.md", "b")
-	dir := filepath.Dir(filepath.Dir(skills))
+	first := e.file(t, ".claude/commands/a.md", "a")
+	e.file(t, ".claude/commands/b.md", "b")
+	dir := filepath.Dir(first)
 	out := e.mustRun(t, "y\n", "symlink", "add", dir)
 	if strings.Count(out, "[y/n/a/q]") != 1 || !isLink(dir) {
 		t.Fatalf("a catalog folder is one entry:\n%s", out)
 	}
 	recs := e.ls(t)
-	if len(recs) != 1 || recs[0]["dir"] != true || recs[0]["original"] != "symlinks/home/.claude/skills" {
+	if len(recs) != 1 || recs[0]["dir"] != true || recs[0]["original"] != "symlinks/home/.claude/commands" {
 		t.Fatalf("records = %v", recs)
 	}
 

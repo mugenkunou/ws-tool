@@ -37,16 +37,13 @@ An entry with a glob expands to one found item per match. `~/.ssh/id_*` must not
 | claude | ~/.claude/commands | folder | no | no | any | |
 | claude | ~/.claude/rules | folder | no | no | any | M |
 | claude | ~/.claude/settings.json | file | no | no | any | |
-| claude | ~/.claude/skills | folder | no | no | any | |
 | codex | ~/.codex/AGENTS.md | file | no | no | any | |
 | codex | ~/.codex/config.toml | file | no | no | any | |
-| codex | ~/.codex/skills | folder | no | no | any | M |
 | conda | ~/.condarc | file | no | no | any | |
 | continue | ~/.continue/.continuerc.json | file | no | no | any | |
 | continue | ~/.continue/config.yaml | file | no | no | any | |
 | copilot | ~/.copilot/agents | folder | no | no | any | |
 | copilot | ~/.copilot/mcp-config.json | file | yes | no | any | M |
-| copilot | ~/.copilot/skills | folder | no | no | any | |
 | curl | ~/.netrc | file | yes | no | any | |
 | cursor | ~/.config/Cursor/User/keybindings.json | file | no | no | linux | |
 | cursor | ~/.config/Cursor/User/settings.json | file | no | no | linux | |
@@ -162,9 +159,9 @@ An entry with a glob expands to one found item per match. `~/.ssh/id_*` must not
 | zsh | ~/.zshenv | file | no | no | any | |
 | zsh | ~/.zshrc | file | no | no | any | |
 
-Kept on purpose: `~/.codex/skills`. The Codex docs list user skills only at `~/.agents/skills`
-(also in the catalog), but ws only suggests paths that exist, so the older location costs
-nothing. Keep its `M` comment and say so in it. Do not add pnpm's `auth.ini` or `config.yaml`:
+The `skills` folders of claude, codex and copilot are not here: `ws skill install` links skills
+there one by one (HANDBOOK `ws skill`), and a whole-folder entry would swallow those links.
+Do not add pnpm's `auth.ini` or `config.yaml`:
 they can hold tokens. `sops` and `pnpm` stay Linux-only.
 
 Left out on purpose: `btop.conf` and `htoprc` (the tools rewrite them on save and replace the

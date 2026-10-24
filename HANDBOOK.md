@@ -552,7 +552,7 @@ client's own exclusion settings.
 | --- | --- | --- |
 | `repo` | git repositories found under `repo.roots` | Repos |
 | `symlink` | host files and folders whose originals live in the workspace, symlinked back | Symlinks |
-| `skill` | agent skills in `agent/skills/`, linked into the coding tools on this machine | — (CLI only) |
+| `skill` | agent skills in `agent/skills/`, linked into the coding tools on this machine | Skills |
 | `scratch` | throwaway directories under `scratch.root_dir` | Scratch |
 | `session` | recorded terminal sessions | Sessions |
 | `ignore` | what the sync client syncs: ignore rules, muted directories, sync warnings | Ignore |
@@ -1561,7 +1561,7 @@ copy goes to the mirror path. What happens depends on what exists:
 | missing | exists | links out and records the entry |
 | missing | missing | error: nothing to add |
 
-Folders: a catalog folder (`~/.claude/skills`, `~/.config/nvim`) is always one entry. `--dir`
+Folders: a catalog folder (`~/.claude/commands`, `~/.config/nvim`) is always one entry. `--dir`
 forces one entry for any folder (`~/.password-store`). `--files` takes every file in the
 folder as its own entry without asking. An unknown folder without either lists its files and
 asks which to take (Enter for everything but catalog secrets, `all`, `none`, or numbers like
@@ -1773,9 +1773,9 @@ ws does not track that. `scan` reports each tool's folder and nothing else, and 
 
 | Command | RO/RW | Does | TUI |
 | --- | --- | --- | --- |
-| `ws skill scan [--tool <name>]` | RO | a grid of every skill against every known tool | CLI only |
-| `ws skill install [<skill>…] [--tool <name>]` | RW | link skills into one tool | CLI only |
-| `ws skill uninstall [<skill>…] [--tool <name>]` | RW | remove the links ws made in one tool | CLI only |
+| `ws skill scan [--tool <name>]` | RO | a grid of every skill against every known tool | screen |
+| `ws skill install [<skill>…] [--tool <name>]` | RW | link skills into one tool | `i`, `:install` |
+| `ws skill uninstall [<skill>…] [--tool <name>]` | RW | remove the links ws made in one tool | `u`, `:uninstall` |
 
 #### `ws skill scan`
 
@@ -3990,7 +3990,7 @@ ws tui
 ```
 
 Opens the interactive terminal UI on the Dashboard. The screens are Dashboard, Repos, Symlinks,
-Scratch, Sessions, Ignore, Secrets, Cron and Trash, reached with 1–9 and tab. It honours
+Scratch, Sessions, Ignore, Secrets, Cron, Trash and Skills, reached with 1–9, 0 and tab. It honours
 `--workspace`. If the workspace is not initialized, it opens the setup screen. stdin
 and stdout must be a terminal.
 
@@ -4085,7 +4085,7 @@ a `:` command bar that takes the CLI's own words.
 ### 6.1 Frame
 
 ```text
-ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹   tabs
+ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹  Skills⁰   tabs
 ────────────────────────────────────────────────────────────────────────────────────────   rule
  Host path          Workspace copy                       App     Status    Sudo           body
  ~/.bashrc          symlinks/home/.bashrc                bash    ✔ ok
@@ -4109,7 +4109,7 @@ a add • ctrl+d unlink • l link • space mark … • tab screens • : comm
 
 ### 6.2 Screens
 
-Tab order: Dashboard, Repos, Symlinks, Scratch, Sessions, Ignore, Secrets, Cron, Trash.
+Tab order: Dashboard, Repos, Symlinks, Scratch, Sessions, Ignore, Secrets, Cron, Trash, Skills.
 Every screen except the Dashboard is the list of its noun's rows, the same rows as
 `ws <noun> ls`. The tab bar shows each screen's jump digit as a superscript.
 
@@ -4306,6 +4306,20 @@ global letter takes the screen's own verb, and the footer says "a allow".
 | `p` | prune: prompt for an age, then a checklist | all rows |
 
 `:` commands: `empty`, `enable`, `disable`, `status`.
+
+**Skills.** The header shows the skills folder, how many skills it holds, and which tools are
+detected (`●`) and how many are not (`○`). A row is a skill: its name, the tools that have
+something at its place, and its path. This list is `ws skill scan`. A skill whose link target is
+gone is listed and cannot be installed.
+
+| Key | Does | Rows |
+| --- | --- | --- |
+| `i` | install: choose one tool (detected first), then a checklist of links | selected |
+| `u` | uninstall: choose one of the tools that hold ws's links, then a checklist | selected |
+
+`:` commands: `install [<tool>]`, `uninstall [<tool>]`. A tool named in the command skips the
+chooser. A row the CLI would skip (already installed, broken, or a link that is not ws's) is
+named in the checklist's note.
 
 ### 6.6 Command bar
 

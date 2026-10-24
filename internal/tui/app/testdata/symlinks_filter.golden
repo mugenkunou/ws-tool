@@ -1,4 +1,4 @@
-ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹  Skills⁰
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  Host path                                   Workspace copy                App     Status      Sudo
  ~/.gitconfig                                symlinks/home/.gitconfig              ✘ broken

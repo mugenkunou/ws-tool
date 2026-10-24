@@ -21,6 +21,7 @@ const (
 	ScreenSecrets
 	ScreenCron
 	ScreenTrash
+	ScreenSkills
 
 	screenCount // sentinel; keep last
 )
@@ -55,6 +56,8 @@ func (s Screen) Icon() string {
 		return "⏰"
 	case ScreenTrash:
 		return "🚮"
+	case ScreenSkills:
+		return "🧩"
 	default:
 		return ""
 	}
@@ -81,6 +84,8 @@ func (s Screen) Title() string {
 		return "Cron"
 	case ScreenTrash:
 		return "Trash"
+	case ScreenSkills:
+		return "Skills"
 	default:
 		return "?"
 	}
@@ -181,6 +186,8 @@ func (s Screen) Noun() string {
 		return "cron"
 	case ScreenTrash:
 		return "trash"
+	case ScreenSkills:
+		return "skill"
 	default:
 		return ""
 	}
