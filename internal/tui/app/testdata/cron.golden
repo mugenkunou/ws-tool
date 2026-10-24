@@ -2,9 +2,9 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secret
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 2 jobs installed · 1 failing
  Job             Schedule      State           Last run          Next run   Description
- dotfile-push    0 * * * *     ✔               2h ago            overdue    commit + push dotfiles
+ dotfile-backup  0 * * * *     ✔               2h ago            overdue    commit + push dotfiles
  repo-sync       */30 * * * *  ✔               40m ago (exit 2)  overdue    sync repo fleet
- all             preset                                                     installs: dotfile-push…
+ all             preset                                                     installs: dotfile-back…
 
 
 
@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secret
 
 
 
-enter view log • a install • ctrl+d remove … • tab screens • : command • ? help • q quit
+enter output • a add • ctrl+d remove • r run … • tab screens • : command • ? help • q quit

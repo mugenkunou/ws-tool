@@ -1,6 +1,6 @@
 // Package cron is the managed-cron-jobs screen: every built-in job and
-// preset with its install state and last run, plus install, remove, and the
-// per-job log.
+// preset with its install state and last run, plus add, remove, run now, the
+// per-job output, and `:apply` (spec §6.5).
 //
 // Navigation levels: list → job log. esc returns to the list; esc in the
 // list asks the app to go up.
@@ -78,6 +78,7 @@ type logMsg struct {
 type readyMsg struct {
 	jobs   []string // job or preset names
 	remove bool
+	apply  bool // `cron apply`: no jobs named
 	err    error
 }
 
@@ -178,6 +179,11 @@ func preflight(jobs []string, remove bool) tea.Cmd {
 	return func() tea.Msg { return readyMsg{jobs: jobs, remove: remove, err: wscron.Preflight()} }
 }
 
+// preflightApply is preflight for `cron apply`.
+func preflightApply() tea.Cmd {
+	return func() tea.Msg { return readyMsg{apply: true, err: wscron.Preflight()} }
+}
+
 // Init starts the first load.
 func (m Model) Init() tea.Cmd { return Load(m.env) }
 
@@ -242,7 +248,16 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 			}
 			return m, nav.Notify(nav.LevelError, text)
 		}
+		if msg.apply {
+			return m.openApply()
+		}
 		return m.openChange(msg.jobs, msg.remove)
+	case nav.CommandMsg:
+		if m.modal.Open() || m.level != levelList {
+			return m, nil
+		}
+		next, cmd, _ := reslist.RunCommand(m, m.list, commands, msg)
+		return next, cmd
 	}
 
 	if m.modal.Open() {
@@ -280,29 +295,100 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	return m, cmd
 }
 
-// actions is every cron key and the rows it acts on.
+// names are the jobs' names.
+func names(rows []Job) []string {
+	out := make([]string, len(rows))
+	for i, j := range rows {
+		out[i] = j.Name
+	}
+	return out
+}
+
+// actions is every cron key and the rows it acts on (spec §6.5).
 var actions = func() []reslist.Action[Model, Job] {
 	k := keys.Cron()
-	change := func(remove bool) func(Model, []Job) (Model, tea.Cmd) {
-		return func(m Model, rows []Job) (Model, tea.Cmd) {
-			names := make([]string, len(rows))
-			for i, j := range rows {
-				names[i] = j.Name
-			}
-			return m, preflight(names, remove)
-		}
-	}
 	return []reslist.Action[Model, Job]{
-		{Key: k.Log, Scope: reslist.Cursor, Do: func(m Model, rows []Job) (Model, tea.Cmd) {
+		{Key: k.Output, Scope: reslist.Cursor, Do: func(m Model, rows []Job) (Model, tea.Cmd) {
 			if rows[0].Preset {
 				return m, nav.Notify(nav.LevelInfo, "Presets have no log of their own — open a member job")
 			}
 			return m.openLog(rows[0].Name)
 		}},
-		{Key: k.Add, Scope: reslist.Selected, Do: change(false)},
-		{Key: k.Remove, Scope: reslist.Selected, Do: change(true)},
+		{Key: k.Add, Scope: reslist.Selected, Do: func(m Model, rows []Job) (Model, tea.Cmd) { return m, preflight(names(rows), false) }},
+		{Key: k.Remove, Scope: reslist.Selected, Do: func(m Model, rows []Job) (Model, tea.Cmd) { return m, preflight(names(rows), true) }},
+		{Key: k.Run, Scope: reslist.Selected, Do: Model.openRun},
 	}
 }()
+
+// commands are the `:` commands: the CLI's words after `cron`.
+var commands = []reslist.Command[Model, Job]{
+	{Name: "apply", Help: "make the crontab match configs/crontab", Scope: reslist.Global,
+		Do: func(m Model, _ []Job, _ []string) (Model, tea.Cmd) { return m, preflightApply() }},
+}
+
+// Commands implements nav.Commander.
+func (m Model) Commands() []nav.CommandInfo { return reslist.CommandInfos(commands) }
+
+// planOptions say where `cron add`, `rm` and `apply` read and write: this
+// binary, this workspace, and its configs/crontab.
+func (m Model) planOptions() wscron.PlanOptions {
+	p := m.env.Paths
+	return wscron.PlanOptions{Bin: wscron.WSBinary(), Workspace: p.Workspace, Display: wscron.DefaultDisplay(), Declared: wscron.DeclaredPath(p.Workspace)}
+}
+
+// openRun is `cron run <job>` (no --if-due) through a checklist with one
+// action per job; a preset runs its members.
+func (m Model) openRun(rows []Job) (Model, tea.Cmd) {
+	var jobs []*wscron.BuiltinJob
+	seen := map[string]bool{}
+	for _, name := range names(rows) {
+		resolved, _, err := wscron.Resolve(name)
+		if err != nil {
+			return m, nav.Notify(nav.LevelError, err.Error())
+		}
+		for _, j := range resolved {
+			if !seen[j.Name] {
+				seen[j.Name] = true
+				jobs = append(jobs, j)
+			}
+		}
+	}
+	workspace := m.env.Paths.Workspace
+	pl := plan.Plan{Command: "cron.run"}
+	for _, j := range jobs {
+		name := j.Name
+		pl.Actions = append(pl.Actions, plan.Action{
+			ID:          "cron-run-" + name,
+			Description: "Run " + name + " now",
+			Execute: func() error {
+				res, err := wscron.RunJob(name, wscron.RunOptions{WorkspacePath: workspace, Display: wscron.DefaultDisplay()})
+				if err != nil {
+					return err
+				}
+				if res.ExitCode != 0 {
+					return fmt.Errorf("%s exited with %d", name, res.ExitCode)
+				}
+				return nil
+			},
+		})
+	}
+	m.modal = m.modal.Confirm(stepChange, confirm.New("Run "+strings.Join(names(rows), ", "), pl))
+	return m, nil
+}
+
+// openApply is `cron apply`: the CLI's plan.
+func (m Model) openApply() (Model, tea.Cmd) {
+	opts := m.planOptions()
+	actions, _, err := wscron.ApplyActions(opts)
+	if err != nil {
+		return m, nav.Notify(nav.LevelError, err.Error())
+	}
+	if len(actions) == 0 {
+		return m, nav.Notify(nav.LevelInfo, "The crontab already matches "+m.env.Rel(opts.Declared)+".")
+	}
+	m.modal = m.modal.Confirm(stepChange, confirm.New("Apply "+m.env.Rel(opts.Declared)+" to the crontab", plan.Plan{Command: "cron.apply", Actions: actions}))
+	return m, nil
+}
 
 func (m Model) openLog(name string) (Model, tea.Cmd) {
 	m.level, m.logJob = levelLog, name
@@ -332,8 +418,7 @@ func (m Model) openChange(names []string, remove bool) (Model, tea.Cmd) {
 			}
 		}
 	}
-	p := m.env.Paths
-	opts := wscron.PlanOptions{Bin: wscron.WSBinary(), Workspace: p.Workspace, Display: wscron.DefaultDisplay()}
+	opts := m.planOptions()
 	pl := plan.Plan{Command: "cron.add"}
 	what := strings.Join(names, ", ")
 	title := "Install cron job " + what

@@ -103,11 +103,11 @@ func fixtures() []tea.Msg {
 			Health:     secrets.Health{Pass: secret.PassHealth{Installed: true, GPGAvailable: true, Initialized: true, GitBacked: true, EntryCount: 42}},
 		},
 		cron.LoadedMsg{Jobs: []cron.Job{
-			{Name: "dotfile-push", Schedule: "0 * * * *", Description: "commit + push dotfiles", Installed: true, CrontabOK: true,
-				Interval: time.Hour, LastRun: wscron.RunRecord{Job: "dotfile-push", Time: fixedClock().Add(-2 * time.Hour)}},
+			{Name: "dotfile-backup", Schedule: "0 * * * *", Description: "commit + push dotfiles", Installed: true, CrontabOK: true,
+				Interval: time.Hour, LastRun: wscron.RunRecord{Job: "dotfile-backup", Time: fixedClock().Add(-2 * time.Hour)}},
 			{Name: "repo-sync", Schedule: "*/30 * * * *", Description: "sync repo fleet", Installed: true, CrontabOK: true,
 				Interval: 30 * time.Minute, LastRun: wscron.RunRecord{Job: "repo-sync", Time: fixedClock().Add(-40 * time.Minute), ExitCode: 2}},
-			{Name: "all", Preset: true, CrontabOK: true, Description: "installs: dotfile-push, repo-sync"},
+			{Name: "all", Preset: true, CrontabOK: true, Description: "installs: dotfile-backup, repo-sync"},
 		}},
 		trash.LoadedMsg{
 			Status: wstrash.Status{

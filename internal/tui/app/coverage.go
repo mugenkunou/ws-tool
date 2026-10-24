@@ -47,9 +47,9 @@ var CLICoverage = func() []Coverage {
 		{"cron ls", nav.ScreenCron, none, ""},
 		{"cron add", nav.ScreenCron, cr.Add, ""},
 		{"cron rm", nav.ScreenCron, cr.Remove, ""},
-		{"cron run", nav.ScreenCron, none, pending},
-		{"cron log", nav.ScreenCron, cr.Log, ""},
-		{"cron apply", nav.ScreenCron, none, pending},
+		{"cron run", nav.ScreenCron, cr.Run, ""},
+		{"cron log", nav.ScreenCron, cr.Output, ""},
+		{"cron apply", nav.ScreenCron, none, ""}, // :apply
 
 		{"dotfile ls", nav.ScreenDotfiles, none, ""},
 		{"dotfile add", nav.ScreenDotfiles, df.Add, ""},
@@ -136,6 +136,7 @@ var CLICoverage = func() []Coverage {
 // of its screen. (Kept beside Coverage rather than in it so entries stay
 // four-field literals.)
 var CoverageCmds = map[string]string{
+	"cron apply": "apply",
 
 	"trash empty":   "empty",
 	"trash enable":  "enable",

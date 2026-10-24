@@ -448,38 +448,41 @@ func (k SecretsMap) FullHelp() [][]key.Binding {
 	}
 }
 
-// CronMap is the binding set for the cron screen. Actions apply to the
-// selected job.
+// CronMap is the binding set for the cron screen (spec §6.5).
 type CronMap struct {
 	Table  table.KeyMap
+	Output key.Binding // enter: the job's recent output
 	Add    key.Binding
 	Remove key.Binding
-	Log    key.Binding
+	Run    key.Binding
 	Back   key.Binding
 }
 
 // Cron returns bindings for the cron screen.
 func Cron() CronMap {
+	add := Add()
+	rm := Delete()
+	rm.SetHelp("ctrl+d", "remove")
 	return CronMap{
 		Table:  Table(),
-		Add:    key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "install")),
-		Remove: keyDelete("remove"),
-		Log:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "view log")),
+		Output: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "output")),
+		Add:    add,
+		Remove: rm,
+		Run:    key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "run")),
 		Back:   back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
 func (k CronMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Log, k.Add, k.Remove}
+	return []key.Binding{k.Output, k.Add, k.Remove, k.Run}
 }
 
 // FullHelp implements help.KeyMap.
 func (k CronMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
-		{k.Log, k.Add, k.Remove},
-		{k.Back},
+		k.ShortHelp(),
 	}
 }
 
