@@ -26,6 +26,11 @@ type Field[T any] struct {
 	Title string         // column and detail heading
 	Value func(T) any    // raw value for JSON and sorting
 	Text  func(T) string // plain display text; nil renders Value
+	// Whole makes key=text and key!=text compare the whole value (ignoring
+	// case) instead of looking for text inside it. Set it on fields with a
+	// fixed set of values, where a substring misleads: status!=ok must not hide
+	// "broken". A bare word still matches inside any field.
+	Whole bool
 }
 
 // Schema describes a record type.
@@ -315,6 +320,9 @@ func (s Schema[T]) matchTerm(item T, t Term) bool {
 		f, ok := s.Field(t.Key)
 		if !ok {
 			return false
+		}
+		if f.Whole {
+			return strings.EqualFold(f.Show(item), t.Value)
 		}
 		if shown(f) {
 			return true

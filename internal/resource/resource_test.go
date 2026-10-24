@@ -94,3 +94,34 @@ func TestWriteTable(t *testing.T) {
 		t.Errorf("wide table =\n%s\nwant\n%s", b.String(), want)
 	}
 }
+
+// A Whole field compares the entire value: status!=ok must keep "broken".
+func TestWholeFieldMatchesTheWholeValue(t *testing.T) {
+	type row struct{ Status string }
+	sc := Schema[row]{
+		Name: "row",
+		ID:   func(r row) string { return r.Status },
+		Fields: []Field[row]{
+			{Key: "status", Title: "Status", Value: func(r row) any { return r.Status }, Whole: true},
+		},
+		Columns: []string{"status"},
+	}
+	rows := []row{{"ok"}, {"broken"}, {"Ok"}}
+	join := func(rs []row) string {
+		var out []string
+		for _, r := range rs {
+			out = append(out, r.Status)
+		}
+		return strings.Join(out, ",")
+	}
+	cases := map[string]string{
+		"status=ok":  "ok,Ok",
+		"status!=ok": "broken",
+		"ok":         "ok,broken,Ok", // a bare word still matches inside any field
+	}
+	for filter, want := range cases {
+		if got := join(sc.Apply(rows, Query{Terms: ParseFilter(filter)})); got != want {
+			t.Errorf("filter %q = %s, want %s", filter, got, want)
+		}
+	}
+}

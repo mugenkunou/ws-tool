@@ -779,7 +779,7 @@ The TUI screen for that noun renders the same fields.
 
 | Flag | Meaning |
 | --- | --- |
-| `--filter <expr>` | keep rows where `key=text` (the field contains text), `key!=text` (it does not), or bare `text` (any field contains it). Case-insensitive. Repeat it, and all must match. The TUI's `/` takes the same expressions. |
+| `--filter <expr>` | keep rows where `key=text` (the field contains text; a field with a fixed set of values, such as `status`, must equal it), `key!=text` (it does not), or bare `text` (any field contains it). Case-insensitive. Repeat it, and all must match. The TUI's `/` takes the same expressions. |
 | `--sort <field[,field]>` | order rows; `-field` descends |
 | `--wide` | show every field as a column |
 | `--json` | one record per row, keyed by field name, with every field |

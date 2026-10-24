@@ -91,7 +91,7 @@ func Schema(v resource.View) resource.Schema[Entry] {
 			{Key: "workspace_path", Title: "Workspace copy", Value: func(e Entry) any { return e.WorkspacePath },
 				Text: func(e Entry) string { return v.Path(e.WorkspacePath) }},
 			{Key: "app", Title: "App", Value: func(e Entry) any { return e.App }},
-			{Key: "status", Title: "Status", Value: func(e Entry) any { return string(e.Status) }},
+			{Key: "status", Title: "Status", Value: func(e Entry) any { return string(e.Status) }, Whole: true},
 			{Key: "message", Title: "Problem", Value: func(e Entry) any { return e.Message }},
 			{Key: "dir", Title: "Directory", Value: func(e Entry) any { return e.Dir }},
 			{Key: "sudo", Title: "Sudo", Value: func(e Entry) any { return e.Sudo }},
