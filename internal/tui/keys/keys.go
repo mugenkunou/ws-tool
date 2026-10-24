@@ -483,41 +483,38 @@ func (k CronMap) FullHelp() [][]key.Binding {
 	}
 }
 
-// TrashMap is the binding set for the trash screen.
+// TrashMap is the binding set for the trash screen (spec §6.5).
 type TrashMap struct {
-	Table      table.KeyMap
-	Enable     key.Binding
-	Disable    key.Binding
-	Empty      key.Binding
-	Purge      key.Binding
-	DeleteItem key.Binding
-	Back       key.Binding
+	Table   table.KeyMap
+	Restore key.Binding
+	Delete  key.Binding
+	Prune   key.Binding
+	Back    key.Binding
 }
 
 // Trash returns bindings for the trash screen.
 func Trash() TrashMap {
+	del := Delete()
+	del.SetHelp("ctrl+d", "delete forever")
 	return TrashMap{
-		Table:      Table(),
-		Enable:     key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "enable soft-delete")),
-		Disable:    key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "disable")),
-		Empty:      key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "empty trash")),
-		Purge:      key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "purge older")),
-		DeleteItem: keyDelete("delete item"),
-		Back:       back(),
+		Table:   Table(),
+		Restore: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "restore")),
+		Delete:  del,
+		Prune:   key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "prune")),
+		Back:    back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
 func (k TrashMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Enable, k.Disable, k.DeleteItem, k.Purge, k.Empty}
+	return []key.Binding{k.Restore, k.Delete, k.Prune}
 }
 
 // FullHelp implements help.KeyMap.
 func (k TrashMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Table.LineUp, k.Table.LineDown},
-		{k.Enable, k.Disable, k.Empty},
-		{k.DeleteItem, k.Purge, k.Back},
+		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
+		k.ShortHelp(),
 	}
 }
 

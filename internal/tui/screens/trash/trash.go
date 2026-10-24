@@ -1,6 +1,7 @@
 // Package trash is the soft-delete screen: which integrations route deletes
-// to the trash, how full it is, the most recently deleted items, and
-// enable / disable / empty.
+// to the trash, how full it is, and the trashed items, with restore, delete
+// forever and prune on keys and empty, enable, disable and status as `:`
+// commands (spec §6.5).
 package trash
 
 import (
@@ -49,6 +50,7 @@ type step int
 
 const (
 	stepChange step = iota
+	stepRestore
 	stepDeleteItem
 	stepPurgeDays
 	stepPurge
@@ -165,9 +167,17 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		return m, nil
 	case RequestEmptyMsg:
 		if !m.modal.Open() {
-			m = m.openEmpty(m.list.Items())
+			m = m.openEmpty()
 		}
 		return m, nil
+	}
+
+	if c, ok := msg.(nav.CommandMsg); ok {
+		if m.modal.Open() {
+			return m, nil
+		}
+		next, cmd, _ := reslist.RunCommand(m, m.list, commands, c)
+		return next, cmd
 	}
 
 	if m.modal.Open() {
@@ -195,20 +205,55 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	return m, cmd
 }
 
-// actions is every trash key and the rows it acts on.
+// actions is every trash key and the rows it acts on (spec §6.5).
 var actions = func() []reslist.Action[Model, Item] {
 	k := keys.Trash()
-	plain := func(f func(Model, []Item) Model) func(Model, []Item) (Model, tea.Cmd) {
-		return func(m Model, rows []Item) (Model, tea.Cmd) { return f(m, rows), nil }
-	}
 	return []reslist.Action[Model, Item]{
-		{Key: k.Enable, Scope: reslist.Global, Do: func(m Model, _ []Item) (Model, tea.Cmd) { return m.openEnable(), nil }},
-		{Key: k.Disable, Scope: reslist.Global, Do: func(m Model, _ []Item) (Model, tea.Cmd) { return m.openDisable(), nil }},
-		{Key: k.DeleteItem, Scope: reslist.Selected, Do: plain(Model.openDeleteItems)},
-		{Key: k.Empty, Scope: reslist.All, Do: plain(Model.openEmpty)},
-		{Key: k.Purge, Scope: reslist.All, Do: Model.promptPurge},
+		{Key: k.Restore, Scope: reslist.Selected, Do: Model.restore},
+		{Key: k.Delete, Scope: reslist.Selected, Do: func(m Model, rows []Item) (Model, tea.Cmd) { return m.openDeleteItems(rows), nil }},
+		{Key: k.Prune, Scope: reslist.All, Do: Model.promptPurge},
 	}
 }()
+
+// commands are the `:` commands: the CLI's words after `trash`. Each runs the
+// function its key or the CLI's plan uses.
+var commands = []reslist.Command[Model, Item]{
+	{Name: "empty", Help: "permanently delete everything", Scope: reslist.Global,
+		Do: func(m Model, _ []Item, _ []string) (Model, tea.Cmd) { return m.openEmpty(), nil }},
+	{Name: "enable", Help: "route deletes to the trash", Scope: reslist.Global,
+		Do: func(m Model, _ []Item, _ []string) (Model, tea.Cmd) { return m.openEnable(), nil }},
+	{Name: "disable", Help: "stop routing deletes to the trash", Scope: reslist.Global,
+		Do: func(m Model, _ []Item, _ []string) (Model, tea.Cmd) { return m.openDisable(), nil }},
+	{Name: "status", Help: "integrations and size", Scope: reslist.Global,
+		Do: func(m Model, _ []Item, _ []string) (Model, tea.Cmd) { return m, statusNotice() }},
+}
+
+// Commands implements nav.Commander.
+func (m Model) Commands() []nav.CommandInfo { return reslist.CommandInfos(commands) }
+
+// statusNotice reads `trash status` and says it in one line.
+func statusNotice() tea.Cmd {
+	return func() tea.Msg {
+		st, err := wstrash.GetStatus()
+		if err != nil {
+			return nav.NoticeMsg{Text: err.Error(), Level: nav.LevelError}
+		}
+		var parts []string
+		for _, in := range st.Integrations {
+			mark := "✘"
+			if in.Enabled {
+				mark = "✔"
+			}
+			parts = append(parts, mark+" "+in.Name)
+		}
+		text := strings.Join(parts, " · ") + fmt.Sprintf(" — %s, %s in %s", format.Plural(st.Items, "item"), style.HumanBytes(st.SizeBytes), st.Root)
+		level := nav.LevelInfo
+		if st.OverLimit {
+			level, text = nav.LevelWarn, text+" (over the limit)"
+		}
+		return nav.NoticeMsg{Text: text, Level: level}
+	}
+}
 
 // names is rows as a name set, or nil when rows is every item.
 func (m Model) names(rows []Item) map[string]bool {
@@ -254,17 +299,41 @@ func (m Model) openDisable() Model {
 	return m
 }
 
+// restore is `trash restore`: the CLI's plan, one line per item that can be put
+// back. Items that cannot (something is at the original path) are named in the
+// checklist's note, as the CLI names them.
+func (m Model) restore(items []Item) (Model, tea.Cmd) {
+	actions, skipped := wstrash.RestorePlan(items)
+	if len(actions) == 0 {
+		var why []string
+		for _, s := range skipped {
+			why = append(why, s.Name+": "+s.Reason)
+		}
+		return m, nav.Notify(nav.LevelWarn, "Nothing to restore — "+strings.Join(why, "; "))
+	}
+	c := confirm.New("Restore "+format.Plural(len(actions), "trash item"), plan.Plan{Command: "trash.restore", Actions: actions})
+	if len(skipped) > 0 {
+		var why []string
+		for _, s := range skipped {
+			why = append(why, s.Name+": "+s.Reason)
+		}
+		c = c.WithNote("Skipped: " + strings.Join(why, "; "))
+	}
+	m.modal = m.modal.Confirm(stepRestore, c)
+	return m, nil
+}
+
 func (m Model) openDeleteItems(items []Item) Model {
 	pl := plan.Plan{Command: "trash.rm"}
 	for _, it := range items {
 		it := it
-		desc := it.Name
-		if it.SizeBytes > 0 {
-			desc += " (" + style.HumanBytes(it.SizeBytes) + ")"
+		desc := fmt.Sprintf("Permanently delete %s (%s)", it.Name, style.HumanBytes(it.SizeBytes))
+		if it.OriginalPath != "" {
+			desc += ", deleted from " + it.OriginalPath
 		}
 		pl.Actions = append(pl.Actions, plan.Action{
 			ID:          "trash-rm-" + it.Name,
-			Description: "Permanently delete " + desc,
+			Description: desc,
 			Execute:     func() error { return wstrash.Delete(it) },
 		})
 	}
@@ -306,9 +375,9 @@ func (m Model) purgeDays(r prompt.ResultMsg) (nav.Component, tea.Cmd) {
 	pl := plan.Plan{Command: "trash.prune"}
 	for _, it := range matched {
 		it := it
-		desc := fmt.Sprintf("%s (%s, %s ago)", it.Name, style.HumanBytes(it.SizeBytes), format.Age(now.Sub(it.DeletedAt)))
+		desc := fmt.Sprintf("%s (%s, deleted %s ago)", it.Name, style.HumanBytes(it.SizeBytes), format.Age(now.Sub(it.DeletedAt)))
 		pl.Actions = append(pl.Actions, plan.Action{
-			ID:          "prune-" + it.Name,
+			ID:          "trash-prune-" + it.Name,
 			Description: "Permanently delete " + desc,
 			Execute:     func() error { return wstrash.Delete(it) },
 		})
@@ -318,12 +387,9 @@ func (m Model) purgeDays(r prompt.ResultMsg) (nav.Component, tea.Cmd) {
 	return m, nil
 }
 
-// openEmpty empties the whole trash when rows is every item, else deletes
-// just rows.
-func (m Model) openEmpty(rows []Item) Model {
-	if m.names(rows) != nil {
-		return m.openDeleteItems(rows)
-	}
+// openEmpty is `trash empty`: the whole trash, whatever is marked or filtered.
+// It is destructive, so its one action starts unchecked (spec §6.7).
+func (m Model) openEmpty() Model {
 	st := m.state.Status
 	pl := plan.Plan{Command: "trash.empty"}
 	if st.Items > 0 {
@@ -333,7 +399,8 @@ func (m Model) openEmpty(rows []Item) Model {
 			Execute:     wstrash.Empty,
 		}}
 	}
-	m.modal = m.modal.Confirm(stepChange, confirm.New("Empty trash", pl))
+	c := confirm.New("Empty trash", pl).WithChecked(func(int, plan.Action) bool { return false })
+	m.modal = m.modal.Confirm(stepChange, c)
 	return m
 }
 

@@ -29,9 +29,34 @@ func TestCoverageKeysExist(t *testing.T) {
 		if len(c.Key.Keys()) == 0 {
 			continue
 		}
+		// A key may live on one view of the screen (Ignore has three), so the
+		// screen's whole key map counts as well as the view that is open.
 		offered := helpBindings(m.screens[c.Screen].KeyMap())
+		if km, ok := listScreenKeys()[c.Screen]; ok {
+			offered = append(offered, helpBindings(km)...)
+		}
 		if !slices.ContainsFunc(offered, func(b key.Binding) bool { return slices.Equal(b.Keys(), c.Key.Keys()) }) {
 			t.Errorf("%s: screen %v does not offer key %v", c.CLI, c.Screen, c.Key.Keys())
+		}
+	}
+}
+
+// TestCoverageCommandsExist: a coverage entry's `:` command is one its screen
+// has.
+func TestCoverageCommandsExist(t *testing.T) {
+	m := loaded(t, 100, 30)
+	screens := map[string]nav.Screen{}
+	for _, c := range CLICoverage {
+		screens[c.CLI] = c.Screen
+	}
+	for cli, name := range CoverageCmds {
+		s, ok := screens[cli]
+		if !ok {
+			t.Errorf("CoverageCmds names %q, which is not a CLI command", cli)
+			continue
+		}
+		if !slices.ContainsFunc(commander(m.screens[s]), func(c nav.CommandInfo) bool { return c.Name == name }) {
+			t.Errorf("%s: screen %v has no `:%s` command", cli, s, name)
 		}
 	}
 }

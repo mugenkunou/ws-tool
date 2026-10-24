@@ -121,12 +121,24 @@ var CLICoverage = func() []Coverage {
 		{"git-credential-helper erase", nav.ScreenSecrets, none, plumbing},
 
 		{"trash ls", nav.ScreenTrash, none, ""},
-		{"trash restore", nav.ScreenTrash, none, pending},
-		{"trash rm", nav.ScreenTrash, tr.DeleteItem, ""},
-		{"trash empty", nav.ScreenTrash, tr.Empty, ""},
-		{"trash prune", nav.ScreenTrash, tr.Purge, ""},
-		{"trash enable", nav.ScreenTrash, tr.Enable, ""},
-		{"trash disable", nav.ScreenTrash, tr.Disable, ""},
-		{"trash status", nav.ScreenTrash, none, ""},
+		{"trash restore", nav.ScreenTrash, tr.Restore, ""},
+		{"trash rm", nav.ScreenTrash, tr.Delete, ""},
+		{"trash empty", nav.ScreenTrash, none, ""}, // :empty
+		{"trash prune", nav.ScreenTrash, tr.Prune, ""},
+		{"trash enable", nav.ScreenTrash, none, ""},  // :enable
+		{"trash disable", nav.ScreenTrash, none, ""}, // :disable
+		{"trash status", nav.ScreenTrash, none, ""},  // :status
 	}
 }()
+
+// CoverageCmds names the `:` command that runs a CLI subcommand, for those
+// that have one (spec §6.5). TestCoverageCommandsExist checks each is a command
+// of its screen. (Kept beside Coverage rather than in it so entries stay
+// four-field literals.)
+var CoverageCmds = map[string]string{
+
+	"trash empty":   "empty",
+	"trash enable":  "enable",
+	"trash disable": "disable",
+	"trash status":  "status",
+}

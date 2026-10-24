@@ -1,8 +1,8 @@
 ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Delete 1 trash item
+Restore 1 trash item
 
-› [x] Permanently delete old-notes.md (2.0 KB)
+› [x] Restore old-notes.md to /home/tester/Workspace/Notes/old-notes.md (creates /home/tester)
 
 
 
