@@ -63,9 +63,6 @@ func (m LoadedMsg) Issues() int {
 // the dashboard when it opens this screen at a specific problem).
 type SelectMsg struct{ System string }
 
-// RequestFixMsg asks the screen to open its link checklist.
-type RequestFixMsg struct{}
-
 // addCandidate is one thing `dotfile add` offers to take: a file, a directory
 // entry, a whole directory (`--dir`), or the live file of an overwritten entry.
 type addCandidate struct {
@@ -408,12 +405,6 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 			m.level = levelList
 		}
 		return m, nil
-	case RequestFixMsg:
-		if m.modal.Open() {
-			return m, nil
-		}
-		m.level = levelList
-		return m.link(m.list.Items())
 	case addPreparedMsg:
 		m.preparing = false
 		return m.prepared(msg)

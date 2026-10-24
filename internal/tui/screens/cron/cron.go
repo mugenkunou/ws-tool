@@ -66,9 +66,6 @@ func (m LoadedMsg) Installed() int {
 // SelectJobMsg asks the screen to select a job by name.
 type SelectJobMsg struct{ Name string }
 
-// RequestLogMsg asks the screen to select a job and show its log.
-type RequestLogMsg struct{ Name string }
-
 type logMsg struct {
 	job  string
 	text string
@@ -234,8 +231,6 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	case SelectJobMsg:
 		m.level = levelList
 		return m.selectJob(msg.Name), nil
-	case RequestLogMsg:
-		return m.selectJob(msg.Name).openLog(msg.Name)
 	case logMsg:
 		if msg.job == m.logJob {
 			m.log.SetContent(msg.text)

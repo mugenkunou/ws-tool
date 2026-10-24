@@ -40,12 +40,6 @@ type LoadedMsg struct {
 	Err    error
 }
 
-// RequestEnableMsg asks the screen to open the enable-soft-delete checklist.
-type RequestEnableMsg struct{}
-
-// RequestEmptyMsg asks the screen to open the empty-trash checklist.
-type RequestEmptyMsg struct{}
-
 type step int
 
 const (
@@ -162,16 +156,6 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		}
 		m.state = msg
 		m.list = m.list.SetItems(msg.Items)
-		return m, nil
-	case RequestEnableMsg:
-		if !m.modal.Open() {
-			m = m.openEnable()
-		}
-		return m, nil
-	case RequestEmptyMsg:
-		if !m.modal.Open() {
-			m = m.openEmpty()
-		}
 		return m, nil
 	}
 
