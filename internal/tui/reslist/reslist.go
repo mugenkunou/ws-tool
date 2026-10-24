@@ -467,7 +467,7 @@ func (m Model[T]) statusLine() string {
 	}
 	if nMarked > 0 {
 		part := theme.Title.Render(fmt.Sprintf("%d marked", nMarked))
-		if ks := m.scopedKeys(Selected, All); len(ks) > 0 {
+		if ks := m.scopedKeys(Selected, All, Marked); len(ks) > 0 {
 			part += theme.Muted.Render(" — " + strings.Join(ks, " · ") + " act on them")
 		}
 		parts = append(parts, part+theme.Muted.Render(" · "+m.keys.Clear.Help().Key+" clears"))

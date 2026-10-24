@@ -20,6 +20,10 @@ type Coverage struct {
 	// Note, when Key is zero, says why there is no key: covered elsewhere,
 	// or deliberately CLI-only.
 	Note string
+	// Cmd is the `:` command (the CLI's words after the noun, as the screen's
+	// Commands() names them) that runs it. Empty when there is none. A command
+	// may stand beside a key (both run one function), or alone.
+	Cmd string
 }
 
 // CLICoverage is every CLI subcommand and its TUI counterpart.
@@ -31,74 +35,74 @@ var CLICoverage = func() []Coverage {
 	plumbing := "git plumbing, called by git itself"
 	pending := "TUI home arrives with the new key grammar (plan 0002, phase D)"
 	return []Coverage{
-		{"init", nav.ScreenDashboard, none, "the TUI shows its setup screen (i) until the workspace is initialized"},
-		{"version", nav.ScreenDashboard, none, "prints the build version"},
-		{"help", nav.ScreenDashboard, none, "the TUI has ? help"},
-		{"tui", nav.ScreenDashboard, none, "starts this TUI"},
+		{"init", nav.ScreenDashboard, none, "the TUI shows its setup screen (i) until the workspace is initialized", ""},
+		{"version", nav.ScreenDashboard, none, "prints the build version", ""},
+		{"help", nav.ScreenDashboard, none, "the TUI has ? help", ""},
+		{"tui", nav.ScreenDashboard, none, "starts this TUI", ""},
 
-		{"completion bash", nav.ScreenDashboard, none, shell},
-		{"completion zsh", nav.ScreenDashboard, none, shell},
-		{"completion fish", nav.ScreenDashboard, none, shell},
-		{"completion enable", nav.ScreenDashboard, none, shell},
-		{"completion disable", nav.ScreenDashboard, none, shell},
-		{"config show", nav.ScreenDashboard, none, ":config show in the command bar (paged)"},
-		{"config edit", nav.ScreenDashboard, none, ":config edit in the command bar (hands over to your editor)"},
+		{"completion bash", nav.ScreenDashboard, none, shell, ""},
+		{"completion zsh", nav.ScreenDashboard, none, shell, ""},
+		{"completion fish", nav.ScreenDashboard, none, shell, ""},
+		{"completion enable", nav.ScreenDashboard, none, shell, ""},
+		{"completion disable", nav.ScreenDashboard, none, shell, ""},
+		{"config show", nav.ScreenDashboard, none, ":config show in the command bar (paged)", ""},
+		{"config edit", nav.ScreenDashboard, none, ":config edit in the command bar (hands over to your editor)", ""},
 
-		{"cron ls", nav.ScreenCron, none, ""},
-		{"cron add", nav.ScreenCron, cr.Add, ""},
-		{"cron rm", nav.ScreenCron, cr.Remove, ""},
-		{"cron run", nav.ScreenCron, cr.Run, ""},
-		{"cron log", nav.ScreenCron, cr.Output, ""},
-		{"cron apply", nav.ScreenCron, none, ""}, // :apply
+		{"cron ls", nav.ScreenCron, none, "", ""},
+		{"cron add", nav.ScreenCron, cr.Add, "", ""},
+		{"cron rm", nav.ScreenCron, cr.Remove, "", ""},
+		{"cron run", nav.ScreenCron, cr.Run, "", ""},
+		{"cron log", nav.ScreenCron, cr.Output, "", ""},
+		{"cron apply", nav.ScreenCron, none, "", "apply"}, // :apply
 
-		{"dotfile ls", nav.ScreenDotfiles, none, ""},
-		{"dotfile add", nav.ScreenDotfiles, df.Add, ""},
-		{"dotfile link", nav.ScreenDotfiles, df.Fix, ""},
-		{"dotfile unlink", nav.ScreenDotfiles, df.Remove, ""},
-		{"dotfile edit", nav.ScreenDotfiles, none, pending},
-		{"dotfile backup enable", nav.ScreenDotfiles, none, pending},
-		{"dotfile backup disable", nav.ScreenDotfiles, none, pending},
-		{"dotfile backup status", nav.ScreenDotfiles, df.GitView, ""},
-		{"dotfile backup push", nav.ScreenDotfiles, none, pending},
+		{"dotfile ls", nav.ScreenDotfiles, none, "", ""},
+		{"dotfile add", nav.ScreenDotfiles, df.Add, "", "add"},
+		{"dotfile link", nav.ScreenDotfiles, df.Link, "", "link"},
+		{"dotfile unlink", nav.ScreenDotfiles, df.Unlink, "", "unlink --all"},
+		{"dotfile edit", nav.ScreenDotfiles, df.Edit, "", ""},
+		{"dotfile backup enable", nav.ScreenDotfiles, none, "", "backup enable"},
+		{"dotfile backup disable", nav.ScreenDotfiles, none, "", "backup disable"},
+		{"dotfile backup status", nav.ScreenDotfiles, none, "", "backup status"},
+		{"dotfile backup push", nav.ScreenDotfiles, df.Backup, "", "backup push"},
 
-		{"ignore ls", nav.ScreenIgnore, ig.NextView, ""},     // the Muted and Ignored views
-		{"ignore lint", nav.ScreenIgnore, none, ""},          // the Warnings view; :lint <path>
-		{"ignore add", nav.ScreenIgnore, ig.Ignore, ""},      // Warnings, Muted
-		{"ignore rm", nav.ScreenIgnore, ig.StopIgnoring, ""}, // Ignored view; :rm <path>
-		{"ignore mute", nav.ScreenIgnore, ig.Mute, ""},       // Warnings
-		{"ignore unmute", nav.ScreenIgnore, ig.Unmute, ""},   // Muted view
-		{"ignore check", nav.ScreenIgnore, none, ""},         // :check <path>
-		{"ignore tree", nav.ScreenIgnore, none, ""},          // :tree [dir], paged
-		{"ignore edit", nav.ScreenIgnore, ig.EditRules, ""},
+		{"ignore ls", nav.ScreenIgnore, ig.NextView, "", ""},       // the Muted and Ignored views
+		{"ignore lint", nav.ScreenIgnore, none, "", "lint"},        // the Warnings view; :lint <path>
+		{"ignore add", nav.ScreenIgnore, ig.Ignore, "", ""},        // Warnings, Muted
+		{"ignore rm", nav.ScreenIgnore, ig.StopIgnoring, "", "rm"}, // Ignored view; :rm <path>
+		{"ignore mute", nav.ScreenIgnore, ig.Mute, "", ""},         // Warnings
+		{"ignore unmute", nav.ScreenIgnore, ig.Unmute, "", ""},     // Muted view
+		{"ignore check", nav.ScreenIgnore, none, "", "check"},      // :check <path>
+		{"ignore tree", nav.ScreenIgnore, none, "", "tree"},        // :tree [dir], paged
+		{"ignore edit", nav.ScreenIgnore, ig.EditRules, "", ""},
 
-		{"session ls", nav.ScreenSessions, none, ""},
-		{"session record", nav.ScreenSessions, lg.Start, ""},
-		{"session stop", nav.ScreenSessions, lg.Stop, ""},
-		{"session show", nav.ScreenSessions, none, pending},
-		{"session grep", nav.ScreenSessions, none, pending},
-		{"session rm", nav.ScreenSessions, lg.Delete, ""},
-		{"session prune", nav.ScreenSessions, lg.Prune, ""},
+		{"session ls", nav.ScreenSessions, none, "", ""},
+		{"session record", nav.ScreenSessions, lg.Start, "", ""},
+		{"session stop", nav.ScreenSessions, lg.Stop, "", ""},
+		{"session show", nav.ScreenSessions, none, pending, ""},
+		{"session grep", nav.ScreenSessions, none, pending, ""},
+		{"session rm", nav.ScreenSessions, lg.Delete, "", ""},
+		{"session prune", nav.ScreenSessions, lg.Prune, "", ""},
 
-		{"repo ls", nav.ScreenRepos, none, ""},
-		{"repo show", nav.ScreenRepos, rp.Open, ""},
-		{"repo fetch", nav.ScreenRepos, rp.Fetch, ""}, // :ls --fetch is the same function
-		{"repo pull", nav.ScreenRepos, rp.Pull, ""},
-		{"repo push", nav.ScreenRepos, none, ":push in the command bar (the shown or marked repos, through the checklist)"},
-		{"repo save", nav.ScreenRepos, rp.Save, ""},
-		{"repo configure", nav.ScreenRepos, rp.Configure, ""},
-		{"repo run", nav.ScreenRepos, rp.Run, ""},
-		{"repo root add", nav.ScreenRepos, rp.AddRoot, ""},
-		{"repo root ls", nav.ScreenRepos, none, ":root ls in the command bar (read-only view)"},
-		{"repo root rm", nav.ScreenRepos, none, ":root rm [<dir>] in the command bar (through the checklist)"},
+		{"repo ls", nav.ScreenRepos, none, "", ""},
+		{"repo show", nav.ScreenRepos, rp.Open, "", ""},
+		{"repo fetch", nav.ScreenRepos, rp.Fetch, "", ""}, // :ls --fetch is the same function
+		{"repo pull", nav.ScreenRepos, rp.Pull, "", ""},
+		{"repo push", nav.ScreenRepos, none, ":push in the command bar (the shown or marked repos, through the checklist)", ""},
+		{"repo save", nav.ScreenRepos, rp.Save, "", ""},
+		{"repo configure", nav.ScreenRepos, rp.Configure, "", ""},
+		{"repo run", nav.ScreenRepos, rp.Run, "", ""},
+		{"repo root add", nav.ScreenRepos, rp.AddRoot, "", ""},
+		{"repo root ls", nav.ScreenRepos, none, ":root ls in the command bar (read-only view)", ""},
+		{"repo root rm", nav.ScreenRepos, none, ":root rm [<dir>] in the command bar (through the checklist)", ""},
 
-		{"scratch ls", nav.ScreenScratch, none, ""},
-		{"scratch new", nav.ScreenScratch, sc.New, ""},
-		{"scratch add", nav.ScreenScratch, none, pending},
-		{"scratch open", nav.ScreenScratch, sc.Open, ""},
-		{"scratch tag", nav.ScreenScratch, sc.Tag, ""},
-		{"scratch rm", nav.ScreenScratch, sc.Delete, ""},
+		{"scratch ls", nav.ScreenScratch, none, "", ""},
+		{"scratch new", nav.ScreenScratch, sc.New, "", ""},
+		{"scratch add", nav.ScreenScratch, none, pending, ""},
+		{"scratch open", nav.ScreenScratch, sc.Open, "", ""},
+		{"scratch tag", nav.ScreenScratch, sc.Tag, "", ""},
+		{"scratch rm", nav.ScreenScratch, sc.Delete, "", ""},
 
-		{"secret ls", nav.ScreenSecrets, none, ""},
+		{"secret ls", nav.ScreenSecrets, none, "", ""},
 		{CLI: "secret show", Screen: nav.ScreenSecrets, Key: se.View},
 		{CLI: "secret allow", Screen: nav.ScreenSecrets, Key: se.Allow},
 		{CLI: "secret mute", Screen: nav.ScreenSecrets, Key: se.Mute},
@@ -116,35 +120,17 @@ var CLICoverage = func() []Coverage {
 		{CLI: "credential enable", Screen: nav.ScreenSecrets, Note: ":credential enable in the command bar (hands over to the CLI wizard)"},
 		{CLI: "credential disable", Screen: nav.ScreenSecrets, Note: ":credential disable in the command bar (hands over to the CLI wizard)"},
 		{CLI: "credential status", Screen: nav.ScreenSecrets, Note: ":credential status in the command bar (paged)"},
-		{"git-credential-helper get", nav.ScreenSecrets, none, plumbing},
-		{"git-credential-helper store", nav.ScreenSecrets, none, plumbing},
-		{"git-credential-helper erase", nav.ScreenSecrets, none, plumbing},
+		{"git-credential-helper get", nav.ScreenSecrets, none, plumbing, ""},
+		{"git-credential-helper store", nav.ScreenSecrets, none, plumbing, ""},
+		{"git-credential-helper erase", nav.ScreenSecrets, none, plumbing, ""},
 
-		{"trash ls", nav.ScreenTrash, none, ""},
-		{"trash restore", nav.ScreenTrash, tr.Restore, ""},
-		{"trash rm", nav.ScreenTrash, tr.Delete, ""},
-		{"trash empty", nav.ScreenTrash, none, ""}, // :empty
-		{"trash prune", nav.ScreenTrash, tr.Prune, ""},
-		{"trash enable", nav.ScreenTrash, none, ""},  // :enable
-		{"trash disable", nav.ScreenTrash, none, ""}, // :disable
-		{"trash status", nav.ScreenTrash, none, ""},  // :status
+		{"trash ls", nav.ScreenTrash, none, "", ""},
+		{"trash restore", nav.ScreenTrash, tr.Restore, "", ""},
+		{"trash rm", nav.ScreenTrash, tr.Delete, "", ""},
+		{"trash empty", nav.ScreenTrash, none, "", "empty"}, // :empty
+		{"trash prune", nav.ScreenTrash, tr.Prune, "", ""},
+		{"trash enable", nav.ScreenTrash, none, "", "enable"},   // :enable
+		{"trash disable", nav.ScreenTrash, none, "", "disable"}, // :disable
+		{"trash status", nav.ScreenTrash, none, "", "status"},   // :status
 	}
 }()
-
-// CoverageCmds names the `:` command that runs a CLI subcommand, for those
-// that have one (spec §6.5). TestCoverageCommandsExist checks each is a command
-// of its screen. (Kept beside Coverage rather than in it so entries stay
-// four-field literals.)
-var CoverageCmds = map[string]string{
-	"cron apply": "apply",
-
-	"ignore lint":  "lint",
-	"ignore rm":    "rm",
-	"ignore check": "check",
-	"ignore tree":  "tree",
-
-	"trash empty":   "empty",
-	"trash enable":  "enable",
-	"trash disable": "disable",
-	"trash status":  "status",
-}

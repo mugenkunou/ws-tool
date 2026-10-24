@@ -189,49 +189,40 @@ func (k ReposMap) FullHelp() [][]key.Binding {
 	}
 }
 
-// DotfilesMap is the binding set for the dotfiles screen.
+// DotfilesMap is the binding set for the dotfiles screen (spec §6.5).
 type DotfilesMap struct {
-	Table    table.KeyMap
-	Add      key.Binding
-	Remove   key.Binding
-	Fix      key.Binding
-	Sync     key.Binding
-	Reset    key.Binding
-	Push     key.Binding
-	GitView  key.Binding
-	GitSetup key.Binding
-	Migrate  key.Binding
-	Back     key.Binding
+	Table  table.KeyMap
+	Add    key.Binding // a: take the marked rows' live files, else prompt for a path
+	Unlink key.Binding // ctrl+d
+	Link   key.Binding // l: repair the broken and overwritten links
+	Edit   key.Binding // e: the workspace copy
+	Backup key.Binding // b: commit pending changes and push
+	Back   key.Binding
 }
 
 // Dotfiles returns bindings for the dotfiles screen.
 func Dotfiles() DotfilesMap {
 	return DotfilesMap{
-		Table:    Table(),
-		Add:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add")),
-		Remove:   keyDelete("remove"),
-		Fix:      key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "fix links")),
-		Sync:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync live→ws")),
-		Reset:    key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "reset all")),
-		Push:     key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "git push")),
-		GitView:  key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "git status/log")),
-		GitSetup: key.NewBinding(key.WithKeys("G"), key.WithHelp("G", "git setup…")),
-		Migrate:  key.NewBinding(key.WithKeys("M"), key.WithHelp("M", "migrate dirs…")),
-		Back:     back(),
+		Table:  Table(),
+		Add:    Add(),
+		Unlink: keyDelete("unlink"),
+		Link:   key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "link")),
+		Edit:   Edit(),
+		Backup: key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "back up")),
+		Back:   back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
 func (k DotfilesMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Add, k.Remove, k.Fix, k.Sync, k.Push}
+	return []key.Binding{k.Add, k.Unlink, k.Link, k.Edit, k.Backup}
 }
 
 // FullHelp implements help.KeyMap.
 func (k DotfilesMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
-		{k.Add, k.Remove, k.Fix, k.Sync, k.Reset},
-		{k.Push, k.GitView, k.GitSetup, k.Migrate},
+		{k.Add, k.Unlink, k.Link, k.Edit, k.Backup},
 		{k.Back},
 	}
 }

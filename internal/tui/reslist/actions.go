@@ -27,6 +27,9 @@ const (
 	// All actions act on the marked rows, else every row shown (filtered):
 	// fleet actions such as fetch, pull, run, empty, purge.
 	All
+	// Marked actions act on the marked rows, and with no marks on none: the
+	// action still runs, with no rows (spec §6.5 Dotfiles `a`).
+	Marked
 )
 
 // Action is one screen action: its key, its scope, and what it does with
@@ -82,6 +85,8 @@ func (m Model[T]) Rows(s Scope) []T {
 			return marked
 		}
 		return m.shown
+	case Marked:
+		return m.marked()
 	}
 	return nil
 }
@@ -95,7 +100,7 @@ func Run[M, T any](m M, l Model[T], actions []Action[M, T], k tea.KeyPressMsg) (
 			continue
 		}
 		rows := l.Rows(a.Scope)
-		if a.Scope != Global && len(rows) == 0 {
+		if a.Scope != Global && a.Scope != Marked && len(rows) == 0 {
 			return m, nil, true
 		}
 		next, cmd := a.Do(m, rows)
@@ -160,7 +165,7 @@ func RunCommand[M, T any](m M, l Model[T], commands []Command[M, T], msg nav.Com
 	}
 	c := commands[best]
 	rows := l.Rows(c.Scope)
-	if c.Scope != Global && len(rows) == 0 {
+	if c.Scope != Global && c.Scope != Marked && len(rows) == 0 {
 		return m, nil, true
 	}
 	next, cmd := c.Do(m, rows, msg.Words[len(strings.Fields(c.Name)):])

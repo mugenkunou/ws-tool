@@ -42,21 +42,16 @@ func TestCoverageKeysExist(t *testing.T) {
 }
 
 // TestCoverageCommandsExist: a coverage entry's `:` command is one its screen
-// has.
+// declares.
 func TestCoverageCommandsExist(t *testing.T) {
 	m := loaded(t, 100, 30)
-	screens := map[string]nav.Screen{}
 	for _, c := range CLICoverage {
-		screens[c.CLI] = c.Screen
-	}
-	for cli, name := range CoverageCmds {
-		s, ok := screens[cli]
-		if !ok {
-			t.Errorf("CoverageCmds names %q, which is not a CLI command", cli)
+		if c.Cmd == "" {
 			continue
 		}
-		if !slices.ContainsFunc(commander(m.screens[s]), func(c nav.CommandInfo) bool { return c.Name == name }) {
-			t.Errorf("%s: screen %v has no `:%s` command", cli, s, name)
+		known := commander(m.screens[c.Screen])
+		if !slices.ContainsFunc(known, func(i nav.CommandInfo) bool { return i.Name == c.Cmd }) {
+			t.Errorf("%s: screen %v has no `:` command %q", c.CLI, c.Screen, c.Cmd)
 		}
 	}
 }

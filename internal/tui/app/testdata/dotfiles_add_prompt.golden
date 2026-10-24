@@ -1,11 +1,9 @@
 ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Reset 3 dotfiles
+Add a dotfile or config directory
+The original moves into configs/dotfiles/ and is symlinked back. A directory lists its entries.
 
-› [ ] Reset all 3 managed dotfiles  (restores originals, unregisters all)
-
-
-
+› ~/
 
 
 
@@ -27,4 +25,6 @@ Reset 3 dotfiles
 
 
 
-space toggle • ctrl+a all/none • enter apply • esc back
+
+
+enter submit • tab complete • esc back

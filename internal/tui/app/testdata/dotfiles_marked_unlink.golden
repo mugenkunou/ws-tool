@@ -1,9 +1,9 @@
 ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Remove 2 dotfiles
+Unlink 2 dotfiles
 
-› [x] Remove dotfile /home/tester/.bashrc  (restores the file to its system path)
-  [x] Remove dotfile /home/tester/.gitconfig  (restores the file to its system path)
+› [x] Unregister /home/tester/.bashrc (workspace copy missing; nothing to restore)
+  [x] Unregister /home/tester/.gitconfig (workspace copy missing; nothing to restore)
 
 
 
