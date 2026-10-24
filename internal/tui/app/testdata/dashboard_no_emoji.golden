@@ -27,4 +27,4 @@ Overview
 │ Cron                       ✘ │ │ Trash                      ! │
 │ 2 jobs installed             │ │ 3.0 MB · 12 files            │
 │ 1 failing                    │ │ soft-delete off (1 of 3)     │
-←→↑↓ move • enter open • tab screens • : command • ? help • q quit
+←→↑↓ move • enter open • ctrl+r refresh • : command • ? help • q quit

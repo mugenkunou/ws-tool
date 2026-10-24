@@ -81,7 +81,7 @@ func Global(n int) GlobalMap {
 
 // ShortHelp implements help.KeyMap.
 func (k GlobalMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Switch, k.Command, k.Help, k.Quit}
+	return []key.Binding{k.Refresh, k.Command, k.Help, k.Quit}
 }
 
 // FullHelp implements help.KeyMap.

@@ -4,7 +4,6 @@ ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secret
  Job             Schedule      State           Last run          Next run   Description
  pass-backup     0 * * * *     ✔               2h ago            overdue    push the pass store
  repo-sync       */30 * * * *  ✔               40m ago (exit 2)  overdue    sync repo fleet
- all             preset                                                     installs: pass-backup,…
 
 
 
@@ -27,4 +26,5 @@ ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secret
 
 
 
-enter output • a add • ctrl+d remove • r run … • tab screens • : command • ? help • q quit
+
+enter output • a add • ctrl+d remove • r run … • ctrl+r refresh • : command • ? help • q quit

@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secret
 
 
 2 marked — a add · ctrl+d unlink · l link act on them · esc clears
-a add • ctrl+d unlink • l link • space mark … • tab screens • : command • ? help • q quit
+a add • ctrl+d unlink • l link • space mark … • ctrl+r refresh • : command • ? help • q quit

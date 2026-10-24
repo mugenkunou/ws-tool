@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secret
 
 
 
-f fetch • p pull • s save • r run • c config • a add … • tab screens • : command • ? help • q quit
+f fetch • p pull • s save • r run • c config … • ctrl+r refresh • : command • ? help • q quit

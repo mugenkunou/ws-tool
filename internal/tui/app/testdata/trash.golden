@@ -1,6 +1,6 @@
 ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹  Skills⁰
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-🚮 ~/.Trash  3.0 MB · 12 files (warns at 1.0 GB)
+🚮 ~/.Trash  3.0 MB · 12 files (warns at 10.0 GB)
 
   ✔ shell rm       rm moves files here
   ✔ VS Code        editor deletes go here
@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secret
 
 
 
-r restore • ctrl+d delete forever • p prune … • tab screens • : command • ? help • q quit
+r restore • ctrl+d delete forever • p prune … • ctrl+r refresh • : command • ? help • q quit

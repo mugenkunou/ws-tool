@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secret
 
 
 2 marked — t tag · ctrl+d delete act on them · esc clears
-a new • enter open • t tag • ctrl+d delete … • tab screens • : command • ? help • q quit
+a new • enter open • t tag • ctrl+d delete … • ctrl+r refresh • : command • ? help • q quit

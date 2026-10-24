@@ -27,4 +27,4 @@ Warnings 2 · Muted 1 · Ignored 2
 
 
 2 marked — i ignore · m mute · s scratch · ctrl+d delete act on them · esc clears
-i ignore • m mute • s scratch • ctrl+d delete … • tab screens • : command • ? help • q quit
+i ignore • m mute • s scratch • ctrl+d delete … • ctrl+r refresh • : command • ? help • q quit

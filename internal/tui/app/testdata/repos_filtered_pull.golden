@@ -27,4 +27,4 @@ Fetching 2 repos…
 
 
 filter state=clean (2 of 4) — f fetch · p pull · s save · r run act on these 2
-f fetch • p pull • s save • r run • c config • a add … • tab screens • : command • ? help • q quit
+f fetch • p pull • s save • r run • c config … • ctrl+r refresh • : command • ? help • q quit

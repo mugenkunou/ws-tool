@@ -27,4 +27,4 @@ Fetching 3 repos…
 
 
 3 marked — f fetch · p pull · s save · r run · c config act on them · esc clears
-f fetch • p pull • s save • r run • c config • a add … • tab screens • : command • ? help • q quit
+f fetch • p pull • s save • r run • c config … • ctrl+r refresh • : command • ? help • q quit
