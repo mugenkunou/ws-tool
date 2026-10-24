@@ -227,43 +227,38 @@ func (k DotfilesMap) FullHelp() [][]key.Binding {
 	}
 }
 
-// ScratchMap is the binding set for the scratch screen.
+// ScratchMap is the binding set for the scratch screen (spec §6.5).
 type ScratchMap struct {
-	Table   table.KeyMap
-	New     key.Binding
-	Open    key.Binding
-	Tag     key.Binding
-	AutoTag key.Binding
-	Search  key.Binding
-	Delete  key.Binding
-	Back    key.Binding
+	Table  table.KeyMap
+	New    key.Binding // a
+	Open   key.Binding // enter: in your editor
+	Tag    key.Binding // t
+	Delete key.Binding // ctrl+d
+	Back   key.Binding
 }
 
 // Scratch returns bindings for the scratch screen.
 func Scratch() ScratchMap {
 	return ScratchMap{
-		Table:   Table(),
-		New:     key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new")),
-		Open:    key.NewBinding(key.WithKeys("enter", "o"), key.WithHelp("enter", "open in editor")),
-		Tag:     key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tag")),
-		AutoTag: key.NewBinding(key.WithKeys("T"), key.WithHelp("T", "auto-tag")),
-		Search:  key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "find")),
-		Delete:  keyDelete("delete"),
-		Back:    back(),
+		Table:  Table(),
+		New:    key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "new")),
+		Open:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
+		Tag:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "tag")),
+		Delete: Delete(),
+		Back:   back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
 func (k ScratchMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.New, k.Open, k.Tag, k.Search, k.Delete}
+	return []key.Binding{k.New, k.Open, k.Tag, k.Delete}
 }
 
 // FullHelp implements help.KeyMap.
 func (k ScratchMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
-		{k.New, k.Open, k.Search},
-		{k.Tag, k.AutoTag, k.Delete},
+		{k.New, k.Open, k.Tag, k.Delete},
 		{k.Back},
 	}
 }

@@ -97,7 +97,7 @@ var CLICoverage = func() []Coverage {
 
 		{"scratch ls", nav.ScreenScratch, none, "", ""},
 		{"scratch new", nav.ScreenScratch, sc.New, "", ""},
-		{"scratch add", nav.ScreenScratch, none, pending, ""},
+		{"scratch add", nav.ScreenScratch, none, "", "add"},
 		{"scratch open", nav.ScreenScratch, sc.Open, "", ""},
 		{"scratch tag", nav.ScreenScratch, sc.Tag, "", ""},
 		{"scratch rm", nav.ScreenScratch, sc.Delete, "", ""},

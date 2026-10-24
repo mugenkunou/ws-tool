@@ -1,7 +1,7 @@
 ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 Tag dns-debug.2026-09
-Comma-separated. Current: dns, network
+Comma-separated; -tag removes one. Current: dns, network
 
 › n
 

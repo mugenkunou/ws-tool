@@ -237,7 +237,9 @@ func TestSnapshots(t *testing.T) {
 		{"dotfiles_marked", []string{"3", "space", "down", "space"}},
 		{"dotfiles_detail", []string{"3", "down", "d"}},
 		{"scratch", []string{"4"}},
-		{"scratch_new_prompt", []string{"4", "n", "d", "n"}},
+		{"scratch_new_prompt", []string{"4", "a", "d", "n"}},
+		{"scratch_marked", []string{"4", "space", "down", "space"}},
+		{"scratch_marked_delete", []string{"4", "space", "down", "space", "ctrl+d"}},
 		{"scratch_tag_prompt", []string{"4", "t", "n"}},
 		{"logs", []string{"5"}},
 		{"ignore", []string{"6"}},
@@ -297,7 +299,7 @@ func TestSnapshotNotice(t *testing.T) {
 func TestResize(t *testing.T) {
 	sizes := [][2]int{{120, 40}, {80, 24}, {60, 15}, {40, 12}, {20, 6}, {1, 1}}
 	flows := [][]string{{"1"}, {"2"}, {"3"}, {"4"}, {"5"}, {"6"}, {"7"}, {"8"}, {"9"},
-		{"2", "enter"}, {"2", "p"}, {"4", "n"}, {"1", "R"}, {"1", "down", "down", "down", "down", "down", "down", "down", "down", "right"}}
+		{"2", "enter"}, {"2", "p"}, {"4", "a"}, {"1", "R"}, {"1", "down", "down", "down", "down", "down", "down", "down", "down", "right"}}
 	for _, sz := range sizes {
 		for _, flow := range flows {
 			m := loaded(t, 100, 30)
@@ -574,7 +576,7 @@ func TestEscMovesOneLevelUp(t *testing.T) {
 // TestEscClosesDialogFirst: with a dialog open, esc closes only the dialog.
 func TestEscClosesDialogFirst(t *testing.T) {
 	m := loaded(t, 80, 24)
-	m = send(m, press("4"), press("n"))
+	m = send(m, press("4"), press("a"))
 	if !m.current().CapturesKeys() {
 		t.Fatal("prompt did not open")
 	}
@@ -591,7 +593,7 @@ func TestEscClosesDialogFirst(t *testing.T) {
 // of quitting or switching screens; ctrl+c still quits.
 func TestDialogCapturesGlobalKeys(t *testing.T) {
 	m := loaded(t, 80, 24)
-	m = send(m, press("4"), press("n"))
+	m = send(m, press("4"), press("a"))
 	for _, k := range []string{"q", "2", "?"} {
 		var cmd tea.Cmd
 		m, cmd = sendRun(m, press(k))
@@ -693,7 +695,7 @@ func TestScratchNewEndToEnd(t *testing.T) {
 	m := New(o, e, nil)
 	m = send(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 	m = pump(t, m, m.loadAll())
-	m = send(m, press("4"), press("n"))
+	m = send(m, press("4"), press("a"))
 	m = typeText(m, "e2e-demo")
 	m, cmd := sendRun(m, press("enter")) // submit name → checklist
 	m = pump(t, m, cmd)
@@ -735,7 +737,7 @@ func TestCancelChangesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := send(New(o, e, nil), tea.WindowSizeMsg{Width: 100, Height: 30})
-	m = send(m, press("4"), press("n"))
+	m = send(m, press("4"), press("a"))
 	m = typeText(m, "never")
 	m, cmd := sendRun(m, press("enter"))
 	m = pump(t, m, cmd)
