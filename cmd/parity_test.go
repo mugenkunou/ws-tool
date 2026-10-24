@@ -17,6 +17,7 @@ var glossaryVerbs = []string{
 	"mute", "unmute", "prune", "grep", "run", "save", "push", "lint", "configure",
 	"apply", "fetch", "pull", "link", "unlink", "tag", "record", "stop", "check",
 	"tree", "allow", "store", "init", "audit", "restore", "empty", "log",
+	"scan", "install", "uninstall",
 }
 
 // subNouns are the two sub-nouns spec §3.1 allows. They stand between a noun

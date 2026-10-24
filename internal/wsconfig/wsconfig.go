@@ -120,7 +120,7 @@ func Default() WsConfig {
 			SkipDirs:  []string{},
 		},
 		Ignore: Ignore{
-			WarnSizeMB: 1,
+			WarnSizeMB: 5,
 			CritSizeMB: 10,
 			MaxDepth:   6,
 			Muted:      []string{},

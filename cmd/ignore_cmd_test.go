@@ -103,10 +103,10 @@ func (e igEnv) jsonOf(t *testing.T, args ...string) (int, map[string]any) {
 	return code, env
 }
 
-// bigFile writes a file over the 1 MB warning threshold.
+// bigFile writes a file over the 5 MB warning threshold.
 func (e igEnv) bigFile(t *testing.T, rel string) string {
 	t.Helper()
-	return e.write(t, rel, strings.Repeat("x", 2*1024*1024))
+	return e.write(t, rel, strings.Repeat("x", 6*1024*1024))
 }
 
 func igHas(t *testing.T, what, got string, wants ...string) {

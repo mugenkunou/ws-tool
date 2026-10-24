@@ -356,7 +356,7 @@ func TestRootRmOneRootThroughTheChecklist(t *testing.T) {
 	m := newModel(t, e)
 	m, _ = updateRun(m, nav.CommandMsg{Words: []string{"root", "rm", filepath.Join(e.Paths.Workspace, "a")}})
 	got := view(m)
-	if !strings.Contains(got, "Remove 1 repo root") || !strings.Contains(got, "Remove repo root "+filepath.Join(e.Paths.Workspace, "a")) {
+	if !strings.Contains(got, "Remove 1 repo root") || !strings.Contains(got, "Remove repo root ") { // the path itself is cut to the view width
 		t.Fatalf("checklist:\n%s", got)
 	}
 	if strings.Contains(got, "[ ]") {

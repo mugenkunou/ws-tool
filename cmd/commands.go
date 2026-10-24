@@ -127,6 +127,16 @@ var commands = []command{
 		Flags:    []flagDoc{allFlag("every entry")},
 		Examples: []string{"ws symlink unlink ~/.gitconfig", "ws symlink unlink --all"}},
 
+	{Path: []string{"skill", "scan"}, Flags: []flagDoc{{Name: "--tool", Arg: "<name>", Desc: "only this tool's column"}},
+		Summary: "which skills are installed in which tools", RO: true,
+		Examples: []string{"ws skill scan", "ws skill scan --tool claude"}},
+	{Path: []string{"skill", "install"}, Args: "[<skill>…]", Summary: "link skills into one tool; no names: a picklist",
+		Flags:    []flagDoc{{Name: "--tool", Arg: "<name>", Desc: "the tool to install into (default: ask)"}},
+		Examples: []string{"ws skill install", "ws skill install review-pr --tool claude"}},
+	{Path: []string{"skill", "uninstall"}, Args: "[<skill>…]", Summary: "remove skill links from one tool; no names: a picklist",
+		Flags:    []flagDoc{{Name: "--tool", Arg: "<name>", Desc: "the tool to uninstall from (default: ask)"}},
+		Examples: []string{"ws skill uninstall", "ws skill uninstall review-pr --tool claude"}},
+
 	{Path: []string{"scratch", "ls"}, Summary: "scratch directories", RO: true,
 		Fields: fieldsOf(func() resource.Schema[scratch.Entry] { return scratch.Schema(resource.CLIView()) })},
 	{Path: []string{"scratch", "new"}, Args: "[name]", Summary: "create one and open it",
@@ -243,6 +253,7 @@ var commands = []command{
 var nounSummaries = []struct{ Name, Summary string }{
 	{"repo", "Git repositories under the repo roots"},
 	{"symlink", "Files and folders kept in the workspace and linked back"},
+	{"skill", "Agent skills linked into your coding tools"},
 	{"scratch", "Scratch directories"},
 	{"session", "Recorded terminal sessions"},
 	{"ignore", "MEGA sync rules and warnings"},

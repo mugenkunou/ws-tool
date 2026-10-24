@@ -43,6 +43,7 @@ Section numbers are stable: code comments cite them as `spec §x.y`.
 - [5. Command reference](#5-command-reference)
   - [`ws repo`](#ws-repo)
   - [`ws symlink`](#ws-symlink)
+  - [`ws skill`](#ws-skill)
   - [`ws scratch`](#ws-scratch)
   - [`ws session`](#ws-session)
   - [`ws ignore`](#ws-ignore)
@@ -402,7 +403,7 @@ the flag, the environment, or the default.
 ├── scripts/
 │   └── lib/
 ├── agent/
-│   └── skills/
+│   └── skills/          # one folder per skill, with a SKILL.md; `ws skill install` links them
 ├── configs/
 ├── symlinks/
 │   ├── home/            # originals of paths under $HOME, at the same relative path
@@ -440,7 +441,7 @@ valid JSON. `ws config edit` checks before saving.
   "repo": { "roots": ["."], "exclude_dirs": ["node_modules", ".venv"], "max_parallel": 8 },
   "secret": { "allowlist": [], "skip_dirs": [] },
   "pass": { "pass_entry": "" },
-  "ignore": { "warn_size_mb": 1, "crit_size_mb": 10, "max_depth": 6, "muted": [] },
+  "ignore": { "warn_size_mb": 5, "crit_size_mb": 10, "max_depth": 6, "muted": [] },
   "ignore_rules": { "schema": 1, "exclude": [], "include": [], "suppress_defaults": [] },
   "session": { "root_dir": "~/Sessions", "max_session_mb": 100 },
   "symlinks": []
@@ -551,6 +552,7 @@ client's own exclusion settings.
 | --- | --- | --- |
 | `repo` | git repositories found under `repo.roots` | Repos |
 | `symlink` | host files and folders whose originals live in the workspace, symlinked back | Symlinks |
+| `skill` | agent skills in `agent/skills/`, linked into the coding tools on this machine | — (CLI only) |
 | `scratch` | throwaway directories under `scratch.root_dir` | Scratch |
 | `session` | recorded terminal sessions | Sessions |
 | `ignore` | what the sync client syncs: ignore rules, muted directories, sync warnings | Ignore |
@@ -596,6 +598,7 @@ prints help.
 | `init`, `audit` | create; inspect entries for problems | pass (and `ws init`) |
 | `restore`, `empty` | put a trashed item back; delete everything in the trash | trash |
 | `log` | recent output of a job | cron |
+| `scan`, `install`, `uninstall` | which skills each tool has; link a skill into one tool; remove that link | skill |
 
 `completion bash|zsh|fish` names a shell, not a verb. It is the one exception to the
 glossary.
@@ -624,6 +627,10 @@ ws symlink add --app <name>               RW  everything found for one app, with
 ws symlink add <folder> [--dir|--files]   RW  a folder as one entry, or one entry per file
 ws symlink link [<host-path>…]            RW  make or repair links from the workspace copies
 ws symlink unlink <host-path…> | --all    RW  put the real content back, stop managing it
+
+ws skill scan [--tool <name>]             RO  which skills are installed in which tools
+ws skill install [<skill>…] [--tool <t>]  RW  link skills into one tool; no names: a picklist
+ws skill uninstall [<skill>…] [--tool <t>] RW  remove skill links from one tool; no names: a picklist
 
 ws scratch ls                             RO  scratch directories
 ws scratch new [name]                     RW  create one and open it
@@ -1734,6 +1741,113 @@ TUI: `ctrl+d` (selected rows), `:unlink --all`.
 workspace path as a second argument`. `symlink edit`, `symlink backup`, `symlink git` and
 `symlink migrate` are unknown subcommands, with a one-line hint.
 
+### `ws skill`
+
+Skills are the folders of instructions that coding tools such as Claude Code or Codex load
+on demand. A skill is a folder, or a symlink to one, that holds a `SKILL.md` with `name` and
+`description` frontmatter. You keep your skills in one place, `<workspace>/agent/skills/<name>/`,
+and `ws skill install` links them into the skills folder of the tool that should have them.
+A skill that is a symlink works too: `agent/skills/<name>` may point anywhere.
+
+ws knows the tools from a **built-in table**. It is in the binary only and cannot be edited.
+Each row is the tool's config folder (a tool counts as **detected** when it exists, because a
+fresh install has no `skills/` folder yet) and the skills folder the tool reads:
+
+| Tool | Skills folder | | Tool | Skills folder |
+| --- | --- | --- | --- | --- |
+| `amp` | `~/.config/agents/skills` | | `junie` * | `~/.junie/skills` |
+| `claude` | `~/.claude/skills` | | `kimi` | `~/.kimi-code/skills` |
+| `cline` | `~/.cline/skills` | | `kiro` | `~/.kiro/skills` |
+| `codex` * | `~/.codex/skills` | | `opencode` | `~/.config/opencode/skills` |
+| `copilot` | `~/.copilot/skills` | | `roo` | `~/.roo/skills` |
+| `cursor` | `~/.cursor/skills` | | `windsurf` | `~/.codeium/windsurf/skills` |
+| `gemini` | `~/.gemini/skills` | | | |
+
+\* The tool's own documentation does not confirm this path (Codex documents only
+`~/.agents/skills`; Junie's user-level path is not published). ws marks it in `scan`.
+
+ws does not use the shared `~/.agents/skills` folder: Claude Code does not read it (tested
+with Claude Code 2.1.310), so every tool gets its own link. Some tools also read
+`~/.claude/skills` (Cursor, Copilot, OpenCode); installing into both can show a skill twice.
+ws does not track that. `scan` reports each tool's folder and nothing else, and you choose.
+
+| Command | RO/RW | Does | TUI |
+| --- | --- | --- | --- |
+| `ws skill scan [--tool <name>]` | RO | a grid of every skill against every known tool | CLI only |
+| `ws skill install [<skill>…] [--tool <name>]` | RW | link skills into one tool | CLI only |
+| `ws skill uninstall [<skill>…] [--tool <name>]` | RW | remove the links ws made in one tool | CLI only |
+
+#### `ws skill scan`
+
+```text
+ws skill scan [--tool <name>]
+```
+
+Read-only. It reads the filesystem and runs no tool. For each skill and each known tool it
+checks one path: `<skills folder>/<skill name>`. If anything is there (a symlink, even a broken
+one, or a real folder), the cell is `✔`. Otherwise it is `·` (`-` with `--no-color`). Nothing
+else is reported: no duplicate check, no judgment. A cell is `·` both when the skill is not
+installed and when the tool is not installed. The header and the footer tell the tools apart: a
+detected tool is bold, a tool that is not detected is dim and listed under `○ not detected`
+(`( )` with `--no-color`). A skill whose link target is gone shows `(broken link)`. An entry in
+`agent/skills/` without a `SKILL.md`, and loose files, are not skills and are not listed.
+
+```text
+$ ws skill scan
+SKILL         amp  claude  cline  codex  copilot  cursor  gemini  ...
+review-pr     ·    ✔       ·      ·      ·        ·       ·
+sql-style     ·    ·       ·      ·      ·        ·       ·
+
+● detected: claude cursor
+○ not detected: amp cline codex* copilot gemini ...
+✔ installed   · not installed (the tool or the skill)
+* path not confirmed by the tool's own docs
+```
+
+`--tool` shows one column. `--json`: `skill.scan`, with `data.tools[]` (`name`, `detected`,
+`unverified`) and `data.skills[]` (`skill`, `broken`, `tools[]` of `tool` and `installed`).
+
+Exit: 0, or 1 on a usage error or an unknown tool.
+
+#### `ws skill install`
+
+```text
+ws skill install [<skill>…] [--tool <name>]
+```
+
+Links each skill into **one** tool's skills folder: a symlink
+`<skills folder>/<name>` to `<workspace>/agent/skills/<name>`, created with the folder if it is
+missing. To install into two tools, run it twice. Without `--tool`, ws lists the known tools
+(detected ones first) and asks for one. Without skill names, it lists the skills not yet in
+that tool and asks which; `all` or `1,3` is accepted. Both prompts need a terminal; with
+`--json` or `--quiet` a missing `--tool` or name is a usage error.
+
+ws never replaces anything. If the path already exists (a real folder, another link), that
+action fails and the rest still run. A skill whose target is gone cannot be installed. A tool
+that is not detected can still be chosen; the plan line says it will create the folder.
+
+```text
+$ ws skill install review-pr --tool claude
+Link review-pr → ~/.claude/skills/review-pr [y/n/a/q] y
+  ✔ Link review-pr → ~/.claude/skills/review-pr
+```
+
+`--json`: `skill.install`, with `data.actions`. Exit: 0, 1 or 3.
+
+#### `ws skill uninstall`
+
+```text
+ws skill uninstall [<skill>…] [--tool <name>]
+```
+
+Removes links from one tool. It removes only a symlink whose own target is inside
+`agent/skills/` (one hop is read: where `agent/skills/<name>` itself points does not matter).
+A real folder, or a link that points elsewhere, is left alone and the action fails. The skill
+in the workspace is never touched. Without `--tool`, ws lists the tools that hold at least one
+of its links; without names, it lists those links.
+
+`--json`: `skill.uninstall`, with `data.actions`. Exit: 0, 1 or 3.
+
 ### `ws scratch`
 
 Scratch directories are throwaway working directories for debugging, investigations and
@@ -2277,7 +2391,7 @@ path that no rule matches syncs. ws writes the rules in this order:
 | Type | Severity | When |
 | --- | --- | --- |
 | `bloat` | CRITICAL | a file is larger than `ignore.crit_size_mb` (default 10) |
-| `bloat` | WARNING | a file is larger than `ignore.warn_size_mb` (default 1) |
+| `bloat` | WARNING | a file is larger than `ignore.warn_size_mb` (default 5) |
 | `depth` | WARNING | a file or directory is more than `ignore.max_depth` (default 6) levels below the workspace |
 | `project-meta` | WARNING | build output next to a project marker: `bin/` beside `go.mod`; `dist/`, `build/`, `node_modules/` beside `package.json` |
 

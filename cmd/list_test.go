@@ -132,7 +132,15 @@ func TestSymlinkLsFieldsAndFilter(t *testing.T) {
 		}
 	}
 
-	recs = listRecords(t, "--workspace", workspace, "symlink", "ls", "--filter", "original=symlinks/system"+filepath.ToSlash(filepath.Join(sys, "id_rsa")))
+	// Where the copy lands (symlinks/home or symlinks/system) depends on whether the
+	// temp dir is under $HOME, so read it from the listing.
+	var original string
+	for _, r := range recs {
+		if strings.HasSuffix(r["system"].(string), "id_rsa") {
+			original, _ = r["original"].(string)
+		}
+	}
+	recs = listRecords(t, "--workspace", workspace, "symlink", "ls", "--filter", "original="+original)
 	if len(recs) != 1 || !strings.HasSuffix(recs[0]["system"].(string), "id_rsa") {
 		t.Errorf("--filter original = %v", recs)
 	}

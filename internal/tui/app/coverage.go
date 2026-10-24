@@ -59,6 +59,10 @@ var CLICoverage = func() []Coverage {
 		{"symlink link", nav.ScreenSymlinks, df.Link, "", "link"},
 		{"symlink unlink", nav.ScreenSymlinks, df.Unlink, "", "unlink --all"},
 
+		{CLI: "skill scan", Screen: nav.ScreenDashboard, Note: "CLI-only for now; skills are linked from the shell"},
+		{CLI: "skill install", Screen: nav.ScreenDashboard, Note: "CLI-only for now; skills are linked from the shell"},
+		{CLI: "skill uninstall", Screen: nav.ScreenDashboard, Note: "CLI-only for now; skills are linked from the shell"},
+
 		{"ignore ls", nav.ScreenIgnore, ig.NextView, "", ""},       // the Muted and Ignored views
 		{"ignore lint", nav.ScreenIgnore, none, "", "lint"},        // the Warnings view; :lint <path>
 		{"ignore add", nav.ScreenIgnore, ig.Ignore, "", ""},        // Warnings, Muted

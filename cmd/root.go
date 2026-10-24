@@ -55,6 +55,8 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runConfig(commandArgs, globals, stdin, stdout, stderr)
 	case "symlink":
 		return runSymlink(commandArgs, globals, stdin, stdout, stderr)
+	case "skill":
+		return runSkill(commandArgs, globals, stdin, stdout, stderr)
 	case "ignore":
 		return runIgnore(commandArgs, globals, stdin, stdout, stderr)
 	case "secret":
