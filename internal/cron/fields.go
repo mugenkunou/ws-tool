@@ -2,7 +2,6 @@ package cron
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/mugenkunou/ws-tool/internal/resource"
@@ -25,12 +24,9 @@ const (
 type Job struct {
 	Name        string
 	Description string
-	Schedule    string // empty for presets and retired jobs
-	Preset      bool
+	Schedule    string // empty for retired jobs
 	Retired     bool
-	Members     []string // jobs a preset installs
-	// State is one of the State constants, or for a preset "installed", "not
-	// installed" or "n of m installed".
+	// State is one of the State constants.
 	State     string
 	Installed bool // a block is in the live crontab (false when it cannot be read)
 	Declared  bool // a block is in configs/crontab
@@ -91,38 +87,6 @@ func Jobs(workspace string) (jobs []Job, crontabErr error) {
 		j.LastRun, _ = LastRun(statePath, name)
 		jobs = append(jobs, j)
 	}
-	for _, name := range presetNames() {
-		members := Presets[name]
-		j := Job{Name: name, Preset: true, Members: members, CrontabOK: crontabErr == nil,
-			Description: "installs: " + strings.Join(members, ", ")}
-		installed := 0
-		for _, m := range jobs {
-			for _, member := range members {
-				if m.Name == member && m.Installed {
-					installed++
-				}
-			}
-		}
-		j.Installed = crontabErr == nil && installed == len(members)
-		j.Declared = true
-		for _, member := range members {
-			if _, ok := has(declared, Names(member)...); !ok {
-				j.Declared = false
-			}
-		}
-		switch {
-		case crontabErr != nil:
-			j.State = StateNA
-		case installed == len(members):
-			j.State = StateInstalled
-		case installed == 0:
-			j.State = StateNotInstalled
-		default:
-			j.State = fmt.Sprintf("%d of %d installed", installed, len(members))
-		}
-		jobs = append(jobs, j)
-	}
-
 	// Retired jobs appear only while a block remains.
 	for _, name := range Retired {
 		_, inLive := has(live, name)
@@ -140,16 +104,6 @@ func Jobs(workspace string) (jobs []Job, crontabErr error) {
 		})
 	}
 	return jobs, crontabErr
-}
-
-func presetNames() []string {
-	var out []string
-	for _, n := range AllNames() {
-		if _, ok := Presets[n]; ok {
-			out = append(out, n)
-		}
-	}
-	return out
 }
 
 // jobState is the first matching state of spec §5 cron ls for a built-in job.
@@ -192,13 +146,7 @@ func Schema(v resource.View) resource.Schema[Job] {
 		ID:   func(j Job) string { return j.Name },
 		Fields: []resource.Field[Job]{
 			{Key: "name", Title: "Job", Value: func(j Job) any { return j.Name }},
-			{Key: "schedule", Title: "Schedule", Value: func(j Job) any { return j.Schedule },
-				Text: func(j Job) string {
-					if j.Preset {
-						return "preset"
-					}
-					return j.Schedule
-				}},
+			{Key: "schedule", Title: "Schedule", Value: func(j Job) any { return j.Schedule }},
 			{Key: "state", Title: "State", Value: func(j Job) any { return j.State }},
 			{Key: "installed", Title: "Installed", Value: func(j Job) any { return j.Installed }},
 			{Key: "declared", Title: "Declared", Value: func(j Job) any { return j.Declared }},
@@ -229,13 +177,6 @@ func Schema(v resource.View) resource.Schema[Job] {
 					return ago(next)
 				}},
 			{Key: "description", Title: "Description", Value: func(j Job) any { return j.Description }},
-			{Key: "preset", Title: "Preset", Value: func(j Job) any { return j.Preset }},
-			{Key: "members", Title: "Members", Value: func(j Job) any {
-				if j.Members == nil {
-					return []string{}
-				}
-				return j.Members
-			}, Text: func(j Job) string { return strings.Join(j.Members, ", ") }},
 		},
 		Columns: []string{"name", "schedule", "state", "last_run", "next_run", "description"},
 	}

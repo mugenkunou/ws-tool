@@ -55,12 +55,6 @@ func TestCronLs(t *testing.T) {
 			t.Errorf("cron ls output missing job %q: %s", name, out.String())
 		}
 	}
-	// Presets must appear.
-	for _, name := range []string{"sync"} {
-		if !strings.Contains(out.String(), name) {
-			t.Errorf("cron ls output missing preset %q: %s", name, out.String())
-		}
-	}
 }
 
 // TestCronLsJSON verifies the JSON output of ws cron ls.

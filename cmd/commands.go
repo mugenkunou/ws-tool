@@ -206,7 +206,7 @@ var commands = []command{
 
 	{Path: []string{"cron", "ls"}, Summary: "jobs: schedule, installed, last run, exit, next run", RO: true,
 		Fields: fieldsOf(func() resource.Schema[cronpkg.Job] { return cronpkg.Schema(resource.CLIView()) })},
-	{Path: []string{"cron", "add"}, Args: "<job…>", Summary: "install jobs or presets", Flags: []flagDoc{displayFlag}},
+	{Path: []string{"cron", "add"}, Args: "<job…>", Summary: "install jobs", Flags: []flagDoc{displayFlag}},
 	{Path: []string{"cron", "rm"}, Args: "<job…>", Summary: "uninstall them"},
 	{Path: []string{"cron", "run"}, Args: "<job>", Summary: "run a job now (crontab lines add --if-due)",
 		Flags: []flagDoc{{Name: "--if-due", Desc: "run only when the job is due"}, displayFlag}},

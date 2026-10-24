@@ -518,7 +518,7 @@ workspace reach the other machines. What ws does for you depends on the client:
 | --- | --- | --- |
 | Exclusion rules | ws generates `<workspace>/.megaignore` (§5 `ws ignore`), which MEGA reads | WorkDrive does not read `.megaignore`. ws does not generate its client's rules, so configure exclusions in the client |
 | `ws ignore ls`, `check`, `tree`, `lint` | evaluate the rules ws holds in `ws.json` | the same: they report what ws's rules would exclude, whichever client runs |
-| `mega-sync` cron job | restarts MEGAsync for a 5-minute window every 30 minutes (§5 `ws cron`) | not needed when the client syncs by itself. Install `pass-backup` alone instead of the `sync` preset |
+| `mega-sync` cron job | restarts MEGAsync for a 5-minute window every 30 minutes (§5 `ws cron`) | not needed when the client syncs by itself. Install `pass-backup` alone |
 
 With a client other than MEGA, `ws ignore lint` still finds files that should not sync
 (bloat, excessive depth, build output), and `ws ignore ls` shows the rules to copy into the
@@ -678,7 +678,7 @@ ws credential disable                     RW  stop it
 ws credential status                      RO  helper config, pass entries, remote coverage
 
 ws cron ls                                RO  jobs: schedule, installed, last run, exit, next run
-ws cron add <job…>                        RW  install jobs or presets
+ws cron add <job…>                        RW  install jobs
 ws cron rm <job…>                         RW  uninstall them
 ws cron run <job> [--if-due]              RW  run a job now (crontab lines add --if-due)
 ws cron log [job…] [--lines n]            RO  recent output of jobs (all when none named)
@@ -3112,8 +3112,7 @@ Exit: 0. 1 when backup is not enabled, the remote is refused, or the commit or p
 
 TUI: `:pass backup push` opens the checklist.
 
-Cron: the `pass-backup` job runs `ws pass backup push --quiet` every 30 minutes. It is
-part of the `sync` preset.
+Cron: the `pass-backup` job runs `ws pass backup push --quiet` every 30 minutes.
 
 #### A second copy in the workspace
 
@@ -3258,16 +3257,16 @@ same, for git configs written by older versions (decision).
 
 ### `ws cron`
 
-Scheduled ws jobs. A row is a built-in job or a preset. Its state comes from three places:
+Scheduled ws jobs. A row is a built-in job. Its state comes from three places:
 the live user crontab (`crontab -l`), the declared crontab `<workspace>/configs/crontab`
 (synced with the workspace), and the run history in `$XDG_STATE_HOME/ws-tool/cron.state`
 (default `~/.local/state/ws-tool/`). The Cron screen shows the same rows.
 
 | Command | RO/RW | Does | TUI |
 | --- | --- | --- | --- |
-| `ws cron ls` | RO | jobs and presets: schedule, state, last run, exit, next run | screen |
-| `ws cron add <job\|preset…>` | RW | install in the live crontab and declare in `configs/crontab` | `a` |
-| `ws cron rm <job\|preset…>` | RW | remove from the live crontab and from `configs/crontab` | `ctrl+d` |
+| `ws cron ls` | RO | jobs: schedule, state, last run, exit, next run | screen |
+| `ws cron add <job…>` | RW | install in the live crontab and declare in `configs/crontab` | `a` |
+| `ws cron rm <job…>` | RW | remove from the live crontab and from `configs/crontab` | `ctrl+d` |
 | `ws cron run <job>` | RW | run the job now and record the result | `r` |
 | `ws cron log [job…] [--lines n]` | RO | recent lines of the cron log | enter |
 | `ws cron apply` | RW | make the live crontab match `configs/crontab` | `:apply` |
@@ -3280,8 +3279,8 @@ binary and `<W>` the absolute workspace path.
 | `mega-sync` | `*/30 * * * *` | 30m | MEGA only: restarts `megasync` for a 5-minute sync window, using `DISPLAY` |
 | `pass-backup` | `*/30 * * * *` | 30m | `<ws> --workspace <W> pass backup push --quiet` |
 
-**Presets.** `sync` = `mega-sync`, `pass-backup`. `sync` suits MEGA. With another
-sync client, install `pass-backup` on its own (§2.6).
+Each job is installed on its own. `mega-sync` suits MEGA; with another sync client,
+install `pass-backup` alone (§2.6).
 
 **Retired names.** `secret-scan`, `ignore-scan`, `repo-sync` (nothing should commit your
 work unattended; use `ws repo save`) and `session-prune` (use `ws session rm --older-than`) are retired. `cron add` rejects them (`cron job
@@ -3328,23 +3327,21 @@ and the user may use it. If it fails, `add`, `rm` and `apply` exit 1 with a fix,
 ws cron ls [--sort <field>] [--filter <expr>] [--wide] [--json]
 ```
 
-Lists every built-in job, then every preset, then every retired job that still has a block in
+Lists every built-in job, then every retired job that still has a block in
 either crontab, each group sorted by name. It reads the live crontab, `configs/crontab` and
 `cron.state`, and changes nothing. It replaces `cron status`.
 
 | Field | Meaning |
 | --- | --- |
-| `name` | job or preset name |
-| `schedule` | cron expression; text `preset` for presets |
+| `name` | job name |
+| `schedule` | cron expression |
 | `state` | see below |
 | `installed` | a block for the job is in the live crontab (bool) |
 | `declared` | a block for the job is in `configs/crontab` (bool) |
 | `last_run` | time of the last recorded run (RFC 3339; text "12m ago") |
 | `last_exit` | exit code of the last run |
 | `next_run` | last run + interval, for installed jobs only; text "in 18m", or `overdue` when past |
-| `description` | one line; presets: `installs: a, b` |
-| `preset` | bool |
-| `members` | jobs a preset installs |
+| `description` | one line |
 
 `state` (decision) is the first match:
 
@@ -3358,7 +3355,7 @@ either crontab, each group sorted by name. It reads the live crontab, `configs/c
 | `installed` | in both, current form | — |
 | `not installed` | in neither | `ws cron add <job>` |
 
-A preset shows `installed`, `not installed`, or `2 of 3 installed`. Default columns: `name`,
+Default columns: `name`,
 `schedule`, `state`, `last_run`, `next_run`, `description` (decision: `next_run` added).
 
 ```text
@@ -3366,7 +3363,6 @@ $ ws cron ls
  Job             Schedule      State          Last run          Next run  Description
  mega-sync       */30 * * * *  installed      12m ago           in 18m    Restart megasync for a 5-minute sync window
  pass-backup     */30 * * * *  not installed                              Push the pass store backup
- sync            preset        1 of 2 installed                           installs: mega-sync, pass-backup
 ```
 
 `--json`: command `cron.ls`. `data` is the array of records with the field keys above (decision: no
@@ -3380,11 +3376,11 @@ TUI: the Cron screen list. Its header reads "2 jobs installed · 1 failing". `d`
 #### `ws cron add`
 
 ```text
-ws cron add <job|preset…> [--display <d>] [--dry-run]
+ws cron add <job…> [--display <d>] [--dry-run]
 ```
 
 Installs each named job: it writes the job's block into the live crontab and into
-`configs/crontab`, creating that file if missing (decision: both files stay in step). Presets expand to their members, and each job is handled once. It needs at least one
+`configs/crontab`, creating that file if missing (decision: both files stay in step). Each job is handled once. It needs at least one
 target. An unknown or retired name exits 1 before any change.
 
 Plan: one action per job that needs a change. Each action covers both files (decision), so the
@@ -3415,13 +3411,12 @@ TUI: `a` acts on the marked rows, else the cursor row, and opens the same checkl
 #### `ws cron rm`
 
 ```text
-ws cron rm <job|preset…> [--dry-run]
+ws cron rm <job…> [--dry-run]
 ```
 
 Removes each named job's block, under its current and old names, from the live crontab and from
 `configs/crontab`. It also deletes the job's legacy wrapper script
-`$XDG_STATE_HOME/ws-tool/cron-jobs/<name>.sh` if one is there. It accepts retired names. Presets
-expand to their members. It needs at least one target. Run history and log lines are kept.
+`$XDG_STATE_HOME/ws-tool/cron-jobs/<name>.sh` if one is there. It accepts retired names. It needs at least one target. Run history and log lines are kept.
 
 Plan: one action per job that has a block in either file, pre-checked. A job with no block is
 reported as "not installed" and gets no action.
@@ -3456,7 +3451,7 @@ prompts. The command is the confirmation.
 Before writing, if `cron.log` is over 5 MB, ws keeps its last 2.5 MB. An old job name runs
 silently as the new job. A retired name logs
 `Skipping: secret-scan is no longer a ws job; run ws cron rm secret-scan` and exits 0, so old
-crontab lines do not fail (decision). Presets cannot be run.
+crontab lines do not fail (decision).
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
@@ -3473,7 +3468,7 @@ Exit: 0 when the job exited 0 or was skipped. 1 when the job failed or the name 
 TUI: `r` acts on the marked rows, else the cursor row. A checklist asks "Run mega-sync now",
 one action per job. The job then runs in
 the background with its output going only to `cron.log`. A notice reports the exit code, and the
-row refreshes. On a preset row, a notice says to run a member job.
+row refreshes.
 
 #### `ws cron log`
 
@@ -3483,7 +3478,7 @@ ws cron log [job…] [--lines <n>]
 
 Prints the last `n` lines of `cron.log` for the named jobs, including lines under their old names,
 or for all jobs when none is named (decision: the job stays optional, per rule 4).
-A preset stands for its members. It reads only `cron.log`.
+It reads only `cron.log`.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
@@ -3500,8 +3495,7 @@ $ ws cron log pass-backup --lines 3
 
 Exit: 0, including for an empty log ("No cron log entries."). 1 for an unknown job.
 
-TUI: enter on a job row opens its log: the last 200 lines, scrolled to the end. esc goes back. On a
-preset row, a notice says to open a member job.
+TUI: enter on a job row opens its log: the last 200 lines, scrolled to the end. esc goes back.
 
 #### `ws cron apply`
 
@@ -5093,18 +5087,18 @@ For a smoke test, point at a throwaway crontab, never your real one:
 `export WS_CRONTAB_FILE=$HOME/tmp/crontab.test`.
 
 ```bash
-ws cron ls                       # jobs and presets: schedule, installed, last run, exit, next run
+ws cron ls                       # jobs: schedule, installed, last run, exit, next run
 ws cron add mega-sync --dry-run  # preview an install; writes nothing
 ws cron add mega-sync            # a block with the schedule line and the @reboot line
 ws cron run mega-sync            # run it now
 ws cron log mega-sync            # read its output
-ws cron add sync --dry-run       # preset: mega-sync + pass-backup
+ws cron add mega-sync --dry-run  # show what would be installed
 ws cron rm mega-sync             # uninstall
 ```
 
 | Check | Expected |
 | --- | --- |
-| `ws cron ls` | the built-in jobs (`mega-sync`, `pass-backup`) and the presets, with `installed` yes or no |
+| `ws cron ls` | the built-in jobs (`mega-sync`, `pass-backup`) with `installed` yes or no |
 | `ws cron add <job> --dry-run` | the plan; the crontab is unchanged |
 | `ws cron add <job>` | a `# >>> ws` block with the schedule line and the `@reboot` line, and `configs/crontab` updated to match |
 | `ws cron run repo-sync` | exits 0 silently and does nothing (a retired name, from existing crontab lines) |

@@ -45,18 +45,18 @@ type LoadedMsg struct {
 func (m LoadedMsg) Failing() []Job {
 	var out []Job
 	for _, j := range m.Jobs {
-		if j.Installed && !j.Preset && j.LastRun.ExitCode != 0 {
+		if j.Installed && j.LastRun.ExitCode != 0 {
 			out = append(out, j)
 		}
 	}
 	return out
 }
 
-// Installed counts installed (non-preset) jobs.
+// Installed counts installed jobs.
 func (m LoadedMsg) Installed() int {
 	n := 0
 	for _, j := range m.Jobs {
-		if j.Installed && !j.Preset {
+		if j.Installed {
 			n++
 		}
 	}
@@ -119,12 +119,7 @@ func New(e env.Env) Model {
 		log:        vp,
 		list: reslist.New(wscron.Schema(e.View()), []reslist.Col[Job]{
 			{Key: "name", Min: 14},
-			{Key: "schedule", Min: 12, Style: func(j Job, t string) string {
-				if j.Preset {
-					return theme.Muted.Render(t)
-				}
-				return t
-			}},
+			{Key: "schedule", Min: 12},
 			{Key: "state", Min: 14, Style: func(j Job, t string) string {
 				switch {
 				case !j.CrontabOK, j.State == wscron.StateOutdated, j.State == wscron.StateNotApplied, j.State == wscron.StateUndeclared:
@@ -307,9 +302,6 @@ var actions = func() []reslist.Action[Model, Job] {
 	k := keys.Cron()
 	return []reslist.Action[Model, Job]{
 		{Key: k.Output, Scope: reslist.Cursor, Do: func(m Model, rows []Job) (Model, tea.Cmd) {
-			if rows[0].Preset {
-				return m, nav.Notify(nav.LevelInfo, "Presets have no log of their own — open a member job")
-			}
 			return m.openLog(rows[0].Name)
 		}},
 		{Key: k.Add, Scope: reslist.Selected, Do: func(m Model, rows []Job) (Model, tea.Cmd) { return m, preflight(names(rows), false) }},

@@ -66,7 +66,7 @@ func (m machine) opts() PlanOptions {
 // ── registry ───────────────────────────────────────────────────────
 
 func TestRegistry(t *testing.T) {
-	want := []string{"mega-sync", "pass-backup", "sync"}
+	want := []string{"mega-sync", "pass-backup"}
 	if got := AllNames(); !slices.Equal(got, want) {
 		t.Fatalf("AllNames = %v, want %v (no aliases, no retired names)", got, want)
 	}
@@ -79,16 +79,6 @@ func TestRegistry(t *testing.T) {
 	for _, n := range []string{"mega-sync", "pass-backup"} {
 		if Builtins[n].Schedule != "*/30 * * * *" || Builtins[n].IntervalSecs != 1800 {
 			t.Errorf("%s schedule = %q interval %d", n, Builtins[n].Schedule, Builtins[n].IntervalSecs)
-		}
-	}
-	if !slices.Equal(Presets["sync"], []string{"mega-sync", "pass-backup"}) || len(Presets) != 1 {
-		t.Errorf("presets = %v", Presets)
-	}
-	for preset, members := range Presets {
-		for _, member := range members {
-			if _, ok := Builtins[member]; !ok {
-				t.Errorf("preset %s names unknown job %s", preset, member)
-			}
 		}
 	}
 }
@@ -126,17 +116,17 @@ func TestAliasesAndRetired(t *testing.T) {
 }
 
 func TestResolve(t *testing.T) {
-	jobs, aliased, err := Resolve("sync")
-	if err != nil || aliased || len(jobs) != 2 || jobs[0].Name != "mega-sync" || jobs[1].Name != "pass-backup" {
-		t.Fatalf("preset: %v %v %v", jobs, aliased, err)
+	jobs, aliased, err := Resolve("mega-sync")
+	if err != nil || aliased || len(jobs) != 1 || jobs[0].Name != "mega-sync" {
+		t.Fatalf("job: %v %v %v", jobs, aliased, err)
+	}
+	if _, _, err = Resolve("sync"); err == nil || !strings.Contains(err.Error(), "unknown cron job") {
+		t.Fatalf("sync is no longer a preset: %v", err)
 	}
 	for _, gone := range []string{"secret-scan", "ignore-scan", "repo-sync"} {
 		if _, _, err = Resolve(gone); err == nil || !strings.Contains(err.Error(), "was removed") {
 			t.Fatalf("%s is retired: %v", gone, err)
 		}
-	}
-	if len(Presets["sync"]) != 2 {
-		t.Fatalf("the sync preset changed: %v", Presets["sync"])
 	}
 	if _, _, err = Resolve("nope"); err == nil || !strings.Contains(err.Error(), "unknown cron job") {
 		t.Fatalf("unknown: %v", err)
@@ -332,12 +322,9 @@ func TestJobStates(t *testing.T) {
 	}
 }
 
-func TestPresetStatesAndRetiredRows(t *testing.T) {
+func TestRetiredRows(t *testing.T) {
 	m := newMachine(t)
 	m.setLive(t, BlockFor(Builtins["mega-sync"], "/ws", "/W", ":1"))
-	if got := stateOf(t, m, "sync"); got != "1 of 2 installed" {
-		t.Fatalf("sync preset: %s", got)
-	}
 
 	// A retired job has a row only while a block remains, last, in either file.
 	jobs, _ := Jobs(m.workspace)
@@ -361,12 +348,12 @@ func TestPresetStatesAndRetiredRows(t *testing.T) {
 	if last := jobs[len(jobs)-1]; !last.Retired {
 		t.Fatalf("retired rows come last: %+v", last)
 	}
-	// Rows: jobs, then presets, then retired.
+	// Rows: jobs, then retired.
 	names := []string{}
-	for _, j := range jobs[:3] {
+	for _, j := range jobs[:2] {
 		names = append(names, j.Name)
 	}
-	if !slices.Equal(names, []string{"mega-sync", "pass-backup", "sync"}) {
+	if !slices.Equal(names, []string{"mega-sync", "pass-backup"}) {
 		t.Fatalf("row order = %v", names)
 	}
 }

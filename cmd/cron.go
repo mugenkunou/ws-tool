@@ -92,7 +92,7 @@ func cronLs(args []string, globals globalFlags, stdout, stderr io.Writer) int {
 
 // ── add ────────────────────────────────────────────────────────────
 
-// resolveJobs expands job and preset names to built-in jobs, each once. An old
+// resolveJobs expands job names to built-in jobs, each once. An old
 // job name prints the rename line. An unknown or retired name is an error.
 func resolveJobs(names []string, globals globalFlags, stderr io.Writer) ([]*cron.BuiltinJob, error) {
 	var jobs []*cron.BuiltinJob
@@ -123,7 +123,7 @@ func cronAdd(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		return 1
 	}
 	if len(fs.Args()) == 0 {
-		fmt.Fprintln(stderr, "usage: ws cron add <job|preset…> [--display <d>]")
+		fmt.Fprintln(stderr, "usage: ws cron add <job…> [--display <d>]")
 		return 1
 	}
 	jobs, err := resolveJobs(fs.Args(), globals, stderr)
@@ -178,17 +178,13 @@ func cronRm(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 		return 1
 	}
 	if len(fs.Args()) == 0 {
-		fmt.Fprintln(stderr, "usage: ws cron rm <job|preset…>")
+		fmt.Fprintln(stderr, "usage: ws cron rm <job…>")
 		return 1
 	}
-	// rm takes built-in jobs, presets (their members), old job names and retired
+	// rm takes built-in jobs, old job names and retired
 	// jobs, whose blocks it still removes.
 	var names []string
 	for _, name := range fs.Args() {
-		if members, ok := cron.Presets[name]; ok {
-			names = append(names, members...)
-			continue
-		}
 		if _, known := cron.Builtins[name]; !known && !cron.IsRetired(name) {
 			if _, old := cron.Canonical(name); !old {
 				fmt.Fprintf(stderr, "unknown cron job %q — run `ws cron ls` to see available jobs\n", name)
@@ -294,12 +290,10 @@ func cronLog(args []string, globals globalFlags, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	// A preset stands for its members; an old name for its job.
+	// An old name stands for its job.
 	var jobs []string
 	for _, name := range fs.Args() {
 		switch {
-		case cron.Presets[name] != nil:
-			jobs = append(jobs, cron.Presets[name]...)
 		case cron.IsRetired(name):
 			jobs = append(jobs, name)
 		default:

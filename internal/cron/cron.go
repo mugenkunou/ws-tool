@@ -50,11 +50,6 @@ var Builtins = map[string]*BuiltinJob{
 	"pass-backup": passBackupJob,
 }
 
-// Presets maps a composite name to the ordered list of job names it expands to.
-var Presets = map[string][]string{
-	"sync": {"mega-sync", "pass-backup"},
-}
-
 // Aliases maps an old job name to the job that replaced it. Old crontab lines
 // keep working (`cron run` takes the old name silently). None are defined now.
 var Aliases = map[string]string{}
@@ -65,19 +60,9 @@ var Aliases = map[string]string{}
 // session-prune went with the sessions size cap (`ws session rm --older-than` is manual).
 var Retired = []string{"secret-scan", "ignore-scan", "repo-sync", "session-prune"}
 
-// AllNames returns every job and preset name, sorted. It holds neither aliases
-// nor retired names: those are hidden.
-func AllNames() []string {
-	var names []string
-	for k := range Builtins {
-		names = append(names, k)
-	}
-	for k := range Presets {
-		names = append(names, k)
-	}
-	sort.Strings(names)
-	return names
-}
+// AllNames returns every job name, sorted. It holds neither aliases nor retired
+// names: those are hidden.
+func AllNames() []string { return JobNames() }
 
 // JobNames returns the built-in job names, sorted.
 func JobNames() []string {
@@ -117,17 +102,6 @@ func Names(job string) []string {
 // BuiltinJobs. aliased is true when name was an old job name. A retired name is an
 // error that says so, and so is an unknown one.
 func Resolve(name string) (jobs []*BuiltinJob, aliased bool, err error) {
-	if preset, ok := Presets[name]; ok {
-		jobs = make([]*BuiltinJob, 0, len(preset))
-		for _, n := range preset {
-			j, ok := Builtins[n]
-			if !ok {
-				return nil, false, fmt.Errorf("internal: preset %q references unknown job %q", name, n)
-			}
-			jobs = append(jobs, j)
-		}
-		return jobs, false, nil
-	}
 	canon, aliased := Canonical(name)
 	if j, ok := Builtins[canon]; ok {
 		return []*BuiltinJob{j}, aliased, nil

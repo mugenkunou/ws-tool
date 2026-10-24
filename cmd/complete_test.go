@@ -309,7 +309,7 @@ func TestCompleteTrashAndCronTargets(t *testing.T) {
 			t.Errorf("cron completion offers the old name %q", retired)
 		}
 	}
-	for _, job := range []string{"mega-sync", "pass-backup", "sync"} {
+	for _, job := range []string{"mega-sync", "pass-backup"} {
 		if !contains(comps, job) {
 			t.Errorf("cron completion lacks %q", job)
 		}

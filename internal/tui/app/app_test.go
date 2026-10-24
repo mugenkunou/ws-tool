@@ -111,7 +111,6 @@ func fixtures() []tea.Msg {
 				Interval: time.Hour, LastRun: wscron.RunRecord{Job: "pass-backup", Time: fixedClock().Add(-2 * time.Hour)}},
 			{Name: "repo-sync", Schedule: "*/30 * * * *", Description: "sync repo fleet", Installed: true, CrontabOK: true,
 				Interval: 30 * time.Minute, LastRun: wscron.RunRecord{Job: "repo-sync", Time: fixedClock().Add(-40 * time.Minute), ExitCode: 2}},
-			{Name: "all", Preset: true, CrontabOK: true, Description: "installs: pass-backup, repo-sync"},
 		}},
 		skills.LoadedMsg{Home: "/home/tester", Entries: []skills.Entry{
 			{Name: "review-pr", Path: ws + "/agent/skills/review-pr", Tools: []string{"claude", "cursor"}},

@@ -272,12 +272,12 @@ func trashTargets(args []string, toComplete string, ctx completionCtx) ([]string
 	return filterPrefix(notGiven(ctx.trashItems, args), toComplete), compDirectiveNoFileComp
 }
 
-// cronTargets completes job and preset names; cron run takes jobs only.
+// cronTargets completes job names.
 func cronTargets(args []string, toComplete string, ctx completionCtx) ([]string, int) {
 	return filterPrefix(notGiven(cronJobNames(), args), toComplete), compDirectiveNoFileComp
 }
 
-// cronJobNames returns the built-in job and preset names for completion, never an
+// cronJobNames returns the built-in job names for completion, never an
 // old job name or a retired one (those are hidden).
 func cronJobNames() []string { return cron.AllNames() }
 

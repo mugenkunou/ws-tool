@@ -72,9 +72,6 @@ func RunJob(name string, opts RunOptions) (RunResult, error) {
 		}
 		return RunResult{Job: name, Skipped: true}, nil
 	}
-	if _, ok := Presets[name]; ok {
-		return RunResult{}, fmt.Errorf("%q is a preset and cannot be run; run one of its jobs: %v", name, Presets[name])
-	}
 	job, ok := Builtins[canon]
 	if !ok {
 		return RunResult{}, fmt.Errorf("unknown cron job %q — run `ws cron ls` to see available jobs", name)
