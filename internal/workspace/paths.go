@@ -6,11 +6,10 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
-// PathOverrides carries explicit path choices (e.g. from --workspace, --config).
+// PathOverrides carries explicit path choices (e.g. from --workspace).
 // Empty fields fall back to the standard resolution.
 type PathOverrides struct {
 	Workspace string
-	Config    string // if set, used instead of <workspace>/ws.json
 }
 
 // Paths holds the resolved, absolute locations of a workspace's key files.
@@ -24,7 +23,7 @@ type Paths struct {
 //
 // Resolution:
 //   - Workspace: --workspace flag → $WS_WORKSPACE → ~/Workspace
-//   - Config: --config flag → $WS_CONFIG → <workspace>/ws.json
+//   - Config: always <workspace>/ws.json
 //
 // This is a clean-break implementation: there is no fallback to the old
 // XDG config (~/.config/ws-tool/config.json) or the old ws/manifest.json.
@@ -38,13 +37,6 @@ func ResolvePaths(o PathOverrides) (Paths, error) {
 			return Paths{}, err
 		}
 		o.Workspace = abs
-	}
-	if o.Config != "" {
-		abs, err := wsconfig.ExpandUserPath(o.Config)
-		if err != nil {
-			return Paths{}, err
-		}
-		o.Config = abs
 	}
 
 	// Resolve workspace root.
@@ -67,18 +59,7 @@ func ResolvePaths(o PathOverrides) (Paths, error) {
 	}
 
 	// Resolve config path.
-	configPath := o.Config
-	if configPath == "" {
-		if envCfg := os.Getenv("WS_CONFIG"); envCfg != "" {
-			abs, err := wsconfig.ExpandUserPath(envCfg)
-			if err != nil {
-				return Paths{}, err
-			}
-			configPath = abs
-		} else {
-			configPath = wsconfig.ConfigPath(workspacePath)
-		}
-	}
+	configPath := wsconfig.ConfigPath(workspacePath)
 
 	return Paths{Workspace: workspacePath, Config: configPath}, nil
 }

@@ -377,10 +377,10 @@ clipboard amnesia.
 | What | Where | Synced |
 | --- | --- | --- |
 | Workspace root | `--workspace` → `$WS_WORKSPACE` → `~/Workspace` | — |
-| State file | `--config` → `$WS_CONFIG` → `<workspace>/ws.json` | yes |
+| State file | `<workspace>/ws.json` | yes |
 | Sync rules | `<workspace>/.megaignore`, generated from `ws.json` `ignore_rules` (MEGA's format, §2.6) | yes |
 | Symlink originals | `<workspace>/symlinks/home/<path under $HOME>` and `<workspace>/symlinks/system/<absolute path>`, or the workspace path you gave as the second argument of `ws symlink add` | yes |
-| Recorded sessions | `<workspace>/data/sessions/<tag>/` | yes |
+| Recorded sessions | `session.root_dir` (default `~/Sessions`), one `<tag>/` directory per session, outside the workspace | no |
 | Scratch directories | `scratch.root_dir` (default `~/Scratch`), outside the workspace | no |
 | Machine-local state | `$XDG_STATE_HOME/ws-tool/` (default `~/.local/state/ws-tool/`): cron run state and logs, trash integration state, the running recording's marker (`session-active.json`) | no |
 | Trash | `$XDG_DATA_HOME/Trash` (default `~/.local/share/Trash`), shared with the desktop file manager | no |
@@ -404,12 +404,10 @@ the flag, the environment, or the default.
 ├── agent/
 │   └── skills/
 ├── configs/
-├── secrets/
 ├── symlinks/
 │   ├── home/            # originals of paths under $HOME, at the same relative path
 │   └── system/          # originals of other paths (/etc/hosts is system/etc/hosts)
 ├── data/
-│   └── sessions/        # recorded sessions
 └── archive/
 ```
 
@@ -444,7 +442,7 @@ valid JSON. `ws config edit` checks before saving.
   "pass": { "pass_entry": "" },
   "ignore": { "warn_size_mb": 1, "crit_size_mb": 10, "max_depth": 6, "muted": [] },
   "ignore_rules": { "schema": 1, "exclude": [], "include": [], "suppress_defaults": [] },
-  "session": { "cap_mb": 500, "max_session_mb": 100 },
+  "session": { "root_dir": "~/Sessions", "max_session_mb": 100 },
   "symlinks": []
 }
 ```
@@ -464,7 +462,7 @@ valid JSON. `ws config edit` checks before saving.
 | `ignore_rules.exclude` | paths ignored by sync (user rules, on top of the built-in template) | `ignore add\|rm` |
 | `ignore.muted` | paths whose sync warnings are hidden; they keep syncing | `ignore mute\|unmute` |
 | `ignore_rules.include` | included directories (`<dir>/**`) | `ignore edit` |
-| `session.cap_mb`, `max_session_mb` | total cap for recordings; per-session limit | hand |
+| `session.root_dir`, `max_session_mb` | where recordings are stored (default `~/Sessions`); size at which one recording ends (default 100) | hand |
 | `symlinks[]` | managed symlinks: `system` (the host path, written with `~` for `$HOME`), `original` (workspace-relative), `dir`, `sudo` | `symlink add\|link\|unlink` |
 
 To use a GUI editor such as `code`, set `editor`.
@@ -581,7 +579,7 @@ prints help.
 | `enable` / `disable` | switch an integration on or off | trash, credential, completion, pass backup |
 | `status` | the health of an integration (not a list of rows) | trash, credential, pass, backup |
 | `mute` / `unmute` | hide / show warnings for a path and everything under it; nothing else changes | ignore, secret |
-| `prune` | delete rows by age (`--older-than`) or by the configured size cap | session, trash |
+| `prune` | delete rows by age (`--older-than`) | trash |
 | `grep` | search inside contents | session |
 | `run` | execute now | repo (a command in each repo), cron (a job) |
 | `save` | stage and commit everything with a timestamped message, pull, push | repo |
@@ -639,8 +637,7 @@ ws session record [tag]                   RW  record a shell session
 ws session stop                           RW  stop the running recording
 ws session show <tag> [--commands]        RO  print a transcript
 ws session grep <text>                    RO  search transcripts
-ws session rm <tag…>                      RW  delete sessions
-ws session prune [--older-than <age>|--all] RW delete old sessions, or enforce the size cap
+ws session rm <tag…> | --older-than <age> RW  delete sessions, or those older than an age
 
 ws ignore ls [--muted]                    RO  every path that doesn't sync, and its rule; --muted: muted warnings
 ws ignore lint [path…]                    RO  check synced files and warn about the unhygienic ones
@@ -735,8 +732,8 @@ shell integration hooks. Old names that existing rc files and crontab lines cont
 silent aliases: `ws completions bash|zsh|fish` (the `eval` line that
 `completions install` wrote runs on every shell start) and the old cron job names.
 
-Built-in cron jobs: `secret-scan`, `ignore-scan` and `repo-sync` are retired: nothing
-commits your work unattended. `ws cron run` of one exits 0 silently and does nothing, so a
+Built-in cron jobs: `secret-scan`, `ignore-scan`, `repo-sync` and `session-prune` are retired: nothing
+commits your work or deletes your sessions unattended. `ws cron run` of one exits 0 silently and does nothing, so a
 crontab line written earlier keeps working; `ws cron rm` removes such a line, and
 `ws cron add` is an error that says the job was removed.
 
@@ -753,7 +750,6 @@ that says to pass the workspace path as a second argument), and exit code `2`.
 
 ```text
 -w, --workspace <dir>   workspace root (default: $WS_WORKSPACE, then ~/Workspace)
--c, --config <file>     state file (default: $WS_CONFIG, then <workspace>/ws.json)
 -q, --quiet             errors only; write commands accept every action
     --verbose           internal decisions on stderr ([verbose] lines)
     --json              JSON on stdout; write commands accept every action
@@ -903,7 +899,6 @@ keep completion and help in step (§9.7).
 | Variable | Effect |
 | --- | --- |
 | `WS_WORKSPACE` | workspace root (after `--workspace`) |
-| `WS_CONFIG` | state file (after `--config`) |
 | `NO_COLOR` | no colors or icons ([no-color.org](https://no-color.org)) |
 | `VISUAL`, `EDITOR` | your editor, when `ws.json` `editor` is empty (§4.10) |
 | `PASSWORD_STORE_DIR` | pass store location |
@@ -1972,13 +1967,15 @@ TUI: `ctrl+d` on the selected rows, through the checklist.
 A session is a recorded terminal session: a shell that ws starts under `script(1)`,
 recording everything the terminal shows (the **transcript**) and every command line you
 run in it (the **commands**). Each row is a directory under
-`<workspace>/data/sessions/<tag>/`, which syncs with the workspace. The directory holds
+`<root_dir>/<tag>/`, where `session.root_dir` defaults to `~/Sessions`. It is outside the
+workspace, so recordings never sync. The directory holds
 `meta.json` (tag, start, end, duration), `stdout.log` (the transcript) and `stdin.log`
 (the commands, one per line). The Sessions screen shows the rows.
 
-Settings live under `session` in `ws.json`: `cap_mb` (default 500) is the total size the
-`prune` default keeps the sessions under, and `max_session_mb` (default 100) ends a
-recording that grows past it.
+Settings live under `session` in `ws.json`: `root_dir` (default `~/Sessions`) is the
+directory the recordings go in, and `max_session_mb` (default 100) is the size at which one
+recording ends. ws warns when a recording passes 80% of it. Nothing deletes old sessions on
+its own: `ws session rm --older-than <age>` does it when you run it.
 
 Only one recording runs at a time on a machine. ws records it in a machine-local marker,
 `$XDG_STATE_HOME/ws-tool/session-active.json`, with its tag, start time and recorder PID
@@ -1991,8 +1988,7 @@ Only one recording runs at a time on a machine. ws records it in a machine-local
 | `ws session record [tag]` | RW | start a recorded shell; leaving it ends the recording | `r` |
 | `ws session stop` | RW | end the recording running on this machine | `:stop` |
 | `ws session grep <text>` | RO | search transcripts and commands | `:grep` |
-| `ws session rm <tag…>` | RW | soft-delete sessions to the trash | `ctrl+d` |
-| `ws session prune [--older-than <age>] [--all]` | RW | delete old sessions; by default, enforce `session.cap_mb` | `p` |
+| `ws session rm <tag…> \| --older-than <age>` | RW | soft-delete sessions to the trash, by tag or by age | `ctrl+d`, `p` |
 
 #### `ws session ls`
 
@@ -2090,7 +2086,7 @@ cue.
 
 **Ending.** The recording ends when the shell exits (`exit`, Ctrl-D), when
 `ws session stop` runs, or when `stdin.log` and `stdout.log` together reach
-`session.max_session_mb` (checked every 5 seconds; ws sends the recorder SIGTERM). ws
+`session.max_session_mb` (checked every 5 seconds; ws warns at 80% and sends the recorder SIGTERM at the limit, then prints `Recording ended at the 100 MB limit`). ws
 then writes the end time and duration into `meta.json`, removes the marker, and prints a
 summary.
 
@@ -2103,8 +2099,8 @@ summary.
 $ ws session record deploy-fix
 
 ✔ Recording deploy-fix
-  Transcript  /home/user/Workspace/data/sessions/deploy-fix/stdout.log
-  Commands    /home/user/Workspace/data/sessions/deploy-fix/stdin.log
+  Transcript  /home/user/Sessions/deploy-fix/stdout.log
+  Commands    /home/user/Sessions/deploy-fix/stdin.log
   End         type exit or press Ctrl-D
 
 ● ws:rec user@laptop:~/Workspace$ kubectl rollout status deploy/api
@@ -2114,8 +2110,8 @@ $ ws session record deploy-fix
 ✔ Session ended
   Tag         deploy-fix
   Duration    14m 22s
-  Transcript  /home/user/Workspace/data/sessions/deploy-fix/stdout.log  (19.0 KB)
-  Commands    /home/user/Workspace/data/sessions/deploy-fix/stdin.log  (12 commands)
+  Transcript  /home/user/Sessions/deploy-fix/stdout.log  (19.0 KB)
+  Commands    /home/user/Sessions/deploy-fix/stdin.log  (12 commands)
 ```
 
 `--dry-run` prints the session directory it would create and starts nothing.
@@ -2147,8 +2143,8 @@ $ ws session stop
 ✔ Session ended
   Tag         deploy-fix
   Duration    14m 22s
-  Transcript  /home/user/Workspace/data/sessions/deploy-fix/stdout.log  (19.0 KB)
-  Commands    /home/user/Workspace/data/sessions/deploy-fix/stdin.log  (12 commands)
+  Transcript  /home/user/Sessions/deploy-fix/stdout.log  (19.0 KB)
+  Commands    /home/user/Sessions/deploy-fix/stdin.log  (12 commands)
 ```
 
 JSON: `session.stop`, with `tag`, `duration_sec` and `stopped`.
@@ -2176,8 +2172,8 @@ the commands file before the transcript.
 
 ```text
 $ ws session grep rsync
-/home/user/Workspace/data/sessions/rsync-backup/stdin.log:1: rsync -avz --delete ~/Workspace/ backup:/data/
-/home/user/Workspace/data/sessions/rsync-backup/stdout.log:3: rsync -avz --delete ~/Workspace/ backup:/data/
+/home/user/Sessions/rsync-backup/stdin.log:1: rsync -avz --delete ~/Workspace/ backup:/data/
+/home/user/Sessions/rsync-backup/stdout.log:3: rsync -avz --delete ~/Workspace/ backup:/data/
 ```
 
 JSON: `session.grep`, a list of matches with `tag`, `path`, `line` and `text`.
@@ -2193,53 +2189,33 @@ narrowing.
 
 ```text
 ws session rm <tag…> [--dry-run]
+ws session rm --older-than <age> [--dry-run]
 ```
 
-Moves sessions to the XDG trash (§7.3). Tags must match exactly. If a tag does not exist
-or names the recording in progress, nothing is deleted (exit 1). The plan has one action
-per session, pre-checked: `Delete /home/user/Workspace/data/sessions/rsync-backup (8.0 KB)`.
+Moves sessions to the XDG trash (§7.3), oldest first when chosen by age. The recording in
+progress is never deleted. Give tags or `--older-than`, not both (exit 1).
+
+- **`<tag…>`:** tags must match exactly. If a tag does not exist or names the recording in
+  progress, nothing is deleted (exit 1).
+- **`--older-than <age>`:** the finished sessions that started longer ago than `<age>`.
+  Ages are `30d`, `12h` or `2w`, and a bare integer means days (the shared age format).
+
+The plan has one action per session, pre-checked:
+`Delete /home/user/Sessions/rsync-backup (8.0 KB)`, and with `--older-than`
+`Delete /home/user/Sessions/2026-08-02-0930 (89.0 MB, 81d old)`. When no session is old
+enough, ws says `Nothing to delete: no session older than 30d.` and exits 0.
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--older-than <age>` | — | delete the sessions older than this, instead of naming tags |
 
 JSON: `session.rm`, with `actions`.
 
 Exit: 0, 1, or 3.
 
-TUI: `ctrl+d` on the selected rows. The recording row is left out of the checklist, with
-a notice.
-
-#### `ws session prune`
-
-```text
-ws session prune [--older-than <age> | --all] [--dry-run]
-```
-
-Deletes finished sessions to the XDG trash, oldest first. The recording in progress is
-never pruned. Which sessions are pruned:
-
-- **No flags:** enforce the cap. If all sessions together (the recording included) take
-  more than `session.cap_mb`, the oldest finished sessions are pruned until the total is
-  at or under the cap. With `cap_mb` 0 or less, there is no cap and nothing is pruned.
-- **`--older-than <age>`:** sessions that started longer ago than `<age>`. Ages are
-  `30d`, `12h` or `2w`, and a bare integer means days (the shared age format). The cap is
-  not applied.
-- **`--all`:** every finished session. Using it together with `--older-than` is an error
-  (exit 1) (decision).
-
-The plan has one action per session, pre-checked:
-`Delete /home/user/Workspace/data/sessions/2026-08-02-0930 (89.0 MB, 81d old)`. With
-nothing to prune, ws says why (`Nothing to prune: 312 MB of the 500 MB cap.`) and exits 0.
-The built-in cron job `session-prune` runs `ws session prune --quiet` nightly at 02:00.
-
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--older-than <age>` | — | prune by age instead of by the cap |
-| `--all` | off | prune every finished session |
-
-JSON: `session.prune`, with `actions`, `storage_bytes` (before pruning) and `cap_mb`.
-
-Exit: 0, 1, or 3.
-
-TUI: `p` asks for an age (blank enforces the cap), then shows the checklist of the sessions
-it would prune. It covers every session, like the CLI, whatever is marked or filtered.
+TUI: `ctrl+d` deletes the selected rows. The recording row is left out of the checklist,
+with a notice. `p` asks for an age, then shows the checklist of the sessions older than it.
+It covers every session, whatever is marked or filtered.
 
 ---
 
@@ -3187,14 +3163,12 @@ binary and `<W>` the absolute workspace path.
 | --- | --- | --- | --- |
 | `mega-sync` | `*/30 * * * *` | 30m | MEGA only: restarts `megasync` for a 5-minute sync window, using `DISPLAY` |
 | `pass-backup` | `*/30 * * * *` | 30m | `<ws> --workspace <W> pass backup push --quiet` |
-| `session-prune` | `0 2 * * *` | 24h | `<ws> --workspace <W> session prune --quiet` |
 
-**Presets.** `sync` = `mega-sync`, `pass-backup`. `maintenance` = `session-prune`
-(decision: the preset stays, with the one job it has left). `sync` suits MEGA. With another
+**Presets.** `sync` = `mega-sync`, `pass-backup`. `sync` suits MEGA. With another
 sync client, install `pass-backup` on its own (§2.6).
 
-**Retired names.** `secret-scan`, `ignore-scan` and `repo-sync` (nothing should commit your
-work unattended; use `ws repo save`) are retired. `cron add` rejects them (`cron job
+**Retired names.** `secret-scan`, `ignore-scan`, `repo-sync` (nothing should commit your
+work unattended; use `ws repo save`) and `session-prune` (use `ws session rm --older-than`) are retired. `cron add` rejects them (`cron job
 "repo-sync" was removed`), `cron rm` still removes their blocks, and `cron run` skips
 them silently and exits 0, so a crontab line written earlier keeps working (see below).
 
@@ -3276,8 +3250,6 @@ $ ws cron ls
  Job             Schedule      State          Last run          Next run  Description
  mega-sync       */30 * * * *  installed      12m ago           in 18m    Restart megasync for a 5-minute sync window
  pass-backup     */30 * * * *  not installed                              Push the pass store backup
- session-prune   0 2 * * *     not installed                              Prune sessions over the size cap
- maintenance     preset        not installed                              installs: session-prune
  sync            preset        1 of 2 installed                           installs: mega-sync, pass-backup
 ```
 
@@ -3743,7 +3715,6 @@ Global flags, accepted before or after the command:
 | Flag | Meaning |
 | --- | --- |
 | `-w, --workspace <dir>` | workspace root (default `$WS_WORKSPACE`, else `~/Workspace`) |
-| `-c, --config <file>` | `ws.json` (default `$WS_CONFIG`, else `<workspace>/ws.json`) |
 | `-q, --quiet` | errors only; accepts plans without prompting |
 | `--verbose` | show internal decisions on stderr |
 | `--json` | the JSON envelope; accepts plans without prompting |
@@ -3754,15 +3725,14 @@ Global flags, accepted before or after the command:
 #### `ws init`
 
 ```text
-ws init [--workspace <dir>] [--config <file>] [--dry-run]
+ws init [--workspace <dir>] [--dry-run]
 ```
 
 Makes a directory a ws workspace. The workspace is `--workspace`, else `$WS_WORKSPACE`, else
-`~/Workspace`. `ws.json` is written where every other command looks for it: `--config`, else
-`$WS_CONFIG`, else `<workspace>/ws.json`. It creates, when missing:
+`~/Workspace`. `ws.json` is written to `<workspace>/ws.json`. It creates, when missing:
 
 - the layout: `notes/ experiments/ artifacts/ references/ scripts/ scripts/lib/ agent/ agent/skills/
-  configs/ secrets/ symlinks/ data/ data/sessions/ archive/`
+  configs/ symlinks/ data/ archive/`
 - `ws.json`, complete: every key, at its default or empty value (`ws config show --defaults`),
   so the file documents every setting (§2.3)
 - `<workspace>/.megaignore`, generated from `ws.json`'s ignore rules
@@ -3781,7 +3751,6 @@ values you set are kept`), and write `.megaignore`. When nothing is missing, it 
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `-w, --workspace <dir>` | `$WS_WORKSPACE`, else `~/Workspace` | workspace root |
-| `-c, --config <file>` | `$WS_CONFIG`, else `<workspace>/ws.json` | where `ws.json` goes |
 | `--dry-run` | false | print the plan; change nothing |
 
 `--json`: command `init`; data `workspace`, `config`, `created` (absolute paths), `existing`
@@ -3790,7 +3759,7 @@ values you set are kept`), and write `.megaignore`. When nothing is missing, it 
 Exit: 0, 1, 3.
 
 TUI: until the workspace is initialized, the TUI shows the setup screen. `enter` hands the terminal to
-`ws init` with the TUI's `--workspace` and `--config`.
+`ws init` with the TUI's `--workspace`.
 
 #### `ws config show`
 
@@ -3908,7 +3877,7 @@ ws tui
 
 Opens the interactive terminal UI on the Dashboard. The screens are Dashboard, Repos, Symlinks,
 Scratch, Sessions, Ignore, Secrets, Cron and Trash, reached with 1–9 and tab. It honours
-`--workspace` and `--config`. If the workspace is not initialized, it opens the setup screen. stdin
+`--workspace`. If the workspace is not initialized, it opens the setup screen. stdin
 and stdout must be a terminal.
 
 Exit: 0 on quit. 1 when stdin or stdout is not a terminal ("ws tui requires an interactive
@@ -4159,7 +4128,7 @@ destructive verb, §6.3, not `u`, which is already `unmute` on Ignore.)
 | --- | --- | --- |
 | `enter` | show the transcript (`c` toggles commands only; `esc` returns) | cursor |
 | `r` | record: prompt for a tag, then hand the terminal to the recorded shell | none |
-| `p` | prune: prompt for an age (blank enforces the size cap), then a checklist | all rows |
+| `p` | delete by age: prompt for an age, then a checklist | all rows |
 | `ctrl+d` | delete | selected |
 
 `:` commands: `stop`, `grep <text>` (narrows the list to sessions with a match; `enter` opens
@@ -4759,7 +4728,7 @@ yes to this and no to the next?
 | --- | --- |
 | Per-file operations (`init`, `symlink add`, `symlink unlink`) | one action per file |
 | Fleet operations (`repo fetch\|pull\|push\|save\|run`) | one action per repo |
-| Cleanup operations (`session prune`, `trash prune`) | one action per item removed |
+| Cleanup operations (`session rm --older-than`, `trash prune`) | one action per item removed |
 | Single-mutation commands (`repo root add`) | one action in total |
 
 **Testing RW commands.** Tests pass `strings.NewReader("y\n")` as stdin. `promptChoice`
@@ -5005,7 +4974,7 @@ ws cron rm mega-sync             # uninstall
 
 | Check | Expected |
 | --- | --- |
-| `ws cron ls` | the built-in jobs (`mega-sync`, `pass-backup`, `session-prune`) and the presets, with `installed` yes or no |
+| `ws cron ls` | the built-in jobs (`mega-sync`, `pass-backup`) and the presets, with `installed` yes or no |
 | `ws cron add <job> --dry-run` | the plan; the crontab is unchanged |
 | `ws cron add <job>` | a `# >>> ws` block with the schedule line and the `@reboot` line, and `configs/crontab` updated to match |
 | `ws cron run repo-sync` | exits 0 silently and does nothing (a retired name, from existing crontab lines) |

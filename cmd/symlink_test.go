@@ -186,21 +186,6 @@ func TestSymlinkAddDirAsSecret(t *testing.T) {
 	}
 }
 
-func TestConfigFlagRejectsDirectory(t *testing.T) {
-	testSetXDG(t)
-	workspace := filepath.Join(t.TempDir(), "Workspace")
-	var out, errOut bytes.Buffer
-	if code := Execute([]string{"init", "--workspace", workspace}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
-		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
-	}
-	errOut.Reset()
-	secrets := filepath.Join(workspace, "secrets")
-	code := Execute([]string{"--workspace", workspace, "symlink", "add", "-c", secrets, secrets}, strings.NewReader(""), &out, &errOut)
-	if code == 0 || !strings.Contains(errOut.String(), "is a directory") {
-		t.Fatalf("expected -c <dir> to be rejected, code=%d stderr=%s", code, errOut.String())
-	}
-}
-
 func TestSymlinkHelpListsAddFlags(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := Execute([]string{"symlink", "add", "--help"}, strings.NewReader(""), &out, &errOut); code != 0 {

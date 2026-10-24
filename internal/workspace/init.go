@@ -20,10 +20,8 @@ var layoutDirs = []string{
 	"agent",
 	"agent/skills",
 	"configs",
-	"secrets",
 	"symlinks",
 	"data",
-	"data/sessions",
 	"archive",
 }
 
@@ -49,13 +47,11 @@ func (p InitPlan) Empty() bool {
 
 // PlanInit reads the workspace and reports what is missing. It fails when an
 // existing ws.json cannot be parsed, since init never replaces one.
-func PlanInit(workspacePath, configPath string) (InitPlan, error) {
+func PlanInit(workspacePath string) (InitPlan, error) {
 	if workspacePath == "" {
 		return InitPlan{}, fmt.Errorf("workspace path is required")
 	}
-	if configPath == "" {
-		configPath = wsconfig.ConfigPath(workspacePath)
-	}
+	configPath := wsconfig.ConfigPath(workspacePath)
 	p := InitPlan{
 		Workspace:   workspacePath,
 		Config:      configPath,

@@ -97,7 +97,7 @@ func TestCompleteSubcommands(t *testing.T) {
 		},
 		{
 			args:      []string{"session", ""},
-			wantSome:  []string{"record", "stop", "ls", "show", "grep", "prune", "rm"},
+			wantSome:  []string{"record", "stop", "ls", "show", "grep", "rm"},
 			wantNone:  []string{"start"},
 			directive: compDirectiveNoFileComp,
 		},
@@ -304,12 +304,12 @@ func TestCompleteTrashAndCronTargets(t *testing.T) {
 		t.Fatalf("trash items: %v", comps)
 	}
 	comps, _ := cronTargets(nil, "", ctx)
-	for _, retired := range []string{"secret-scan", "ignore-scan", "repo-sync"} {
+	for _, retired := range []string{"secret-scan", "ignore-scan", "repo-sync", "session-prune"} {
 		if contains(comps, retired) {
 			t.Errorf("cron completion offers the old name %q", retired)
 		}
 	}
-	for _, job := range []string{"mega-sync", "pass-backup", "session-prune", "sync", "maintenance"} {
+	for _, job := range []string{"mega-sync", "pass-backup", "sync"} {
 		if !contains(comps, job) {
 			t.Errorf("cron completion lacks %q", job)
 		}
@@ -529,21 +529,6 @@ func TestRunCompleteViaExecute(t *testing.T) {
 
 // ── Flag-value completion tests (Issue #5) ────────────────────────
 
-func TestFlagValueCompletionConfig(t *testing.T) {
-	// ws --config <TAB> should return Default directive so shell does file completion.
-	_, dir := resolveCompletions([]string{"--config", ""}, globalFlags{})
-	if dir != compDirectiveDefault {
-		t.Fatalf("--config <TAB>: expected Default directive (%d), got %d", compDirectiveDefault, dir)
-	}
-}
-
-func TestFlagValueCompletionConfigShort(t *testing.T) {
-	_, dir := resolveCompletions([]string{"-c", ""}, globalFlags{})
-	if dir != compDirectiveDefault {
-		t.Fatalf("-c <TAB>: expected Default directive, got %d", dir)
-	}
-}
-
 func TestFlagValueCompletionWorkspace(t *testing.T) {
 	// ws --workspace <TAB> should return FilterDirs so only directories are shown.
 	_, dir := resolveCompletions([]string{"--workspace", ""}, globalFlags{})
@@ -569,9 +554,9 @@ func TestFlagValueCompletionBoolFlag(t *testing.T) {
 }
 
 func TestFlagValueCompletionEqualForm(t *testing.T) {
-	// --config=/etc/<TAB> stays as a single token; should not enter value-completion path.
+	// --workspace=/etc/ stays as a single token; should not enter value-completion path.
 	// The word being completed starts with "/etc/" which is not a "-", so normal flow.
-	comps, dir := resolveCompletions([]string{"--config=/etc/"}, globalFlags{})
+	comps, dir := resolveCompletions([]string{"--workspace=/etc/"}, globalFlags{})
 	// This is treated as the partial word; prev doesn't exist, so no flag-value path.
 	_ = comps
 	_ = dir

@@ -58,7 +58,7 @@ func testEnv(t *testing.T) env.Env {
 		},
 		Config:     cfg,
 		ScratchDir: "/home/tester/Scratch",
-		LogDir:     ws + "/data/sessions",
+		LogDir:     "/home/tester/Sessions",
 		Clock:      fixedClock,
 	}
 }
@@ -688,7 +688,7 @@ func TestScratchNewEndToEnd(t *testing.T) {
 	if err := wsconfig.Save(cfgPath, cfg); err != nil {
 		t.Fatal(err)
 	}
-	o := workspace.PathOverrides{Workspace: wsPath, Config: cfgPath}
+	o := workspace.PathOverrides{Workspace: wsPath}
 	e, err := env.Load(o)
 	if err != nil {
 		t.Fatal(err)
@@ -733,7 +733,7 @@ func TestCancelChangesNothing(t *testing.T) {
 	cfg2.Scratch.RootDir = filepath.Join(root, "Scratch")
 	cfgPath2 := filepath.Join(wsPath, "ws.json")
 	_ = wsconfig.Save(cfgPath2, cfg2)
-	o := workspace.PathOverrides{Workspace: wsPath, Config: cfgPath2}
+	o := workspace.PathOverrides{Workspace: wsPath}
 	e, err := env.Load(o)
 	if err != nil {
 		t.Fatal(err)

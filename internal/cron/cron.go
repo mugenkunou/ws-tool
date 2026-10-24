@@ -46,15 +46,13 @@ type BuiltinJob struct {
 
 // Builtins is the registry of all built-in named cron jobs.
 var Builtins = map[string]*BuiltinJob{
-	"mega-sync":     megaSyncJob,
-	"pass-backup":   passBackupJob,
-	"session-prune": sessionPruneJob,
+	"mega-sync":   megaSyncJob,
+	"pass-backup": passBackupJob,
 }
 
 // Presets maps a composite name to the ordered list of job names it expands to.
 var Presets = map[string][]string{
-	"maintenance": {"session-prune"},
-	"sync":        {"mega-sync", "pass-backup"},
+	"sync": {"mega-sync", "pass-backup"},
 }
 
 // Aliases maps an old job name to the job that replaced it. Old crontab lines
@@ -63,8 +61,9 @@ var Aliases = map[string]string{}
 
 // Retired are jobs that no longer exist. `cron add` rejects them, `cron rm` still
 // removes their blocks, and `cron run` logs a skip and exits 0, so old crontab
-// lines do not fail. Nothing commits your work unattended, so repo-sync is gone.
-var Retired = []string{"secret-scan", "ignore-scan", "repo-sync"}
+// lines do not fail. Nothing commits your work unattended, so repo-sync is gone, and
+// session-prune went with the sessions size cap (`ws session rm --older-than` is manual).
+var Retired = []string{"secret-scan", "ignore-scan", "repo-sync", "session-prune"}
 
 // AllNames returns every job and preset name, sorted. It holds neither aliases
 // nor retired names: those are hidden.

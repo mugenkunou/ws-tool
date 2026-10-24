@@ -66,7 +66,7 @@ func (m machine) opts() PlanOptions {
 // ── registry ───────────────────────────────────────────────────────
 
 func TestRegistry(t *testing.T) {
-	want := []string{"maintenance", "mega-sync", "pass-backup", "session-prune", "sync"}
+	want := []string{"mega-sync", "pass-backup", "sync"}
 	if got := AllNames(); !slices.Equal(got, want) {
 		t.Fatalf("AllNames = %v, want %v (no aliases, no retired names)", got, want)
 	}
@@ -75,16 +75,13 @@ func TestRegistry(t *testing.T) {
 			t.Errorf("job %s is incomplete: %+v", name, j)
 		}
 	}
-	// Schedules per spec: every 30 minutes, session-prune at 02:00.
+	// Schedules per spec: every 30 minutes.
 	for _, n := range []string{"mega-sync", "pass-backup"} {
 		if Builtins[n].Schedule != "*/30 * * * *" || Builtins[n].IntervalSecs != 1800 {
 			t.Errorf("%s schedule = %q interval %d", n, Builtins[n].Schedule, Builtins[n].IntervalSecs)
 		}
 	}
-	if Builtins["session-prune"].Schedule != "0 2 * * *" || Builtins["session-prune"].IntervalSecs != 86400 {
-		t.Errorf("session-prune = %+v", Builtins["session-prune"])
-	}
-	if !slices.Equal(Presets["sync"], []string{"mega-sync", "pass-backup"}) || !slices.Equal(Presets["maintenance"], []string{"session-prune"}) {
+	if !slices.Equal(Presets["sync"], []string{"mega-sync", "pass-backup"}) || len(Presets) != 1 {
 		t.Errorf("presets = %v", Presets)
 	}
 	for preset, members := range Presets {
@@ -98,8 +95,7 @@ func TestRegistry(t *testing.T) {
 
 func TestJobBodies(t *testing.T) {
 	bodies := map[string]string{
-		"pass-backup":   "/ws --workspace /W pass backup push --quiet",
-		"session-prune": "/ws --workspace /W session prune --quiet",
+		"pass-backup": "/ws --workspace /W pass backup push --quiet",
 	}
 	for name, want := range bodies {
 		if got := Builtins[name].scriptBody("/ws", ":1", "/W"); got != want {
@@ -119,7 +115,7 @@ func TestAliasesAndRetired(t *testing.T) {
 	if got := Names("mega-sync"); !slices.Equal(got, []string{"mega-sync"}) {
 		t.Errorf("Names = %v", got)
 	}
-	for _, r := range []string{"secret-scan", "ignore-scan", "repo-sync"} {
+	for _, r := range []string{"secret-scan", "ignore-scan", "repo-sync", "session-prune"} {
 		if !IsRetired(r) {
 			t.Errorf("%s must be retired", r)
 		}
@@ -178,15 +174,15 @@ func TestParseBlocksIsGeneric(t *testing.T) {
 }
 
 func TestRemoveBlocksKeepsOtherLines(t *testing.T) {
-	ct := "MAILTO=me\n\n" + BlockFor(Builtins["mega-sync"], "/ws", "/W", ":1") + "\n0 5 * * * mine\n" + BlockFor(Builtins["session-prune"], "/ws", "/W", ":1")
+	ct := "MAILTO=me\n\n" + BlockFor(Builtins["mega-sync"], "/ws", "/W", ":1") + "\n0 5 * * * mine\n" + BlockFor(Builtins["pass-backup"], "/ws", "/W", ":1")
 	got := removeBlocks(ct, "mega-sync")
-	if strings.Contains(got, "mega-sync") || !strings.Contains(got, "MAILTO=me") || !strings.Contains(got, "0 5 * * * mine") || !strings.Contains(got, "ws:session-prune") {
+	if strings.Contains(got, "mega-sync") || !strings.Contains(got, "MAILTO=me") || !strings.Contains(got, "0 5 * * * mine") || !strings.Contains(got, "ws:pass-backup") {
 		t.Fatalf("removed:\n%s", got)
 	}
 	if again := removeBlocks(got, "mega-sync"); again != got {
 		t.Fatal("removing an absent block must be a no-op")
 	}
-	if strings.Contains(removeBlocks(ct, "mega-sync", "session-prune"), "ws:") {
+	if strings.Contains(removeBlocks(ct, "mega-sync", "pass-backup"), "ws:") {
 		t.Fatal("both blocks go")
 	}
 }
@@ -342,9 +338,6 @@ func TestPresetStatesAndRetiredRows(t *testing.T) {
 	if got := stateOf(t, m, "sync"); got != "1 of 2 installed" {
 		t.Fatalf("sync preset: %s", got)
 	}
-	if got := stateOf(t, m, "maintenance"); got != StateNotInstalled {
-		t.Fatalf("maintenance preset: %s", got)
-	}
 
 	// A retired job has a row only while a block remains, last, in either file.
 	jobs, _ := Jobs(m.workspace)
@@ -370,10 +363,10 @@ func TestPresetStatesAndRetiredRows(t *testing.T) {
 	}
 	// Rows: jobs, then presets, then retired.
 	names := []string{}
-	for _, j := range jobs[:5] {
+	for _, j := range jobs[:3] {
 		names = append(names, j.Name)
 	}
-	if !slices.Equal(names, []string{"mega-sync", "pass-backup", "session-prune", "maintenance", "sync"}) {
+	if !slices.Equal(names, []string{"mega-sync", "pass-backup", "sync"}) {
 		t.Fatalf("row order = %v", names)
 	}
 }
@@ -436,7 +429,7 @@ func TestAddActionsWriteBothFilesTogether(t *testing.T) {
 // TestAddOfARetiredJobIsRefused: retired jobs are
 // gone, and `cron add` says so instead of installing anything (plan 0003).
 func TestAddOfARetiredJobIsRefused(t *testing.T) {
-	for _, name := range []string{"repo-sync", "ignore-scan", "secret-scan"} {
+	for _, name := range []string{"repo-sync", "ignore-scan", "secret-scan", "session-prune"} {
 		if _, _, err := Resolve(name); err == nil || !strings.Contains(err.Error(), "was removed") {
 			t.Errorf("Resolve(%s) = %v, want a was-removed error", name, err)
 		}
@@ -447,8 +440,8 @@ func TestAddOfARetiredJobIsRefused(t *testing.T) {
 // never written (the bug: add wrote only the live crontab).
 func TestAddFixesAnUndeclaredOrUnappliedJob(t *testing.T) {
 	m := newMachine(t)
-	jobs, _, _ := Resolve("session-prune")
-	block := BlockFor(Builtins["session-prune"], m.opts().Bin, m.workspace, ":7")
+	jobs, _, _ := Resolve("pass-backup")
+	block := BlockFor(Builtins["pass-backup"], m.opts().Bin, m.workspace, ":7")
 	m.setLive(t, block)
 	acts, already, _ := AddActions(jobs, m.opts())
 	if len(acts) != 1 || len(already) != 0 {
@@ -457,7 +450,7 @@ func TestAddFixesAnUndeclaredOrUnappliedJob(t *testing.T) {
 	if err := acts[0].Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(m.declaredText(t), "ws:session-prune") {
+	if !strings.Contains(m.declaredText(t), "ws:pass-backup") {
 		t.Fatal("configs/crontab must now declare it")
 	}
 	// not applied: declared only.
@@ -602,8 +595,8 @@ func logText(t *testing.T) string {
 
 func TestRunDryRunRunsNothing(t *testing.T) {
 	newMachine(t)
-	res, err := RunJob("session-prune", RunOptions{WorkspacePath: "/W", DryRun: true})
-	if err != nil || !strings.Contains(res.Command, "--workspace /W session prune --quiet") {
+	res, err := RunJob("pass-backup", RunOptions{WorkspacePath: "/W", DryRun: true})
+	if err != nil || !strings.Contains(res.Command, "--workspace /W pass backup push --quiet") {
 		t.Fatalf("%+v %v", res, err)
 	}
 	if logText(t) != "" {
@@ -631,19 +624,19 @@ func TestRunRetiredAndPreset(t *testing.T) {
 func TestIfDueSkipsAndPlainRunAlwaysRuns(t *testing.T) {
 	m := newMachine(t)
 	// Fake a job body that prints and exits 3, by replacing the job for the test.
-	saved := Builtins["session-prune"].scriptBody
-	t.Cleanup(func() { Builtins["session-prune"].scriptBody = saved })
-	Builtins["session-prune"].scriptBody = func(_, _, _ string) string { return "echo out-line; echo err-line >&2; exit 3" }
+	saved := Builtins["pass-backup"].scriptBody
+	t.Cleanup(func() { Builtins["pass-backup"].scriptBody = saved })
+	Builtins["pass-backup"].scriptBody = func(_, _, _ string) string { return "echo out-line; echo err-line >&2; exit 3" }
 
 	var out, errOut strings.Builder
-	res, err := RunJob("session-prune", RunOptions{Stdout: &out, Stderr: &errOut})
+	res, err := RunJob("pass-backup", RunOptions{Stdout: &out, Stderr: &errOut})
 	if err != nil || res.ExitCode != 3 || res.Skipped {
 		t.Fatalf("first run: %+v %v", res, err)
 	}
 	// Output is captured into cron.log, line by line, with the job's name, and
 	// also reaches the writers.
 	log := logText(t)
-	for _, want := range []string{"[session-prune] Starting", "[session-prune] out-line", "[session-prune] err-line", "[session-prune] Failed (exit 3)"} {
+	for _, want := range []string{"[pass-backup] Starting", "[pass-backup] out-line", "[pass-backup] err-line", "[pass-backup] Failed (exit 3)"} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("log lacks %q:\n%s", want, log)
 		}
@@ -652,16 +645,16 @@ func TestIfDueSkipsAndPlainRunAlwaysRuns(t *testing.T) {
 		t.Fatalf("writers got out=%q err=%q", out.String(), errOut.String())
 	}
 	statePath, _ := StateFilePath()
-	if r, _ := LastRun(statePath, "session-prune"); r.ExitCode != 3 || time.Since(r.Time) > time.Minute {
+	if r, _ := LastRun(statePath, "pass-backup"); r.ExitCode != 3 || time.Since(r.Time) > time.Minute {
 		t.Fatalf("state = %+v (the job's own code is recorded)", r)
 	}
 
 	// Just ran: --if-due skips, a plain run runs again.
-	res, _ = RunJob("session-prune", RunOptions{IfDue: true})
+	res, _ = RunJob("pass-backup", RunOptions{IfDue: true})
 	if !res.Skipped || res.ExitCode != 0 || !strings.Contains(logText(t), "Skipping: last run") {
 		t.Fatalf("--if-due must skip a job that just ran: %+v", res)
 	}
-	res, _ = RunJob("session-prune", RunOptions{})
+	res, _ = RunJob("pass-backup", RunOptions{})
 	if res.Skipped || res.ExitCode != 3 {
 		t.Fatalf("a plain run always runs: %+v", res)
 	}
@@ -673,7 +666,7 @@ func TestIfDueSkipsAndPlainRunAlwaysRuns(t *testing.T) {
 // nothing (plan 0003 step 1).
 func TestRunOfRetiredJobsIsASilentNoOp(t *testing.T) {
 	newMachine(t)
-	for _, name := range []string{"ignore-scan", "repo-sync", "secret-scan"} {
+	for _, name := range []string{"ignore-scan", "repo-sync", "secret-scan", "session-prune"} {
 		res, err := RunJob(name, RunOptions{WorkspacePath: "/W"})
 		if err != nil || !res.Skipped || res.ExitCode != 0 {
 			t.Fatalf("%s: %+v %v", name, res, err)

@@ -27,12 +27,14 @@ func newSessEnv(t *testing.T) sessEnv {
 	state := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", state)
 	ws := initWorkspace(t)
-	return sessEnv{
+	e := sessEnv{
 		workspace: ws,
-		logDir:    filepath.Join(ws, "data", "sessions"),
+		logDir:    filepath.Join(t.TempDir(), "Sessions"),
 		stateDir:  filepath.Join(state, "ws-tool"),
 		trash:     filepath.Join(data, "Trash", "files"),
 	}
+	e.setSession(t, 100)
+	return e
 }
 
 func (e sessEnv) run(stdin string, args ...string) (int, string, string) {
@@ -263,14 +265,14 @@ func TestSessionRm(t *testing.T) {
 }
 
 // setSessionConfig rewrites session settings in ws.json.
-func (e sessEnv) setSession(t *testing.T, capMB, maxMB int) {
+func (e sessEnv) setSession(t *testing.T, maxMB int) {
 	t.Helper()
 	cfgPath := filepath.Join(e.workspace, "ws.json")
 	cfg, err := wsconfig.Load(cfgPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Session.CapMB, cfg.Session.MaxSessionMB = capMB, maxMB
+	cfg.Session.RootDir, cfg.Session.MaxSessionMB = e.logDir, maxMB
 	if err := wsconfig.Save(cfgPath, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -288,86 +290,54 @@ func (e sessEnv) aged(t *testing.T, tag string, days int, size int) {
 	}
 }
 
-// TestSessionPruneEnforcesTheCap: a bare prune removed nothing, so the nightly
-// job did nothing although it said it enforced cap_mb (plan 0002 B2).
-func TestSessionPruneEnforcesTheCap(t *testing.T) {
-	e := newSessEnv(t)
-	e.setSession(t, 1, 100) // a 1 MB cap
-	e.aged(t, "oldest", 30, 600<<10)
-	e.aged(t, "middle", 20, 600<<10)
-	e.aged(t, "newest", 1, 600<<10)
-
-	out := e.mustRun(t, "y\ny\n", "session", "prune")
-	// 1.8 MB over a 1 MB cap: the two oldest go, the newest stays (0.6 MB).
-	if strings.Count(out, "[y/n/a/q]") != 2 || !strings.Contains(out, "Delete "+filepath.Join(e.logDir, "oldest")+" (") || !strings.Contains(out, "30d old") {
-		t.Fatalf("plan lines:\n%s", out)
-	}
-	if _, err := os.Stat(filepath.Join(e.logDir, "newest")); err != nil {
-		t.Fatal("the newest must stay")
-	}
-	for _, tag := range []string{"oldest", "middle"} {
-		if _, err := os.Stat(filepath.Join(e.logDir, tag)); !os.IsNotExist(err) {
-			t.Fatalf("%s must be pruned", tag)
-		}
-	}
-	if out := e.mustRun(t, "", "session", "prune"); !strings.Contains(out, "Nothing to prune") || !strings.Contains(out, "1 MB cap") {
-		t.Fatalf("under the cap:\n%s", out)
-	}
-}
-
-func TestSessionPruneByAgeAndAll(t *testing.T) {
+func TestSessionRmOlderThan(t *testing.T) {
 	e := newSessEnv(t)
 	e.aged(t, "old", 40, 10)
 	e.aged(t, "recent", 2, 10)
 
 	// A bare number is days, the shared age format.
-	out := e.mustRun(t, "y\n", "session", "prune", "--older-than", "30")
-	if strings.Count(out, "[y/n/a/q]") != 1 || !strings.Contains(out, filepath.Join(e.logDir, "old")) {
+	out := e.mustRun(t, "y\n", "session", "rm", "--older-than", "30")
+	if strings.Count(out, "[y/n/a/q]") != 1 || !strings.Contains(out, filepath.Join(e.logDir, "old")) || !strings.Contains(out, "40d old") {
 		t.Fatalf("--older-than 30:\n%s", out)
 	}
-	if code, _, errOut := e.run("", "session", "prune", "--older-than", "soon"); code != 1 || !strings.Contains(errOut, "invalid age") {
+	if _, err := os.Stat(filepath.Join(e.logDir, "recent")); err != nil {
+		t.Fatal("a session younger than the age stays")
+	}
+	if out := e.mustRun(t, "", "session", "rm", "--older-than", "30"); !strings.Contains(out, "Nothing to delete") {
+		t.Fatalf("nothing is that old now:\n%s", out)
+	}
+	if code, _, errOut := e.run("", "session", "rm", "--older-than", "soon"); code != 1 || !strings.Contains(errOut, "invalid age") {
 		t.Fatalf("a bad age: %d %s", code, errOut)
 	}
-	if code, _, errOut := e.run("", "session", "prune", "--all", "--older-than", "1d"); code != 1 || !strings.Contains(errOut, "cannot be used together") {
-		t.Fatalf("--all with --older-than: %d %s", code, errOut)
+	if code, _, errOut := e.run("", "session", "rm", "recent", "--older-than", "1d"); code != 1 || !strings.Contains(errOut, "usage") {
+		t.Fatalf("tags with --older-than: %d %s", code, errOut)
 	}
 
-	// --all deletes every finished session, never the recording.
+	// The recording in progress is never deleted, however old.
 	if _, err := wssession.Start(wssession.StartOptions{LogDir: e.logDir, StateDir: e.stateDir, Tag: "live"}); err != nil {
 		t.Fatal(err)
 	}
-	e.mustRun(t, "y\n", "session", "prune", "--all")
+	e.mustRun(t, "", "session", "rm", "--older-than", "1h")
 	if _, err := os.Stat(filepath.Join(e.logDir, "live")); err != nil {
-		t.Fatal("the recording in progress is never pruned")
-	}
-	if _, err := os.Stat(filepath.Join(e.logDir, "recent")); !os.IsNotExist(err) {
-		t.Fatal("--all deletes every finished session")
+		t.Fatal("the recording in progress is never deleted")
 	}
 }
 
-func TestSessionPruneJSONAndNoCap(t *testing.T) {
+func TestSessionRmOlderThanDryRunJSON(t *testing.T) {
 	e := newSessEnv(t)
-	e.setSession(t, 0, 100) // no cap
-	e.aged(t, "big", 5, 2<<20)
-	if out := e.mustRun(t, "", "session", "prune"); !strings.Contains(out, "Nothing to prune") {
-		t.Fatalf("a cap of 0 means no cap, and the nightly job must not delete everything:\n%s", out)
-	}
-
-	e.setSession(t, 1, 100)
-	_, js, _ := e.run("", "--json", "--dry-run", "session", "prune")
+	e.aged(t, "big", 5, 10)
+	_, js, _ := e.run("", "--json", "--dry-run", "session", "rm", "--older-than", "1d")
 	var env struct {
 		Command string `json:"command"`
 		DryRun  bool   `json:"dry_run"`
 		Data    struct {
-			Actions      []struct{ Status string } `json:"actions"`
-			StorageBytes int64                     `json:"storage_bytes"`
-			CapMB        int                       `json:"cap_mb"`
+			Actions []struct{ Status string } `json:"actions"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal([]byte(js), &env); err != nil {
 		t.Fatalf("not JSON: %v\n%s", err, js)
 	}
-	if env.Command != "session.prune" || !env.DryRun || len(env.Data.Actions) != 1 || env.Data.CapMB != 1 || env.Data.StorageBytes < 2<<20 {
+	if env.Command != "session.rm" || !env.DryRun || len(env.Data.Actions) != 1 {
 		t.Fatalf("envelope = %+v", env)
 	}
 	if _, err := os.Stat(filepath.Join(e.logDir, "big")); err != nil {

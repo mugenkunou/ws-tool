@@ -37,13 +37,3 @@ var passBackupJob = &BuiltinJob{
 		return fmt.Sprintf("%s --workspace %s pass backup push --quiet", wsBin, workspace)
 	},
 }
-
-var sessionPruneJob = &BuiltinJob{
-	Name:         "session-prune",
-	Schedule:     "0 2 * * *",
-	IntervalSecs: 24 * 60 * 60,
-	Description:  "Prune sessions over the size cap (nightly at 02:00)",
-	scriptBody: func(wsBin, display, workspace string) string {
-		return fmt.Sprintf("%s --workspace %s session prune --quiet", wsBin, workspace)
-	},
-}

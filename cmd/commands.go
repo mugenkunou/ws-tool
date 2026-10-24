@@ -147,9 +147,8 @@ var commands = []command{
 		Flags: []flagDoc{{Name: "--commands", Desc: "print only the commands"}}},
 	{Path: []string{"session", "grep"}, Args: "<text>", Summary: "search transcripts", RO: true,
 		Flags: []flagDoc{{Name: "--max", Arg: "<n>", Desc: "stop after n matches (0: no limit)"}}},
-	{Path: []string{"session", "rm"}, Args: "<tag…>", Summary: "delete sessions"},
-	{Path: []string{"session", "prune"}, Summary: "delete old sessions, or enforce the size cap",
-		Flags: []flagDoc{olderThan, allFlag("every finished session")}},
+	{Path: []string{"session", "rm"}, Args: "<tag…>", Summary: "delete sessions, or those older than an age",
+		Flags: []flagDoc{olderThan}},
 
 	{Path: []string{"ignore", "ls"}, Summary: "every path that doesn't sync, and its rule; --muted: muted warnings", RO: true,
 		Flags: []flagDoc{{Name: "--muted", Desc: "the muted warnings instead of the ignored paths"}},

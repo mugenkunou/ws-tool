@@ -9,7 +9,7 @@ import (
 
 func TestBuildEngineWithDefaults(t *testing.T) {
 	rules := DefaultUserRules()
-	for _, d := range []string{"secrets", "configs", "artifacts", "data", "archive"} {
+	for _, d := range []string{"configs", "artifacts", "data", "archive"} {
 		rules.Include = append(rules.Include, RuleEntry{Pattern: d + "/**"})
 	}
 	engine := BuildEngine(rules)
@@ -22,11 +22,11 @@ func TestBuildEngineWithDefaults(t *testing.T) {
 
 	// Files under an included directory that the defaults would exclude still sync.
 	for _, p := range []string{
-		"secrets/pass/.gpg-id",
-		"secrets/pass/.git/config",
+		"configs/pass/.gpg-id",
+		"configs/pass/.git/config",
 		"symlinks/home/.git/HEAD",
 		"artifacts/report.csv",
-		"data/sessions/2026-07-14/stdout.log",
+		"data/dumps/2026-07-14/out.log",
 		"archive/old.tar.gz",
 	} {
 		res = engine.Evaluate(p, false)
@@ -122,7 +122,7 @@ func TestGenerateMegaignore(t *testing.T) {
 	if !strings.Contains(content, "-:.*") {
 		t.Fatal("expected default exclude rules")
 	}
-	if strings.Contains(content, "+g:secrets/**") || strings.Contains(content, "+:ws\n") {
+	if strings.Contains(content, "+g:configs/**") || strings.Contains(content, "+:ws\n") {
 		t.Fatal("the only built-in include rule is symlinks/**: the rest are the ones in ws.json")
 	}
 }

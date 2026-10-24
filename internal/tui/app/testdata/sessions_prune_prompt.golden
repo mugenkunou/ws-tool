@@ -1,7 +1,7 @@
 ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 Prune sessions older than (age)
-An age such as 30d, 12h or 2w (a bare number is days). Blank enforces the size cap (session.cap_mb).
+An age such as 30d, 12h or 2w (a bare number is days).
 
 ›
 

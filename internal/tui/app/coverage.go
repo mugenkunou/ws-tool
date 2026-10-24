@@ -75,7 +75,6 @@ var CLICoverage = func() []Coverage {
 		{"session show", nav.ScreenSessions, lg.View, "", ""},
 		{"session grep", nav.ScreenSessions, none, "", "grep"},
 		{"session rm", nav.ScreenSessions, lg.Delete, "", ""},
-		{"session prune", nav.ScreenSessions, lg.Prune, "", ""},
 
 		{"repo ls", nav.ScreenRepos, none, "", ""},
 		{"repo show", nav.ScreenRepos, rp.Open, "", ""},

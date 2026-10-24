@@ -62,7 +62,6 @@ func printCmdHelp(stdout io.Writer, h cmdHelp) int {
 // globalFlagLines are the global flags, as `ws help` lists them (spec §4.1).
 var globalFlagLines = []string{
 	"  -w, --workspace string   Path to workspace root (default: $WS_WORKSPACE or ~/Workspace)",
-	"  -c, --config string      Path to ws.json (default: <workspace>/ws.json)",
 	"  -q, --quiet              Errors only; write commands accept every action",
 	"      --verbose            Show internal decisions on stderr",
 	"      --json               Machine-readable output; write commands accept every action",

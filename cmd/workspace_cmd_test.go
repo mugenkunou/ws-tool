@@ -60,11 +60,11 @@ func TestInitIsIdempotentAndFillsKeys(t *testing.T) {
 	}
 }
 
-func TestInitJSONAndConfigFlag(t *testing.T) {
+func TestInitJSON(t *testing.T) {
 	testSetXDG(t)
 	ws := filepath.Join(t.TempDir(), "Workspace")
-	cfg := filepath.Join(t.TempDir(), "elsewhere.json")
-	code, out, errOut := execArgs(t, "--json", "init", "--workspace", ws, "--config", cfg)
+	cfg := filepath.Join(ws, "ws.json")
+	code, out, errOut := execArgs(t, "--json", "init", "--workspace", ws)
 	if code != 0 {
 		t.Fatalf("init: %d %s", code, errOut)
 	}
@@ -86,17 +86,11 @@ func TestInitJSONAndConfigFlag(t *testing.T) {
 	if env.Command != "init" || env.Data.Workspace != ws || env.Data.Config != cfg {
 		t.Fatalf("%+v", env)
 	}
-	if !slices.Contains(env.Data.Created, cfg) || !slices.Contains(env.Data.Created, filepath.Join(ws, ".megaignore")) || len(env.Data.Existing) != 0 || len(env.Data.Actions) != 3 {
+	if !slices.Contains(env.Data.Created, cfg) || !slices.Contains(env.Data.Created, filepath.Join(ws, ".megaignore")) {
 		t.Fatalf("created=%v existing=%v actions=%v", env.Data.Created, env.Data.Existing, env.Data.Actions)
 	}
-	if _, err := os.Stat(cfg); err != nil {
-		t.Fatalf("ws.json goes where --config says: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(ws, "ws.json")); err == nil {
-		t.Fatal("not in the workspace")
-	}
 	// Initialized, and listing it as existing now.
-	_, out, _ = execArgs(t, "--json", "init", "--workspace", ws, "--config", cfg)
+	_, out, _ = execArgs(t, "--json", "init", "--workspace", ws)
 	_ = json.Unmarshal([]byte(out), &env)
 	if len(env.Data.Created) != 0 || !slices.Contains(env.Data.Existing, cfg) {
 		t.Fatalf("second run: created=%v existing=%v", env.Data.Created, env.Data.Existing)

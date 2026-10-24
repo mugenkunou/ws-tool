@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -23,7 +24,7 @@ import (
 // runSession dispatches `ws session <verb>` (spec §5 session).
 func runSession(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: ws session <ls|show|record|stop|grep|rm|prune> …")
+		fmt.Fprintln(stderr, "usage: ws session <ls|show|record|stop|grep|rm> …")
 		return 1
 	}
 	workspacePath, configPath, err := requireWorkspaceInitialized(globals, stderr)
@@ -41,9 +42,14 @@ func runSession(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	// Sessions live under <workspace>/data/sessions/, and sync with the workspace.
+	// Sessions live under session.root_dir (default ~/Sessions), outside the workspace.
+	logDir, err := wsconfig.ResolvePath(workspacePath, cfg.Session.RootDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "session.root_dir: %s\n", err)
+		return 1
+	}
 	s := sessionEnv{
-		logDir:   filepath.Join(workspacePath, "data", "sessions"),
+		logDir:   logDir,
 		stateDir: stateDir,
 		cfg:      cfg,
 	}
@@ -62,11 +68,9 @@ func runSession(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		return s.grep(rest, globals, stdout, stderr)
 	case "rm":
 		return s.rm(rest, globals, stdin, stdout, stderr)
-	case "prune":
-		return s.prune(rest, globals, stdin, stdout, stderr)
 	}
 	fmt.Fprintf(stderr, "unknown command: session %s\n", verb)
-	fmt.Fprintln(stderr, "usage: ws session <ls|show|record|stop|grep|rm|prune> …")
+	fmt.Fprintln(stderr, "usage: ws session <ls|show|record|stop|grep|rm> …")
 	return 1
 }
 
@@ -245,24 +249,33 @@ func (e sessionEnv) record(args []string, globals globalFlags, stdin io.Reader, 
 	}
 	_ = wssession.SetActivePID(e.stateDir, cmd.Process.Pid)
 
-	// End the recording when it grows past session.max_session_mb.
+	// Warn at 80% of session.max_session_mb, and end the recording at the limit.
 	maxMB := e.cfg.Session.MaxSessionMB
 	if maxMB <= 0 {
 		maxMB = 100
 	}
 	done := make(chan struct{})
+	var hitLimit atomic.Bool
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		limit := int64(maxMB) * 1024 * 1024
+		warned := false
 		for {
 			select {
 			case <-done:
 				return
 			case <-ticker.C:
-				if fileSizeOf(res.StdinPath)+fileSizeOf(res.StdoutPath) >= limit {
+				size := fileSizeOf(res.StdinPath) + fileSizeOf(res.StdoutPath)
+				switch {
+				case size >= limit:
+					hitLimit.Store(true)
 					_ = cmd.Process.Signal(syscall.SIGTERM)
 					return
+				case !warned && size >= limit/5*4:
+					warned = true
+					fmt.Fprintf(stderr, "\nws: this recording is at %s of the %d MB limit (session.max_session_mb); it ends at the limit.\n",
+						style.HumanBytes(size), maxMB)
 				}
 			}
 		}
@@ -280,6 +293,9 @@ func (e sessionEnv) record(args []string, globals globalFlags, stdin io.Reader, 
 	}
 	if !globals.quiet {
 		printSessionEnded(out, nc, res.Tag, stopped.DurationSec, res.StdoutPath, res.StdinPath)
+		if hitLimit.Load() {
+			fmt.Fprintln(out, style.ResultWarning(nc, "Recording ended at the %d MB limit (session.max_session_mb)", maxMB))
+		}
 	}
 	return 0
 }
@@ -348,18 +364,19 @@ func (e sessionEnv) stop(args []string, globals globalFlags, stdout, stderr io.W
 	return 0
 }
 
-// ── rm, prune ──────────────────────────────────────────────────────
+// ── rm ─────────────────────────────────────────────────────────────
 
 func (e sessionEnv) rm(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("session-rm", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	olderThan := fs.String("older-than", "", "")
 	registerGlobalFlags(fs, &globals)
 	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	if len(fs.Args()) == 0 {
-		fmt.Fprintln(stderr, "usage: ws session rm <tag…>")
+	if (len(fs.Args()) == 0) == (*olderThan == "") {
+		fmt.Fprintln(stderr, "usage: ws session rm <tag…> | --older-than <age>")
 		return 1
 	}
 	sessions, err := wssession.List(e.logDir, e.stateDir)
@@ -367,38 +384,56 @@ func (e sessionEnv) rm(args []string, globals globalFlags, stdin io.Reader, stdo
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	byTag := map[string]wssession.Session{}
-	for _, s := range sessions {
-		byTag[s.Tag] = s
-	}
 
-	// Tags must match exactly. If one does not exist or is the recording in
-	// progress, nothing is deleted.
 	var chosen []wssession.Session
-	seen := map[string]bool{}
-	for _, tag := range fs.Args() {
-		if err := wssession.ValidateTag(tag); err != nil {
+	notes := map[string]string{}
+	if *olderThan != "" {
+		d, err := age.Parse(*olderThan)
+		if err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		s, ok := byTag[tag]
-		switch {
-		case !ok:
-			fmt.Fprintf(stderr, "session not found: %s\n", tag)
-			return 1
-		case s.Active:
-			fmt.Fprintf(stderr, "cannot remove the active session: %s (stop it first with `ws session stop`)\n", tag)
-			return 1
+		now := time.Now().UTC()
+		chosen = wssession.SelectOlderThan(sessions, d, now)
+		for _, s := range chosen {
+			notes[s.Tag] = fmt.Sprintf("%dd old", int(now.Sub(s.StartedAt).Hours()/24))
 		}
-		if !seen[tag] {
-			seen[tag] = true
-			chosen = append(chosen, s)
+		if len(chosen) == 0 && !globals.json {
+			fmt.Fprintf(textOut(globals, stdout), "Nothing to delete: no session older than %s.\n", *olderThan)
+			return 0
+		}
+	} else {
+		byTag := map[string]wssession.Session{}
+		for _, s := range sessions {
+			byTag[s.Tag] = s
+		}
+		// Tags must match exactly. If one does not exist or is the recording in
+		// progress, nothing is deleted.
+		seen := map[string]bool{}
+		for _, tag := range fs.Args() {
+			if err := wssession.ValidateTag(tag); err != nil {
+				fmt.Fprintln(stderr, err.Error())
+				return 1
+			}
+			s, ok := byTag[tag]
+			switch {
+			case !ok:
+				fmt.Fprintf(stderr, "session not found: %s\n", tag)
+				return 1
+			case s.Active:
+				fmt.Fprintf(stderr, "cannot remove the active session: %s (stop it first with `ws session stop`)\n", tag)
+				return 1
+			}
+			if !seen[tag] {
+				seen[tag] = true
+				chosen = append(chosen, s)
+			}
 		}
 	}
 
 	p := Plan{Command: "session.rm"}
 	for _, s := range chosen {
-		p.Actions = append(p.Actions, e.deleteAction(s, ""))
+		p.Actions = append(p.Actions, e.deleteAction(s, notes[s.Tag]))
 	}
 	planResult := RunPlan(p, stdin, stdout, globals)
 	if globals.json {
@@ -408,7 +443,7 @@ func (e sessionEnv) rm(args []string, globals globalFlags, stdin io.Reader, stdo
 }
 
 // deleteAction soft-deletes one session. note, when set, follows the size in
-// the plan line (prune adds the age).
+// the plan line (an --older-than delete adds the age).
 func (e sessionEnv) deleteAction(s wssession.Session, note string) Action {
 	detail := style.HumanBytes(s.SizeBytes)
 	if note != "" {
@@ -421,71 +456,6 @@ func (e sessionEnv) deleteAction(s wssession.Session, note string) Action {
 			return wssession.Remove(wssession.RemoveOptions{LogDir: e.logDir, StateDir: e.stateDir, Tag: s.Tag})
 		},
 	}
-}
-
-func (e sessionEnv) prune(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("session-prune", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	olderThan := fs.String("older-than", "", "")
-	all := fs.Bool("all", false, "")
-	registerGlobalFlags(fs, &globals)
-	if err := parseInterspersed(fs, args); err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	if len(fs.Args()) > 0 {
-		fmt.Fprintln(stderr, "usage: ws session prune [--older-than <age> | --all]")
-		return 1
-	}
-	if *all && *olderThan != "" {
-		fmt.Fprintln(stderr, "--all and --older-than cannot be used together")
-		return 1
-	}
-	sel := wssession.PruneSelection{CapMB: e.cfg.Session.CapMB, All: *all, Now: time.Now().UTC()}
-	if *olderThan != "" {
-		d, err := age.Parse(*olderThan)
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		sel.OlderThan = d
-	}
-
-	sessions, err := wssession.List(e.logDir, e.stateDir)
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	total := wssession.TotalBytes(sessions)
-	chosen := wssession.SelectPrune(sessions, sel)
-
-	p := Plan{Command: "session.prune"}
-	for _, s := range chosen {
-		days := int(sel.Now.Sub(s.StartedAt).Hours() / 24)
-		p.Actions = append(p.Actions, e.deleteAction(s, fmt.Sprintf("%dd old", days)))
-	}
-	if len(p.Actions) == 0 && !globals.json {
-		out := textOut(globals, stdout)
-		switch {
-		case *all:
-			fmt.Fprintln(out, "Nothing to prune: no finished sessions.")
-		case *olderThan != "":
-			fmt.Fprintf(out, "Nothing to prune: no session older than %s.\n", *olderThan)
-		case e.cfg.Session.CapMB <= 0:
-			fmt.Fprintln(out, "Nothing to prune: no size cap is set (session.cap_mb).")
-		default:
-			fmt.Fprintf(out, "Nothing to prune: %s of the %d MB cap.\n", style.HumanBytes(total), e.cfg.Session.CapMB)
-		}
-		return 0
-	}
-
-	planResult := RunPlan(p, stdin, stdout, globals)
-	if globals.json {
-		return writeJSONDryRun(stdout, stderr, "session.prune", globals.dryRun, map[string]any{
-			"actions": planResult.Actions, "storage_bytes": total, "cap_mb": e.cfg.Session.CapMB,
-		})
-	}
-	return planResult.ExitCode()
 }
 
 // ── helpers ────────────────────────────────────────────────────────

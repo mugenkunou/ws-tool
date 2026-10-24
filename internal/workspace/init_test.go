@@ -36,7 +36,7 @@ func runPlan(t *testing.T, p InitPlan) {
 
 func TestPlanInitOnAnEmptyDirectory(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "Workspace")
-	p, err := PlanInit(root, "")
+	p, err := PlanInit(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestPlanInitOnAnEmptyDirectory(t *testing.T) {
 		t.Fatal("planning writes nothing")
 	}
 	runPlan(t, p)
-	for _, rel := range []string{"ws.json", ".megaignore", "symlinks", "configs", "secrets", "data/sessions", "agent/skills"} {
+	for _, rel := range []string{"ws.json", ".megaignore", "symlinks", "configs", "agent/skills"} {
 		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
 			t.Errorf("%s: %v", rel, err)
 		}
@@ -57,7 +57,7 @@ func TestPlanInitOnAnEmptyDirectory(t *testing.T) {
 	if m, _ := wsconfig.MissingKeys(content); len(m) != 0 {
 		t.Errorf("init wrote an incomplete ws.json, lacking %v", m)
 	}
-	again, err := PlanInit(root, "")
+	again, err := PlanInit(root)
 	if err != nil || !again.Empty() {
 		t.Fatalf("a second plan finds nothing to do: %+v %v", again, err)
 	}
@@ -66,13 +66,13 @@ func TestPlanInitOnAnEmptyDirectory(t *testing.T) {
 func TestPlanInitFillsKeysAndKeepsValues(t *testing.T) {
 	root := t.TempDir()
 	cfg := filepath.Join(root, "ws.json")
-	if err := os.WriteFile(cfg, []byte(`{"schema": 1, "repo": {"roots": ["experiments"], "max_parallel": 3}, "session": {"cap_mb": 9}}`), 0o644); err != nil {
+	if err := os.WriteFile(cfg, []byte(`{"schema": 1, "repo": {"roots": ["experiments"], "max_parallel": 3}, "session": {"max_session_mb": 9}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, ".megaignore"), []byte("mine\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	p, err := PlanInit(root, "")
+	p, err := PlanInit(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestPlanInitFillsKeysAndKeepsValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(got.Repo.Roots, []string{"experiments"}) || got.Repo.MaxParallel != 3 || got.Session.CapMB != 9 {
+	if !slices.Equal(got.Repo.Roots, []string{"experiments"}) || got.Repo.MaxParallel != 3 || got.Session.MaxSessionMB != 9 {
 		t.Fatalf("values already set are kept: %+v", got)
 	}
 	content, _ := os.ReadFile(cfg)
@@ -98,28 +98,12 @@ func TestPlanInitFillsKeysAndKeepsValues(t *testing.T) {
 	}
 }
 
-func TestPlanInitUsesTheConfigPath(t *testing.T) {
-	root := t.TempDir()
-	elsewhere := filepath.Join(t.TempDir(), "mine.json")
-	p, err := PlanInit(root, elsewhere)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runPlan(t, p)
-	if _, err := os.Stat(elsewhere); err != nil {
-		t.Fatalf("ws.json goes where --config says: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "ws.json")); err == nil {
-		t.Fatal("and nowhere else")
-	}
-}
-
 func TestPlanInitRefusesAnInvalidConfig(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "ws.json"), []byte("{nope"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := PlanInit(root, ""); err == nil || !strings.Contains(err.Error(), "ws.json") {
+	if _, err := PlanInit(root); err == nil || !strings.Contains(err.Error(), "ws.json") {
 		t.Fatalf("got %v", err)
 	}
 	if b, _ := os.ReadFile(filepath.Join(root, "ws.json")); string(b) != "{nope" {
@@ -129,7 +113,7 @@ func TestPlanInitRefusesAnInvalidConfig(t *testing.T) {
 
 func TestWriteConfigNeverReplaces(t *testing.T) {
 	root := t.TempDir()
-	p, _ := PlanInit(root, "")
+	p, _ := PlanInit(root)
 	runPlan(t, p)
 	if err := p.WriteConfig(); err == nil {
 		t.Fatal("WriteConfig must refuse when ws.json exists")

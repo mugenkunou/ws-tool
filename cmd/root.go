@@ -17,7 +17,6 @@ import (
 
 type globalFlags struct {
 	workspace  string
-	config     string
 	quiet      bool
 	verbose    bool
 	json       bool
@@ -99,8 +98,6 @@ func parseGlobalFlags(args []string) (globalFlags, []string, error) {
 	registry := map[string]flagDef{
 		"workspace": {str: &globals.workspace},
 		"w":         {str: &globals.workspace},
-		"config":    {str: &globals.config},
-		"c":         {str: &globals.config},
 		"json":      {boo: &globals.json},
 		"dry-run":   {boo: &globals.dryRun},
 		"no-color":  {boo: &globals.noColor},
@@ -171,12 +168,6 @@ func registerGlobalFlags(fs *flag.FlagSet, globals *globalFlags) {
 	}
 	if fs.Lookup("w") == nil {
 		fs.StringVar(&globals.workspace, "w", globals.workspace, "")
-	}
-	if fs.Lookup("config") == nil {
-		fs.StringVar(&globals.config, "config", globals.config, "")
-	}
-	if fs.Lookup("c") == nil {
-		fs.StringVar(&globals.config, "c", globals.config, "")
 	}
 	if fs.Lookup("json") == nil {
 		fs.BoolVar(&globals.json, "json", globals.json, "")
@@ -315,8 +306,9 @@ func jsonExit(data any) int {
 	return 0
 }
 
-// resolveGlobalPaths resolves the path-valued global flags (--workspace,
-// --config) in place, per spec "Path Rules": absolute as is, ~
+// resolveGlobalPaths resolves the path-valued global flag (--workspace) in
+// place, per spec "Path Rules": absolute as is, ~
+// workspace) in place, per spec "Path Rules": absolute as is, ~
 // expanded, anything else relative to the current directory. Empty values stay
 // empty so callers can still apply their defaults.
 func resolveGlobalPaths(globals *globalFlags) error {
@@ -325,7 +317,6 @@ func resolveGlobalPaths(globals *globalFlags) error {
 		v    *string
 	}{
 		{"workspace", &globals.workspace},
-		{"config", &globals.config},
 	} {
 		if *f.v == "" {
 			continue
@@ -348,7 +339,6 @@ func resolveWorkspacePaths(globals globalFlags) (workspacePath, configPath strin
 	}
 	p, err := workspace.ResolvePaths(workspace.PathOverrides{
 		Workspace: globals.workspace,
-		Config:    globals.config,
 	})
 	if err != nil {
 		return "", "", err
@@ -368,7 +358,7 @@ func requireWorkspaceInitialized(globals globalFlags, stderr ...io.Writer) (stri
 	}
 
 	if info, statErr := os.Stat(configPath); statErr == nil && info.IsDir() {
-		return "", "", fmt.Errorf("Error: --config %s is a directory, not a ws.json file.\n(-c is the global --config shorthand.)", configPath)
+		return "", "", fmt.Errorf("Error: %s is a directory, not a ws.json file.", configPath)
 	}
 	if !workspace.ConfigExists(configPath) {
 		return "", "", errors.New("Error: workspace not initialized.\nRun `ws init` to set up this directory as a ws workspace.")

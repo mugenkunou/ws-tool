@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -106,7 +105,6 @@ type completionCtx struct {
 // starts with "-".
 var globalFlagCompletions = []string{
 	"--workspace",
-	"--config",
 	"--quiet",
 	"--verbose",
 	"--json",
@@ -358,8 +356,12 @@ func loadCompletionCtx(globals globalFlags) completionCtx {
 		}
 	}
 
-	// Session tags: directory names under data/sessions/.
-	ctx.logDir = filepath.Join(resolved, "data", "sessions")
+	// Session tags: directory names under session.root_dir.
+	if cfgErr == nil {
+		if dir, err := wsconfig.ResolvePath(resolved, cfg.Session.RootDir); err == nil {
+			ctx.logDir = dir
+		}
+	}
 	ctx.logTags = listDirNames(ctx.logDir)
 
 	// Scratch directory names.
@@ -427,7 +429,7 @@ func splitArgsForCompletion(raw []string) (positional []string, toComplete strin
 // stringFlags are the flags that take a value: the global ones, and every flag
 // the command table documents with an argument.
 var stringFlags = func() map[string]bool {
-	m := map[string]bool{"workspace": true, "w": true, "config": true, "c": true}
+	m := map[string]bool{"workspace": true, "w": true}
 	for _, c := range commands {
 		for _, f := range c.Flags {
 			if f.Arg != "" {

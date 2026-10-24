@@ -9,7 +9,7 @@
 //
 // Path resolution order:
 //
-//	--config flag → $WS_CONFIG → <workspace>/ws.json
+//	<workspace>/ws.json
 package wsconfig
 
 import (
@@ -84,8 +84,8 @@ type Ignore struct {
 
 // Session holds session-recording settings.
 type Session struct {
-	CapMB        int `json:"cap_mb"`
-	MaxSessionMB int `json:"max_session_mb"`
+	RootDir      string `json:"root_dir"`       // where recordings live; machine-local, never synced
+	MaxSessionMB int    `json:"max_session_mb"` // a recording ends when it reaches this size
 }
 
 // Link is a single entry in the symlinks registry.
@@ -127,7 +127,7 @@ func Default() WsConfig {
 		},
 		IgnoreRules: ignore.DefaultUserRules(),
 		Session: Session{
-			CapMB:        500,
+			RootDir:      "~/Sessions",
 			MaxSessionMB: 100,
 		},
 		Symlinks: []Link{},
@@ -498,6 +498,7 @@ func WithAbsPaths(cfg WsConfig, workspacePath string) WsConfig {
 
 	out := cfg
 	out.Scratch.RootDir = abs(cfg.Scratch.RootDir)
+	out.Session.RootDir = abs(cfg.Session.RootDir)
 	out.Repo.Roots = absAll(cfg.Repo.Roots)
 	out.Repo.ExcludeDirs = absAll(cfg.Repo.ExcludeDirs)
 	out.Secret.SkipDirs = absAll(cfg.Secret.SkipDirs)

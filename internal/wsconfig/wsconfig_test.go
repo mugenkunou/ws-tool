@@ -62,7 +62,7 @@ func TestSaveWritesEveryKey(t *testing.T) {
 		"pass":         {"pass_entry"},
 		"ignore":       {"warn_size_mb", "crit_size_mb", "max_depth", "muted"},
 		"ignore_rules": {"schema", "exclude", "include", "suppress_defaults"},
-		"session":      {"cap_mb", "max_session_mb"},
+		"session":      {"root_dir", "max_session_mb"},
 	}
 	for section, keys := range want {
 		obj, ok := generic[section].(map[string]any)
@@ -120,7 +120,7 @@ func TestRoundTripKeepsEveryValue(t *testing.T) {
 	cfg.Ignore.Muted = []string{"experiments/ml"}
 	cfg.Pass.PassEntry = "git/github.com"
 	cfg.Secret.SkipDirs = []string{"references/vendor"}
-	cfg.Session.CapMB = 250
+	cfg.Session.MaxSessionMB = 250
 	cfg.Symlinks = []Link{{System: "/etc/hosts", Original: "symlinks/system/etc/hosts", Dir: false, Sudo: true}}
 	if err := Save(path, cfg); err != nil {
 		t.Fatal(err)

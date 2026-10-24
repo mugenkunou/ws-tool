@@ -9,7 +9,6 @@ CLI for scripts, full-screen TUI (`ws tui`) for humans.
  your configs ──┐
  your repos ────┤
  your secrets ──┼──►  ~/Workspace  ──►  ☁️ any sync client  ──►  🖥️ new machine: ws init, ws symlink link, done
- your sessions ─┤
  your scratch ──┘
 ```
 
@@ -58,11 +57,10 @@ Stuck? `ws help`, or `ws <noun> --help`.
 ├── symlinks/          🔗 originals, at the same path they have on your machine
 │   ├── home/            ~/.gitconfig → symlinks/home/.gitconfig
 │   └── system/          /etc/hosts → symlinks/system/etc/hosts
-├── notes/ experiments/ artifacts/ references/ archive/ scripts/ agent/ configs/ secrets/
-└── data/sessions/     📼 recorded terminal sessions
+└── notes/ experiments/ artifacts/ references/ archive/ scripts/ agent/ configs/ data/
 ```
 
-Machine-local bits (cron state, trash hooks) stay **outside**, in `~/.local/state/ws-tool/`. They never sync.
+Machine-local bits (cron state, trash hooks) stay **outside**, in `~/.local/state/ws-tool/`. Recorded sessions live in `~/Sessions` (`session.root_dir`), and scratch directories in `~/Scratch`. None of them sync.
 
 ---
 

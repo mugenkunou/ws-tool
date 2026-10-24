@@ -303,38 +303,18 @@ func tags(ss []Session) string {
 	return strings.Join(out, ",")
 }
 
-func TestSelectPrune(t *testing.T) {
+func TestSelectOlderThan(t *testing.T) {
 	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	all := []Session{
 		session("new", 1, 100, false),
 		session("mid", 10, 200, false),
 		session("old", 40, 300, false),
-		session("rec", 0, 50, true),
+		session("rec", 30, 50, true),
 	}
-	if got := tags(SelectPrune(all, PruneSelection{All: true, Now: now})); got != "old,mid,new" {
-		t.Errorf("--all = %s (every finished session, oldest first, never the recording)", got)
+	if got := tags(SelectOlderThan(all, 7*24*time.Hour, now)); got != "old,mid" {
+		t.Errorf("older than 7d = %s (oldest first, never the recording)", got)
 	}
-	if got := tags(SelectPrune(all, PruneSelection{OlderThan: 7 * 24 * time.Hour, Now: now})); got != "old,mid" {
-		t.Errorf("--older-than 7d = %s", got)
-	}
-	// 650 MB in total. A 500 MB cap deletes the oldest until it fits: old (300)
-	// leaves 350.
-	if got := tags(SelectPrune(all, PruneSelection{CapMB: 500, Now: now})); got != "old" {
-		t.Errorf("cap 500 = %s", got)
-	}
-	if got := tags(SelectPrune(all, PruneSelection{CapMB: 100, Now: now})); got != "old,mid,new" {
-		t.Errorf("cap 100 cannot be met by the finished ones alone: %s", got)
-	}
-	if got := SelectPrune(all, PruneSelection{CapMB: 1000, Now: now}); len(got) != 0 {
-		t.Errorf("under the cap nothing is pruned: %v", got)
-	}
-	// A cap of 0 or less means no cap: the nightly job must not delete everything.
-	for _, cap := range []int{0, -5} {
-		if got := SelectPrune(all, PruneSelection{CapMB: cap, Now: now}); len(got) != 0 {
-			t.Errorf("cap %d = %v, want nothing", cap, got)
-		}
-	}
-	if TotalBytes(all) != 650<<20 {
-		t.Errorf("total = %d", TotalBytes(all))
+	if got := SelectOlderThan(all, 90*24*time.Hour, now); len(got) != 0 {
+		t.Errorf("nothing is that old: %v", got)
 	}
 }

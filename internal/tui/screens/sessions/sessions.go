@@ -349,7 +349,7 @@ var actions = func() []reslist.Action[Model, wssession.Session] {
 	return []reslist.Action[Model, wssession.Session]{
 		{Key: k.View, Scope: reslist.Cursor, Do: Model.show},
 		{Key: k.Record, Scope: reslist.Global, Do: Model.promptRecord},
-		// Prune takes all the sessions, like `ws session prune`: not the marks,
+		// Prune takes all the sessions, like `ws session rm --older-than`: not the marks,
 		// not the filter.
 		{Key: k.Prune, Scope: reslist.Global, Do: Model.promptPrune},
 		{Key: k.Delete, Scope: reslist.Selected, Do: Model.delete},
@@ -492,20 +492,16 @@ func finished(rows []wssession.Session) []wssession.Session {
 	return out
 }
 
-// promptPrune is p: an age, or blank to enforce the size cap, then a checklist
-// of what goes (`ws session prune`). It covers all the sessions.
+// promptPrune is p: an age, then a checklist of what goes (`ws session rm
+// --older-than`). It covers all the sessions.
 func (m Model) promptPrune(_ []wssession.Session) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.modal, cmd = m.modal.Prompt(stepPruneAge, prompt.New("Prune sessions older than (age)",
-		prompt.WithHint("An age such as 30d, 12h or 2w (a bare number is days). Blank enforces the size cap (session.cap_mb)."),
+		prompt.WithHint("An age such as 30d, 12h or 2w (a bare number is days)."),
 		prompt.WithValidate(func(v string) error {
-			if strings.TrimSpace(v) == "" {
-				return nil
-			}
 			_, err := age.Parse(v)
 			return err
-		}),
-		prompt.AllowEmpty()))
+		})))
 	return m, cmd
 }
 
@@ -514,26 +510,16 @@ func (m Model) promptPrune(_ []wssession.Session) (Model, tea.Cmd) {
 func (m Model) openPrune(raw string) (Model, tea.Cmd) {
 	raw = strings.TrimSpace(raw)
 	now := m.env.Now()
-	sel := wssession.PruneSelection{CapMB: m.env.Config.Session.CapMB, Now: now}
-	if raw != "" {
-		d, err := age.Parse(raw)
-		if err != nil {
-			return m, nav.Notify(nav.LevelWarn, err.Error())
-		}
-		sel.OlderThan = d
+	d, err := age.Parse(raw)
+	if err != nil {
+		return m, nav.Notify(nav.LevelWarn, err.Error())
 	}
-	chosen := wssession.SelectPrune(m.sessions, sel)
+	chosen := wssession.SelectOlderThan(m.sessions, d, now)
 	if len(chosen) == 0 {
-		switch {
-		case raw != "":
-			return m, nav.Notify(nav.LevelInfo, "Nothing to prune: no session older than "+raw+".")
-		case sel.CapMB <= 0:
-			return m, nav.Notify(nav.LevelInfo, "Nothing to prune: no size cap is set (session.cap_mb).")
-		}
-		return m, nav.Notify(nav.LevelInfo, fmt.Sprintf("Nothing to prune: %s of the %d MB cap.", style.HumanBytes(wssession.TotalBytes(m.sessions)), sel.CapMB))
+		return m, nav.Notify(nav.LevelInfo, "Nothing to prune: no session older than "+raw+".")
 	}
 	logDir := m.env.LogDir
-	p := plan.Plan{Command: "session.prune"}
+	p := plan.Plan{Command: "session.rm"}
 	for _, s := range chosen {
 		tag := s.Tag
 		days := int(now.Sub(s.StartedAt).Hours() / 24)
@@ -545,11 +531,7 @@ func (m Model) openPrune(raw string) (Model, tea.Cmd) {
 			},
 		})
 	}
-	title := "Prune sessions older than " + raw
-	if raw == "" {
-		title = "Prune sessions over the size cap"
-	}
-	m.modal = m.modal.Confirm(stepPrune, confirm.New(title, p))
+	m.modal = m.modal.Confirm(stepPrune, confirm.New("Prune sessions older than "+raw, p))
 	return m, nil
 }
 

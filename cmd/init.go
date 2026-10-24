@@ -26,12 +26,12 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		return 1
 	}
 
-	workspacePath, configPath, err := resolveWorkspacePaths(globals)
+	workspacePath, _, err := resolveWorkspacePaths(globals)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	p, err := workspace.PlanInit(workspacePath, configPath)
+	p, err := workspace.PlanInit(workspacePath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1

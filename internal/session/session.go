@@ -1,5 +1,5 @@
 // Package session is the data behind `ws session`: recorded terminal sessions, each
-// a directory <workspace>/data/sessions/<tag>/ holding meta.json, stdout.log (the
+// a directory <session.root_dir>/<tag>/ holding meta.json, stdout.log (the
 // transcript) and stdin.log (the commands, one per line).
 package session
 
@@ -496,63 +496,17 @@ func Remove(opts RemoveOptions) error {
 	return nil
 }
 
-// PruneSelection says which sessions a prune deletes.
-type PruneSelection struct {
-	CapMB     int           // enforce this size cap (the default), when no age or all
-	OlderThan time.Duration // sessions that started longer ago than this
-	All       bool          // every finished session
-	Now       time.Time
-}
-
-// SelectPrune returns the finished sessions to delete, oldest first. With
-// OlderThan or All, those sessions. Otherwise it enforces the cap: when all
-// sessions together (the recording included) take more than CapMB, the oldest
-// finished sessions are chosen until the total is at or under it. A cap of 0 or
-// less means no cap, and nothing is chosen. The recording in progress is never
-// chosen.
-func SelectPrune(sessions []Session, sel PruneSelection) []Session {
-	finished := make([]Session, 0, len(sessions))
-	var total int64
-	for _, s := range sessions {
-		total += s.SizeBytes
-		if !s.Active {
-			finished = append(finished, s)
-		}
-	}
-	sort.Slice(finished, func(i, j int) bool { return finished[i].StartedAt.Before(finished[j].StartedAt) })
-
+// SelectOlderThan returns the finished sessions that started at least olderThan
+// before now, oldest first. The recording in progress is never chosen.
+func SelectOlderThan(sessions []Session, olderThan time.Duration, now time.Time) []Session {
 	var out []Session
-	switch {
-	case sel.All:
-		return finished
-	case sel.OlderThan > 0:
-		for _, s := range finished {
-			if sel.Now.Sub(s.StartedAt) >= sel.OlderThan {
-				out = append(out, s)
-			}
-		}
-		return out
-	case sel.CapMB <= 0:
-		return nil
-	}
-	limit := int64(sel.CapMB) * 1024 * 1024
-	for _, s := range finished {
-		if total <= limit {
-			break
-		}
-		out = append(out, s)
-		total -= s.SizeBytes
-	}
-	return out
-}
-
-// TotalBytes is the size of every session together.
-func TotalBytes(sessions []Session) int64 {
-	var n int64
 	for _, s := range sessions {
-		n += s.SizeBytes
+		if !s.Active && now.Sub(s.StartedAt) >= olderThan {
+			out = append(out, s)
+		}
 	}
-	return n
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.Before(out[j].StartedAt) })
+	return out
 }
 
 // ── Files ──────────────────────────────────────────────────────────

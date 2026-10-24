@@ -22,12 +22,12 @@ func initWorkspace(t *testing.T) workspace.PathOverrides {
 	if err := wsconfig.Save(cfgPath, wsconfig.Default()); err != nil {
 		t.Fatal(err)
 	}
-	return workspace.PathOverrides{Workspace: root, Config: cfgPath}
+	return workspace.PathOverrides{Workspace: root}
 }
 
 func TestLoadNotInitialized(t *testing.T) {
 	root := t.TempDir()
-	e, err := Load(workspace.PathOverrides{Workspace: root, Config: filepath.Join(root, "missing.json")})
+	e, err := Load(workspace.PathOverrides{Workspace: root})
 	if !errors.Is(err, ErrNotInitialized) {
 		t.Fatalf("err = %v, want ErrNotInitialized", err)
 	}
@@ -42,8 +42,8 @@ func TestLoadResolvesDirs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(o.Workspace, "data", "sessions"); e.LogDir != want {
-		t.Errorf("log dir = %q, want %q", e.LogDir, want)
+	if !filepath.IsAbs(e.LogDir) || e.LogDir == filepath.Join(o.Workspace, "data", "sessions") {
+		t.Errorf("log dir %q is not an absolute session.root_dir", e.LogDir)
 	}
 	if !filepath.IsAbs(e.ScratchDir) {
 		t.Errorf("scratch dir %q is not absolute", e.ScratchDir)

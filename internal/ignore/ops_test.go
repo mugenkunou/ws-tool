@@ -9,7 +9,7 @@ import (
 
 func rulesWith(exclude ...string) UserRules {
 	r := DefaultUserRules()
-	for _, d := range []string{"artifacts", "configs", "secrets", "archive"} {
+	for _, d := range []string{"artifacts", "configs", "archive"} {
 		r.Include = append(r.Include, RuleEntry{Pattern: d + "/**"})
 	}
 	for _, p := range exclude {
@@ -25,14 +25,14 @@ func rulesWith(exclude ...string) UserRules {
 func TestUserExcludesWinOverIncludedDirectories(t *testing.T) {
 	rules := rulesWith(
 		"symlinks/home/.bashrc",
-		"secrets/old.key",
+		"configs/old.key",
 		"archive/*.log",
 		"experiments/ml/dump.bin",
 	)
 	rules.Include = append(rules.Include, RuleEntry{Pattern: "experiments/ml/**"})
 	engine := BuildEngine(rules)
 
-	for _, p := range []string{"symlinks/home/.bashrc", "secrets/old.key", "archive/run.log", "experiments/ml/dump.bin"} {
+	for _, p := range []string{"symlinks/home/.bashrc", "configs/old.key", "archive/run.log", "experiments/ml/dump.bin"} {
 		res := engine.Evaluate(p, false)
 		if res.Included {
 			t.Errorf("%s: want ignored by the user exclude, got included (rule %s)", p, res.Rule)
@@ -42,7 +42,7 @@ func TestUserExcludesWinOverIncludedDirectories(t *testing.T) {
 		}
 	}
 	// Neighbours in the same included directories still sync.
-	for _, p := range []string{"symlinks/home/.zshrc", "secrets/new.key", "experiments/ml/model.bin", "archive/data.tar.gz"} {
+	for _, p := range []string{"symlinks/home/.zshrc", "configs/new.key", "experiments/ml/model.bin", "archive/data.tar.gz"} {
 		if res := engine.Evaluate(p, false); !res.Included {
 			t.Errorf("%s: want synced, got ignored by %s", p, res.Rule)
 		}

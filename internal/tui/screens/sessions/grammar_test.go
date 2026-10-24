@@ -32,17 +32,13 @@ func fixtureRows() []wssession.Session {
 	}
 }
 
-func screenCap(t *testing.T, rows []wssession.Session, capMB int) nav.Component {
+func screen(t *testing.T, rows []wssession.Session) nav.Component {
 	t.Helper()
-	cfg := wsconfig.Default()
-	cfg.Session.CapMB = capMB
-	e := env.Env{LogDir: "/ws/logs", Config: cfg, Clock: func() time.Time { return now }}
+	e := env.Env{LogDir: "/ws/logs", Config: wsconfig.Default(), Clock: func() time.Time { return now }}
 	c, _ := New(e).Update(nav.ResizeMsg{Width: 120, Height: 20})
 	c, _ = c.Update(LoadedMsg{Sessions: rows})
 	return c
 }
-
-func screen(t *testing.T, rows []wssession.Session) nav.Component { return screenCap(t, rows, 0) }
 
 func keyMsg(k string) tea.KeyPressMsg {
 	switch k {
@@ -117,7 +113,7 @@ func TestKeysAreTheSpecTable(t *testing.T) {
 }
 
 // TestEveryActionDeclaresItsScope: each key acts on the rows spec §6.5 says.
-// Prune covers all rows (the CLI's prune takes no rows), so it is declared as
+// Prune covers all rows (`session rm --older-than` takes no rows), so it is declared as
 // acting on none: it ignores the marks and the filter.
 func TestEveryActionDeclaresItsScope(t *testing.T) {
 	want := map[string]reslist.Scope{
@@ -209,7 +205,7 @@ func TestRecordPromptsForATag(t *testing.T) {
 }
 
 // TestPruneCoversAllRowsAndAsksAnAge: p ignores the marks and the filter, asks
-// for an age, and a blank one enforces the size cap.
+// for an age.
 func TestPruneCoversAllRowsAndAsksAnAge(t *testing.T) {
 	c := press(screen(t, fixtureRows()), "down", "space", "p") // one mark
 	if !c.CapturesKeys() || !strings.Contains(plain(c), "Prune sessions older than") {
@@ -222,22 +218,6 @@ func TestPruneCoversAllRowsAndAsksAnAge(t *testing.T) {
 	}
 	if !strings.Contains(v, "[x]") || strings.Contains(v, "[ ]") {
 		t.Errorf("prune plans start checked:\n%s", v)
-	}
-
-	// Blank, with no cap set: nothing to do, and the screen says why.
-	c = submit(press(screen(t, fixtureRows()), "p"))
-	if c.CapturesKeys() {
-		t.Errorf("no cap, no checklist:\n%s", plain(c))
-	}
-	// Blank, with a cap that is exceeded: the oldest finished sessions go.
-	rows := fixtureRows()
-	for i := range rows {
-		rows[i].SizeBytes = 1 << 20
-	}
-	c = submit(press(screenCap(t, rows, 2), "p"))
-	v = plain(c)
-	if !strings.Contains(v, "size cap") || !strings.Contains(v, "/ws/logs/old2") {
-		t.Errorf("blank enforces the cap:\n%s", v)
 	}
 }
 

@@ -50,13 +50,13 @@ func TestCronLs(t *testing.T) {
 		t.Fatalf("cron ls: code=%d stderr=%s stdout=%s", code, errOut.String(), out.String())
 	}
 	// All built-in job names must appear.
-	for _, name := range []string{"mega-sync", "pass-backup", "session-prune"} {
+	for _, name := range []string{"mega-sync", "pass-backup"} {
 		if !strings.Contains(out.String(), name) {
 			t.Errorf("cron ls output missing job %q: %s", name, out.String())
 		}
 	}
 	// Presets must appear.
-	for _, name := range []string{"maintenance", "sync"} {
+	for _, name := range []string{"sync"} {
 		if !strings.Contains(out.String(), name) {
 			t.Errorf("cron ls output missing preset %q: %s", name, out.String())
 		}
@@ -105,7 +105,7 @@ func TestCronAddDryRun(t *testing.T) {
 	code := Execute([]string{
 		"--workspace", workspace,
 		"--dry-run",
-		"cron", "add", "session-prune",
+		"cron", "add", "pass-backup",
 	}, strings.NewReader("y\n"), &out, &errOut)
 	// dry-run should exit 0.
 	if code != 0 {
@@ -168,7 +168,7 @@ func TestCronLogJobFilter(t *testing.T) {
 	}
 	logFile := filepath.Join(logDir, "cron.log")
 	logContent := "2026-05-08T10:00:00Z [mega-sync] Starting\n" +
-		"2026-05-08T10:05:00Z [session-prune] Starting\n" +
+		"2026-05-08T10:05:00Z [pass-backup] Starting\n" +
 		"2026-05-08T10:05:01Z [mega-sync] Done (exit 0)\n"
 	if err := os.WriteFile(logFile, []byte(logContent), 0o644); err != nil {
 		t.Fatal(err)
@@ -183,8 +183,8 @@ func TestCronLogJobFilter(t *testing.T) {
 	if !strings.Contains(out.String(), "mega-sync") {
 		t.Errorf("expected mega-sync entries in log output: %s", out.String())
 	}
-	if strings.Contains(out.String(), "session-prune") {
-		t.Errorf("log output should not contain session-prune entries: %s", out.String())
+	if strings.Contains(out.String(), "pass-backup") {
+		t.Errorf("log output should not contain pass-backup entries: %s", out.String())
 	}
 }
 
@@ -232,7 +232,7 @@ func TestCronAddPreflightAccessDenied(t *testing.T) {
 	t.Setenv("WS_CRONTAB_FILE", "") // the real preflight, against the shim
 
 	var out, errOut bytes.Buffer
-	code := Execute([]string{"--workspace", workspace, "cron", "add", "session-prune"},
+	code := Execute([]string{"--workspace", workspace, "cron", "add", "pass-backup"},
 		strings.NewReader(""), &out, &errOut)
 	if code == 0 {
 		t.Fatal("expected non-zero exit when crontab access is denied")

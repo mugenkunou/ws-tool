@@ -1,5 +1,5 @@
 // Package age parses the ages that --older-than takes: 30d, 12h, 2w, or a bare
-// integer meaning days (spec §5 session prune, trash prune).
+// integer meaning days (spec §5 session rm --older-than, trash prune).
 package age
 
 import (

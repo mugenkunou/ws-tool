@@ -46,7 +46,7 @@ export GIT_CONFIG_GLOBAL="$demo/gitconfig"
 export GIT_TERMINAL_PROMPT=0
 export PASSWORD_STORE_DIR="$demo/home/.password-store"
 export VISUAL=true
-unset DISPLAY WS_CONFIG
+unset DISPLAY
 export PATH="$demo/bin:\$PATH"
 ENV
 # shellcheck disable=SC1091
@@ -128,7 +128,7 @@ echo "draft" > "$W/notes/draft.md"
 ws trash enable --quiet 2>/dev/null || true
 
 # ── cron ──────────────────────────────────────────────────────────
-ws cron add mega-sync session-prune --quiet 2>/dev/null || true
+ws cron add mega-sync pass-backup --quiet 2>/dev/null || true
 
 cat <<MSG
 

@@ -14,7 +14,7 @@ var runCredentialEnable func(e *repoEnv) error
 
 func init() {
 	runCredentialEnable = func(e *repoEnv) error {
-		args := []string{"--workspace", e.workspace, "--config", e.configPath, "credential", "enable"}
+		args := []string{"--workspace", e.workspace, "credential", "enable"}
 		if code := Execute(args, e.stdin, e.stdout, e.stderr); code != 0 {
 			return fmt.Errorf("ws credential enable exited %d", code)
 		}

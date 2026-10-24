@@ -59,12 +59,14 @@ func Load(o workspace.PathOverrides) (Env, error) {
 		Paths:       p,
 		Config:      cfg,
 		ExcludeDirs: cfg.Repo.ExcludeDirs,
-		LogDir:      filepath.Join(p.Workspace, "data", "sessions"),
 	}
 	for _, r := range cfg.Repo.Roots {
 		if resolved, err := wsconfig.ResolvePath(p.Workspace, r); err == nil {
 			e.RepoRoots = append(e.RepoRoots, resolved)
 		}
+	}
+	if dir, err := wsconfig.ResolvePath(p.Workspace, cfg.Session.RootDir); err == nil {
+		e.LogDir = dir
 	}
 	if dir, err := wsconfig.ResolvePath(p.Workspace, cfg.Scratch.RootDir); err == nil {
 		e.ScratchDir = dir

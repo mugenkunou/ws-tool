@@ -304,12 +304,11 @@ func TestIgnoreAddWorksInsideIncludedDirectories(t *testing.T) {
 // file, and the next rewrite puts it into .megaignore.
 func TestActivatedExcludeRulesTakeEffect(t *testing.T) {
 	e := newIgEnv(t)
-	e.includeDir(t, "secrets")
 	e.includeDir(t, "configs")
-	secret := e.write(t, "secrets/old.env", "TOKEN=x")
+	secret := e.write(t, "configs/old.env", "TOKEN=x")
 	dot := e.write(t, "symlinks/home/.bashrc", "export A=1\n")
 	e.setCfg(t, func(c *wsconfig.WsConfig) {
-		c.IgnoreRules.Exclude = append(c.IgnoreRules.Exclude, ruleEntry("secrets/old.env"), ruleEntry("symlinks/home/.bashrc"))
+		c.IgnoreRules.Exclude = append(c.IgnoreRules.Exclude, ruleEntry("configs/old.env"), ruleEntry("symlinks/home/.bashrc"))
 	})
 
 	_, ls, _ := e.run("", "ignore", "ls")
@@ -324,9 +323,9 @@ func TestActivatedExcludeRulesTakeEffect(t *testing.T) {
 	f := e.write(t, "notes/x.bin", "x")
 	e.do(t, "ignore", "add", f)
 	mega := e.readFile(t, ".megaignore")
-	igHas(t, ".megaignore", mega, "-:secrets/old.env", "-:symlinks/home/.bashrc", "-:notes/x.bin")
-	if strings.Index(mega, "-:secrets/old.env") < strings.Index(mega, "+g:secrets/**") {
-		t.Fatalf("activated excludes must follow +g:secrets/**:\n%s", mega)
+	igHas(t, ".megaignore", mega, "-:configs/old.env", "-:symlinks/home/.bashrc", "-:notes/x.bin")
+	if strings.Index(mega, "-:configs/old.env") < strings.Index(mega, "+g:configs/**") {
+		t.Fatalf("activated excludes must follow +g:configs/**:\n%s", mega)
 	}
 	_, _, errOut = e.run("", "ignore", "ls")
 	if strings.Contains(errOut, "differs") {
