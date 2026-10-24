@@ -1,4 +1,29 @@
-.PHONY: build test test-local test-docker test-image test-image-clean fmt clean hooks release-check install uninstall
+.PHONY: help build test test-local test-docker test-image test-image-clean fmt clean hooks release-check install uninstall
+
+.DEFAULT_GOAL := help
+
+# ── help ──────────────────────────────────────────────────────────────────────
+
+help:
+	@echo "Usage: make <target> [VAR=value]"
+	@echo ""
+	@echo "Targets:"
+	@echo "  build              compile the ws binary into ./ws"
+	@echo "  install            build and install to \$$(PREFIX)/bin (default ~/.local/bin)"
+	@echo "  uninstall          remove the binary installed by 'make install'"
+	@echo "  test               run tests in Docker (LOCAL=1 to run on the host)"
+	@echo "  test-local         run tests directly on the host"
+	@echo "  test-docker        run tests inside the Docker test image"
+	@echo "  test-image         build the Docker test image"
+	@echo "  test-image-clean   remove the Docker test image and stamp"
+	@echo "  fmt                gofmt all Go files"
+	@echo "  clean              remove the built ./ws binary"
+	@echo "  hooks              install the git pre-push hook"
+	@echo "  release-check      gitleaks, go vet and race tests"
+	@echo ""
+	@echo "Variables:"
+	@echo "  VERSION=dev        version stamped into the binary"
+	@echo "  PREFIX=~/.local    install prefix"
 
 VERSION  ?= dev
 TMPDIR   ?= $(HOME)/tmp
