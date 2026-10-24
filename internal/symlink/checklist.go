@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// CheckRow is one line of the `ws symlink add` checklist: an app's ordinary items
-// together, or one secret or sudo item on its own (a private key with its .pub).
+// CheckRow is one line of the `ws symlink add` checklist: one item on its own
+// (a private key with its .pub is the one pair).
 type CheckRow struct {
 	App     string
 	Items   []Entry
@@ -17,13 +17,12 @@ type CheckRow struct {
 	Checked bool
 }
 
-// ChecklistRows groups the found items. One row per app holds its items that are
-// neither secret nor sudo (checked). Every secret or sudo item is its own row
-// (unchecked); a private key and its .pub are one row.
+// ChecklistRows lists the found items, one row each, so each can be picked on its
+// own. Ordinary items are checked; secret and sudo items are not. A private key
+// and its .pub are one row.
 func ChecklistRows(found []Entry) []CheckRow {
 	var rows []CheckRow
 	var apps []string
-	byApp := map[string]int{} // app -> index of its ordinary row
 	for _, e := range found {
 		if !slices.Contains(apps, e.App) {
 			apps = append(apps, e.App)
@@ -45,15 +44,9 @@ func ChecklistRows(found []Entry) []CheckRow {
 			rows[i].Items = append(rows[i].Items, e)
 			continue
 		}
-		i, ok := byApp[e.App]
-		if !ok {
-			i = len(rows)
-			byApp[e.App] = i
-			rows = append(rows, CheckRow{App: e.App, Checked: true})
-		}
-		rows[i].Items = append(rows[i].Items, e)
+		rows = append(rows, CheckRow{App: e.App, Items: []Entry{e}, Checked: true})
 	}
-	// Order: by app (catalog order), the ordinary row before the app's own secret rows.
+	// Order: by app (catalog order), ordinary rows before the app's own secret rows.
 	order := func(r CheckRow) int { return slices.Index(apps, r.App) }
 	slices.SortStableFunc(rows, func(a, b CheckRow) int {
 		if d := order(a) - order(b); d != 0 {

@@ -140,8 +140,8 @@ Stored under symlinks/ at the same path as on this machine.
 Enter = checked ones · all · none · 1,3
 ```
 
-One row per app for its non-secret, non-sudo items (checked). Every secret or sudo item is its
-own row (unchecked). A private key and its `.pub` are one row. Answer grammar is exactly
+One row per item, so each can be picked on its own: non-secret, non-sudo items are checked,
+secret and sudo items are not. A private key and its `.pub` are one row. Answer grammar is exactly
 `Enter`, `all`, `none`, or a comma list of numbers. Anything else re-asks. `q` or ctrl-c
 cancels with exit 130. After the answer, show the same per-item plan lines as `add <path>` and
 run them. `--app <name>` skips the question and adds every non-secret, non-sudo item found

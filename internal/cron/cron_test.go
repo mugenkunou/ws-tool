@@ -376,7 +376,7 @@ func TestAddActionsWriteBothFilesTogether(t *testing.T) {
 	m := newMachine(t)
 	m.setLive(t, "MAILTO=me\n")
 	m.setDeclared(t, "CRON_TZ=UTC\n")
-	jobs, _, _ := Resolve("sync")
+	jobs := []*BuiltinJob{Builtins["mega-sync"], Builtins["pass-backup"]}
 	acts, already, err := AddActions(jobs, m.opts())
 	if err != nil || len(already) != 0 || len(acts) != 2 {
 		t.Fatalf("actions=%d already=%v err=%v", len(acts), already, err)
@@ -591,7 +591,7 @@ func TestRunDryRunRunsNothing(t *testing.T) {
 	}
 }
 
-func TestRunRetiredAndPreset(t *testing.T) {
+func TestRunRetired(t *testing.T) {
 	newMachine(t)
 	res, err := RunJob("secret-scan", RunOptions{WorkspacePath: "/W"})
 	if err != nil || !res.Skipped || res.ExitCode != 0 {
@@ -599,9 +599,6 @@ func TestRunRetiredAndPreset(t *testing.T) {
 	}
 	if !strings.Contains(logText(t), "[secret-scan] Skipping: secret-scan is no longer a ws job; run ws cron rm secret-scan") {
 		t.Fatalf("log:\n%s", logText(t))
-	}
-	if _, err := RunJob("sync", RunOptions{}); err == nil || !strings.Contains(err.Error(), "preset") {
-		t.Fatalf("a preset cannot be run: %v", err)
 	}
 	if _, err := RunJob("nope", RunOptions{}); err == nil {
 		t.Fatal("an unknown job is an error")

@@ -70,7 +70,7 @@ func (e trEnv) inTrash(name string) bool { return exists2(filepath.Join(e.root, 
 func TestTrashStatusAndEnable(t *testing.T) {
 	e := newTrEnv(t)
 	out := e.mustRun(t, "", "trash", "status") // exit 0: off integrations are reported, not an error
-	for _, want := range []string{"Trash root", e.root, "[err] shell-rm", "[err] file-explorer", "ws trash enable", "Items 0 · Files 0 · Size 0 B · Warns at 1.0 GB"} {
+	for _, want := range []string{"Trash root", e.root, "[err] shell-rm", "[err] file-explorer", "ws trash enable", "Items 0 · Files 0 · Size 0 B · Warns at 10.0 GB"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("status lacks %q:\n%s", want, out)
 		}

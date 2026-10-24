@@ -22,7 +22,7 @@ func found(app, path string, secret, sudo bool) symlink.Entry {
 	return symlink.Entry{Status: symlink.StatusFound, App: app, System: path, Secret: secret, Sudo: sudo, Group: path}
 }
 
-func TestChecklistRowsGroupByAppAndPairKeys(t *testing.T) {
+func TestChecklistRowsOnePerItemAndPairKeys(t *testing.T) {
 	key := found("ssh", "/h/.ssh/id_rsa", true, false)
 	pub := found("ssh", "/h/.ssh/id_rsa.pub", false, false)
 	pub.Group = key.System
@@ -43,16 +43,16 @@ func TestChecklistRowsGroupByAppAndPairKeys(t *testing.T) {
 	for i, r := range rows {
 		got[i] = want{r.App, len(r.Items), r.Checked}
 	}
-	// One row per app for its ordinary items (checked); every secret or sudo item on
-	// its own (unchecked); a key and its .pub on one row.
-	exp := []want{{"git", 2, true}, {"hosts", 1, false}, {"ssh", 1, true}, {"ssh", 2, false}, {"aws", 1, false}}
+	// One row per item (ordinary checked, secret or sudo unchecked); a key and its
+	// .pub on one row.
+	exp := []want{{"git", 1, true}, {"git", 1, true}, {"hosts", 1, false}, {"ssh", 1, true}, {"ssh", 2, false}, {"aws", 1, false}}
 	if !slices.Equal(got, exp) {
 		t.Fatalf("rows = %+v\nwant %+v", got, exp)
 	}
-	if l := rows[3].Label("/h"); l != "~/.ssh/id_rsa + .pub" {
+	if l := rows[4].Label("/h"); l != "~/.ssh/id_rsa + .pub" {
 		t.Fatalf("pair label = %q", l)
 	}
-	if !rows[1].Sudo || !rows[3].Secret || !rows[4].Secret {
+	if !rows[2].Sudo || !rows[4].Secret || !rows[5].Secret {
 		t.Fatal("tags must follow the items")
 	}
 }
@@ -112,7 +112,8 @@ func TestAddChecklistEnterTakesTheCheckedRows(t *testing.T) {
 	for _, want := range []string{
 		"Found on this machine, not symlinked yet:",
 		"[x] 1  git",
-		"[ ] 2  ssh",
+		"[x] 2  git",
+		"[ ] 3  ssh",
 		"~/.ssh/id_rsa + .pub",
 		"🔑 secret",
 		"Stored under symlinks/ at the same path as on this machine.",
@@ -135,12 +136,12 @@ func TestAddChecklistAllAndNumbers(t *testing.T) {
 	e := newDfEnv(t)
 	e.machine(t)
 	asTerminal(t, true)
-	e.mustRun(t, "2\n", "symlink", "add") // only the ssh pair
+	e.mustRun(t, "3\n", "symlink", "add") // only the ssh pair
 	if isLink(filepath.Join(e.home, ".gitconfig")) || !isLink(filepath.Join(e.home, ".ssh", "id_rsa")) || !isLink(filepath.Join(e.home, ".ssh", "id_rsa.pub")) {
-		t.Fatal("2 is the key and its .pub, and nothing else")
+		t.Fatal("3 is the key and its .pub, and nothing else")
 	}
 	e.mustRun(t, "all\n", "symlink", "add")
-	if !isLink(filepath.Join(e.home, ".gitconfig")) {
+	if !isLink(filepath.Join(e.home, ".gitconfig")) || !isLink(filepath.Join(e.home, ".gitignore_global")) {
 		t.Fatal("all takes the rest")
 	}
 	if out := e.mustRun(t, "", "symlink", "add"); !strings.Contains(out, "Nothing found") {

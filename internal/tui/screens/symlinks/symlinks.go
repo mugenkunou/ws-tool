@@ -435,8 +435,8 @@ func prepareChecklist(e env.Env) tea.Cmd {
 	}
 }
 
-// openChecklist is the add checklist: one row per app for its ordinary items
-// (checked), every secret or sudo item on its own (unchecked).
+// openChecklist is the add checklist: one row per item (ordinary checked,
+// secret or sudo unchecked).
 func (m Model) openChecklist(msg checklistMsg) (Model, tea.Cmd) {
 	if msg.err != nil {
 		return m, nav.Notify(nav.LevelError, msg.err.Error())
