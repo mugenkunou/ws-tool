@@ -1,1 +1,3 @@
 e31d770320ee485febaef538ac32250e728387f0:internal/secret/scan_test.go:aws-access-token:152
+7ab1862e9f3886f145732493749e4975163c6ccf:internal/secret/actions_test.go:private-key:287
+d0df3d136f0586184b9e00d144e3211848bbd19d:cmd/dotfile_cmd_test.go:private-key:255
