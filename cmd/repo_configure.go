@@ -9,11 +9,11 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/repo"
 )
 
-// credentialEnable runs `ws credential enable`. Tests replace it.
-var credentialEnable func(e *repoEnv) error
+// runCredentialEnable runs `ws credential enable`. Tests replace it.
+var runCredentialEnable func(e *repoEnv) error
 
 func init() {
-	credentialEnable = func(e *repoEnv) error {
+	runCredentialEnable = func(e *repoEnv) error {
 		args := []string{"--workspace", e.workspace, "--config", e.configPath, "credential", "enable"}
 		if code := Execute(args, e.stdin, e.stdout, e.stderr); code != 0 {
 			return fmt.Errorf("ws credential enable exited %d", code)
@@ -151,7 +151,7 @@ func (c *configurer) askRepo(en repo.Entry) {
 		c.askedCredentials = true
 		if c.askYN("Use ws (pass) as git's credential helper? [y/N]", false) {
 			c.add("credential-enable", "Enable ws as git's credential helper (ws credential enable)",
-				func() error { return credentialEnable(c.e) })
+				func() error { return runCredentialEnable(c.e) })
 		}
 	}
 	if has("fetch-staleness", repo.SeverityInfo) && len(facts.Remotes) > 0 {

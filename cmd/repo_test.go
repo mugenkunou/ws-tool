@@ -1362,9 +1362,9 @@ func TestRepoConfigureDefaultBranchCredentialsAndFetch(t *testing.T) {
 	runGitLocal(t, a, "remote", "set-url", "origin", "https://example.invalid/x.git")
 
 	enabled := 0
-	saved := credentialEnable
-	credentialEnable = func(*repoEnv) error { enabled++; return nil }
-	t.Cleanup(func() { credentialEnable = saved })
+	saved := runCredentialEnable
+	runCredentialEnable = func(*repoEnv) error { enabled++; return nil }
+	t.Cleanup(func() { runCredentialEnable = saved })
 
 	// default branch: Enter accepts main; credentials: y; fetch: n.
 	in := "\ny\nn\na\n"
