@@ -750,13 +750,21 @@ func TestDotfileBackupDisableClearsTheRemoteAndTheCronJob(t *testing.T) {
 	if err := os.WriteFile(crontab, []byte("MAILTO=me\n"+block), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The same block is declared in configs/crontab, which `cron apply` reads.
+	declared := filepath.Join(e.workspace, "configs", "crontab")
+	if err := os.WriteFile(declared, []byte(block), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	out := e.mustRun(t, "y\ny\n", "dotfile", "backup", "disable")
-	if !strings.Contains(out, "Remove the backup remote "+remote) || !strings.Contains(out, "Remove the dotfile-backup cron job") {
+	if !strings.Contains(out, "Remove the backup remote "+remote) || !strings.Contains(out, "Remove dotfile-backup from the crontab and "+declared) {
 		t.Fatalf("plan lines:\n%s", out)
 	}
 	if got := read(t, crontab); strings.Contains(got, "dotfile-sync") || !strings.Contains(got, "MAILTO=me") {
 		t.Fatalf("the ws block goes, other lines stay:\n%s", got)
+	}
+	if got := read(t, declared); strings.Contains(got, "dotfile-sync") {
+		t.Fatalf("the declared block goes too, or cron apply brings the job back:\n%s", got)
 	}
 	if o, _ := exec.Command("git", "-C", filepath.Join(e.workspace, "configs", "dotfiles"), "remote").Output(); strings.TrimSpace(string(o)) != "" {
 		t.Fatalf("origin must be removed, got %q", o)

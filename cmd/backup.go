@@ -84,26 +84,20 @@ func runBackup(spec backupSpec, args []string, globals globalFlags, stdin io.Rea
 
 func (s backupSpec) command(verb string) string { return s.noun + ".backup." + verb }
 
-// cronJobInstalled reports whether any of the backup's cron jobs (its name, or
-// an old one) has a block in the live crontab. An unreadable crontab counts as
-// not installed.
-func (s backupSpec) cronJobInstalled() bool {
-	for _, name := range append([]string{s.job}, s.oldJobs...) {
-		if has, err := cron.HasJob(name); err == nil && has {
-			return true
-		}
+// cronRemoval is the plan that removes the backup's cron job from the live
+// crontab and from configs/crontab, under every name it has had, so a later
+// `cron apply` does not bring it back. An unreadable crontab, or a job that is
+// not installed, gives no action.
+func (s backupSpec) cronRemoval() []Action {
+	opts := cron.PlanOptions{Bin: cron.WSBinary(), Workspace: s.workspace}
+	if s.workspace != "" {
+		opts.Declared = cron.DeclaredPath(s.workspace)
 	}
-	return false
-}
-
-// removeCronJob removes the backup's cron job, under every name it has had.
-func (s backupSpec) removeCronJob() error {
-	for _, name := range append([]string{s.job}, s.oldJobs...) {
-		if err := cron.RemoveJob(name); err != nil {
-			return err
-		}
+	acts, _, err := cron.RemoveActions(append([]string{s.job}, s.oldJobs...), opts)
+	if err != nil {
+		return nil
 	}
-	return nil
+	return acts
 }
 
 // visibilityJSON is the shape of data.visibility (spec §5 dotfile backup enable).
@@ -318,13 +312,7 @@ func runBackupDisable(spec backupSpec, args []string, globals globalFlags, stdin
 			},
 		})
 	}
-	if spec.cronJobInstalled() {
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "remove-cron-job",
-			Description: fmt.Sprintf("Remove the %s cron job", spec.job),
-			Execute:     spec.removeCronJob,
-		})
-	}
+	plan.Actions = append(plan.Actions, spec.cronRemoval()...)
 
 	if len(plan.Actions) == 0 {
 		if globals.json {

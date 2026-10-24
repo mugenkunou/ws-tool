@@ -641,7 +641,7 @@ func TestPassBackupDisable(t *testing.T) {
 	}
 
 	_, out, _ := passRun(t, "", "--workspace", workspace, "pass", "backup", "disable", "--dry-run", "--no-color")
-	for _, want := range []string{"Remove the backup remote " + remote, "Remove the pass-backup cron job"} {
+	for _, want := range []string{"Remove the backup remote " + remote, "Remove pass-backup from the crontab"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("plan lacks %q:\n%s", want, out)
 		}

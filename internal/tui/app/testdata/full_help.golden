@@ -12,19 +12,19 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secret
 
 
 
-This screen     Lists                            General                     Commands
-enter  show     ↑/k         up                   tab        next screen      :push           push th
-f      fetch    ↓/j         down                 shift+tab  prev screen      :root ls        list th
-p      pull     g           top                  1-9        jump to screen   :root rm <dir>  remove
-s      save     G           bottom               ctrl+r     refresh          :ls --fetch     fetch t
-r      run      pgup        page up              :          command          :config show    print t
-c      config   pgdn        page down            ?          help             :config edit    edit ws
-a      add      /           filter               q          quit             :help  :q       this he
-                >           sort by next field   esc        back
-                <           reverse sort
-                d           describe
-                y           json
-                space       mark
-                ctrl+space  mark range
-                ctrl+\      clear marks
-                ctrl+a      mark all/none
+This screen    Lists                        General                    Commands
+enter  show    ↑/k         up               tab        next screen     :push           push the s…
+f      fetch   ↓/j         down             shift+tab  prev screen     :root ls        list the d…
+p      pull    g           top              1-9        jump to screen  :root rm <dir>  remove a d…
+s      save    G           bottom           ctrl+r     refresh         :ls --fetch     fetch the …
+r      run     pgup        page up          :          command         :config show    print the …
+c      config  pgdn        page down        ?          help            :config edit    edit ws.js…
+a      add     /           filter           q          quit            :help  :q       this help;…
+               >           sort by next f…  esc        back
+               <           reverse sort
+               d           describe
+               y           json
+               space       mark
+               ctrl+space  mark range
+               ctrl+\      clear marks
+               ctrl+a      mark all/none

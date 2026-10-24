@@ -1,10 +1,12 @@
 package app
 
 import (
+	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
@@ -79,21 +81,72 @@ func (m Model) helpColumns() []helpColumn {
 	return cols
 }
 
-// fullHelpView renders the columns side by side, each titled, clipped to the
-// width. It is as tall as its tallest column plus the titles.
+// fullHelpView renders the columns side by side, each titled. When they do not
+// fit the width, the widest columns have their descriptions shortened (with an
+// ellipsis) down to a floor, and if that is not enough the columns that fit are
+// kept in the order this screen, commands, lists, general, so the screen's own
+// keys and commands are never the ones lost.
 func (m Model) fullHelpView() string {
+	const gap, floor = 2, 16
 	cols := m.helpColumns()
-	rendered := make([]string, 0, len(cols))
-	for _, c := range cols {
-		kw := 0
+	natural := make([]int, len(cols))
+	keyW := make([]int, len(cols))
+	for i, c := range cols {
+		natural[i] = lipgloss.Width(c.title)
 		for _, r := range c.rows {
-			kw = max(kw, lipgloss.Width(r[0]))
+			keyW[i] = max(keyW[i], lipgloss.Width(r[0]))
 		}
+		for _, r := range c.rows {
+			natural[i] = max(natural[i], keyW[i]+2+lipgloss.Width(r[1]))
+		}
+	}
+	limit := slices.Clone(natural)
+	sum := func() int {
+		n := 0
+		for _, w := range limit {
+			n += w + gap
+		}
+		return n
+	}
+	for sum() > m.width {
+		widest := 0
+		for i := range limit {
+			if limit[i] > limit[widest] {
+				widest = i
+			}
+		}
+		if limit[widest] <= floor {
+			break
+		}
+		limit[widest]--
+	}
+
+	rendered := make([]string, len(cols))
+	widths := make([]int, len(cols))
+	for i, c := range cols {
 		lines := []string{theme.Title.Render(c.title)}
 		for _, r := range c.rows {
-			lines = append(lines, theme.Bold.Render(r[0])+strings.Repeat(" ", kw-lipgloss.Width(r[0])+2)+theme.Muted.Render(r[1]))
+			line := theme.Bold.Render(r[0]) + strings.Repeat(" ", keyW[i]-lipgloss.Width(r[0])+2) + theme.Muted.Render(r[1])
+			lines = append(lines, ansi.Truncate(line, limit[i], "…"))
 		}
-		rendered = append(rendered, lipgloss.NewStyle().MarginRight(3).Render(strings.Join(lines, "\n")))
+		rendered[i] = lipgloss.NewStyle().MarginRight(gap).Render(strings.Join(lines, "\n"))
+		widths[i] = lipgloss.Width(rendered[i])
 	}
-	return lipgloss.NewStyle().MaxWidth(m.width).Render(lipgloss.JoinHorizontal(lipgloss.Top, rendered...))
+	keep := make([]bool, len(cols))
+	used := 0
+	for _, i := range []int{0, 3, 1, 2} {
+		if i >= len(cols) {
+			continue
+		}
+		if used+widths[i] <= m.width || used == 0 {
+			keep[i], used = true, used+widths[i]
+		}
+	}
+	var out []string
+	for i := range cols {
+		if keep[i] {
+			out = append(out, rendered[i])
+		}
+	}
+	return lipgloss.NewStyle().MaxWidth(m.width).Render(lipgloss.JoinHorizontal(lipgloss.Top, out...))
 }

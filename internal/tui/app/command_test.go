@@ -285,3 +285,23 @@ func TestFullHelpHasFourTitledColumns(t *testing.T) {
 		t.Errorf("full help overflows 100x30: %d lines", h)
 	}
 }
+
+// TestFullHelpKeepsTheScreensColumnsWhenNarrow: at 80 columns the four columns do
+// not fit; the screen's own keys and its `:` commands stay, and the general keys
+// go first.
+func TestFullHelpKeepsTheScreensColumnsWhenNarrow(t *testing.T) {
+	m, _, _ := withCommands(t)
+	m = send(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = send(m, press("3"), press("?"))
+	v := tuitest.Plain(view(m))
+	for _, want := range []string{"This screen", "Commands", ":backup push"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("80 columns: help lacks %q:\n%s", want, v)
+		}
+	}
+	for _, line := range strings.Split(v, "\n") {
+		if len([]rune(line)) > 80 {
+			t.Errorf("a help line is wider than 80 columns: %q", line)
+		}
+	}
+}
