@@ -30,7 +30,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/cron"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/dotfiles"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/logs"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/sessions"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/repos"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/scratch"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/secrets"
@@ -132,7 +132,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		m = m.set(nav.ScreenDotfiles, msg.Err, dotfilesArea(msg))
 	case scratch.LoadedMsg:
 		m = m.set(nav.ScreenScratch, msg.Err, scratchArea(msg))
-	case logs.LoadedMsg:
+	case sessions.LoadedMsg:
 		m = m.set(nav.ScreenSessions, msg.Err, logsArea(msg))
 	case ignore.LoadedMsg:
 		m = m.set(nav.ScreenIgnore, msg.Err, ignoreArea(msg))
@@ -361,7 +361,7 @@ func scratchArea(msg scratch.LoadedMsg) area {
 	return a
 }
 
-func logsArea(msg logs.LoadedMsg) area {
+func logsArea(msg sessions.LoadedMsg) area {
 	a := area{lines: []string{format.Plural(len(msg.Sessions), "session")}}
 	for _, s := range msg.Sessions {
 		if s.Active {

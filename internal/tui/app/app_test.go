@@ -25,7 +25,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/cron"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/dotfiles"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/logs"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/sessions"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/repos"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/scratch"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/secrets"
@@ -89,7 +89,7 @@ func fixtures() []tea.Msg {
 			},
 			Tags: []string{"dns", "network", "proxy"},
 		},
-		logs.LoadedMsg{Sessions: []wslog.Session{
+		sessions.LoadedMsg{Sessions: []wslog.Session{
 			{Tag: "deploy-fix", StartedAt: time.Date(2026, 9, 30, 14, 5, 0, 0, time.UTC), Commands: 12, SizeBytes: 40960, Active: true},
 			{Tag: "rsync-backup", StartedAt: time.Date(2026, 9, 28, 9, 30, 0, 0, time.UTC), DurationSec: 1865, Commands: 7, SizeBytes: 8192},
 		}},
@@ -241,7 +241,10 @@ func TestSnapshots(t *testing.T) {
 		{"scratch_marked", []string{"4", "space", "down", "space"}},
 		{"scratch_marked_delete", []string{"4", "space", "down", "space", "ctrl+d"}},
 		{"scratch_tag_prompt", []string{"4", "t", "n"}},
-		{"logs", []string{"5"}},
+		{"sessions", []string{"5"}},
+		{"sessions_marked", []string{"5", "space", "down", "space"}},
+		{"sessions_prune_prompt", []string{"5", "p"}},
+		{"sessions_delete_checklist", []string{"5", "down", "ctrl+d"}},
 		{"ignore", []string{"6"}},
 		{"ignore_muted", []string{"6", "v"}},
 		{"ignore_ignored", []string{"6", "v", "v"}},

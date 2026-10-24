@@ -1,0 +1,30 @@
+ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Tag                                       Started           Duration  Cmds  Size       State
+ deploy-fix                                2026-09-30 14:05  —         12    40.0 KB    ● recording
+ rsync-backup                              2026-09-28 09:30  31m 05s   7     8.0 KB     done
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+2 marked — ctrl+d delete act on them · esc clears
+enter show • r record • p prune • ctrl+d delete … • tab screens • : command • ? help • q quit

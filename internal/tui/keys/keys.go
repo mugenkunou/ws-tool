@@ -263,45 +263,41 @@ func (k ScratchMap) FullHelp() [][]key.Binding {
 	}
 }
 
-// LogsMap is the binding set for the recorded-sessions screen.
-type LogsMap struct {
+// SessionsMap is the binding set for the recorded-sessions screen (spec §6.5).
+type SessionsMap struct {
 	Table      table.KeyMap
-	Start      key.Binding
-	Stop       key.Binding
-	View       key.Binding
-	ToggleMode key.Binding // in the session viewer: full ↔ commands only
-	Search     key.Binding
-	Delete     key.Binding
-	Prune      key.Binding
+	View       key.Binding // enter: the transcript
+	Record     key.Binding // r
+	Prune      key.Binding // p
+	Delete     key.Binding // ctrl+d
+	ToggleMode key.Binding // in the transcript: full output / commands only
 	Back       key.Binding
 }
 
-// Logs returns bindings for the recorded-sessions screen.
-func Logs() LogsMap {
-	return LogsMap{
+// Sessions returns bindings for the recorded-sessions screen.
+func Sessions() SessionsMap {
+	return SessionsMap{
 		Table:      Table(),
-		Start:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "start recording")),
-		Stop:       key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "stop recording")),
-		View:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "view")),
+		View:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "show")),
+		Record:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "record")),
+		Prune:      key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "prune")),
+		Delete:     Delete(),
 		ToggleMode: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "commands only")),
-		Search:     key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "find")),
-		Delete:     keyDelete("delete"),
-		Prune:      key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "prune")),
 		Back:       back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
-func (k LogsMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.View, k.Start, k.Stop, k.Search, k.Delete, k.Prune}
+func (k SessionsMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.View, k.Record, k.Prune, k.Delete}
 }
 
 // FullHelp implements help.KeyMap.
-func (k LogsMap) FullHelp() [][]key.Binding {
+func (k SessionsMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
-		{k.View, k.Search, k.Back},
-		{k.Start, k.Stop, k.Delete, k.Prune},
+		{k.View, k.Record, k.Prune, k.Delete},
+		{k.Back},
 	}
 }
 

@@ -42,7 +42,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/dashboard"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/dotfiles"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/logs"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/sessions"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/repos"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/scratch"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/secrets"
@@ -133,7 +133,7 @@ func (m Model) withEnv(e env.Env, loadErr error) Model {
 		m.screens[nav.ScreenRepos] = repos.New(e)
 		m.screens[nav.ScreenDotfiles] = dotfiles.New(e)
 		m.screens[nav.ScreenScratch] = scratch.New(e)
-		m.screens[nav.ScreenSessions] = logs.New(e)
+		m.screens[nav.ScreenSessions] = sessions.New(e)
 		m.screens[nav.ScreenIgnore] = ignore.New(e)
 		m.screens[nav.ScreenSecrets] = secrets.New(e)
 		m.screens[nav.ScreenCron] = cron.New(e)

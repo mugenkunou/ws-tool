@@ -28,12 +28,11 @@ type Coverage struct {
 
 // CLICoverage is every CLI subcommand and its TUI counterpart.
 var CLICoverage = func() []Coverage {
-	rp, sc, lg := keys.Repos(), keys.Scratch(), keys.Logs()
+	rp, sc, lg := keys.Repos(), keys.Scratch(), keys.Sessions()
 	df, ig, se, cr, tr := keys.Dotfiles(), keys.Ignore(), keys.Secrets(), keys.Cron(), keys.Trash()
 	none := key.Binding{}
 	shell := "shell integration; nothing to show in a TUI"
 	plumbing := "git plumbing, called by git itself"
-	pending := "TUI home arrives with the new key grammar (plan 0002, phase D)"
 	return []Coverage{
 		{"init", nav.ScreenDashboard, none, "the TUI shows its setup screen (i) until the workspace is initialized", ""},
 		{"version", nav.ScreenDashboard, none, "prints the build version", ""},
@@ -76,10 +75,10 @@ var CLICoverage = func() []Coverage {
 		{"ignore edit", nav.ScreenIgnore, ig.EditRules, "", ""},
 
 		{"session ls", nav.ScreenSessions, none, "", ""},
-		{"session record", nav.ScreenSessions, lg.Start, "", ""},
-		{"session stop", nav.ScreenSessions, lg.Stop, "", ""},
-		{"session show", nav.ScreenSessions, none, pending, ""},
-		{"session grep", nav.ScreenSessions, none, pending, ""},
+		{"session record", nav.ScreenSessions, lg.Record, "", ""},
+		{"session stop", nav.ScreenSessions, none, "", "stop"},
+		{"session show", nav.ScreenSessions, lg.View, "", ""},
+		{"session grep", nav.ScreenSessions, none, "", "grep"},
 		{"session rm", nav.ScreenSessions, lg.Delete, "", ""},
 		{"session prune", nav.ScreenSessions, lg.Prune, "", ""},
 
