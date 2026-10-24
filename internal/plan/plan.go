@@ -10,6 +10,9 @@ type Action struct {
 	ID          string       // unique within the plan, e.g. "create-config"
 	Description string       // human-readable: "Create ws/config.json"
 	Execute     func() error // the actual mutation (called only after consent)
+	// Output, when set, returns text the CLI prints (indented) under the
+	// action's result line after it ran, whether it succeeded or failed.
+	Output func() string
 }
 
 // Plan is an ordered list of actions a command intends to perform.

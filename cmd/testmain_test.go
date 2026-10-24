@@ -45,6 +45,13 @@ func TestMain(m *testing.M) {
 		defer os.RemoveAll(gitCfgDir)
 	}
 
+	// git must not look above the repository root for a repository: in a git
+	// worktree mounted into Docker the .git file there points at a host path
+	// that does not exist, and every git command run outside a repo then dies.
+	if wd, err := os.Getwd(); err == nil {
+		_ = os.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(wd))
+	}
+
 	os.Exit(m.Run())
 }
 

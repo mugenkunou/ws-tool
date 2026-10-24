@@ -3,7 +3,6 @@ package repo
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -45,8 +44,13 @@ type Finding struct {
 }
 
 // HygieneChecks lists every check ID Doctor knows, in run order.
-// Dirty state is not a hygiene check: scan already reports it as a status badge.
-var HygieneChecks = []string{"identity", "upstream", "default-branch", "fetch-staleness"}
+// Dirty state is not a hygiene check: the list reports it in its state column.
+var HygieneChecks = []string{"identity", "upstream", "default-branch", "fetch-staleness", "credentials"}
+
+// FixHint is the end of every finding's detail: the command that fixes it.
+func FixHint(repoPath string) string {
+	return " (fix: ws repo configure " + repoPath + ")"
+}
 
 // DoctorOptions controls which checks Doctor runs.
 type DoctorOptions struct {
@@ -91,8 +95,44 @@ func Doctor(workspacePath string, repos []Repository, opts DoctorOptions) []Find
 		if checkSet["fetch-staleness"] {
 			findings = append(findings, checkFetchStaleness(r.Path, absPath, staleDays)...)
 		}
+		if checkSet["credentials"] {
+			findings = append(findings, checkCredentials(r.Path, absPath)...)
+		}
+	}
+	// Every detail ends with its fix.
+	for i := range findings {
+		findings[i].Detail += FixHint(findings[i].Repo)
 	}
 	return findings
+}
+
+// checkCredentials reports an HTTPS remote when git has no credential helper
+// (local, global or system), so every fetch or push would need a password.
+func checkCredentials(repoRelPath, repoPath string) []Finding {
+	remote := ""
+	urls, err := gitCmd(repoPath, "config", "--get-regexp", `^remote\..*\.url$`).Output()
+	if err != nil {
+		return nil
+	}
+	for _, line := range strings.Split(string(urls), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && strings.HasPrefix(strings.ToLower(fields[1]), "https://") {
+			remote = strings.TrimSuffix(strings.TrimPrefix(fields[0], "remote."), ".url")
+			break
+		}
+	}
+	if remote == "" {
+		return nil
+	}
+	if out, err := gitCmd(repoPath, "config", "--get-all", "credential.helper").Output(); err == nil && strings.TrimSpace(string(out)) != "" {
+		return nil
+	}
+	return []Finding{{
+		Repo:     repoRelPath,
+		Check:    "credentials",
+		Severity: SeverityInfo,
+		Detail:   "remote " + remote + " is HTTPS and git has no credential helper",
+	}}
 }
 
 // checkIdentity verifies user.name and user.email are configured.
@@ -140,7 +180,7 @@ func checkIdentity(repoRelPath, repoPath string) []Finding {
 
 // checkUpstream verifies the current branch has a tracking upstream.
 func checkUpstream(repoRelPath, repoPath string) []Finding {
-	cmd := exec.Command("git", "-C", repoPath, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+	cmd := gitCmd(repoPath, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
 	cmd.Stderr = nil
 	if err := cmd.Run(); err != nil {
 		return []Finding{{
@@ -161,7 +201,7 @@ func checkDefaultBranch(repoRelPath, repoPath string) []Finding {
 	if gitConfigGet(repoPath, "--global", "init.defaultBranch") != "" {
 		return nil
 	}
-	cmd := exec.Command("git", "-C", repoPath, "symbolic-ref", "refs/remotes/origin/HEAD")
+	cmd := gitCmd(repoPath, "symbolic-ref", "refs/remotes/origin/HEAD")
 	cmd.Stderr = nil
 	if err := cmd.Run(); err != nil {
 		return []Finding{{
@@ -200,9 +240,7 @@ func checkFetchStaleness(repoRelPath, repoPath string, maxDays int) []Finding {
 
 // gitConfigGet reads a single git config value. scope is "--local" or "--global".
 func gitConfigGet(repoPath, scope, key string) string {
-	args := []string{"-C", repoPath, "config", scope, key}
-	cmd := exec.Command("git", args...)
-	cmd.Stderr = nil
+	cmd := gitCmd(repoPath, "config", scope, key)
 	out, err := cmd.Output()
 	if err != nil {
 		return ""

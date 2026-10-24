@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/mugenkunou/ws-tool/internal/plan"
 	"github.com/mugenkunou/ws-tool/internal/style"
@@ -120,6 +121,13 @@ func RunPlan(plan Plan, stdin io.Reader, stdout io.Writer, globals globalFlags) 
 					Status: "executed",
 				})
 				fmt.Fprintf(out, "  %s %s\n", style.IconCheck(nc), a.Description)
+			}
+			if a.Output != nil {
+				if text := strings.TrimRight(a.Output(), "\n"); text != "" {
+					for _, line := range strings.Split(text, "\n") {
+						fmt.Fprintf(out, "      %s\n", strings.TrimRight(line, " \t\r"))
+					}
+				}
 			}
 		}
 	}

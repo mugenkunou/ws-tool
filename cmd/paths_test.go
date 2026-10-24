@@ -30,13 +30,13 @@ func TestPathRuleRepoScanPrintsOneAbsolutePathPerRepo(t *testing.T) {
 	repoPath := filepath.Join(workspace, "r1")
 
 	var out, errOut bytes.Buffer
-	Execute([]string{"--workspace", workspace, "--no-color", "repo", "scan", "--no-fetch", "--check", "identity"}, strings.NewReader(""), &out, &errOut)
+	Execute([]string{"--workspace", workspace, "--no-color", "repo", "ls", "--check", "identity"}, strings.NewReader(""), &out, &errOut)
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 1 {
-		t.Fatalf("expected exactly one line for one repo, got %d:\n%s", len(lines), out.String())
+	if len(lines) != 2 {
+		t.Fatalf("expected a header and one row for one repo, got %d lines:\n%s", len(lines), out.String())
 	}
-	if !strings.Contains(lines[0], " "+repoPath+" ") {
-		t.Fatalf("expected absolute repo path %s, got: %s", repoPath, lines[0])
+	if !strings.HasPrefix(lines[1], repoPath+" ") {
+		t.Fatalf("expected absolute repo path %s, got: %s", repoPath, lines[1])
 	}
 	if strings.Contains(out.String(), "~") {
 		t.Fatalf("output must not contain tilde paths: %s", out.String())
@@ -48,7 +48,7 @@ func TestPathRuleRepoJSONPathsAbsolute(t *testing.T) {
 	repoPath := filepath.Join(workspace, "r1")
 
 	var out, errOut bytes.Buffer
-	if code := Execute([]string{"--workspace", workspace, "--json", "repo", "scan", "--no-fetch", "--check", "identity"}, strings.NewReader(""), &out, &errOut); code != 0 {
+	if code := Execute([]string{"--workspace", workspace, "--json", "repo", "ls", "--check", "identity"}, strings.NewReader(""), &out, &errOut); code != 0 {
 		t.Fatalf("scan --json failed: %d %s", code, errOut.String())
 	}
 	var payload struct {
@@ -90,7 +90,7 @@ func TestPathRuleRepoTargetResolvesAgainstCwd(t *testing.T) {
 
 	// Absolute works from anywhere.
 	var out, errOut bytes.Buffer
-	if code := Execute(args(repoPath), strings.NewReader(""), &out, &errOut); code != 0 || strings.TrimSpace(out.String()) != repoPath {
+	if code := Execute(args(repoPath), strings.NewReader(""), &out, &errOut); code != 0 || !strings.Contains(out.String(), repoPath) {
 		t.Fatalf("absolute target: code=%d out=%q err=%q", code, out.String(), errOut.String())
 	}
 
@@ -98,12 +98,12 @@ func TestPathRuleRepoTargetResolvesAgainstCwd(t *testing.T) {
 	chdir(t, workspace)
 	out.Reset()
 	errOut.Reset()
-	if code := Execute(args("r1"), strings.NewReader(""), &out, &errOut); code != 0 || strings.TrimSpace(out.String()) != repoPath {
+	if code := Execute(args("r1"), strings.NewReader(""), &out, &errOut); code != 0 || !strings.Contains(out.String(), repoPath) {
 		t.Fatalf("cwd-relative target: code=%d out=%q err=%q", code, out.String(), errOut.String())
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := Execute(args("./r1/"), strings.NewReader(""), &out, &errOut); code != 0 || strings.TrimSpace(out.String()) != repoPath {
+	if code := Execute(args("./r1/"), strings.NewReader(""), &out, &errOut); code != 0 || !strings.Contains(out.String(), repoPath) {
 		t.Fatalf("uncleaned cwd-relative target: code=%d out=%q err=%q", code, out.String(), errOut.String())
 	}
 
@@ -116,17 +116,22 @@ func TestPathRuleRepoTargetResolvesAgainstCwd(t *testing.T) {
 		t.Fatalf("expected exit 1 for workspace-relative target from foreign cwd, got %d out=%s", code, out.String())
 	}
 	cwd, _ := os.Getwd()
-	if !strings.Contains(errOut.String(), "no repo at "+filepath.Join(cwd, "r1")) {
+	if !strings.Contains(errOut.String(), "ws: no repo at "+filepath.Join(cwd, "r1")) {
 		t.Fatalf("error must show the absolute path it resolved to, got: %s", errOut.String())
 	}
 }
 
-func TestPathRuleRepoTargetRejectsMultipleArgs(t *testing.T) {
+// Several targets are allowed; one that is no repo fails the whole command
+// before any work, and names the absolute path it resolved to.
+func TestPathRuleRepoSeveralTargetsOneUnknown(t *testing.T) {
 	workspace := initScanFixture(t, true)
 	var out, errOut bytes.Buffer
-	code := Execute([]string{"--workspace", workspace, "repo", "ls", filepath.Join(workspace, "r1"), "extra"}, strings.NewReader(""), &out, &errOut)
-	if code != 1 || !strings.Contains(errOut.String(), "expected at most one repo path") {
-		t.Fatalf("expected multiple-arg error, got %d stderr=%s", code, errOut.String())
+	code := Execute([]string{"--workspace", workspace, "repo", "ls", filepath.Join(workspace, "r1"), filepath.Join(workspace, "extra")}, strings.NewReader(""), &out, &errOut)
+	if code != 1 || !strings.Contains(errOut.String(), "ws: no repo at "+filepath.Join(workspace, "extra")) {
+		t.Fatalf("expected no-repo error, got %d stderr=%s", code, errOut.String())
+	}
+	if out.Len() != 0 {
+		t.Fatalf("no output before the targets are checked: %s", out.String())
 	}
 }
 
@@ -135,7 +140,7 @@ func TestPathRuleRepoPathFilterMatchesWholeComponents(t *testing.T) {
 	repoPath := filepath.Join(workspace, "r1")
 
 	var out, errOut bytes.Buffer
-	if code := Execute([]string{"--workspace", workspace, "repo", "ls", "--path", workspace}, strings.NewReader(""), &out, &errOut); code != 0 || strings.TrimSpace(out.String()) != repoPath {
+	if code := Execute([]string{"--workspace", workspace, "repo", "ls", "--path", workspace}, strings.NewReader(""), &out, &errOut); code != 0 || !strings.Contains(out.String(), repoPath) {
 		t.Fatalf("--path <workspace>: code=%d out=%q err=%q", code, out.String(), errOut.String())
 	}
 	out.Reset()

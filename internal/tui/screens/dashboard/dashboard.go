@@ -301,7 +301,7 @@ func reposArea(msg repos.LoadedMsg) area {
 		case st.Dirty || st.Ahead > 0 || st.Behind > 0:
 			outOfSync = append(outOfSync, st.Path)
 		}
-		if len(e.Findings) > 0 {
+		if e.Issues() > 0 {
 			withFindings = append(withFindings, st.Path)
 		}
 	}

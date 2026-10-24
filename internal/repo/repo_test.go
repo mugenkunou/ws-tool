@@ -164,38 +164,6 @@ func TestDiscoverExcludeDirs(t *testing.T) {
 	}
 }
 
-func TestReconcile(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	ws := filepath.Join(t.TempDir(), "Workspace")
-	repoPath := filepath.Join(ws, "notes", "brain")
-	if err := os.MkdirAll(repoPath, 0o755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
-	runGitCmd(t, repoPath, "init")
-
-	tracked := []TrackedRepo{
-		{Path: "notes/brain", Branch: "main", Remote: "origin"},
-		{Path: "data/missing", Branch: "main", Remote: "origin"},
-	}
-
-	summary, repos, err := Reconcile(ws, []string{"."}, nil, tracked)
-	if err != nil {
-		t.Fatalf("reconcile failed: %v", err)
-	}
-	if summary.Found != 1 {
-		t.Fatalf("expected 1 found, got %d", summary.Found)
-	}
-	if len(repos) != 1 {
-		t.Fatalf("expected 1 repo, got %d", len(repos))
-	}
-	if repos[0].Path != repoPath {
-		t.Fatalf("expected %s, got %s", repoPath, repos[0].Path)
-	}
-}
-
 func TestSyncOne(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

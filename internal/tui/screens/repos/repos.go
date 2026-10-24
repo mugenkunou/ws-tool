@@ -72,7 +72,7 @@ func (m LoadedMsg) Summarize() Summary {
 		if e.Status.Detached {
 			s.Detached++
 		}
-		s.Findings += len(e.Findings)
+		s.Findings += e.Issues() // warn and error findings; info is not an issue
 	}
 	return s
 }

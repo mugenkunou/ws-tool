@@ -4,9 +4,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/mugenkunou/ws-tool/internal/repo"
 	"github.com/mugenkunou/ws-tool/internal/resource"
@@ -14,20 +15,39 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
-var repoHelp = cmdHelp{
-	Usage: "ws repo <ls|scan|fetch|pull|sync|run|add-root|ls-roots>",
-	Flags: append([]string{
-		"      --dry-run    Preview write operations (default: false)",
-		"      --rebase     Use rebase for diverged repos in sync (default: merge)",
-		"      --path       Restrict to repos under this workspace subpath",
-		"      --dirty      Only repos with uncommitted changes",
-		"      --ahead      Only repos ahead of upstream",
-		"      --behind     Only repos behind upstream",
-		"      --detached   Only repos in detached HEAD",
-	}, listFlagHelp("scan", repo.Schema(resource.CLIView()).Keys())...),
+// runRepo dispatches `ws repo <verb>` (spec §5 repo).
+func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		renderHelpFor([]string{"repo"}, globals.noColor, stdout, stderr)
+		return 0
+	}
+	verb, rest := args[0], args[1:]
+	switch verb {
+	case "ls":
+		return repoLs(rest, globals, stdout, stderr)
+	case "show":
+		return repoShow(rest, globals, stdout, stderr)
+	case "fetch":
+		return repoFetch(rest, globals, stdout, stderr)
+	case "pull":
+		return repoPull(rest, globals, stdin, stdout, stderr)
+	case "push":
+		return repoPush(rest, globals, stdin, stdout, stderr)
+	case "save":
+		return repoSave(rest, globals, stdin, stdout, stderr)
+	case "configure":
+		return repoConfigure(rest, globals, stdin, stdout, stderr)
+	case "run":
+		return repoRun(rest, globals, stdin, stdout, stderr)
+	case "root":
+		return repoRoot(rest, globals, stdin, stdout, stderr)
+	}
+	fmt.Fprintf(stderr, "unknown command: repo %s\n", verb)
+	fmt.Fprintln(stderr, "usage: ws repo <ls|show|fetch|pull|push|save|configure|run|root> …")
+	return 1
 }
 
-// repoFilterFlags holds the common filter flags for repo subcommands.
+// repoFilterFlags holds the filter flags of every command that selects repos.
 type repoFilterFlags struct {
 	path     string
 	dirty    bool
@@ -37,7 +57,7 @@ type repoFilterFlags struct {
 }
 
 func registerRepoFilterFlags(fs *flag.FlagSet, f *repoFilterFlags) {
-	fs.StringVar(&f.path, "path", "", "restrict to repos under this workspace subpath")
+	fs.StringVar(&f.path, "path", "", "only repos at or under this directory")
 	fs.BoolVar(&f.dirty, "dirty", false, "only dirty repos")
 	fs.BoolVar(&f.ahead, "ahead", false, "only repos ahead of upstream")
 	fs.BoolVar(&f.behind, "behind", false, "only repos behind upstream")
@@ -58,824 +78,478 @@ func (f *repoFilterFlags) resolve() error {
 	return nil
 }
 
-func (f repoFilterFlags) toFilterOptions() repo.FilterOptions {
-	return repo.FilterOptions{
-		Path:     f.path,
-		Dirty:    f.dirty,
-		Ahead:    f.ahead,
-		Behind:   f.behind,
-		Detached: f.detached,
-	}
+// hasState reports whether a filter reads the repo's status.
+func (f repoFilterFlags) hasState() bool { return f.dirty || f.ahead || f.behind || f.detached }
+
+// stateOptions are the filters that read status; --path is applied earlier.
+func (f repoFilterFlags) stateOptions() repo.FilterOptions {
+	return repo.FilterOptions{Dirty: f.dirty, Ahead: f.ahead, Behind: f.behind, Detached: f.detached}
 }
 
-func (f repoFilterFlags) hasFilter() bool {
-	return f.path != "" || f.dirty || f.ahead || f.behind || f.detached
+// repoEnv is the workspace a repo command runs in.
+type repoEnv struct {
+	globals    globalFlags
+	workspace  string
+	configPath string
+	cfg        wsconfig.WsConfig
+	stdin      io.Reader
+	stdout     io.Writer
+	stderr     io.Writer
 }
 
-// filterRepos applies filter flags to a repo list via scan.
-// Returns the filtered repos (or original repos if no filter is active).
-func filterRepos(workspacePath string, repos []repo.Repository, f repoFilterFlags) []repo.Repository {
-	if !f.hasFilter() {
-		return repos
-	}
-	statuses := repo.Scan(workspacePath, repos)
-	filtered := repo.Filter(statuses, f.toFilterOptions())
-	result := make([]repo.Repository, 0, len(filtered))
-	for _, s := range filtered {
-		result = append(result, repo.Repository{Path: s.Path})
-	}
-	return result
-}
-
-// targetRepo filters the repo list to the single repo named by the optional
-// positional argument. The argument is resolved like every path input
-// (absolute, ~, or relative to cwd) and compared against absolute repo paths.
-// Returns the original list if no argument is given, or an error message and
-// nil slice if the argument is invalid or matches no repo.
-func targetRepo(repos []repo.Repository, args []string) ([]repo.Repository, string) {
-	if len(args) == 0 {
-		return repos, ""
-	}
-	if len(args) > 1 {
-		return nil, fmt.Sprintf("expected at most one repo path, got %d: %s", len(args), strings.Join(args, " "))
-	}
-	target, err := wsconfig.ExpandUserPath(args[0])
-	if err != nil {
-		return nil, fmt.Sprintf("invalid repo path %q: %s", args[0], err.Error())
-	}
-	for _, r := range repos {
-		if filepath.Clean(r.Path) == target {
-			return []repo.Repository{r}, ""
-		}
-	}
-	return nil, fmt.Sprintf("no repo at %s — run `ws repo ls` to see available repos", target)
-}
-
-// isExternalRepo reports whether a repo lives outside the workspace (e.g. the
-// pass store). External repos are not auto-fetched by scan/sync.
-func isExternalRepo(workspacePath, repoPath string) bool {
-	return !repo.IsWithin(repoPath, workspacePath)
-}
-
-func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	if hasHelpArg(args) {
-		return printCmdHelp(stdout, repoHelp)
-	}
-	if len(args) == 0 {
-		return printCmdHelp(stdout, repoHelp)
-	}
-
+// loadRepoEnv requires an initialized workspace and reads ws.json.
+func loadRepoEnv(globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) (*repoEnv, bool) {
 	workspacePath, configPath, err := requireWorkspaceInitialized(globals, stderr)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
-		return 1
+		return nil, false
 	}
-
 	cfg, err := wsconfig.Load(configPath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
-		return 1
+		return nil, false
 	}
-
-	roots := make([]string, 0, len(cfg.Repo.Roots))
-	for _, r := range cfg.Repo.Roots {
-		resolved, err := wsconfig.ResolvePath(workspacePath, r)
-		if err != nil {
-			continue
-		}
-		roots = append(roots, resolved)
-	}
-
-	excludeDirs := cfg.Repo.ExcludeDirs
-
-	sub := args[0]
-	subArgs := args[1:]
-	switch sub {
-	case "ls":
-		fs := flag.NewFlagSet("repo-ls", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		var filters repoFilterFlags
-		registerRepoFilterFlags(fs, &filters)
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if err := filters.resolve(); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		repos, err := repo.Discover(workspacePath, roots, excludeDirs)
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		repos = filterRepos(workspacePath, repos, filters)
-		{
-			var errMsg string
-			repos, errMsg = targetRepo(repos, fs.Args())
-			if errMsg != "" {
-				fmt.Fprintln(stderr, errMsg)
-				return 1
-			}
-		}
-		return renderRepoList(globals, workspacePath, repos, stdout, stderr)
-	case "scan":
-		fs := flag.NewFlagSet("repo-scan", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		noFetch := fs.Bool("no-fetch", false, "skip fetch before scan")
-		var checks stringSliceFlag
-		fs.Var(&checks, "check", "run only this hygiene check (repeatable)")
-		var filters repoFilterFlags
-		registerRepoFilterFlags(fs, &filters)
-		lf := registerListFlags(fs, "")
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if err := filters.resolve(); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if msg := validateHygieneChecks(checks); msg != "" {
-			fmt.Fprintln(stderr, msg)
-			return 1
-		}
-		if err := repo.Schema(resource.CLIView()).Validate(lf.query()); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		repos, err := repo.Discover(workspacePath, roots, excludeDirs)
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		{
-			var errMsg string
-			repos, errMsg = targetRepo(repos, fs.Args())
-			if errMsg != "" {
-				fmt.Fprintln(stderr, errMsg)
-				return 1
-			}
-		}
-
-		// Fetch first (unless --no-fetch), then scan.
-		var fetchWarnings []string
-		if !*noFetch {
-			for _, r := range repos {
-				if isExternalRepo(workspacePath, r.Path) {
-					continue // skip external repos (e.g. pass store)
-				}
-				result := repo.FetchOne(workspacePath, r)
-				if !result.Success {
-					fetchWarnings = append(fetchWarnings, fmt.Sprintf("%s: %s", r.Path, result.Error))
-				}
-			}
-		}
-
-		statuses := repo.Scan(workspacePath, repos)
-		if filters.hasFilter() {
-			statuses = repo.Filter(statuses, filters.toFilterOptions())
-		}
-
-		// Hygiene checks run after fetch so fetch-staleness reflects it,
-		// and only over the repos that survived filtering.
-		scanned := make([]repo.Repository, 0, len(statuses))
-		for _, st := range statuses {
-			scanned = append(scanned, repo.Repository{Path: st.Path})
-		}
-		findings := repo.Doctor(workspacePath, scanned, repo.DoctorOptions{Checks: checks})
-
-		// --sort / --filter work on the same records the TUI lists.
-		entries, ok := applyList(repo.Schema(resource.CLIView()), repo.Entries(statuses, findings), lf, stderr)
-		if !ok {
-			return 1
-		}
-		statuses, findings = statuses[:0], findings[:0]
-		for _, e := range entries {
-			statuses = append(statuses, e.Status)
-			findings = append(findings, e.Findings...)
-		}
-
-		return renderRepoScan(globals, workspacePath, statuses, fetchWarnings, findings, stdout, stderr)
-	case "doctor":
-		fmt.Fprintln(stderr, "`ws repo doctor` has been merged into `ws repo scan` — hygiene findings now appear inline")
-		return 1
-	case "fetch":
-		fs := flag.NewFlagSet("repo-fetch", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		var filters repoFilterFlags
-		registerRepoFilterFlags(fs, &filters)
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if err := filters.resolve(); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		repos, err := repo.Discover(workspacePath, roots, excludeDirs)
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		repos = filterRepos(workspacePath, repos, filters)
-		{
-			var errMsg string
-			repos, errMsg = targetRepo(repos, fs.Args())
-			if errMsg != "" {
-				fmt.Fprintln(stderr, errMsg)
-				return 1
-			}
-		}
-		results := repo.FetchAll(workspacePath, repos)
-		return renderRepoFetch(globals, workspacePath, results, stdout, stderr)
-	case "pull":
-		fs := flag.NewFlagSet("repo-pull", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		rebase := fs.Bool("rebase", false, "use git pull --rebase")
-		var filters repoFilterFlags
-		registerRepoFilterFlags(fs, &filters)
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if err := filters.resolve(); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		repos, err := repo.Discover(workspacePath, roots, excludeDirs)
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		repos = filterRepos(workspacePath, repos, filters)
-		{
-			var errMsg string
-			repos, errMsg = targetRepo(repos, fs.Args())
-			if errMsg != "" {
-				fmt.Fprintln(stderr, errMsg)
-				return 1
-			}
-		}
-		if globals.dryRun {
-			if globals.json {
-				return writeJSONDryRun(stdout, stderr, "repo.pull", true, map[string]any{"repos": repos})
-			}
-			fmt.Fprintf(textOut(globals, stdout), "Would pull %d repositories.\n", len(repos))
-			return 0
-		}
-
-		plan := Plan{Command: "repo.pull"}
-		for _, r := range repos {
-			r := r // capture
-			short := style.AbsPath(workspacePath, r.Path)
-			plan.Actions = append(plan.Actions, Action{
-				ID:          "pull-" + r.Path,
-				Description: fmt.Sprintf("Pull %s", short),
-				Execute: func() error {
-					results := repo.PullAll(workspacePath, []repo.Repository{r}, *rebase)
-					if len(results) > 0 && !results[0].Success {
-						return fmt.Errorf("%s", results[0].Error)
-					}
-					return nil
-				},
-			})
-		}
-		planResult := RunPlan(plan, stdin, stdout, globals)
-		if globals.json {
-			return writeJSON(stdout, stderr, "repo.pull", map[string]any{"actions": planResult.Actions})
-		}
-		return planResult.ExitCode()
-	case "sync":
-		fs := flag.NewFlagSet("repo-sync", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		rebase := fs.Bool("rebase", false, "use rebase for diverged repos (default: merge)")
-		var filters repoFilterFlags
-		registerRepoFilterFlags(fs, &filters)
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if err := filters.resolve(); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		repos, err := repo.Discover(workspacePath, roots, excludeDirs)
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		{
-			var errMsg string
-			repos, errMsg = targetRepo(repos, fs.Args())
-			if errMsg != "" {
-				fmt.Fprintln(stderr, errMsg)
-				return 1
-			}
-		}
-
-		// Fetch first to get accurate ahead/behind counts.
-		nc := globals.noColor
-		if !globals.json && !globals.quiet {
-			out := textOut(globals, stdout)
-			for i, r := range repos {
-				if isExternalRepo(workspacePath, r.Path) {
-					continue // skip external repos (e.g. pass store)
-				}
-				short := style.AbsPath(workspacePath, r.Path)
-				fmt.Fprintf(out, "\r%s Fetching %s (%d/%d)…",
-					style.IconGit(nc), style.Infof(nc, "%s", short), i+1, len(repos))
-				repo.FetchOne(workspacePath, r)
-			}
-			fmt.Fprintln(out) // finish the progress line
-		} else {
-			for _, r := range repos {
-				if isExternalRepo(workspacePath, r.Path) {
-					continue // skip external repos (e.g. pass store)
-				}
-				repo.FetchOne(workspacePath, r)
-			}
-		}
-
-		statuses := repo.Scan(workspacePath, repos)
-		if filters.hasFilter() {
-			statuses = repo.Filter(statuses, filters.toFilterOptions())
-		}
-
-		// Build sync plans.
-		var syncPlans []repo.SyncPlan
-		var warnings []string
-		for _, s := range statuses {
-			sp := repo.PlanSync(s)
-			if sp.Strategy == repo.SyncSkip {
-				if sp.Warning != "" {
-					warnings = append(warnings, fmt.Sprintf("%s (%s)", sp.Path, sp.Warning))
-				}
-				continue
-			}
-			syncPlans = append(syncPlans, sp)
-		}
-
-		if len(syncPlans) == 0 {
-			if globals.json {
-				return writeJSON(stdout, stderr, "repo.sync", map[string]any{"actions": []any{}, "warnings": warnings})
-			}
-			out := textOut(globals, stdout)
-			fmt.Fprintln(out, style.ResultSuccess(nc, "All repositories are up to date."))
-			for _, w := range warnings {
-				fmt.Fprintf(out, "%s %s\n", style.IconWarning(nc), style.Mutedf(nc, "Skipped: %s", w))
-			}
-			return 0
-		}
-
-		if globals.dryRun {
-			if globals.json {
-				return writeJSONDryRun(stdout, stderr, "repo.sync", true, map[string]any{"plans": syncPlans, "warnings": warnings})
-			}
-			out := textOut(globals, stdout)
-			for _, sp := range syncPlans {
-				short := style.AbsPath(workspacePath, sp.Path)
-				strategy := string(sp.Strategy)
-				switch sp.Strategy {
-				case repo.SyncPullPush:
-					if sp.Status.Dirty {
-						strategy = "commit+pull(" + rebaseOrMerge(*rebase) + ")+push"
-					} else {
-						strategy = "pull(" + rebaseOrMerge(*rebase) + ")+push"
-					}
-				case repo.SyncPull:
-					if sp.Status.Dirty {
-						strategy = "commit+pull(" + rebaseOrMerge(*rebase) + ")+push"
-					} else {
-						strategy = "pull(ff)"
-					}
-				case repo.SyncCommitPush:
-					strategy = "commit+push"
-				}
-				fmt.Fprintf(out, "[dry-run] %-12s %s  (%s)\n", strategy, style.Infof(nc, "%s", short), sp.Detail)
-			}
-			for _, w := range warnings {
-				fmt.Fprintf(out, "%s %s\n", style.IconWarning(nc), style.Mutedf(nc, "Skipped: %s", w))
-			}
-			return 0
-		}
-
-		syncOpts := repo.SyncOptions{Rebase: *rebase}
-		plan := Plan{Command: "repo.sync"}
-		for _, sp := range syncPlans {
-			sp := sp // capture
-			desc := syncActionDescription(workspacePath, sp, *rebase)
-			plan.Actions = append(plan.Actions, Action{
-				ID:          "sync-" + sp.Path,
-				Description: desc,
-				Execute: func() error {
-					result := repo.SyncOne(workspacePath, sp, syncOpts)
-					if !result.Success {
-						return fmt.Errorf("%s", result.Error)
-					}
-					return nil
-				},
-			})
-		}
-		planResult := RunPlan(plan, stdin, stdout, globals)
-
-		if globals.json {
-			return writeJSON(stdout, stderr, "repo.sync", map[string]any{"actions": planResult.Actions, "warnings": warnings})
-		}
-
-		out := textOut(globals, stdout)
-		for _, w := range warnings {
-			fmt.Fprintf(out, "%s %s\n", style.IconWarning(nc), style.Mutedf(nc, "Skipped: %s", w))
-		}
-		return planResult.ExitCode()
-	case "run":
-		fs := flag.NewFlagSet("repo-run", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		var filters repoFilterFlags
-		registerRepoFilterFlags(fs, &filters)
-		registerGlobalFlags(fs, &globals)
-		if err := fs.Parse(subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		if err := filters.resolve(); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		command := fs.Args()
-		if len(command) == 0 {
-			fmt.Fprintln(stderr, "usage: ws repo run -- <command...>")
-			return 1
-		}
-		repos, err := repo.Discover(workspacePath, roots, excludeDirs)
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-		repos = filterRepos(workspacePath, repos, filters)
-		if globals.dryRun {
-			if globals.json {
-				return writeJSONDryRun(stdout, stderr, "repo.run", true, map[string]any{"command": command, "repos": repos})
-			}
-			fmt.Fprintf(textOut(globals, stdout), "Would run command in %d repositories.\n", len(repos))
-			return 0
-		}
-
-		plan := Plan{Command: "repo.run"}
-		for _, r := range repos {
-			r := r
-			short := style.AbsPath(workspacePath, r.Path)
-			plan.Actions = append(plan.Actions, Action{
-				ID:          "run-" + r.Path,
-				Description: fmt.Sprintf("Run in %s", short),
-				Execute: func() error {
-					results := repo.RunAll(workspacePath, []repo.Repository{r}, command)
-					if len(results) > 0 && !results[0].Success {
-						return fmt.Errorf("%s", results[0].Error)
-					}
-					return nil
-				},
-			})
-		}
-		planResult := RunPlan(plan, stdin, stdout, globals)
-		if globals.json {
-			return writeJSON(stdout, stderr, "repo.run", map[string]any{"actions": planResult.Actions})
-		}
-		return planResult.ExitCode()
-	case "add-root":
-		fs := flag.NewFlagSet("repo-add-root", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-
-		posArgs := fs.Args()
-		if len(posArgs) == 0 {
-			fmt.Fprintln(stderr, "usage: ws repo add-root <path>")
-			return 1
-		}
-
-		if len(posArgs) > 1 {
-			fmt.Fprintf(stderr, "expected one path, got %d: %s\n", len(posArgs), strings.Join(posArgs, " "))
-			return 1
-		}
-
-		// Resolve like every path input: absolute, ~, or relative to cwd.
-		resolvedPath, err := wsconfig.ExpandUserPath(posArgs[0])
-		if err != nil {
-			fmt.Fprintf(stderr, "invalid path: %s\n", err.Error())
-			return 1
-		}
-
-		info, err := os.Stat(resolvedPath)
-		if err != nil {
-			fmt.Fprintf(stderr, "path does not exist or is not accessible: %s\n", resolvedPath)
-			return 1
-		}
-		if !info.IsDir() {
-			fmt.Fprintf(stderr, "path is not a directory: %s\n", resolvedPath)
-			return 1
-		}
-
-		// Config values resolve against the workspace, so store the root
-		// workspace-relative when it is inside the workspace, else absolute.
-		storedRoot := resolvedPath
-		if repo.IsWithin(resolvedPath, workspacePath) {
-			if rel, err := filepath.Rel(workspacePath, resolvedPath); err == nil {
-				storedRoot = filepath.ToSlash(rel)
-			}
-		}
-
-		// Load current config
-		cfg, err := wsconfig.Load(configPath)
-		if err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-
-		// Check if root already exists (config roots are workspace-relative).
-		for _, r := range cfg.Repo.Roots {
-			resolvedRoot, err := wsconfig.ResolvePath(workspacePath, r)
-			if err != nil {
-				continue
-			}
-			if resolvedRoot == resolvedPath {
-				fmt.Fprintf(stderr, "path already configured as repo root: %s\n", resolvedPath)
-				return 1
-			}
-		}
-
-		if globals.dryRun {
-			if globals.json {
-				return writeJSONDryRun(stdout, stderr, "repo.add-root", true, map[string]any{"path": resolvedPath})
-			}
-			fmt.Fprintf(textOut(globals, stdout), "Would add repo root: %s\n", resolvedPath)
-			return 0
-		}
-
-		plan := Plan{Command: "repo.add-root"}
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "add-root-" + resolvedPath,
-			Description: fmt.Sprintf("Add repo root: %s", resolvedPath),
-			Execute: func() error {
-				// Reload config to ensure we have the latest version
-				cfg, err := wsconfig.Load(configPath)
-				if err != nil {
-					return err
-				}
-				cfg.Repo.Roots = append(cfg.Repo.Roots, storedRoot)
-				return wsconfig.Save(configPath, cfg)
-			},
-		})
-
-		planResult := RunPlan(plan, stdin, stdout, globals)
-		if globals.json {
-			return writeJSON(stdout, stderr, "repo.add-root", map[string]any{"actions": planResult.Actions})
-		}
-		return planResult.ExitCode()
-	case "ls-roots":
-		fs := flag.NewFlagSet("repo-ls-roots", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		registerGlobalFlags(fs, &globals)
-		if err := parseInterspersed(fs, subArgs); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-
-		if globals.json {
-			absRoots := make([]string, 0, len(cfg.Repo.Roots))
-			for _, r := range cfg.Repo.Roots {
-				absRoots = append(absRoots, style.AbsPath(workspacePath, r))
-			}
-			return writeJSON(stdout, stderr, "repo.ls-roots", map[string]any{"roots": absRoots})
-		}
-
-		out := textOut(globals, stdout)
-		if len(cfg.Repo.Roots) == 0 {
-			fmt.Fprintln(out, "No repo roots configured.")
-			return 0
-		}
-
-		fmt.Fprintln(out, "Configured repo roots:")
-		for i, r := range cfg.Repo.Roots {
-			short := style.AbsPath(workspacePath, r)
-			fmt.Fprintf(out, "  %d. %s\n", i, short)
-		}
-		return 0
-	default:
-		fmt.Fprintf(stderr, "unknown repo subcommand: %s\n", sub)
-		return 1
-	}
+	return &repoEnv{globals: globals, workspace: workspacePath, configPath: configPath, cfg: cfg,
+		stdin: stdin, stdout: stdout, stderr: stderr}, true
 }
 
-func syncActionDescription(workspacePath string, sp repo.SyncPlan, rebase bool) string {
-	return repo.DescribeSync(sp, style.AbsPath(workspacePath, sp.Path), rebase)
+// roots are the effective discovery roots, absolute, in ws.json order. An empty
+// list means the workspace itself.
+func (e *repoEnv) roots() []string { return effectiveRoots(e.workspace, e.cfg.Repo.Roots) }
+
+func effectiveRoots(workspacePath string, configured []string) []string {
+	var roots []string
+	for _, r := range configured {
+		if resolved, err := wsconfig.ResolvePath(workspacePath, r); err == nil {
+			roots = append(roots, resolved)
+		}
+	}
+	if len(roots) == 0 {
+		roots = []string{filepath.Clean(workspacePath)}
+	}
+	return roots
 }
 
-func rebaseOrMerge(rebase bool) string {
-	if rebase {
-		return "rebase"
+// targets discovers the repos, resolves the [repo…] arguments against them and
+// applies --path. Every target is checked before any work starts: an argument
+// that is not a discovered repo is an error (`ws: no repo at <abs path>`).
+func (e *repoEnv) targets(args []string, f repoFilterFlags) ([]repo.Repository, bool) {
+	repos, err := repo.Discover(e.workspace, e.roots(), e.cfg.Repo.ExcludeDirs)
+	if err != nil {
+		fmt.Fprintln(e.stderr, err.Error())
+		return nil, false
 	}
-	return "merge"
+	repos, errMsg := selectTargets(repos, args)
+	if errMsg != "" {
+		fmt.Fprintln(e.stderr, errMsg)
+		return nil, false
+	}
+	if f.path != "" {
+		repos = slices.DeleteFunc(slices.Clone(repos), func(r repo.Repository) bool { return !repo.IsWithin(r.Path, f.path) })
+	}
+	return repos, true
 }
 
-func renderRepoList(globals globalFlags, workspacePath string, repos []repo.Repository, stdout, stderr io.Writer) int {
-	if globals.json {
-		return writeJSON(stdout, stderr, "repo.ls", repos)
+// selectTargets keeps the discovered repos named by args, in path order. An
+// argument is a path (absolute, ~, or relative to the current directory), cleaned
+// and compared exactly: a path inside a repo, or a directory that holds repos,
+// is not a target. Without arguments every repo stays.
+func selectTargets(repos []repo.Repository, args []string) ([]repo.Repository, string) {
+	if len(args) == 0 {
+		return repos, ""
 	}
-
-	out := textOut(globals, stdout)
-	if len(repos) == 0 {
-		fmt.Fprintln(out, "No repositories found.")
-		return 0
+	want := map[string]bool{}
+	for _, a := range args {
+		abs, err := wsconfig.ExpandUserPath(a)
+		if err != nil {
+			return nil, fmt.Sprintf("ws: invalid repo path %q: %s", a, err.Error())
+		}
+		if !slices.ContainsFunc(repos, func(r repo.Repository) bool { return filepath.Clean(r.Path) == abs }) {
+			return nil, "ws: no repo at " + abs
+		}
+		want[abs] = true
 	}
+	var out []repo.Repository
 	for _, r := range repos {
-		fmt.Fprintln(out, style.AbsPath(workspacePath, r.Path))
+		if want[filepath.Clean(r.Path)] {
+			out = append(out, r)
+		}
 	}
-	return 0
+	return out, ""
 }
+
+// scan reads the status of repos and applies the status filters.
+func (e *repoEnv) scan(repos []repo.Repository, f repoFilterFlags) []repo.RepoStatus {
+	return repo.Filter(repo.Scan(e.workspace, repos), f.stateOptions())
+}
+
+// narrow applies the status filters to repos, reading status only when a
+// filter needs it.
+func (e *repoEnv) narrow(repos []repo.Repository, f repoFilterFlags) []repo.Repository {
+	if !f.hasState() {
+		return repos
+	}
+	return pathsOf(e.scan(repos, f))
+}
+
+func pathsOf(statuses []repo.RepoStatus) []repo.Repository {
+	out := make([]repo.Repository, len(statuses))
+	for i, s := range statuses {
+		out[i] = repo.Repository{Path: s.Path}
+	}
+	return out
+}
+
+// short is a repo path as the CLI prints it: absolute.
+func (e *repoEnv) short(path string) string { return style.AbsPath(e.workspace, path) }
+
+// fetchAll fetches every repo, one at a time, and returns the results.
+func (e *repoEnv) fetchAll(repos []repo.Repository) []repo.FetchResult {
+	return repo.FetchAll(e.workspace, repos)
+}
+
+// oneLine flattens git's multi-line error text for a single-line message.
+func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 // validateHygieneChecks returns an error message if any requested check ID is unknown.
 func validateHygieneChecks(checks []string) string {
-	known := make(map[string]bool, len(repo.HygieneChecks))
-	for _, c := range repo.HygieneChecks {
-		known[c] = true
-	}
 	for _, c := range checks {
-		if !known[c] {
+		if !slices.Contains(repo.HygieneChecks, c) {
 			return fmt.Sprintf("unknown check %q — available: %s", c, strings.Join(repo.HygieneChecks, ", "))
 		}
 	}
 	return ""
 }
 
-func renderRepoScan(globals globalFlags, workspacePath string, statuses []repo.RepoStatus, fetchWarnings []string, findings []repo.Finding, stdout, stderr io.Writer) int {
-	warnCount := 0
-	for _, f := range findings {
-		if f.Severity >= repo.SeverityWarn {
-			warnCount++
-		}
+// ── ls ─────────────────────────────────────────────────────────────
+
+func repoLs(args []string, globals globalFlags, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("repo-ls", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fetch := fs.Bool("fetch", false, "fetch each repo first")
+	var checks stringSliceFlag
+	fs.Var(&checks, "check", "run only this hygiene check (repeatable)")
+	var filters repoFilterFlags
+	registerRepoFilterFlags(fs, &filters)
+	lf := registerListFlags(fs, "")
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
 	}
-	// Listing is not a verdict: dirty repos and findings exit 0. Only a fetch
-	// that failed is partial (3).
-	exitCode := 0
-	if len(fetchWarnings) > 0 {
-		exitCode = 3
+	if err := filters.resolve(); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if msg := validateHygieneChecks(checks); msg != "" {
+		fmt.Fprintln(stderr, msg)
+		return 1
+	}
+	schema := repo.Schema(resource.CLIView())
+	if err := schema.Validate(lf.query()); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	e, ok := loadRepoEnv(globals, nil, stdout, stderr)
+	if !ok {
+		return 1
+	}
+	repos, ok := e.targets(fs.Args(), filters)
+	if !ok {
+		return 1
 	}
 
-	if globals.json {
-		data := map[string]any{"statuses": repo.Schema(resource.CLIView()).Records(repo.Entries(statuses, findings)), "findings": findings}
-		if findings == nil {
-			data["findings"] = []repo.Finding{}
+	// A fetch has no plan and no prompt: it changes only remote-tracking refs.
+	// --dry-run skips it.
+	var fetchWarnings []string
+	if *fetch && !globals.dryRun {
+		for _, r := range e.fetchAll(repos) {
+			if !r.Success {
+				fetchWarnings = append(fetchWarnings, r.Path+": "+oneLine(r.Error))
+				fmt.Fprintf(stderr, "ws: fetch failed: %s: %s\n", r.Path, oneLine(r.Error))
+			}
 		}
+	}
+
+	statuses := e.scan(repos, filters)
+	// Hygiene runs last, so fetch-staleness reflects the fetch.
+	findings := repo.Doctor(e.workspace, pathsOf(statuses), repo.DoctorOptions{Checks: checks})
+	entries, ok := applyList(schema, repo.Entries(statuses, findings), lf, stderr)
+	if !ok {
+		return 1
+	}
+
+	code := 0
+	if len(fetchWarnings) > 0 {
+		code = 3
+	}
+	if globals.json {
+		var shown []repo.Finding
+		for _, en := range entries {
+			shown = append(shown, en.Findings...)
+		}
+		if shown == nil {
+			shown = []repo.Finding{}
+		}
+		data := map[string]any{"statuses": schema.Records(entries), "findings": shown}
 		if len(fetchWarnings) > 0 {
 			data["fetch_warnings"] = fetchWarnings
 		}
-		return writeJSON(stdout, stderr, "repo.scan", data)
+		if c := writeJSON(stdout, stderr, "repo.ls", data); c != 0 {
+			return c
+		}
+		return code
 	}
+	out := textOut(globals, stdout)
+	if len(entries) == 0 {
+		fmt.Fprintln(out, "No repositories found.")
+		return code
+	}
+	if err := schema.WriteTable(out, entries, lf.wide); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	return code
+}
+
+// ── show ───────────────────────────────────────────────────────────
+
+func repoShow(args []string, globals globalFlags, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("repo-show", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if len(fs.Args()) != 1 {
+		fmt.Fprintln(stderr, "usage: ws repo show <repo>")
+		return 1
+	}
+	e, ok := loadRepoEnv(globals, nil, stdout, stderr)
+	if !ok {
+		return 1
+	}
+	repos, ok := e.targets(fs.Args(), repoFilterFlags{})
+	if !ok {
+		return 1
+	}
+	// show never fetches: it reads the repo as it is.
+	statuses := repo.Scan(e.workspace, repos)
+	findings := repo.Doctor(e.workspace, repos, repo.DoctorOptions{})
+	entry := repo.Entries(statuses, findings)[0]
+
+	if globals.json {
+		schema := repo.Schema(resource.CLIView())
+		fnd := entry.Findings
+		if fnd == nil {
+			fnd = []repo.Finding{}
+		}
+		return writeJSON(stdout, stderr, "repo.show", map[string]any{
+			"status":   schema.Records([]repo.Entry{entry})[0],
+			"findings": fnd,
+		})
+	}
+	fmt.Fprint(textOut(globals, stdout), repo.Detail(entry))
+	return 0
+}
+
+// ── fetch ──────────────────────────────────────────────────────────
+
+func repoFetch(args []string, globals globalFlags, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("repo-fetch", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var filters repoFilterFlags
+	registerRepoFilterFlags(fs, &filters)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if err := filters.resolve(); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	e, ok := loadRepoEnv(globals, nil, stdout, stderr)
+	if !ok {
+		return 1
+	}
+	repos, ok := e.targets(fs.Args(), filters)
+	if !ok {
+		return 1
+	}
+	repos = e.narrow(repos, filters)
 
 	out := textOut(globals, stdout)
 	nc := globals.noColor
-
-	// Show fetch warnings first.
-	for _, w := range fetchWarnings {
-		fmt.Fprintf(out, "%s %s\n", style.Badge("fetch-failed", nc), style.Mutedf(nc, "%s", w))
-	}
-	if len(fetchWarnings) > 0 {
-		fmt.Fprintln(out)
-	}
-
-	if len(statuses) == 0 {
-		fmt.Fprintln(out, "No repositories found.")
+	if globals.dryRun {
+		results := []repo.FetchResult{}
+		for _, r := range repos {
+			results = append(results, repo.FetchResult{Path: r.Path, Error: "not fetched (dry run)"})
+			if !globals.json {
+				fmt.Fprintf(out, "Would fetch %s\n", r.Path)
+			}
+		}
+		if globals.json {
+			return writeJSONDryRun(stdout, stderr, "repo.fetch", true, results)
+		}
 		return 0
 	}
 
-	byRepo := map[string][]repo.Finding{}
-	for _, f := range findings {
-		byRepo[f.Repo] = append(byRepo[f.Repo], f)
+	results := e.fetchAll(repos)
+	if results == nil {
+		results = []repo.FetchResult{}
 	}
-	hiddenInfo := 0
-
-	for _, s := range statuses {
-		short := style.AbsPath(workspacePath, s.Path)
-		if s.Error != "" {
-			fmt.Fprintf(out, "%s %s %s\n", style.IconGit(nc), style.Infof(nc, "%s", short), style.Badge("error", nc)+" "+style.Errorf(nc, "%s", s.Error))
+	failed := 0
+	for _, r := range results {
+		if !r.Success {
+			failed++
+		}
+	}
+	// 0 when every fetch succeeds, 3 when some fail, 1 when all fail.
+	code := 0
+	switch {
+	case failed == 0:
+	case failed == len(results):
+		code = 1
+	default:
+		code = 3
+	}
+	if globals.json {
+		if c := writeJSON(stdout, stderr, "repo.fetch", results); c != 0 {
+			return c
+		}
+		return code
+	}
+	if len(results) == 0 {
+		fmt.Fprintln(out, "No repositories found.")
+		return 0
+	}
+	for _, r := range results {
+		if r.Success {
+			fmt.Fprintln(out, style.ResultSuccess(nc, "%s fetched", r.Path))
 		} else {
-			dirtyBadge := style.Badge("clean", nc)
-			if s.Dirty {
-				dirtyBadge = style.Badge("dirty", nc)
-			}
-			detached := ""
-			if s.Detached {
-				detached = " " + style.Badge("detached", nc)
-			}
-			aheadBehind := ""
-			if s.Ahead > 0 || s.Behind > 0 {
-				aheadBehind = fmt.Sprintf(" %s %s",
-					style.Successf(nc, "↑%d", s.Ahead),
-					style.Warningf(nc, "↓%d", s.Behind))
-			}
-			fmt.Fprintf(out, "%s %s  %s %s%s%s\n",
-				style.IconGit(nc),
-				style.Infof(nc, "%s", short),
-				style.Accentf(nc, "%s", s.Branch),
-				dirtyBadge,
-				detached,
-				aheadBehind)
-		}
-		for _, f := range byRepo[s.Path] {
-			if f.Severity < repo.SeverityWarn {
-				if !globals.verbose {
-					hiddenInfo++
-					continue
-				}
-				fmt.Fprintf(out, "   %s %s\n", style.Mutedf(nc, "·"), style.Mutedf(nc, "[%s] %s", f.Check, f.Detail))
-				continue
-			}
-			fmt.Fprintf(out, "   %s [%s] %s\n", style.IconWarning(nc), f.Check, f.Detail)
+			fmt.Fprintln(out, style.ResultError(nc, "%s failed: %s", r.Path, oneLine(r.Error)))
 		}
 	}
-
-	if warnCount > 0 || hiddenInfo > 0 {
-		fmt.Fprintln(out)
-		summary := fmt.Sprintf("Hygiene: %d warning(s)", warnCount)
-		if hiddenInfo > 0 {
-			summary += style.Mutedf(nc, " · %d info hidden (--verbose to show)", hiddenInfo)
-		}
-		fmt.Fprintln(out, summary)
-	}
-
-	return exitCode
+	return code
 }
 
-func renderRepoFetch(globals globalFlags, workspacePath string, results []repo.FetchResult, stdout, stderr io.Writer) int {
-	if globals.json {
-		return writeJSON(stdout, stderr, "repo.fetch", results)
-	} else {
-		out := textOut(globals, stdout)
-		if len(results) == 0 {
-			fmt.Fprintln(out, "No repositories found.")
-			return 0
-		}
-		for _, r := range results {
-			nc := globals.noColor
-			short := style.AbsPath(workspacePath, r.Path)
-			if r.Success {
-				fmt.Fprintln(out, style.ResultSuccess(nc, "%s fetched", style.Infof(nc, "%s", short)))
-			} else {
-				fmt.Fprintln(out, style.ResultError(nc, "%s failed: %s", short, r.Error))
-			}
-		}
-	}
+// ── shared by pull, push, save ─────────────────────────────────────
 
-	anyFailure := false
-	for _, r := range results {
-		if !r.Success {
-			anyFailure = true
-			break
-		}
-	}
-	if anyFailure {
-		return 3
-	}
-	return 0
+// repoInteractive reports whether prompts can reach a person. Tests replace it.
+var repoInteractive = isInteractive
+
+// strategyFlagsOf registers --rebase and --merge.
+func strategyFlagsOf(fs *flag.FlagSet) (rebase, merge *bool) {
+	return fs.Bool("rebase", false, "rebase diverged repos"), fs.Bool("merge", false, "merge diverged repos")
 }
 
-func renderRepoOperation(globals globalFlags, verb string, results []repo.OperationResult, stdout, stderr io.Writer) int {
-	if globals.json {
-		return writeJSON(stdout, stderr, "repo."+verb, results)
-	} else {
-		out := textOut(globals, stdout)
-		if len(results) == 0 {
-			fmt.Fprintln(out, "No repositories found.")
-			return 0
+// chooser answers "rebase, merge or skip" for a diverged repo: the flag when
+// there is one, else the person at the terminal, else a skip. ws never
+// chooses for you.
+func (e *repoEnv) chooser(rebase, merge bool) repo.Chooser {
+	return func(path string, local, remote int) (repo.Strategy, string) {
+		switch {
+		case rebase:
+			return repo.StrategyRebase, ""
+		case merge:
+			return repo.StrategyMerge, ""
 		}
-		for _, r := range results {
-			nc := globals.noColor
-			if r.Success {
-				fmt.Fprintln(out, style.ResultSuccess(nc, "%s %s", style.Infof(nc, "%s", r.Path), verb))
-			} else {
-				fmt.Fprintln(out, style.ResultError(nc, "%s failed: %s", r.Path, r.Error))
+		if e.globals.quiet || e.globals.json || !repoInteractive(e.stdin, e.stdout) {
+			return repo.StrategySkip, repo.ReasonDiverged
+		}
+		commits := "commits"
+		if remote == 1 {
+			commits = "commit"
+		}
+		fmt.Fprintf(e.stdout, "%s has diverged (%d local, %d remote %s).\n", e.short(path), local, remote, commits)
+		for {
+			fmt.Fprint(e.stdout, "Pull with [r]ebase, [m]erge, or [s]kip this repo? ")
+			line, err := readLine(e.stdin)
+			if err != nil {
+				return repo.StrategySkip, "diverged: skipped"
+			}
+			switch strings.ToLower(strings.TrimSpace(line)) {
+			case "r", "rebase":
+				return repo.StrategyRebase, ""
+			case "m", "merge":
+				return repo.StrategyMerge, ""
+			case "", "s", "skip":
+				return repo.StrategySkip, "diverged: skipped"
 			}
 		}
 	}
+}
 
-	anyFailure := false
-	for _, r := range results {
+// fetchTargets fetches repos for pull and save, and returns the failures by path.
+// With --dry-run nothing is fetched.
+func (e *repoEnv) fetchTargets(repos []repo.Repository) map[string]string {
+	failed := map[string]string{}
+	if e.globals.dryRun {
+		return failed
+	}
+	for _, r := range e.fetchAll(repos) {
 		if !r.Success {
-			anyFailure = true
-			break
+			failed[r.Path] = oneLine(r.Error)
 		}
 	}
-	if anyFailure {
-		return 3
+	return failed
+}
+
+// printSkipped lists the repos a command leaves out.
+func (e *repoEnv) printSkipped(skipped []repo.Skip) {
+	out := quietOut(e.globals, e.stdout)
+	for _, s := range skipped {
+		fmt.Fprintf(out, "Skipped: %s (%s)\n", e.short(s.Path), s.Reason)
 	}
-	return 0
+}
+
+// printDryRunAge says how old the last fetch is, because a dry run plans from it.
+func (e *repoEnv) printDryRunAge(statuses []repo.RepoStatus) {
+	if !e.globals.dryRun || len(statuses) == 0 {
+		return
+	}
+	var oldest time.Time
+	never := 0
+	for _, s := range statuses {
+		t, ok := repo.LastFetch(s.Path)
+		if !ok {
+			never++
+			continue
+		}
+		if oldest.IsZero() || t.Before(oldest) {
+			oldest = t
+		}
+	}
+	note := "Planned from the last fetch"
+	switch {
+	case never > 0 && oldest.IsZero():
+		note += ", which never happened"
+	case never > 0:
+		note += fmt.Sprintf(": oldest %s ago, %d never fetched", humanAge(time.Since(oldest)), never)
+	default:
+		note += fmt.Sprintf(": oldest %s ago", humanAge(time.Since(oldest)))
+	}
+	fmt.Fprintln(quietOut(e.globals, e.stdout), note+".")
+}
+
+func humanAge(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return "under a minute"
+	case d < time.Hour:
+		return pluralize(int(d.Minutes()), "minute")
+	case d < 48*time.Hour:
+		return pluralize(int(d.Hours()), "hour")
+	}
+	return pluralize(int(d.Hours()/24), "day")
+}
+
+// noneSkipped keeps the JSON list a list.
+func noneSkipped(s []repo.Skip) []repo.Skip {
+	if s == nil {
+		return []repo.Skip{}
+	}
+	return s
 }

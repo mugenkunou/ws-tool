@@ -7,7 +7,7 @@ import (
 )
 
 // Entry is one repo's status plus its hygiene findings: the record
-// `ws repo scan` reports and the TUI repos screen lists.
+// `ws repo ls` reports and the TUI repos screen lists.
 type Entry struct {
 	Status   RepoStatus
 	Findings []Finding
@@ -24,6 +24,17 @@ func (e Entry) State() string {
 		return "no upstream"
 	}
 	return "clean"
+}
+
+// Issues counts the warn and error findings. Info findings are not issues.
+func (e Entry) Issues() int {
+	n := 0
+	for _, f := range e.Findings {
+		if f.Severity >= SeverityWarn {
+			n++
+		}
+	}
+	return n
 }
 
 // Entries pairs statuses with their findings.
@@ -50,12 +61,12 @@ func Schema(v resource.View) resource.Schema[Entry] {
 			{Key: "state", Title: "State", Value: func(e Entry) any { return e.State() }},
 			{Key: "ahead", Title: "↑", Value: func(e Entry) any { return e.Status.Ahead }},
 			{Key: "behind", Title: "↓", Value: func(e Entry) any { return e.Status.Behind }},
-			{Key: "issues", Title: "Issues", Value: func(e Entry) any { return len(e.Findings) },
+			{Key: "issues", Title: "Issues", Value: func(e Entry) any { return e.Issues() },
 				Text: func(e Entry) string {
-					if len(e.Findings) == 0 {
+					if e.Issues() == 0 {
 						return ""
 					}
-					return resource.Plain(len(e.Findings))
+					return resource.Plain(e.Issues())
 				}},
 			{Key: "branch", Title: "Branch", Value: func(e Entry) any { return e.Status.Branch },
 				Text: func(e Entry) string {

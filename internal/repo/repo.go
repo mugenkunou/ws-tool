@@ -44,7 +44,6 @@ func workspaceRel(workspacePath, value string) (rel string, ok bool) {
 	return r, true
 }
 
-
 type Repository struct {
 	Path string `json:"path"`
 }
@@ -71,17 +70,9 @@ type OperationResult struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error,omitempty"`
 	Output  string `json:"output,omitempty"`
-}
-
-type ReconcileSummary struct {
-	Scanned int `json:"scanned"`
-	Found   int `json:"found"`
-}
-
-type TrackedRepo struct {
-	Path   string `json:"path"`
-	Branch string `json:"branch"`
-	Remote string `json:"remote"`
+	// ExitCode is the exit code of a command run in the repo: 0 on success,
+	// -1 when the command did not start.
+	ExitCode int `json:"exit_code"`
 }
 
 type FilterOptions struct {
@@ -124,6 +115,9 @@ func Discover(workspacePath string, roots []string, excludeDirs []string) ([]Rep
 			absRoot = filepath.Join(workspacePath, root)
 		}
 		absRoot = filepath.Clean(absRoot)
+		if !IsWithin(absRoot, workspacePath) {
+			continue // repos outside the workspace are never listed
+		}
 
 		info, err := os.Stat(absRoot)
 		if err != nil || !info.IsDir() {
@@ -227,6 +221,9 @@ func PullAll(workspacePath string, repos []Repository, rebase bool) []OperationR
 		absPath := absRepoPath(workspacePath, r.Path)
 		out, err := runGit(absPath, args...)
 		if err != nil {
+			if rebase {
+				runGit(absPath, "rebase", "--abort") // leave no repo half-way
+			}
 			results = append(results, OperationResult{Path: r.Path, Success: false, Error: err.Error()})
 			continue
 		}
@@ -401,66 +398,44 @@ func SyncOne(workspacePath string, plan SyncPlan, opts SyncOptions) OperationRes
 	return result
 }
 
+// RunAll runs command in each repo with the repo root as its working
+// directory. Stdout and stderr are captured together, and stdin is not
+// connected. A command that exits non-zero fails; its output is kept.
 func RunAll(workspacePath string, repos []Repository, command []string) []OperationResult {
 	results := make([]OperationResult, 0, len(repos))
 	if len(command) == 0 {
 		return results
 	}
-
 	for _, r := range repos {
-		absPath := absRepoPath(workspacePath, r.Path)
-		cmd := exec.Command(command[0], command[1:]...)
-		cmd.Dir = absPath
-		var stdout bytes.Buffer
-		var stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		err := cmd.Run()
-		if err != nil {
-			errText := strings.TrimSpace(stderr.String())
-			if errText == "" {
-				errText = err.Error()
-			}
-			results = append(results, OperationResult{Path: r.Path, Success: false, Error: errText})
-			continue
-		}
-		results = append(results, OperationResult{Path: r.Path, Success: true, Output: strings.TrimSpace(stdout.String())})
+		results = append(results, RunOne(workspacePath, r, command))
 	}
-
 	return results
 }
 
-func Reconcile(workspacePath string, roots []string, excludeDirs []string, tracked []TrackedRepo) (ReconcileSummary, []Repository, error) {
-	discovered, err := Discover(workspacePath, roots, excludeDirs)
-	if err != nil {
-		return ReconcileSummary{}, nil, err
+// RunOne runs command in one repo; see RunAll.
+func RunOne(workspacePath string, r Repository, command []string) OperationResult {
+	cmd := exec.Command(command[0], command[1:]...)
+	cmd.Dir = absRepoPath(workspacePath, r.Path)
+	cmd.Env = gitEnv()
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	res := OperationResult{Path: r.Path}
+	err := cmd.Run()
+	res.Output = strings.TrimSpace(buf.String())
+	if err == nil {
+		res.Success = true
+		return res
 	}
-
-	seen := make(map[string]struct{}, len(discovered))
-	for _, r := range discovered {
-		seen[r.Path] = struct{}{}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		res.ExitCode = exitErr.ExitCode()
+		res.Error = fmt.Sprintf("exit %d", res.ExitCode)
+	} else {
+		res.ExitCode = -1
+		res.Error = err.Error()
 	}
-
-	// Merge tracked repos that weren't discovered (may have been removed or are outside roots).
-	for _, tr := range tracked {
-		absPath := filepath.Clean(absRepoPath(workspacePath, tr.Path))
-		if _, exists := seen[absPath]; exists {
-			continue
-		}
-		// Check if the tracked path actually exists on disk.
-		gitDir := filepath.Join(absPath, ".git")
-		if info, err := os.Stat(gitDir); err == nil && info.IsDir() {
-			discovered = append(discovered, Repository{Path: absPath})
-			seen[absPath] = struct{}{}
-		}
-	}
-
-	sort.Slice(discovered, func(i, j int) bool { return discovered[i].Path < discovered[j].Path })
-
-	return ReconcileSummary{
-		Scanned: len(discovered),
-		Found:   len(discovered),
-	}, discovered, nil
+	return res
 }
 
 func FetchOne(workspacePath string, r Repository) FetchResult {
@@ -539,9 +514,7 @@ func scanOne(absPath, relPath string) RepoStatus {
 }
 
 func runGit(repoPath string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", repoPath}, args...)...)
-	// Prevent git from prompting for credentials — this tool is non-interactive.
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd := gitCmd(repoPath, args...)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
