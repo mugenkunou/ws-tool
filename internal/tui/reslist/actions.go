@@ -28,7 +28,7 @@ const (
 	// fleet actions such as fetch, pull, run, empty, purge.
 	All
 	// Marked actions act on the marked rows, and with no marks on none: the
-	// action still runs, with no rows (spec §6.5 Dotfiles `a`).
+	// action still runs, with no rows (spec §6.5 Symlinks `a`).
 	Marked
 )
 

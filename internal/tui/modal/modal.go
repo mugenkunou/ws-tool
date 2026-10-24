@@ -43,9 +43,6 @@ type Model struct {
 	height  int
 }
 
-// Closed is the no-dialog state.
-func Closed() Model { return Model{} }
-
 // Prompt opens a text prompt for step.
 func (m Model) Prompt(step any, p prompt.Model) (Model, tea.Cmd) {
 	n := Model{kind: kindPrompt, step: step, prompt: p.SetSize(m.width, m.height), width: m.width, height: m.height}

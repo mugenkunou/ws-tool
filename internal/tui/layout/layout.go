@@ -58,8 +58,3 @@ func Columns(total int, cols []Col) []table.Column {
 	}
 	return out
 }
-
-// Clamp bounds v to [lo, hi].
-func Clamp(v, lo, hi int) int {
-	return min(max(v, lo), hi)
-}

@@ -287,40 +287,6 @@ func InitGit() error {
 	return nil
 }
 
-// AddGitRemote adds a git remote to the pass store.
-func AddGitRemote(url string) error {
-	verb := "add"
-	if GitRemoteURL() != "" {
-		verb = "set-url" // origin exists: point it at the new URL
-	}
-	cmd := exec.Command("pass", "git", "remote", verb, "origin", url)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("pass git remote add failed: %s", strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-// GitPush runs pass git push.
-func GitPush() error {
-	cmd := exec.Command("pass", "git", "push")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("pass git push failed: %s", strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-// GitLog returns the last N commit log entries from the pass store.
-func GitLog(count int) (string, error) {
-	cmd := exec.Command("pass", "git", "log", fmt.Sprintf("-%d", count), "--oneline", "--no-decorate")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("pass git log failed: %s", strings.TrimSpace(string(out)))
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
 // GitRemoteURL returns the origin remote URL of the pass store, or empty string.
 func GitRemoteURL() string {
 	h := CheckPass()
@@ -354,8 +320,22 @@ func InsertEntry(entryName, value string) error {
 	return nil
 }
 
+// CopyCommand is the `symlink add` command (without the leading ws) that puts the
+// pass store into the workspace, as one folder entry. The store path is written
+// with ~ when it lies inside $HOME. MirrorPath lands it in symlinks/home/.password-store.
+// A copy there is a second sync path: pass keeps syncing through its own git remote.
+func CopyCommand(storePath string) string {
+	p := storePath
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if rel, err := filepath.Rel(home, storePath); err == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+			p = "~/" + filepath.ToSlash(rel)
+		}
+	}
+	return "symlink add " + p + " --dir"
+}
+
 // WorkspaceCopy reports where the pass store lives inside the workspace, when
-// the store path is a symlink into it (what `ws dotfile add --dir` leaves).
+// the store path is a symlink into it (what `ws symlink add --dir` leaves).
 // ok is false when the store is not such a link.
 func WorkspaceCopy(storePath, workspacePath string) (target string, ok bool) {
 	info, err := os.Lstat(storePath)

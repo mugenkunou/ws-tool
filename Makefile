@@ -2,8 +2,8 @@
 
 VERSION  ?= dev
 TMPDIR   ?= $(HOME)/tmp
-GOCACHE  ?= $(HOME)/.gocache
-GOTMPDIR ?= $(HOME)/gotmp
+GOCACHE  ?= $(HOME)/tmp/gocache
+GOTMPDIR ?= $(HOME)/tmp/gotmp
 GOMODCACHE ?= $(shell go env GOMODCACHE)
 LDFLAGS  := -s -w -X github.com/mugenkunou/ws-tool/cmd.appVersion=$(VERSION)
 
@@ -37,7 +37,7 @@ else
 endif
 
 # test-local: run tests directly on the host. Relies on a home-directory TMPDIR
-# plus repo-local GOCACHE to work around noexec /tmp on this machine.
+# plus GOCACHE under ~/tmp to work around noexec /tmp on this machine.
 test-local:
 	@mkdir -p "$(TMPDIR)" "$(GOCACHE)" "$(GOTMPDIR)"
 	TMPDIR="$(TMPDIR)" GOCACHE="$(GOCACHE)" GOTMPDIR="$(GOTMPDIR)" go test ./...
@@ -54,9 +54,9 @@ test-docker: $(DOCKER_STAMP)
 		--user "$$(id -u):$$(id -g)" \
 		-v "$(CURDIR):/workspace:ro" \
 		-v "$(GOMODCACHE):/gomodcache:ro" \
-		-v "$(TMPDIR):/workspace/tmp:rw" \
-		-v "$(CURDIR)/.gocache:/workspace/.gocache:rw" \
-		-v "$(GOTMPDIR):/workspace/.gotmp:rw" \
+		-v "$(TMPDIR):/scratch/tmp:rw" \
+		-v "$(GOCACHE):/scratch/gocache:rw" \
+		-v "$(GOTMPDIR):/scratch/gotmp:rw" \
 		-w /workspace \
 		-e HOME=/tmp \
 		-e GOFLAGS=-mod=readonly \
@@ -64,9 +64,9 @@ test-docker: $(DOCKER_STAMP)
 		-e GOPROXY=off \
 		-e GONOSUMDB='*' \
 		-e GONOSUMCHECK='*' \
-		-e TMPDIR=/workspace/tmp \
-		-e GOCACHE=/workspace/.gocache \
-		-e GOTMPDIR=/workspace/.gotmp \
+		-e TMPDIR=/scratch/tmp \
+		-e GOCACHE=/scratch/gocache \
+		-e GOTMPDIR=/scratch/gotmp \
 		-e XDG_CONFIG_HOME= \
 		-e PASSWORD_STORE_DIR= \
 		-e WS_CRONTAB_FILE= \

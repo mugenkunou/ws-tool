@@ -27,7 +27,7 @@ type Engine struct {
 
 // EvalResult reports whether relPath syncs, and why. The final matching rule
 // wins (last-match-wins): an exclude rule blocks sync, and a later include
-// rule (an always-sync directory) can hand the path back. SafeHarbor is true
+// rule (an included directory) can hand the path back. ByInclude is true
 // when such an include rule is the reason the path syncs; its warnings count
 // as muted. OverriddenBy is the include rule that last matched. RuleSource is
 // where the deciding rule comes from (SourceBuiltin, SourceUser, or empty when
@@ -36,7 +36,7 @@ type EvalResult struct {
 	Included     bool   `json:"included"`
 	Rule         string `json:"rule"`
 	RuleSource   string `json:"rule_source,omitempty"`
-	SafeHarbor   bool   `json:"safe_harbor,omitempty"`
+	ByInclude    bool   `json:"by_include,omitempty"`
 	OverriddenBy string `json:"overridden_by,omitempty"`
 }
 
@@ -78,9 +78,9 @@ func (e *Engine) Evaluate(relPath string, isDir bool) EvalResult {
 	for _, rule := range e.Rules {
 		if matchRule(rule, normalized, isDir) {
 			if rule.Include {
-				// An include override won: the path is inside a safe harbor
+				// An include override won: the path is inside an include rule
 				// whether or not an earlier exclude matched it.
-				result.SafeHarbor = true
+				result.ByInclude = true
 				result.OverriddenBy = rule.Raw
 			}
 			result.Included = rule.Include
@@ -88,10 +88,10 @@ func (e *Engine) Evaluate(relPath string, isDir bool) EvalResult {
 			result.RuleSource = rule.Source
 		}
 	}
-	// Suppressed = included by a safe-harbor include override, even when no
-	// exclude rule ever matched (a harbor dir keeps syncing everything in
+	// Suppressed = included by a include override, even when no
+	// exclude rule ever matched (an included dir keeps syncing everything in
 	// it by design). A path the excludes still own is not suppressed.
-	result.SafeHarbor = result.Included && result.SafeHarbor
+	result.ByInclude = result.Included && result.ByInclude
 	return result
 }
 

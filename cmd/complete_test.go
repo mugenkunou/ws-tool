@@ -102,14 +102,9 @@ func TestCompleteSubcommands(t *testing.T) {
 			directive: compDirectiveNoFileComp,
 		},
 		{
-			args:      []string{"dotfile", ""},
-			wantSome:  []string{"add", "link", "unlink", "ls", "edit", "backup"},
-			wantNone:  []string{"rm", "scan", "fix", "sync", "reset", "git", "migrate"},
-			directive: compDirectiveNoFileComp,
-		},
-		{
-			args:      []string{"dotfile", "backup", ""},
-			wantSome:  []string{"enable", "disable", "status", "push"},
+			args:      []string{"symlink", ""},
+			wantSome:  []string{"add", "link", "unlink", "ls"},
+			wantNone:  []string{"rm", "scan", "fix", "sync", "reset", "git", "migrate", "edit", "backup"},
 			directive: compDirectiveNoFileComp,
 		},
 		{
@@ -238,21 +233,11 @@ func TestCompleteIgnoreCheckFileCompletion(t *testing.T) {
 	}
 }
 
-func TestCompleteDotfileAdd(t *testing.T) {
-	// dotfile add should also allow file completion.
-	_, dir := resolveCompletions([]string{"dotfile", "add", ""}, globalFlags{})
+func TestCompleteSymlinkAdd(t *testing.T) {
+	// symlink add should also allow file completion.
+	_, dir := resolveCompletions([]string{"symlink", "add", ""}, globalFlags{})
 	if dir != compDirectiveDefault {
 		t.Fatalf("expected Default (file completion), got %d", dir)
-	}
-}
-
-func TestCompleteDotfileBackupVerbs(t *testing.T) {
-	comps, dir := resolveCompletions([]string{"dotfile", "backup", ""}, globalFlags{})
-	if dir != compDirectiveNoFileComp {
-		t.Fatalf("expected NoFileComp, got %d", dir)
-	}
-	if !contains(comps, "enable") || !contains(comps, "status") {
-		t.Fatalf("expected backup verbs, got %v", comps)
 	}
 }
 
@@ -305,9 +290,9 @@ func TestCompleteSessionTags(t *testing.T) {
 	}
 }
 
-func TestCompleteDotfileTargets(t *testing.T) {
-	ctx := completionCtx{dotfiles: []string{"/home/user/.vimrc", "/home/user/.bashrc"}}
-	comps, dir := dotfileTargets(nil, "", ctx)
+func TestCompleteSymlinkTargets(t *testing.T) {
+	ctx := completionCtx{symlinks: []string{"/home/user/.vimrc", "/home/user/.bashrc"}}
+	comps, dir := symlinkTargets(nil, "", ctx)
 	if dir != compDirectiveNoFileComp || len(comps) != 2 {
 		t.Fatalf("expected 2 system paths, got %v %d", comps, dir)
 	}
@@ -319,12 +304,12 @@ func TestCompleteTrashAndCronTargets(t *testing.T) {
 		t.Fatalf("trash items: %v", comps)
 	}
 	comps, _ := cronTargets(nil, "", ctx)
-	for _, retired := range []string{"dotfile-sync", "log-prune", "secret-scan", "ignore-scan", "repo-sync"} {
+	for _, retired := range []string{"secret-scan", "ignore-scan", "repo-sync"} {
 		if contains(comps, retired) {
 			t.Errorf("cron completion offers the old name %q", retired)
 		}
 	}
-	for _, job := range []string{"dotfile-backup", "mega-sync", "pass-backup", "session-prune", "sync", "maintenance"} {
+	for _, job := range []string{"mega-sync", "pass-backup", "session-prune", "sync", "maintenance"} {
 		if !contains(comps, job) {
 			t.Errorf("cron completion lacks %q", job)
 		}

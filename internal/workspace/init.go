@@ -19,12 +19,11 @@ var layoutDirs = []string{
 	"scripts/lib",
 	"agent",
 	"agent/skills",
-	"configs/dotfiles",
+	"configs",
 	"secrets",
-	"secrets/dotfiles",
-	"secrets/pass",
+	"symlinks",
 	"data",
-	"data/ws-log",
+	"data/sessions",
 	"archive",
 }
 

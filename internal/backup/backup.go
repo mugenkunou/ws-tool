@@ -1,8 +1,5 @@
-// Package backup holds the git operations behind `ws dotfile backup` and
-// `ws pass backup`, which work exactly alike (spec §5 pass backup): the same
-// verbs, the same status, the same private-remote rule. Only the repository
-// differs, so the git plumbing and the visibility check live here once, and
-// each noun supplies its repository path and its own settings.
+// Package backup holds the git operations behind `ws pass backup` (spec §5
+// pass backup): init, commit, push, status and the private-remote rule.
 package backup
 
 import (
@@ -75,7 +72,7 @@ func IsRepo(path string) bool {
 }
 
 // Init makes path a git repository on branch, with the commit identity
-// `ws <ws@localhost>` set in the repository's local config (spec §5 dotfile
+// `ws <ws@localhost>` set in the repository's local config (spec §5 pass
 // backup). An existing repository is only moved to the branch.
 func Init(path, branch string) error {
 	if err := os.MkdirAll(path, 0o755); err != nil {

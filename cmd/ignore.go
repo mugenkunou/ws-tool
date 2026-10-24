@@ -293,10 +293,10 @@ func anyWithin(path string, dirs []string) bool {
 
 // ── add ────────────────────────────────────────────────────────────
 
-// dotfileOriginal names the link whose workspace copy a path is, contains or
+// symlinkOriginal names the link whose workspace copy a path is, contains or
 // lies inside, or "" when there is none.
-func (e ignoreEnv) dotfileOriginal(abs string) string {
-	for _, l := range e.cfg.Links {
+func (e ignoreEnv) symlinkOriginal(abs string) string {
+	for _, l := range e.cfg.Symlinks {
 		orig := filepath.Join(e.workspace, filepath.FromSlash(l.Original))
 		if repo.IsWithin(abs, orig) || repo.IsWithin(orig, abs) {
 			return l.System
@@ -330,8 +330,8 @@ func (e ignoreEnv) add(args []string, globals globalFlags, stdin io.Reader, stdo
 			err = fmt.Errorf("%s: a name with * would be read as a pattern", abs)
 		}
 		if err == nil {
-			if sys := e.dotfileOriginal(abs); sys != "" {
-				err = fmt.Errorf("%s is the workspace copy of the dotfile %s: it must sync for ws dotfile link on your other machines", abs, sys)
+			if sys := e.symlinkOriginal(abs); sys != "" {
+				err = fmt.Errorf("%s is the workspace copy of the symlink %s: it must sync for ws symlink link on your other machines", abs, sys)
 			}
 		}
 		if err != nil {
@@ -493,7 +493,7 @@ func (e ignoreEnv) mute(args []string, globals globalFlags, stdin io.Reader, std
 			case st.Entry != "":
 				fmt.Fprintf(out, "Already muted: %s (its parent %s is muted)\n", abs, style.AbsPath(e.workspace, st.Entry))
 			default:
-				fmt.Fprintf(out, "Already muted: %s (always-sync directory %s)\n", abs, ruleLabel(st.Rule, st.RuleSource))
+				fmt.Fprintf(out, "Already muted: %s (included directory %s)\n", abs, ruleLabel(st.Rule, st.RuleSource))
 			}
 			continue
 		}
@@ -560,8 +560,8 @@ func (e ignoreEnv) unmute(args []string, globals globalFlags, stdin io.Reader, s
 			fmt.Fprintf(stderr, "%s is muted by its parent %s: unmute that instead\n", abs, style.AbsPath(e.workspace, st.Entry))
 			bad = true
 		default:
-			fmt.Fprintf(stderr, "%s is under the always-sync directory %s: its warnings stay muted, because that directory syncs everything by design.\n"+
-				"  To change it, edit safe_harbors or suppress_harbors with ws ignore edit\n", abs, ruleLabel(st.Rule, st.RuleSource))
+			fmt.Fprintf(stderr, "%s is under the included directory %s: its warnings stay muted, because that directory syncs everything by design.\n"+
+				"  To change it, edit include with ws ignore edit\n", abs, ruleLabel(st.Rule, st.RuleSource))
 			bad = true
 		}
 	}
@@ -636,8 +636,8 @@ func (e ignoreEnv) check(args []string, globals globalFlags, stdout, stderr io.W
 	switch {
 	case !res.Included:
 		reason = "rule " + ruleLabel(res.Rule, res.RuleSource)
-	case res.SafeHarbor:
-		reason = "always-sync directory " + ruleLabel(res.Rule, res.RuleSource)
+	case res.ByInclude:
+		reason = "included directory " + ruleLabel(res.Rule, res.RuleSource)
 	default:
 		reason = "no rule matches"
 	}
@@ -699,14 +699,11 @@ func normalizeRules(r ignore.UserRules) ignore.UserRules {
 	if r.Exclude == nil {
 		r.Exclude = []ignore.RuleEntry{}
 	}
-	if r.SafeHarbors == nil {
-		r.SafeHarbors = []ignore.RuleEntry{}
+	if r.Include == nil {
+		r.Include = []ignore.RuleEntry{}
 	}
 	if r.SuppressDefaults == nil {
 		r.SuppressDefaults = []string{}
-	}
-	if r.SuppressHarbors == nil {
-		r.SuppressHarbors = []string{}
 	}
 	return r
 }

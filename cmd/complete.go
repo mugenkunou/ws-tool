@@ -10,6 +10,7 @@ import (
 
 	"github.com/mugenkunou/ws-tool/internal/cron"
 	"github.com/mugenkunou/ws-tool/internal/repo"
+	"github.com/mugenkunou/ws-tool/internal/symlink"
 	"github.com/mugenkunou/ws-tool/internal/trash"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
@@ -25,7 +26,7 @@ const (
 
 // topLevelCommands is the list used by both __complete and the generated shell
 // scripts. It is derived from the command table, so it holds exactly the
-// commands help lists and never a hidden alias (dev.md §12.6).
+// commands help lists and never a hidden alias (HANDBOOK.md §9.7).
 var topLevelCommands = func() []string {
 	out := nextWords(nil)
 	slices.Sort(out)
@@ -51,10 +52,9 @@ var resolvers = map[string]resolver{
 	"repo root add":  func([]string, string, completionCtx) ([]string, int) { return nil, compDirectiveFilterDirs },
 	"repo root rm":   rootTargets,
 
-	"dotfile add":    fileTargets,
-	"dotfile link":   dotfileTargets,
-	"dotfile unlink": dotfileTargets,
-	"dotfile edit":   dotfileTargets,
+	"symlink add":    fileTargets,
+	"symlink link":   symlinkTargets,
+	"symlink unlink": symlinkTargets,
 
 	"scratch add":  fileTargets,
 	"scratch new":  scratchNames,
@@ -94,7 +94,7 @@ type completionCtx struct {
 	workspace  string
 	scratchDir string
 	logDir     string
-	dotfiles   []string // dotfile system paths
+	symlinks   []string // symlink host paths
 	logTags    []string // session tag directory names
 	scratchIDs []string // scratch directory names
 	repoPaths  []string // discovered repo paths (absolute)
@@ -163,6 +163,9 @@ func resolveCompletions(args []string, globals globalFlags) ([]string, int) {
 		prev := args[len(args)-2]
 		if strings.HasPrefix(prev, "-") && !strings.Contains(prev, "=") {
 			if ok, dir := flagValueDirective(prev); ok {
+				if prev == "--app" {
+					return filterPrefix(symlink.Apps(), args[len(args)-1]), compDirectiveNoFileComp
+				}
 				if strings.TrimLeft(prev, "-") == "shell" {
 					return filterPrefix([]string{"bash", "zsh", "fish"}, args[len(args)-1]), compDirectiveNoFileComp
 				}
@@ -247,8 +250,8 @@ func dirTargets([]string, string, completionCtx) ([]string, int) {
 	return nil, compDirectiveFilterDirs
 }
 
-func dotfileTargets(args []string, toComplete string, ctx completionCtx) ([]string, int) {
-	return filterPrefix(notGiven(ctx.dotfiles, args), toComplete), compDirectiveNoFileComp
+func symlinkTargets(args []string, toComplete string, ctx completionCtx) ([]string, int) {
+	return filterPrefix(notGiven(ctx.symlinks, args), toComplete), compDirectiveNoFileComp
 }
 
 func scratchNames(args []string, toComplete string, ctx completionCtx) ([]string, int) {
@@ -315,7 +318,7 @@ func loadCompletionCtx(globals globalFlags) completionCtx {
 	}
 	ctx.workspace = resolved
 
-	// Load config for scratch.root_dir, repo roots, and dotfile links.
+	// Load config for scratch.root_dir, repo roots, and symlinks.
 	cfg, cfgErr := wsconfig.Load(resolvedConfig)
 	if cfgErr == nil {
 		if dir, err := wsconfig.ResolvePath(resolved, cfg.Scratch.RootDir); err == nil {
@@ -328,10 +331,10 @@ func loadCompletionCtx(globals globalFlags) completionCtx {
 		}
 	}
 
-	// Load dotfile links from ws.json for completions.
+	// Load symlinks from ws.json for completions.
 	if cfgErr == nil {
-		for _, link := range cfg.Links {
-			ctx.dotfiles = append(ctx.dotfiles, link.System)
+		for _, link := range cfg.Symlinks {
+			ctx.symlinks = append(ctx.symlinks, link.System)
 		}
 	}
 
@@ -355,8 +358,8 @@ func loadCompletionCtx(globals globalFlags) completionCtx {
 		}
 	}
 
-	// Session tags: directory names under data/ws-log/.
-	ctx.logDir = filepath.Join(resolved, "data", "ws-log")
+	// Session tags: directory names under data/sessions/.
+	ctx.logDir = filepath.Join(resolved, "data", "sessions")
 	ctx.logTags = listDirNames(ctx.logDir)
 
 	// Scratch directory names.

@@ -23,13 +23,16 @@ func TestJSONExitCodeFollowsActions(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The storage path is taken, so the add action fails.
-	taken := filepath.Join(workspace, "configs", "dotfiles", "bashrc")
+	taken := filepath.Join(workspace, "symlinks", "home", ".bashrc")
+	if err := os.MkdirAll(filepath.Dir(taken), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(taken, []byte("already here\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	var out, errOut bytes.Buffer
-	code := Execute([]string{"--workspace", workspace, "--json", "dotfile", "add", system}, strings.NewReader(""), &out, &errOut)
+	code := Execute([]string{"--workspace", workspace, "--json", "symlink", "add", system}, strings.NewReader(""), &out, &errOut)
 	if code != 1 {
 		t.Fatalf("every action failed: exit %d, want 1\nstdout: %s\nstderr: %s", code, out.String(), errOut.String())
 	}
@@ -59,7 +62,7 @@ func TestJSONExitHelper(t *testing.T) {
 
 // jsonMigrated lists the nouns whose JSON command names follow the grammar.
 // Each noun is added in the commit that moves it (plan 0002 phase B).
-var jsonMigrated = []string{"version", "dotfile", "session", "scratch", "trash", "cron", "ignore", "repo", "secret", "pass", "credential"}
+var jsonMigrated = []string{"version", "symlink", "session", "scratch", "trash", "cron", "ignore", "repo", "secret", "pass", "credential"}
 
 // TestJSONCommandNames: every read-only command that needs no target, run with
 // --json, reports <noun>.<verb> as its command (spec §4.4).
@@ -86,7 +89,7 @@ func TestJSONCommandNames(t *testing.T) {
 }
 
 // TestFlagsMayFollowPositionals: a flag after a positional argument is parsed
-// (`ws dotfile add ~/.x --dir` used to fail because the standard flag package
+// (`ws symlink add ~/.x --dir` used to fail because the standard flag package
 // stops at the first positional).
 func TestFlagsMayFollowPositionals(t *testing.T) {
 	home := t.TempDir()
@@ -100,7 +103,7 @@ func TestFlagsMayFollowPositionals(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
-	code := Execute([]string{"--workspace", workspace, "dotfile", "add", dir, "--dir", "--dry-run"}, strings.NewReader(""), &out, &errOut)
+	code := Execute([]string{"--workspace", workspace, "symlink", "add", dir, "--dir", "--dry-run"}, strings.NewReader(""), &out, &errOut)
 	if code != 0 {
 		t.Fatalf("a flag after the positional should parse: exit %d stderr=%s", code, errOut.String())
 	}
@@ -118,7 +121,7 @@ func TestJSONStdoutIsOnlyJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
-	code := Execute([]string{"--workspace", workspace, "--json", "dotfile", "add", system}, strings.NewReader(""), &out, &errOut)
+	code := Execute([]string{"--workspace", workspace, "--json", "symlink", "add", system}, strings.NewReader(""), &out, &errOut)
 	if code != 0 {
 		t.Fatalf("exit %d stderr=%s", code, errOut.String())
 	}

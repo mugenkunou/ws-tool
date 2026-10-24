@@ -13,29 +13,29 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	wscron "github.com/mugenkunou/ws-tool/internal/cron"
-	wsdotfile "github.com/mugenkunou/ws-tool/internal/dotfile"
 	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
-	wslog "github.com/mugenkunou/ws-tool/internal/log"
 	wsrepo "github.com/mugenkunou/ws-tool/internal/repo"
 	"github.com/mugenkunou/ws-tool/internal/resource"
 	wsscratch "github.com/mugenkunou/ws-tool/internal/scratch"
 	wssecret "github.com/mugenkunou/ws-tool/internal/secret"
+	wssession "github.com/mugenkunou/ws-tool/internal/session"
+	symlink "github.com/mugenkunou/ws-tool/internal/symlink"
 	wstrash "github.com/mugenkunou/ws-tool/internal/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/cron"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/dotfiles"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/repos"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/scratch"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/secrets"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/sessions"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/symlinks"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/trash"
 )
 
 // listScreens are the screens that are a reslist.
 var listScreens = []nav.Screen{
-	nav.ScreenRepos, nav.ScreenDotfiles, nav.ScreenScratch, nav.ScreenSessions,
+	nav.ScreenRepos, nav.ScreenSymlinks, nav.ScreenScratch, nav.ScreenSessions,
 	nav.ScreenIgnore, nav.ScreenSecrets, nav.ScreenCron, nav.ScreenTrash,
 }
 
@@ -267,9 +267,9 @@ func TestJSONPaneNeedsNoView(t *testing.T) {
 			for _, e := range msg.Entries {
 				same("repo", wsrepo.Schema(cli).Record(e), wsrepo.Schema(tui).Record(e))
 			}
-		case dotfiles.LoadedMsg:
+		case symlinks.LoadedMsg:
 			for _, e := range msg.Entries {
-				same("dotfile", wsdotfile.Schema(cli).Record(e), wsdotfile.Schema(tui).Record(e))
+				same("symlink", symlink.Schema(cli).Record(e), symlink.Schema(tui).Record(e))
 			}
 		case scratch.LoadedMsg:
 			for _, e := range msg.Entries {
@@ -277,7 +277,7 @@ func TestJSONPaneNeedsNoView(t *testing.T) {
 			}
 		case sessions.LoadedMsg:
 			for _, e := range msg.Sessions {
-				same("session", wslog.Schema(cli).Record(e), wslog.Schema(tui).Record(e))
+				same("session", wssession.Schema(cli).Record(e), wssession.Schema(tui).Record(e))
 			}
 		case ignore.LoadedMsg:
 			for _, e := range msg.Violations {
@@ -299,18 +299,19 @@ func TestJSONPaneNeedsNoView(t *testing.T) {
 	}
 }
 
-// TestDashboardOpensFilteredScreen: enter on a Dashboard problem leaves the
-// screen showing only the affected rows.
-func TestDashboardOpensFilteredScreen(t *testing.T) {
-	m := dashboardTo(t, loaded(t, 100, 30), "dotfile links broken")
+// TestDashboardOpensTheScreenOnTheProblemRow: enter on a Dashboard problem leaves the
+// Symlinks screen with the cursor on the first broken, missing or drifted row.
+func TestDashboardOpensTheScreenOnTheProblemRow(t *testing.T) {
+	m := dashboardTo(t, loaded(t, 100, 30), "symlinks broken, missing or drifted")
 	m, cmd := sendRun(m, press("enter"))
 	m = apply(m, cmd)
-	if m.active != nav.ScreenDotfiles {
+	if m.active != nav.ScreenSymlinks {
 		t.Fatalf("active = %v", m.active.Title())
 	}
-	v := tuitestPlain(view(m))
-	if !strings.Contains(v, "filter status!=ok") || strings.Contains(v, "/home/tester/.bashrc") {
-		t.Fatalf("the screen is filtered to the broken rows:\n%s", v)
+	// `d` describes the cursor row: it must be the broken one.
+	v := tuitestPlain(view(send(m, press("d"))))
+	if !strings.Contains(v, "Host path       ~/.gitconfig") {
+		t.Fatalf("the cursor should be on the broken row:\n%s", v)
 	}
 }
 

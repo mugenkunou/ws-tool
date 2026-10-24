@@ -32,11 +32,3 @@ func TestAge(t *testing.T) {
 		}
 	}
 }
-
-func TestDuration(t *testing.T) {
-	for s, want := range map[int64]string{42: "42s", 185: "3m 05s", 3720: "1h 02m"} {
-		if got := Duration(s); got != want {
-			t.Errorf("Duration(%d) = %q, want %q", s, got, want)
-		}
-	}
-}

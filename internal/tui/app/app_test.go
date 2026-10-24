@@ -12,23 +12,23 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	wscron "github.com/mugenkunou/ws-tool/internal/cron"
-	"github.com/mugenkunou/ws-tool/internal/dotfile"
 	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
-	wslog "github.com/mugenkunou/ws-tool/internal/log"
 	"github.com/mugenkunou/ws-tool/internal/repo"
 	wsscratch "github.com/mugenkunou/ws-tool/internal/scratch"
 	"github.com/mugenkunou/ws-tool/internal/secret"
+	wssession "github.com/mugenkunou/ws-tool/internal/session"
+	"github.com/mugenkunou/ws-tool/internal/symlink"
 	wstrash "github.com/mugenkunou/ws-tool/internal/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/cron"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/dotfiles"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/repos"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/scratch"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/secrets"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/sessions"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/symlinks"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 	"github.com/mugenkunou/ws-tool/internal/tui/tuitest"
@@ -58,7 +58,7 @@ func testEnv(t *testing.T) env.Env {
 		},
 		Config:     cfg,
 		ScratchDir: "/home/tester/Scratch",
-		LogDir:     ws + "/data/ws-log",
+		LogDir:     ws + "/data/sessions",
 		Clock:      fixedClock,
 	}
 }
@@ -77,10 +77,10 @@ func fixtures() []tea.Msg {
 			{Status: repo.RepoStatus{Path: ws + "/Projects/old", Detached: true, Behind: 5, HasUpstream: true}},
 			{Status: repo.RepoStatus{Path: "/home/tester/.password-store", Branch: "master"}},
 		}},
-		dotfiles.LoadedMsg{Entries: []dotfiles.Entry{
-			{Link: wsconfig.Link{System: "/home/tester/.bashrc", Original: "configs/dotfiles/bashrc"}, WorkspacePath: "/home/tester/Workspace/configs/dotfiles/bashrc"},
-			{Link: wsconfig.Link{System: "/home/tester/.gitconfig", Original: "configs/dotfiles/gitconfig"}, WorkspacePath: "/home/tester/Workspace/configs/dotfiles/gitconfig", Status: dotfile.StatusBroken},
-			{Link: wsconfig.Link{System: "/etc/hosts", Original: "configs/dotfiles/etc/hosts", Sudo: true}, WorkspacePath: "/home/tester/Workspace/configs/dotfiles/etc/hosts", Status: dotfile.StatusOverwritten},
+		symlinks.LoadedMsg{Entries: []symlinks.Entry{
+			{System: "/home/tester/.bashrc", Original: "symlinks/home/.bashrc", WorkspacePath: "/home/tester/Workspace/symlinks/home/.bashrc", Status: symlink.StatusOK, Registered: true},
+			{System: "/home/tester/.gitconfig", Original: "symlinks/home/.gitconfig", WorkspacePath: "/home/tester/Workspace/symlinks/home/.gitconfig", Status: symlink.StatusBroken, Registered: true},
+			{System: "/etc/hosts", Original: "symlinks/system/etc/hosts", WorkspacePath: "/home/tester/Workspace/symlinks/system/etc/hosts", Sudo: true, Status: symlink.StatusDrifted, Registered: true},
 		}},
 		scratch.LoadedMsg{
 			Entries: []wsscratch.Entry{
@@ -89,7 +89,7 @@ func fixtures() []tea.Msg {
 			},
 			Tags: []string{"dns", "network", "proxy"},
 		},
-		sessions.LoadedMsg{Sessions: []wslog.Session{
+		sessions.LoadedMsg{Sessions: []wssession.Session{
 			{Tag: "deploy-fix", StartedAt: time.Date(2026, 9, 30, 14, 5, 0, 0, time.UTC), Commands: 12, SizeBytes: 40960, Active: true},
 			{Tag: "rsync-backup", StartedAt: time.Date(2026, 9, 28, 9, 30, 0, 0, time.UTC), DurationSec: 1865, Commands: 7, SizeBytes: 8192},
 		}},
@@ -106,11 +106,11 @@ func fixtures() []tea.Msg {
 			Health:     secrets.Health{Pass: secret.PassHealth{Installed: true, GPGAvailable: true, Initialized: true, GitBacked: true, EntryCount: 42}},
 		},
 		cron.LoadedMsg{Jobs: []cron.Job{
-			{Name: "dotfile-backup", Schedule: "0 * * * *", Description: "commit + push dotfiles", Installed: true, CrontabOK: true,
-				Interval: time.Hour, LastRun: wscron.RunRecord{Job: "dotfile-backup", Time: fixedClock().Add(-2 * time.Hour)}},
+			{Name: "pass-backup", Schedule: "0 * * * *", Description: "push the pass store", Installed: true, CrontabOK: true,
+				Interval: time.Hour, LastRun: wscron.RunRecord{Job: "pass-backup", Time: fixedClock().Add(-2 * time.Hour)}},
 			{Name: "repo-sync", Schedule: "*/30 * * * *", Description: "sync repo fleet", Installed: true, CrontabOK: true,
 				Interval: 30 * time.Minute, LastRun: wscron.RunRecord{Job: "repo-sync", Time: fixedClock().Add(-40 * time.Minute), ExitCode: 2}},
-			{Name: "all", Preset: true, CrontabOK: true, Description: "installs: dotfile-backup, repo-sync"},
+			{Name: "all", Preset: true, CrontabOK: true, Description: "installs: pass-backup, repo-sync"},
 		}},
 		trash.LoadedMsg{
 			Status: wstrash.Status{
@@ -227,15 +227,14 @@ func TestSnapshots(t *testing.T) {
 		{"repos_marked_fetch", []string{"2", "space", "down", "space", "down", "space", "f"}},
 		{"repos_marked", []string{"2", "space", "down", "space", "down", "space"}},
 		{"repos_range_marked", []string{"2", "down", "space", "down", "down", "ctrl+space"}},
-		{"dotfiles", []string{"3"}},
-		{"dotfiles_add_prompt", []string{"3", "a"}},
-		{"dotfiles_add_prompt_prefilled", []string{"3", "down", "down", "a"}},
-		{"dotfiles_filter", []string{"3", "/", "s", "t", "a", "t", "u", "s", "!", "=", "o", "k", "enter"}},
-		{"dotfiles_sorted_marked", []string{"3", ">", "space", "down", "space"}},
-		{"dotfiles_marked_unlink", []string{"3", "space", "down", "space", "ctrl+d"}},
-		{"dotfiles_marked_link", []string{"3", "down", "space", "l"}},
-		{"dotfiles_marked", []string{"3", "space", "down", "space"}},
-		{"dotfiles_detail", []string{"3", "down", "d"}},
+		{"symlinks", []string{"3"}},
+		{"symlinks_add_scanning", []string{"3", "a"}}, // the checklist follows when the scan returns
+		{"symlinks_filter", []string{"3", "/", "s", "t", "a", "t", "u", "s", "!", "=", "o", "k", "enter"}},
+		{"symlinks_sorted_marked", []string{"3", ">", "space", "down", "space"}},
+		{"symlinks_marked_unlink", []string{"3", "space", "down", "space", "ctrl+d"}},
+		{"symlinks_marked_link", []string{"3", "down", "space", "l"}},
+		{"symlinks_marked", []string{"3", "space", "down", "space"}},
+		{"symlinks_detail", []string{"3", "down", "d"}},
 		{"scratch", []string{"4"}},
 		{"scratch_new_prompt", []string{"4", "a", "d", "n"}},
 		{"scratch_marked", []string{"4", "space", "down", "space"}},
@@ -284,8 +283,8 @@ func TestSnapshotNotInitialized(t *testing.T) {
 
 func TestSnapshotLoadError(t *testing.T) {
 	m := loaded(t, 80, 24)
-	m = send(m, dotfiles.LoadedMsg{Err: errors.New("ws.json: permission denied")}, press("3"))
-	tuitest.Golden(t, "dotfiles_error", view(m))
+	m = send(m, symlinks.LoadedMsg{Err: errors.New("ws.json: permission denied")}, press("3"))
+	tuitest.Golden(t, "symlinks_error", view(m))
 }
 
 func TestSnapshotNotice(t *testing.T) {
@@ -378,7 +377,7 @@ func TestGlobalKeysLeavePageKeysAlone(t *testing.T) {
 // TestDashboardRanksProblemsFirst: errors lead the attention list.
 func TestDashboardRanksProblemsFirst(t *testing.T) {
 	v := tuitest.Plain(view(loaded(t, 100, 30)))
-	errAt := strings.Index(v, "dotfile links broken")
+	errAt := strings.Index(v, "symlinks broken, missing or drifted")
 	warnAt := strings.Index(v, "out of sync")
 	if errAt < 0 || warnAt < 0 || errAt > warnAt {
 		t.Fatalf("errors should precede warnings:\n%s", v)
@@ -448,7 +447,7 @@ func collect(cmd tea.Cmd) []tea.Msg {
 // §6.5): x, r, c, O and R do nothing there.
 func TestDashboardHasNoActionKeys(t *testing.T) {
 	for _, k := range []string{"x", "r", "c", "O", "R", "a", "d"} {
-		m := dashboardTo(t, loaded(t, 100, 30), "dotfile links broken")
+		m := dashboardTo(t, loaded(t, 100, 30), "symlinks broken, missing or drifted")
 		m2, cmd := sendRun(m, press(k))
 		if cmds := collect(cmd); len(cmds) != 0 || m2.active != nav.ScreenDashboard || m2.current().CapturesKeys() {
 			t.Errorf("%s on the Dashboard produced %v (active %v)", k, cmds, m2.active.Title())
@@ -456,29 +455,29 @@ func TestDashboardHasNoActionKeys(t *testing.T) {
 	}
 }
 
-// TestDashboardOpensTheScreenFiltered: enter on a problem opens its screen
-// filtered to the affected rows, so the screen's own key acts on exactly those.
-func TestDashboardOpensTheScreenFiltered(t *testing.T) {
-	m := dashboardTo(t, loaded(t, 100, 30), "dotfile links broken")
+// TestDashboardOpensTheScreenAtTheProblem: enter on a problem opens its screen with
+// the first affected row selected.
+func TestDashboardOpensTheScreenAtTheProblem(t *testing.T) {
+	m := dashboardTo(t, loaded(t, 100, 30), "symlinks broken, missing or drifted")
 	_, cmd := sendRun(m, press("enter"))
-	var gotoDotfiles, filtered bool
+	var gotoSymlinks, selected bool
 	for _, msg := range collect(cmd) {
 		switch msg := msg.(type) {
 		case nav.GotoMsg:
-			gotoDotfiles = msg.Screen == nav.ScreenDotfiles
-		case nav.FilterMsg:
-			filtered = msg.Screen == nav.ScreenDotfiles && msg.Filter == "status!=ok"
+			gotoSymlinks = msg.Screen == nav.ScreenSymlinks
+		case symlinks.SelectMsg:
+			selected = msg.System == "/home/tester/.gitconfig"
 		}
 	}
-	if !gotoDotfiles || !filtered {
-		t.Fatalf("goto %v filter %v", gotoDotfiles, filtered)
+	if !gotoSymlinks || !selected {
+		t.Fatalf("goto %v select %v", gotoSymlinks, selected)
 	}
 }
 
 // TestDashboardGrid: arrows move spatially between cards and never open a
 // screen; ↑ from the top row returns to the attention list; enter opens.
 func TestDashboardGrid(t *testing.T) {
-	m := loaded(t, 100, 30) // 3 columns: Repos Dotfiles Scratch / Logs Ignore Secrets / Cron Trash
+	m := loaded(t, 100, 30) // 3 columns: Repos Symlinks Scratch / Logs Ignore Secrets / Cron Trash
 	selected := func(m Model) string { return focusedCard(t, m) }
 	// Leave the attention list for the grid's first card.
 	for range 8 {
@@ -488,9 +487,9 @@ func TestDashboardGrid(t *testing.T) {
 		t.Fatalf("after leaving the list: %q, want Repos", got)
 	}
 	steps := []struct{ key, want string }{
-		{"right", "Dotfiles"}, {"right", "Scratch"}, {"right", "Scratch"}, // edge stops
+		{"right", "Symlinks"}, {"right", "Scratch"}, {"right", "Scratch"}, // edge stops
 		{"down", "Secrets"}, {"left", "Ignore"}, {"down", "Trash"}, {"down", "Trash"},
-		{"up", "Ignore"}, {"up", "Dotfiles"}, {"left", "Repos"}, {"l", "Dotfiles"}, {"h", "Repos"},
+		{"up", "Ignore"}, {"up", "Symlinks"}, {"left", "Repos"}, {"l", "Symlinks"}, {"h", "Repos"},
 	}
 	for _, st := range steps {
 		m = send(m, press(st.key))

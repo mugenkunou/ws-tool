@@ -105,7 +105,7 @@ var icons = struct {
 	Record  iconPair // recording active
 	Info    iconPair // informational
 	Lock    iconPair // secret / security
-	Link    iconPair // symlink / dotfile
+	Link    iconPair // symlink
 	Folder  iconPair // directory
 	Git     iconPair // git repo
 	Trash   iconPair // trash / delete
@@ -160,24 +160,7 @@ func IconCross(noColor bool) string   { return Icon(icons.Cross, noColor) }
 func IconWarning(noColor bool) string { return Icon(icons.Warning, noColor) }
 func IconDot(noColor bool) string     { return Icon(icons.Dot, noColor) }
 func IconArrow(noColor bool) string   { return Icon(icons.Arrow, noColor) }
-func IconRecord(noColor bool) string  { return Icon(icons.Record, noColor) }
 func IconInfo(noColor bool) string    { return Icon(icons.Info, noColor) }
-func IconLock(noColor bool) string    { return Icon(icons.Lock, noColor) }
-func IconLink(noColor bool) string    { return Icon(icons.Link, noColor) }
-func IconFolder(noColor bool) string  { return Icon(icons.Folder, noColor) }
-func IconGit(noColor bool) string     { return Icon(icons.Git, noColor) }
-func IconTrash(noColor bool) string   { return Icon(icons.Trash, noColor) }
-func IconSearch(noColor bool) string  { return Icon(icons.Search, noColor) }
-func IconSpark(noColor bool) string   { return Icon(icons.Spark, noColor) }
-func IconGear(noColor bool) string    { return Icon(icons.Gear, noColor) }
-func IconShield(noColor bool) string  { return Icon(icons.Shield, noColor) }
-func IconWrench(noColor bool) string  { return Icon(icons.Wrench, noColor) }
-func IconPlay(noColor bool) string    { return Icon(icons.Play, noColor) }
-func IconStop(noColor bool) string    { return Icon(icons.Stop, noColor) }
-func IconEye(noColor bool) string     { return Icon(icons.Eye, noColor) }
-func IconBell(noColor bool) string    { return Icon(icons.Bell, noColor) }
-func IconClock(noColor bool) string   { return Icon(icons.Clock, noColor) }
-func IconRestore(noColor bool) string { return Icon(icons.Restore, noColor) }
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Core painting functions
@@ -189,11 +172,6 @@ func Paint(code, text string, noColor bool) string {
 		return text
 	}
 	return code + text + Reset
-}
-
-// Successf formats and paints in success (green).
-func Successf(noColor bool, format string, a ...any) string {
-	return Paint(Colors.Success, fmt.Sprintf(format, a...), noColor)
 }
 
 // Errorf formats and paints in error (red).
@@ -248,29 +226,6 @@ func Badge(label string, noColor bool) string {
 // ──────────────────────────────────────────────────────────────────────────────
 // Severity counters — "0 critical · 2 warning" with color
 // ──────────────────────────────────────────────────────────────────────────────
-
-// Counts renders "N critical · M warning" with appropriate coloring.
-func Counts(critical, warning int, noColor bool) string {
-	var parts []string
-
-	cStr := fmt.Sprintf("%d critical", critical)
-	if critical > 0 {
-		cStr = Paint(Colors.Critical, cStr, noColor)
-	} else {
-		cStr = Paint(Colors.Muted, cStr, noColor)
-	}
-	parts = append(parts, cStr)
-
-	wStr := fmt.Sprintf("%d warning", warning)
-	if warning > 0 {
-		wStr = Paint(Colors.Warning, wStr, noColor)
-	} else {
-		wStr = Paint(Colors.Muted, wStr, noColor)
-	}
-	parts = append(parts, wStr)
-
-	return strings.Join(parts, " · ")
-}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Section headers — visual structure
@@ -336,25 +291,6 @@ type TableRow struct {
 	Columns []string
 }
 
-// RenderTable writes rows with space-padded columns.
-// widths[i] is the minimum width for column i.
-func RenderTable(w io.Writer, rows []TableRow, widths []int) {
-	for _, row := range rows {
-		var sb strings.Builder
-		for i, col := range row.Columns {
-			if i < len(widths) {
-				fmt.Fprintf(&sb, "%-*s", widths[i], col)
-			} else {
-				sb.WriteString(col)
-			}
-			if i < len(row.Columns)-1 {
-				sb.WriteString("  ")
-			}
-		}
-		fmt.Fprintln(w, strings.TrimRight(sb.String(), " "))
-	}
-}
-
 // ──────────────────────────────────────────────────────────────────────────────
 // Result line helpers — "✔ Moved ...", "✖ Failed ..."
 // ──────────────────────────────────────────────────────────────────────────────
@@ -378,13 +314,6 @@ func ResultWarning(noColor bool, format string, a ...any) string {
 	icon := IconWarning(noColor)
 	msg := fmt.Sprintf(format, a...)
 	return Paint(Colors.Warning, icon, noColor) + " " + msg
-}
-
-// ResultInfo returns a cyan info + message line.
-func ResultInfo(noColor bool, format string, a ...any) string {
-	icon := IconInfo(noColor)
-	msg := fmt.Sprintf(format, a...)
-	return Paint(Colors.Info, icon, noColor) + " " + msg
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

@@ -211,20 +211,6 @@ func FetchAll(workspacePath string, repos []Repository) []FetchResult {
 	return results
 }
 
-// RunAll runs command in each repo with the repo root as its working
-// directory. Stdout and stderr are captured together, and stdin is not
-// connected. A command that exits non-zero fails; its output is kept.
-func RunAll(workspacePath string, repos []Repository, command []string) []OperationResult {
-	results := make([]OperationResult, 0, len(repos))
-	if len(command) == 0 {
-		return results
-	}
-	for _, r := range repos {
-		results = append(results, RunOne(workspacePath, r, command))
-	}
-	return results
-}
-
 // RunOne runs command in one repo; see RunAll.
 func RunOne(workspacePath string, r Repository, command []string) OperationResult {
 	cmd := exec.Command(command[0], command[1:]...)

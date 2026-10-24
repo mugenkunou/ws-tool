@@ -85,27 +85,6 @@ func TestFetchAllNoRemotePartial(t *testing.T) {
 	}
 }
 
-func TestRunAll(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-
-	ws := filepath.Join(t.TempDir(), "Workspace")
-	repoPath := filepath.Join(ws, "repo")
-	if err := os.MkdirAll(repoPath, 0o755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
-	runGitCmd(t, repoPath, "init")
-
-	results := RunAll(ws, []Repository{{Path: "repo"}}, []string{"git", "status", "--short"})
-	if len(results) != 1 {
-		t.Fatalf("expected one result, got %d", len(results))
-	}
-	if !results[0].Success {
-		t.Fatalf("expected run success, got error: %s", results[0].Error)
-	}
-}
-
 func runGitCmd(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -124,7 +103,7 @@ func TestDiscoverExcludeDirs(t *testing.T) {
 	ws := filepath.Join(t.TempDir(), "Workspace")
 
 	// Create two repos: one at ws/ (should be excluded) and one outside it.
-	wsRepo := filepath.Join(ws, "ws", "dotfiles-git")
+	wsRepo := filepath.Join(ws, "ws", "configs-git")
 	userRepo := filepath.Join(ws, "Experiments", "blog")
 	for _, p := range []string{wsRepo, userRepo} {
 		if err := os.MkdirAll(p, 0o755); err != nil {

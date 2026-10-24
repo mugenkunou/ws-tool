@@ -1,0 +1,30 @@
+ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+────────────────────────────────────────────────────────────────────────────────────────────────────
+symlink  ~/.gitconfig
+
+Host path       ~/.gitconfig
+Stored as       symlinks/home/.gitconfig
+Workspace copy  symlinks/home/.gitconfig
+App
+Status          broken
+Problem
+Directory
+Sudo
+
+esc back
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+↑/k scroll up • ↓/j scroll down • esc back • tab screens • : command • ? help • q quit

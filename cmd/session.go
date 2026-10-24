@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/mugenkunou/ws-tool/internal/age"
-	wslog "github.com/mugenkunou/ws-tool/internal/log"
 	"github.com/mugenkunou/ws-tool/internal/resource"
+	wssession "github.com/mugenkunou/ws-tool/internal/session"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
@@ -41,9 +41,9 @@ func runSession(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	// Sessions live under <workspace>/data/ws-log/, and sync with the workspace.
+	// Sessions live under <workspace>/data/sessions/, and sync with the workspace.
 	s := sessionEnv{
-		logDir:   filepath.Join(workspacePath, "data", "ws-log"),
+		logDir:   filepath.Join(workspacePath, "data", "sessions"),
 		stateDir: stateDir,
 		cfg:      cfg,
 	}
@@ -86,12 +86,12 @@ func (e sessionEnv) ls(args []string, globals globalFlags, stdout, stderr io.Wri
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	sessions, err := wslog.List(e.logDir, e.stateDir)
+	sessions, err := wssession.List(e.logDir, e.stateDir)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	return renderList(globals, "session.ls", wslog.Schema(resource.CLIView()), sessions, lf, "No recorded sessions.", stdout, stderr)
+	return renderList(globals, "session.ls", wssession.Schema(resource.CLIView()), sessions, lf, "No recorded sessions.", stdout, stderr)
 }
 
 func (e sessionEnv) show(args []string, globals globalFlags, stdout, stderr io.Writer) int {
@@ -107,7 +107,7 @@ func (e sessionEnv) show(args []string, globals globalFlags, stdout, stderr io.W
 		fmt.Fprintln(stderr, "usage: ws session show <tag> [--commands]")
 		return 1
 	}
-	res, err := wslog.Show(e.logDir, fs.Args()[0], *commands)
+	res, err := wssession.Show(e.logDir, fs.Args()[0], *commands)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -136,7 +136,7 @@ func (e sessionEnv) grep(args []string, globals globalFlags, stdout, stderr io.W
 		fmt.Fprintln(stderr, "usage: ws session grep <text> [--max <n>]")
 		return 1
 	}
-	matches, err := wslog.Grep(e.logDir, e.stateDir, text, *max)
+	matches, err := wssession.Grep(e.logDir, e.stateDir, text, *max)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -177,7 +177,7 @@ func (e sessionEnv) record(args []string, globals globalFlags, stdin io.Reader, 
 	tag := ""
 	if len(fs.Args()) == 1 {
 		tag = fs.Args()[0]
-		if err := wslog.ValidateTag(tag); err != nil {
+		if err := wssession.ValidateTag(tag); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -214,7 +214,7 @@ func (e sessionEnv) record(args []string, globals globalFlags, stdin io.Reader, 
 		}
 	}
 
-	res, err := wslog.Start(wslog.StartOptions{LogDir: e.logDir, StateDir: e.stateDir, Tag: tag})
+	res, err := wssession.Start(wssession.StartOptions{LogDir: e.logDir, StateDir: e.stateDir, Tag: tag})
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -240,10 +240,10 @@ func (e sessionEnv) record(args []string, globals globalFlags, stdin io.Reader, 
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Start(); err != nil {
 		fmt.Fprintf(stderr, "Error starting recording: %s\n", err)
-		_, _ = wslog.Stop(wslog.StopOptions{LogDir: e.logDir, StateDir: e.stateDir})
+		_, _ = wssession.Stop(wssession.StopOptions{LogDir: e.logDir, StateDir: e.stateDir})
 		return 1
 	}
-	_ = wslog.SetActivePID(e.stateDir, cmd.Process.Pid)
+	_ = wssession.SetActivePID(e.stateDir, cmd.Process.Pid)
 
 	// End the recording when it grows past session.max_session_mb.
 	maxMB := e.cfg.Session.MaxSessionMB
@@ -271,7 +271,7 @@ func (e sessionEnv) record(args []string, globals globalFlags, stdin io.Reader, 
 	close(done)
 
 	// Finalize (idempotent: `session stop` may have done it already).
-	stopped, _ := wslog.Stop(wslog.StopOptions{LogDir: e.logDir, StateDir: e.stateDir})
+	stopped, _ := wssession.Stop(wssession.StopOptions{LogDir: e.logDir, StateDir: e.stateDir})
 	if globals.json {
 		return writeJSON(stdout, stderr, "session.record", map[string]any{
 			"tag": res.Tag, "session_dir": res.SessionDir, "stdin_path": res.StdinPath,
@@ -322,14 +322,14 @@ func (e sessionEnv) stop(args []string, globals globalFlags, stdout, stderr io.W
 
 	// stop runs without a plan and without a prompt (spec §4.7).
 	if globals.dryRun {
-		if m, ok := wslog.ActiveMarker(e.stateDir); ok {
+		if m, ok := wssession.ActiveMarker(e.stateDir); ok {
 			fmt.Fprintf(out, "Would stop the recording %s\n", m.Tag)
 		} else {
 			fmt.Fprintln(out, "No active recording session.")
 		}
 		return 0
 	}
-	res, err := wslog.StopActive(wslog.StopOptions{LogDir: e.logDir, StateDir: e.stateDir})
+	res, err := wssession.StopActive(wssession.StopOptions{LogDir: e.logDir, StateDir: e.stateDir})
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -344,7 +344,7 @@ func (e sessionEnv) stop(args []string, globals globalFlags, stdout, stderr io.W
 		return 0
 	}
 	printSessionEnded(out, nc, res.Tag, res.DurationSec,
-		filepath.Join(res.Dir, wslog.TranscriptFile), filepath.Join(res.Dir, wslog.CommandsFile))
+		filepath.Join(res.Dir, wssession.TranscriptFile), filepath.Join(res.Dir, wssession.CommandsFile))
 	return 0
 }
 
@@ -362,22 +362,22 @@ func (e sessionEnv) rm(args []string, globals globalFlags, stdin io.Reader, stdo
 		fmt.Fprintln(stderr, "usage: ws session rm <tag…>")
 		return 1
 	}
-	sessions, err := wslog.List(e.logDir, e.stateDir)
+	sessions, err := wssession.List(e.logDir, e.stateDir)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	byTag := map[string]wslog.Session{}
+	byTag := map[string]wssession.Session{}
 	for _, s := range sessions {
 		byTag[s.Tag] = s
 	}
 
 	// Tags must match exactly. If one does not exist or is the recording in
 	// progress, nothing is deleted.
-	var chosen []wslog.Session
+	var chosen []wssession.Session
 	seen := map[string]bool{}
 	for _, tag := range fs.Args() {
-		if err := wslog.ValidateTag(tag); err != nil {
+		if err := wssession.ValidateTag(tag); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
@@ -409,7 +409,7 @@ func (e sessionEnv) rm(args []string, globals globalFlags, stdin io.Reader, stdo
 
 // deleteAction soft-deletes one session. note, when set, follows the size in
 // the plan line (prune adds the age).
-func (e sessionEnv) deleteAction(s wslog.Session, note string) Action {
+func (e sessionEnv) deleteAction(s wssession.Session, note string) Action {
 	detail := style.HumanBytes(s.SizeBytes)
 	if note != "" {
 		detail += ", " + note
@@ -418,7 +418,7 @@ func (e sessionEnv) deleteAction(s wslog.Session, note string) Action {
 		ID:          "session-rm-" + s.Tag,
 		Description: fmt.Sprintf("Delete %s (%s)", filepath.Join(e.logDir, s.Tag), detail),
 		Execute: func() error {
-			return wslog.Remove(wslog.RemoveOptions{LogDir: e.logDir, StateDir: e.stateDir, Tag: s.Tag})
+			return wssession.Remove(wssession.RemoveOptions{LogDir: e.logDir, StateDir: e.stateDir, Tag: s.Tag})
 		},
 	}
 }
@@ -441,7 +441,7 @@ func (e sessionEnv) prune(args []string, globals globalFlags, stdin io.Reader, s
 		fmt.Fprintln(stderr, "--all and --older-than cannot be used together")
 		return 1
 	}
-	sel := wslog.PruneSelection{CapMB: e.cfg.Session.CapMB, All: *all, Now: time.Now().UTC()}
+	sel := wssession.PruneSelection{CapMB: e.cfg.Session.CapMB, All: *all, Now: time.Now().UTC()}
 	if *olderThan != "" {
 		d, err := age.Parse(*olderThan)
 		if err != nil {
@@ -451,13 +451,13 @@ func (e sessionEnv) prune(args []string, globals globalFlags, stdin io.Reader, s
 		sel.OlderThan = d
 	}
 
-	sessions, err := wslog.List(e.logDir, e.stateDir)
+	sessions, err := wssession.List(e.logDir, e.stateDir)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	total := wslog.TotalBytes(sessions)
-	chosen := wslog.SelectPrune(sessions, sel)
+	total := wssession.TotalBytes(sessions)
+	chosen := wssession.SelectPrune(sessions, sel)
 
 	p := Plan{Command: "session.prune"}
 	for _, s := range chosen {
@@ -512,7 +512,7 @@ func sessionShellInit(sessionDir string, noColor, noPrompt bool) (shellCmd strin
 	if shellBase != "zsh" {
 		shellBase, shell = "bash", "bash"
 	}
-	stdinLog := filepath.Join(sessionDir, wslog.CommandsFile)
+	stdinLog := filepath.Join(sessionDir, wssession.CommandsFile)
 	content := sessionShellInitContent(shellBase, stdinLog, !noPrompt, noColor)
 	env = []string{"WS_LOG_RECORDING=1"}
 

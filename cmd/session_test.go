@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	wslog "github.com/mugenkunou/ws-tool/internal/log"
+	wssession "github.com/mugenkunou/ws-tool/internal/session"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
@@ -29,7 +29,7 @@ func newSessEnv(t *testing.T) sessEnv {
 	ws := initWorkspace(t)
 	return sessEnv{
 		workspace: ws,
-		logDir:    filepath.Join(ws, "data", "ws-log"),
+		logDir:    filepath.Join(ws, "data", "sessions"),
 		stateDir:  filepath.Join(state, "ws-tool"),
 		trash:     filepath.Join(data, "Trash", "files"),
 	}
@@ -51,9 +51,9 @@ func (e sessEnv) mustRun(t *testing.T, stdin string, args ...string) string {
 }
 
 // seed creates a finished session with the given commands and transcript.
-func (e sessEnv) seed(t *testing.T, tag, commands, transcript string) wslog.StartResult {
+func (e sessEnv) seed(t *testing.T, tag, commands, transcript string) wssession.StartResult {
 	t.Helper()
-	res, err := wslog.Start(wslog.StartOptions{LogDir: e.logDir, StateDir: e.stateDir, Tag: tag})
+	res, err := wssession.Start(wssession.StartOptions{LogDir: e.logDir, StateDir: e.stateDir, Tag: tag})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func (e sessEnv) seed(t *testing.T, tag, commands, transcript string) wslog.Star
 	if err := os.WriteFile(res.StdoutPath, []byte(transcript), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := wslog.Stop(wslog.StopOptions{LogDir: e.logDir, StateDir: e.stateDir}); err != nil {
+	if _, err := wssession.Stop(wssession.StopOptions{LogDir: e.logDir, StateDir: e.stateDir}); err != nil {
 		t.Fatal(err)
 	}
 	return res
@@ -113,7 +113,7 @@ func TestSessionLsAndShow(t *testing.T) {
 
 func TestSessionLsShowsTheRecording(t *testing.T) {
 	e := newSessEnv(t)
-	if _, err := wslog.Start(wslog.StartOptions{LogDir: e.logDir, StateDir: e.stateDir, Tag: "deploy-fix"}); err != nil {
+	if _, err := wssession.Start(wssession.StartOptions{LogDir: e.logDir, StateDir: e.stateDir, Tag: "deploy-fix"}); err != nil {
 		t.Fatal(err)
 	}
 	out := e.mustRun(t, "", "session", "ls")
@@ -182,13 +182,13 @@ func TestSessionStop(t *testing.T) {
 
 	// A recording whose recorder is this very process: stop finalizes it
 	// without signalling (it would end the test run).
-	if _, err := wslog.Start(wslog.StartOptions{LogDir: e.logDir, StateDir: e.stateDir, Tag: "demo"}); err != nil {
+	if _, err := wssession.Start(wssession.StartOptions{LogDir: e.logDir, StateDir: e.stateDir, Tag: "demo"}); err != nil {
 		t.Fatal(err)
 	}
 	if code, out, _ := e.run("", "session", "stop", "--dry-run"); code != 0 || !strings.Contains(out, "Would stop the recording demo") {
 		t.Fatalf("dry-run: %d %s", code, out)
 	}
-	if _, ok := wslog.ActiveMarker(e.stateDir); !ok {
+	if _, ok := wssession.ActiveMarker(e.stateDir); !ok {
 		t.Fatal("--dry-run must stop nothing")
 	}
 
@@ -198,11 +198,11 @@ func TestSessionStop(t *testing.T) {
 			t.Fatalf("stop output lacks %q:\n%s", want, out)
 		}
 	}
-	if _, ok := wslog.ActiveMarker(e.stateDir); ok {
+	if _, ok := wssession.ActiveMarker(e.stateDir); ok {
 		t.Fatal("the marker must be removed")
 	}
 
-	if _, err := wslog.Start(wslog.StartOptions{LogDir: e.logDir, StateDir: e.stateDir, Tag: "again"}); err != nil {
+	if _, err := wssession.Start(wssession.StartOptions{LogDir: e.logDir, StateDir: e.stateDir, Tag: "again"}); err != nil {
 		t.Fatal(err)
 	}
 	_, js, _ := e.run("", "--json", "session", "stop")
@@ -251,7 +251,7 @@ func TestSessionRm(t *testing.T) {
 	}
 
 	// The recording in progress cannot be deleted.
-	if _, err := wslog.Start(wslog.StartOptions{LogDir: e.logDir, StateDir: e.stateDir, Tag: "live"}); err != nil {
+	if _, err := wssession.Start(wssession.StartOptions{LogDir: e.logDir, StateDir: e.stateDir, Tag: "live"}); err != nil {
 		t.Fatal(err)
 	}
 	if code, _, errOut := e.run("", "session", "rm", "live", "c"); code != 1 || !strings.Contains(errOut, "active session") {
@@ -333,7 +333,7 @@ func TestSessionPruneByAgeAndAll(t *testing.T) {
 	}
 
 	// --all deletes every finished session, never the recording.
-	if _, err := wslog.Start(wslog.StartOptions{LogDir: e.logDir, StateDir: e.stateDir, Tag: "live"}); err != nil {
+	if _, err := wssession.Start(wssession.StartOptions{LogDir: e.logDir, StateDir: e.stateDir, Tag: "live"}); err != nil {
 		t.Fatal(err)
 	}
 	e.mustRun(t, "y\n", "session", "prune", "--all")
@@ -387,7 +387,7 @@ func TestSessionRecordNeedsATerminal(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(e.logDir, "demo")); !os.IsNotExist(err) {
 		t.Fatal("nothing may be created when ws refuses to record")
 	}
-	if _, ok := wslog.ActiveMarker(e.stateDir); ok {
+	if _, ok := wssession.ActiveMarker(e.stateDir); ok {
 		t.Fatal("no marker may be left behind")
 	}
 	for _, bad := range []string{"../../x", "a/b", ".hidden"} {
@@ -401,28 +401,6 @@ func TestSessionRecordNeedsATerminal(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(e.logDir, "demo")); !os.IsNotExist(err) {
 		t.Fatal("--dry-run creates nothing")
 	}
-}
-
-func TestLogAliasesReachSession(t *testing.T) {
-	e := newSessEnv(t)
-	e.seed(t, "demo", "ls\n", "ls\n")
-
-	code, out, errOut := e.run("", "log", "ls")
-	if code != 0 || !strings.Contains(out, "demo") || !strings.Contains(errOut, `"log ls" is now "session ls"`) {
-		t.Fatalf("exit %d out=%s err=%s", code, out, errOut)
-	}
-	// `log start --tag t` is `session record t`; without a terminal it refuses.
-	code, _, errOut = e.run("", "log", "start", "--tag", "x", "--quiet-start")
-	if code != 1 || !strings.Contains(errOut, "interactive terminal") {
-		t.Fatalf("exit %d stderr=%s", code, errOut)
-	}
-	// The nightly cron line calls `log prune --quiet`; --quiet silences the hint.
-	e.setSession(t, 500, 100)
-	code, out, errOut = e.run("", "--quiet", "log", "prune")
-	if code != 0 || errOut != "" {
-		t.Fatalf("a quiet alias is silent: exit %d err=%q", code, errOut)
-	}
-	e.mustRun(t, "y\n", "log", "rm", "demo")
 }
 
 // TestRecordedShellInit: the generated init files carry the prompt indicator

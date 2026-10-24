@@ -50,29 +50,6 @@ func TestBadge(t *testing.T) {
 	}
 }
 
-func TestCounts(t *testing.T) {
-	result := Counts(2, 1, true)
-	if !strings.Contains(result, "2 critical") {
-		t.Fatalf("expected '2 critical', got %q", result)
-	}
-	if !strings.Contains(result, "1 warning") {
-		t.Fatalf("expected '1 warning', got %q", result)
-	}
-	if !strings.Contains(result, "·") {
-		t.Fatalf("expected separator, got %q", result)
-	}
-}
-
-func TestCountsColored(t *testing.T) {
-	result := Counts(0, 3, false)
-	if !strings.Contains(result, "0 critical") {
-		t.Fatalf("expected '0 critical', got %q", result)
-	}
-	if !strings.Contains(result, "3 warning") {
-		t.Fatalf("expected '3 warning', got %q", result)
-	}
-}
-
 func TestDivider(t *testing.T) {
 	plain := Divider(true)
 	if len(plain) == 0 {
@@ -127,34 +104,6 @@ func TestResultError(t *testing.T) {
 	result := ResultError(true, "Failed %s", "file.txt")
 	if !strings.Contains(result, "[err]") {
 		t.Fatalf("expected [err] icon, got %q", result)
-	}
-}
-
-func TestRenderTable(t *testing.T) {
-	var buf bytes.Buffer
-	rows := []TableRow{
-		{Columns: []string{"A", "BB", "CCC"}},
-		{Columns: []string{"DD", "E", "F"}},
-	}
-	RenderTable(&buf, rows, []int{6, 6, 6})
-	out := buf.String()
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("expected 2 lines, got %d", len(lines))
-	}
-}
-
-func TestSuccessf(t *testing.T) {
-	result := Successf(true, "done %d", 42)
-	if result != "done 42" {
-		t.Fatalf("expected plain 'done 42', got %q", result)
-	}
-	colored := Successf(false, "done %d", 42)
-	if !strings.Contains(colored, "done 42") {
-		t.Fatalf("colored should contain text, got %q", colored)
-	}
-	if !strings.Contains(colored, esc) {
-		t.Fatal("colored should contain escape sequence")
 	}
 }
 

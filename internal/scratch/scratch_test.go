@@ -29,12 +29,12 @@ func TestNewListDelete(t *testing.T) {
 		t.Fatalf("expected one scratch entry, got %d", len(list))
 	}
 
-	del, err := Delete(DeleteOptions{RootDir: root, Name: "proxy-auth"})
+	entry, err := Resolve(root, "proxy-auth")
 	if err != nil {
-		t.Fatalf("delete failed: %v", err)
+		t.Fatalf("resolve failed: %v", err)
 	}
-	if len(del.Removed) != 1 {
-		t.Fatalf("expected one removed, got %+v", del)
+	if err := Remove(entry); err != nil {
+		t.Fatalf("remove failed: %v", err)
 	}
 }
 

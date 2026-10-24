@@ -1,6 +1,6 @@
 // Package resource describes a domain's list records once — their fields —
 // so the CLI (text and --json) and the TUI show, filter, and sort them the
-// same way. See docs/adr/0001-tui-list-screens-from-shared-resource-descriptions.md.
+// same way. See HANDBOOK.md §7.5.
 //
 // A Schema is plain data: every field has a key (the JSON key and the name
 // used by --sort / --filter and the TUI filter), a title, the raw value, and
@@ -30,7 +30,7 @@ type Field[T any] struct {
 
 // Schema describes a record type.
 type Schema[T any] struct {
-	Name    string         // record noun, e.g. "dotfile"
+	Name    string         // record noun, e.g. "symlink"
 	ID      func(T) string // stable identity across reloads
 	Fields  []Field[T]
 	Columns []string // field keys shown in tables (CLI text and TUI), in order

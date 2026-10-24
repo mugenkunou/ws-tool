@@ -59,7 +59,7 @@ func Load(o workspace.PathOverrides) (Env, error) {
 		Paths:       p,
 		Config:      cfg,
 		ExcludeDirs: cfg.Repo.ExcludeDirs,
-		LogDir:      filepath.Join(p.Workspace, "data", "ws-log"),
+		LogDir:      filepath.Join(p.Workspace, "data", "sessions"),
 	}
 	for _, r := range cfg.Repo.Roots {
 		if resolved, err := wsconfig.ResolvePath(p.Workspace, r); err == nil {

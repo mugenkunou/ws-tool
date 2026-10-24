@@ -30,15 +30,15 @@ func typed(m Model, s string) Model {
 	return m
 }
 
-var cands = []string{"push", "backup status", "repo", "repos", "dotfile", "dotfiles", "dashboard", "config show", "q"}
+var cands = []string{"push", "backup status", "repo", "repos", "symlink", "symlinks", "dashboard", "config show", "q"}
 
 func TestMatchesAreProperPrefixesIgnoringCase(t *testing.T) {
-	m := typed(New("", cands), "do")
-	if got := strings.Join(m.Matches(), ","); got != "dotfile,dotfiles" {
+	m := typed(New("", cands), "sy")
+	if got := strings.Join(m.Matches(), ","); got != "symlink,symlinks" {
 		t.Fatalf("matches = %s", got)
 	}
-	m = typed(New("", cands), "DOTFILE")
-	if got := strings.Join(m.Matches(), ","); got != "dotfiles" {
+	m = typed(New("", cands), "SYMLINK")
+	if got := strings.Join(m.Matches(), ","); got != "symlinks" {
 		t.Fatalf("an exact match is not offered again: %s", got)
 	}
 	if got := typed(New("", cands), "zzz").Matches(); len(got) != 0 {
@@ -47,9 +47,9 @@ func TestMatchesAreProperPrefixesIgnoringCase(t *testing.T) {
 }
 
 func TestTabCompletesTheFirstMatch(t *testing.T) {
-	m := typed(New("", cands), "do")
+	m := typed(New("", cands), "sy")
 	m, _ = m.Update(kp("tab"))
-	if m.Value() != "dotfile" {
+	if m.Value() != "symlink" {
 		t.Fatalf("value = %q", m.Value())
 	}
 	// Nothing to complete: tab leaves the text.
@@ -74,9 +74,9 @@ func TestEnterSubmitsAndEscCancels(t *testing.T) {
 }
 
 func TestBackspaceAndCtrlU(t *testing.T) {
-	m := typed(New("", cands), "dot")
+	m := typed(New("", cands), "syl")
 	m, _ = m.Update(kp("backspace"))
-	if m.Value() != "do" {
+	if m.Value() != "sy" {
 		t.Fatalf("value = %q", m.Value())
 	}
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
@@ -86,20 +86,20 @@ func TestBackspaceAndCtrlU(t *testing.T) {
 }
 
 func TestPrefill(t *testing.T) {
-	m := New("dotfile add ~/.password-store --dir", cands)
-	if m.Value() != "dotfile add ~/.password-store --dir" {
+	m := New("symlink add ~/.password-store --dir", cands)
+	if m.Value() != "symlink add ~/.password-store --dir" {
 		t.Fatalf("value = %q", m.Value())
 	}
 	_, cmd := m.Update(kp("enter"))
-	if r := cmd().(ResultMsg); r.Line != "dotfile add ~/.password-store --dir" {
+	if r := cmd().(ResultMsg); r.Line != "symlink add ~/.password-store --dir" {
 		t.Fatalf("a prefilled line can be run as it is: %+v", r)
 	}
 }
 
 func TestViewShowsCompletionsDimmedAndClips(t *testing.T) {
-	m := typed(New("", cands), "do").SetWidth(80)
+	m := typed(New("", cands), "sy").SetWidth(80)
 	v := ansi.Strip(m.View())
-	if !strings.HasPrefix(v, ":do") || !strings.Contains(v, "tfile") || !strings.Contains(v, "dotfiles") {
+	if !strings.HasPrefix(v, ":sy") || !strings.Contains(v, "mlink") || !strings.Contains(v, "symlinks") {
 		t.Fatalf("view = %q", v)
 	}
 	if lipgloss.Height(m.View()) != 1 {
@@ -113,7 +113,7 @@ func TestViewShowsCompletionsDimmedAndClips(t *testing.T) {
 }
 
 func TestClosest(t *testing.T) {
-	for typed, want := range map[string]string{"dotfil": "dotfile", "dotfle": "dotfile", "bakup status": "backup status", "xyzzyx": ""} {
+	for typed, want := range map[string]string{"symlin": "symlink", "symlnk": "symlink", "bakup status": "backup status", "xyzzyx": ""} {
 		if got := Closest(typed, cands); got != want {
 			t.Errorf("Closest(%q) = %q, want %q", typed, got, want)
 		}

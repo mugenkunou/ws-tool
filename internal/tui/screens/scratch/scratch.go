@@ -388,7 +388,7 @@ func (m Model) addCommand(_ []wsscratch.Entry, args []string) (Model, tea.Cmd) {
 	}
 	plans, err := wsscratch.PlanAdd(wsscratch.AddOptions{
 		RootDir: m.env.ScratchDir, WorkspacePath: m.env.Paths.Workspace, ConfigPath: m.env.Paths.Config,
-		Links: m.env.Config.Links, Paths: paths,
+		Links: m.env.Config.Symlinks, Paths: paths,
 	})
 	if err != nil {
 		return m, nav.Notify(nav.LevelError, err.Error())

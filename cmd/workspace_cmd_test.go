@@ -123,7 +123,7 @@ func TestConfigShowIsResolvedAbsolute(t *testing.T) {
 	ws := initWorkspace(t)
 	cfgPath := filepath.Join(ws, "ws.json")
 	cfg, _ := wsconfig.Load(cfgPath)
-	cfg.Links = []wsconfig.Link{{System: "/home/u/.x", Original: "configs/dotfiles/x"}}
+	cfg.Symlinks = []wsconfig.Link{{System: "/home/u/.x", Original: "symlinks/home/x"}}
 	cfg.Secret.SkipDirs = []string{"vendor"}
 	if err := wsconfig.Save(cfgPath, cfg); err != nil {
 		t.Fatal(err)
@@ -142,7 +142,7 @@ func TestConfigShowIsResolvedAbsolute(t *testing.T) {
 		Secret struct {
 			SkipDirs []string `json:"skip_dirs"`
 		} `json:"secret"`
-		Links []struct{ Original string } `json:"links"`
+		Symlinks []struct{ Original string } `json:"symlinks"`
 	}
 	if err := json.Unmarshal([]byte(out), &shown); err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -151,7 +151,7 @@ func TestConfigShowIsResolvedAbsolute(t *testing.T) {
 		t.Fatalf("workspace/config: %+v", shown)
 	}
 	if !slices.Equal(shown.Repo.Roots, []string{ws}) || !slices.Equal(shown.Secret.SkipDirs, []string{filepath.Join(ws, "vendor")}) ||
-		len(shown.Links) != 1 || shown.Links[0].Original != filepath.Join(ws, "configs/dotfiles/x") {
+		len(shown.Symlinks) != 1 || shown.Symlinks[0].Original != filepath.Join(ws, "symlinks/home/x") {
 		t.Fatalf("paths must be absolute: %+v", shown)
 	}
 

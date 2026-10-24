@@ -33,17 +33,6 @@ func (lf *listFlags) query() resource.Query {
 	}
 }
 
-// listFlagHelp documents --sort / --filter for a list command, naming the
-// schema's field keys.
-func listFlagHelp(cmd string, keys []string) []string {
-	return []string{
-		"      --sort fields    " + cmd + ": sort by field; comma-separated, -field descends",
-		"      --filter expr    " + cmd + ": key=text, key!=text, or text (repeatable; all must match)",
-		"      --wide           " + cmd + ": show every field as a column",
-		"                       fields: " + strings.Join(keys, ", "),
-	}
-}
-
 // applyList filters and sorts items by --filter / --sort, reporting an
 // unknown field on stderr (ok is then false). Commands with their own text
 // layout (the scans) use it before printing.

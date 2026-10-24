@@ -23,17 +23,18 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/mugenkunou/ws-tool/internal/style"
+	"github.com/mugenkunou/ws-tool/internal/symlink"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/format"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/cron"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/dotfiles"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/repos"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/scratch"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/secrets"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/sessions"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/symlinks"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 )
@@ -70,7 +71,7 @@ type area struct {
 
 // areas in grid order (row-major).
 var areas = []nav.Screen{
-	nav.ScreenRepos, nav.ScreenDotfiles, nav.ScreenScratch,
+	nav.ScreenRepos, nav.ScreenSymlinks, nav.ScreenScratch,
 	nav.ScreenSessions, nav.ScreenIgnore,
 	nav.ScreenSecrets, nav.ScreenCron, nav.ScreenTrash,
 }
@@ -128,8 +129,11 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		m.areas = map[nav.Screen]area{}
 	case repos.LoadedMsg:
 		m = m.set(nav.ScreenRepos, msg.Err, reposArea(msg))
-	case dotfiles.LoadedMsg:
-		m = m.set(nav.ScreenDotfiles, msg.Err, dotfilesArea(msg))
+	case symlinks.LoadedMsg:
+		if msg.Walked {
+			return m, nil // the screen's second load adds the $HOME walk; the Dashboard needs no walk
+		}
+		m = m.set(nav.ScreenSymlinks, msg.Err, symlinksArea(msg))
 	case scratch.LoadedMsg:
 		m = m.set(nav.ScreenScratch, msg.Err, scratchArea(msg))
 	case sessions.LoadedMsg:
@@ -340,15 +344,28 @@ func dirtyNote(n int) string {
 	return " · " + theme.Warn.Render(fmt.Sprintf("%d dirty", n))
 }
 
-func dotfilesArea(msg dotfiles.LoadedMsg) area {
-	a := area{lines: []string{format.Plural(len(msg.Entries), "dotfile") + " managed"}}
-	if n := msg.Issues(); n > 0 {
+func symlinksArea(msg symlinks.LoadedMsg) area {
+	a := area{lines: []string{format.Plural(msg.Registered(), "symlink") + " managed"}}
+	// Broken, missing and drifted entries are the problems; untracked links and
+	// orphans are in the screen's list but are not alarms.
+	var bad []string
+	for _, e := range msg.Entries {
+		switch e.Status {
+		case symlink.StatusBroken, symlink.StatusMissing, symlink.StatusDrifted:
+			bad = append(bad, e.System)
+		}
+	}
+	if n := len(bad); n > 0 {
 		a.lines = append(a.lines, theme.Error.Render(format.Plural(n, "link")+" need fixing"))
-		a.issues = append(a.issues, issue{sev: sevError, screen: nav.ScreenDotfiles,
-			text:   format.Plural(n, "dotfile link") + " broken or overwritten",
-			filter: "status!=ok"})
-	} else if len(msg.Entries) > 0 {
+		a.issues = append(a.issues, issue{sev: sevError, screen: nav.ScreenSymlinks,
+			text:  format.Plural(n, "symlink") + " broken, missing or drifted",
+			focus: symlinks.SelectMsg{System: bad[0]}})
+	} else if msg.Registered() > 0 {
 		a.lines = append(a.lines, theme.OK.Render("all links healthy"))
+	}
+	if msg.Found > 0 {
+		a.issues = append(a.issues, issue{sev: sevInfo, screen: nav.ScreenSymlinks,
+			text: format.Plural(msg.Found, "known config") + " found, not symlinked"})
 	}
 	return a
 }
@@ -375,15 +392,15 @@ func logsArea(msg sessions.LoadedMsg) area {
 
 func ignoreArea(msg ignore.LoadedMsg) area {
 	n := msg.Actionable()
-	harbored := len(msg.Violations) - n
+	included := len(msg.Violations) - n
 	a := area{lines: []string{theme.OK.Render("nothing bloating sync")}}
 	if n > 0 {
 		a.lines = []string{theme.Warn.Render(format.Plural(n, "violation"))}
 		a.issues = append(a.issues, issue{sev: sevWarn, screen: nav.ScreenIgnore,
 			text: format.Plural(n, "sync hygiene violation") + " (bloat, depth, build artifacts)"})
 	}
-	if harbored > 0 {
-		a.lines = append(a.lines, theme.Muted.Render(fmt.Sprintf("%d in safe harbors", harbored)))
+	if included > 0 {
+		a.lines = append(a.lines, theme.Muted.Render(fmt.Sprintf("%d in included paths", included)))
 	}
 	return a
 }

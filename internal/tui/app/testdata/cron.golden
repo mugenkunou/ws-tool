@@ -1,10 +1,10 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 2 jobs installed · 1 failing
  Job             Schedule      State           Last run          Next run   Description
- dotfile-backup  0 * * * *     ✔               2h ago            overdue    commit + push dotfiles
+ pass-backup     0 * * * *     ✔               2h ago            overdue    push the pass store
  repo-sync       */30 * * * *  ✔               40m ago (exit 2)  overdue    sync repo fleet
- all             preset                                                     installs: dotfile-back…
+ all             preset                                                     installs: pass-backup,…
 
 
 

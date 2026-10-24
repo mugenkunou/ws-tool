@@ -47,7 +47,7 @@ type LoadedMsg struct {
 	Err        error
 }
 
-// Actionable counts violations outside safe harbors.
+// Actionable counts violations outside included paths.
 func (m LoadedMsg) Actionable() int {
 	n := 0
 	for _, v := range m.Violations {
@@ -197,8 +197,8 @@ func check(e env.Env, input string) tea.Cmd {
 		switch {
 		case !res.Included:
 			return checkMsg{level: nav.LevelWarn, text: fmt.Sprintf("✘ IGNORED  %s — excluded by rule `%s`", abs, res.Rule)}
-		case res.SafeHarbor:
-			return checkMsg{level: nav.LevelSuccess, text: fmt.Sprintf("✔ SYNCED  %s — always-sync directory `%s`", abs, res.Rule)}
+		case res.ByInclude:
+			return checkMsg{level: nav.LevelSuccess, text: fmt.Sprintf("✔ SYNCED  %s — included directory `%s`", abs, res.Rule)}
 		case res.Rule == "<default>":
 			return checkMsg{level: nav.LevelSuccess, text: fmt.Sprintf("✔ SYNCED  %s — no matching exclude rule", abs)}
 		default:
@@ -559,10 +559,10 @@ func (m Model) ignorePaths(paths []string) (Model, tea.Cmd) {
 			err = fmt.Errorf("%s: a name with * would be read as a pattern", abs)
 		}
 		if err == nil {
-			for _, l := range cfg.Links {
+			for _, l := range cfg.Symlinks {
 				orig := filepath.Join(e.Paths.Workspace, filepath.FromSlash(l.Original))
 				if repo.IsWithin(abs, orig) || repo.IsWithin(orig, abs) {
-					err = fmt.Errorf("%s is the workspace copy of the dotfile %s: it must sync for dotfile link on your other machines", abs, l.System)
+					err = fmt.Errorf("%s is the workspace copy of the symlink %s: it must sync for ws symlink link on your other machines", abs, l.System)
 					break
 				}
 			}
@@ -663,7 +663,7 @@ func (m Model) mutePaths(paths []string) (Model, tea.Cmd) {
 
 // unmuteRows is `ignore unmute` for Muted rows. A row muted through a parent
 // directory unmutes that entry, once however many of its rows are chosen; a row
-// muted by an always-sync directory cannot be unmuted here.
+// muted by an included directory cannot be unmuted here.
 func (m Model) unmuteRows(rows []wsignore.Violation) (Model, tea.Cmd) {
 	cfg, e := m.config(), m.env
 	eng := wsignore.BuildEngine(cfg.IgnoreRules)
@@ -677,7 +677,7 @@ func (m Model) unmuteRows(rows []wsignore.Violation) (Model, tea.Cmd) {
 		case !st.Muted:
 			continue
 		case st.Entry == "":
-			return m, nav.Notify(nav.LevelError, fmt.Sprintf("%s is under the always-sync directory `%s`: its warnings stay muted. To change it, use %s",
+			return m, nav.Notify(nav.LevelError, fmt.Sprintf("%s is under the included directory `%s`: its warnings stay muted. To change it, use %s",
 				abs, st.Rule, m.keys.EditRules.Help().Key+" "+m.keys.EditRules.Help().Desc))
 		case seen[st.Entry]:
 			continue
@@ -713,7 +713,7 @@ func (m Model) scratchPaths(paths []string) (Model, tea.Cmd) {
 	}
 	plans, err := wsscratch.PlanAdd(wsscratch.AddOptions{
 		RootDir: e.ScratchDir, WorkspacePath: e.Paths.Workspace, ConfigPath: e.Paths.Config,
-		Links: m.config().Links, Paths: abs,
+		Links: m.config().Symlinks, Paths: abs,
 	})
 	if err != nil {
 		return m, nav.Notify(nav.LevelError, err.Error())

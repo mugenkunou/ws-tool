@@ -8,7 +8,11 @@ import (
 )
 
 func TestBuildEngineWithDefaults(t *testing.T) {
-	engine := BuildEngine(DefaultUserRules())
+	rules := DefaultUserRules()
+	for _, d := range []string{"secrets", "configs", "artifacts", "data", "archive"} {
+		rules.Include = append(rules.Include, RuleEntry{Pattern: d + "/**"})
+	}
+	engine := BuildEngine(rules)
 
 	// Hidden files should be excluded by default rule -:.*
 	res := engine.Evaluate(".git/config", false)
@@ -16,18 +20,18 @@ func TestBuildEngineWithDefaults(t *testing.T) {
 		t.Fatal("expected .git/config to be excluded by defaults")
 	}
 
-	// Files in an "all" block that the defaults would exclude are safe harbors.
+	// Files under an included directory that the defaults would exclude still sync.
 	for _, p := range []string{
 		"secrets/pass/.gpg-id",
 		"secrets/pass/.git/config",
-		"configs/dotfiles/.git/HEAD",
+		"symlinks/home/.git/HEAD",
 		"artifacts/report.csv",
-		"data/ws-log/2026-07-14/stdout.log",
+		"data/sessions/2026-07-14/stdout.log",
 		"archive/old.tar.gz",
 	} {
 		res = engine.Evaluate(p, false)
-		if !res.Included || !res.SafeHarbor {
-			t.Fatalf("expected %s included as safe harbor, got included=%v harbor=%v rule=%s", p, res.Included, res.SafeHarbor, res.Rule)
+		if !res.Included || !res.ByInclude {
+			t.Fatalf("expected %s included via an include rule, got included=%v by_include=%v rule=%s", p, res.Included, res.ByInclude, res.Rule)
 		}
 	}
 
@@ -43,9 +47,9 @@ func TestBuildEngineWithDefaults(t *testing.T) {
 	}
 
 	// Paths in an "all" block not excluded by any rule are just included.
-	res = engine.Evaluate("configs/dotfiles/profile", false)
+	res = engine.Evaluate("symlinks/home/profile", false)
 	if !res.Included {
-		t.Fatal("expected configs/dotfiles/profile to be included")
+		t.Fatal("expected symlinks/home/profile to be included")
 	}
 
 	// Normal file should be included
@@ -80,26 +84,26 @@ func TestBuildEngineSuppressDefault(t *testing.T) {
 	}
 }
 
-func TestBuildEngineUserSafeHarbor(t *testing.T) {
+func TestBuildEngineUserByInclude(t *testing.T) {
 	rules := DefaultUserRules()
-	rules.SafeHarbors = append(rules.SafeHarbors, RuleEntry{Pattern: "Backups/**"})
+	rules.Include = append(rules.Include, RuleEntry{Pattern: "Backups/**"})
 
 	engine := BuildEngine(rules)
 
-	// Backups/ content should be included via safe harbor override
+	// Backups/ content should be included vian include rule override
 	res := engine.Evaluate("Backups/backup.tar.gz", false)
 	if !res.Included {
-		t.Fatal("expected Backups/backup.tar.gz to be included via user safe harbor")
+		t.Fatal("expected Backups/backup.tar.gz to be included via user include rule")
 	}
-	if !res.SafeHarbor {
-		t.Fatal("expected SafeHarbor=true for Backups/backup.tar.gz")
+	if !res.ByInclude {
+		t.Fatal("expected ByInclude=true for Backups/backup.tar.gz")
 	}
 }
 
 func TestGenerateMegaignore(t *testing.T) {
 	rules := DefaultUserRules()
 	rules.Exclude = append(rules.Exclude, RuleEntry{Pattern: "datasets/", Note: "too large"})
-	rules.SafeHarbors = append(rules.SafeHarbors, RuleEntry{Pattern: "Backups/**"})
+	rules.Include = append(rules.Include, RuleEntry{Pattern: "Backups/**"})
 
 	content := GenerateMegaignore(rules)
 
@@ -110,7 +114,7 @@ func TestGenerateMegaignore(t *testing.T) {
 		t.Fatal("expected user exclude rule in output")
 	}
 	if !strings.Contains(content, "+g:Backups/**") {
-		t.Fatal("expected user safe harbor in output")
+		t.Fatal("expected user include rule in output")
 	}
 	if !strings.Contains(content, "-s:*") {
 		t.Fatal("expected sentinel at end")
@@ -118,8 +122,22 @@ func TestGenerateMegaignore(t *testing.T) {
 	if !strings.Contains(content, "-:.*") {
 		t.Fatal("expected default exclude rules")
 	}
-	if !strings.Contains(content, "+g:secrets/**") || strings.Contains(content, "+:ws\n") {
-		t.Fatal("expected the layout safe harbors, not the old ws/ harbor")
+	if strings.Contains(content, "+g:secrets/**") || strings.Contains(content, "+:ws\n") {
+		t.Fatal("the only built-in include rule is symlinks/**: the rest are the ones in ws.json")
+	}
+}
+
+// TestDefaultsIgnoreTempFiles: the built-in excludes cover known temp and
+// partial-download files, hidden ones (.foo.swp, .#foo) through -:.*.
+func TestDefaultsIgnoreTempFiles(t *testing.T) {
+	engine := BuildEngine(DefaultUserRules())
+	for _, p := range []string{"notes/draft.tmp", "a/b.swp", "a/.draft.md.swp", "dl/x.part", "dl/x.crdownload", "a/#draft#", "a/.#draft", "a/.~lock.x.odt#"} {
+		if res := engine.Evaluate(p, false); res.Included {
+			t.Errorf("%s: want ignored, got included", p)
+		}
+	}
+	if res := engine.Evaluate("notes/template.md", false); !res.Included {
+		t.Errorf("notes/template.md must still sync, ignored by %s", res.Rule)
 	}
 }
 
@@ -147,15 +165,15 @@ func TestWriteMegaignore(t *testing.T) {
 func TestGetRuleStats(t *testing.T) {
 	rules := DefaultUserRules()
 	rules.Exclude = append(rules.Exclude, RuleEntry{Pattern: "a"}, RuleEntry{Pattern: "b"})
-	rules.SafeHarbors = append(rules.SafeHarbors, RuleEntry{Pattern: "Backups/**"})
+	rules.Include = append(rules.Include, RuleEntry{Pattern: "Backups/**"})
 	rules.SuppressDefaults = append(rules.SuppressDefaults, "*.log")
 
 	stats := GetRuleStats(rules)
 	if stats.UserExclude != 2 {
 		t.Fatalf("expected 2 user excludes, got %d", stats.UserExclude)
 	}
-	if stats.UserHarbors != 1 {
-		t.Fatalf("expected 1 user harbor, got %d", stats.UserHarbors)
+	if stats.UserInclude != 1 {
+		t.Fatalf("expected 1 user include rule, got %d", stats.UserInclude)
 	}
 	if stats.SuppressedDefaults != 1 {
 		t.Fatalf("expected 1 suppressed default, got %d", stats.SuppressedDefaults)

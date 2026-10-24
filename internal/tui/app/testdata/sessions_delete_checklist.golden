@@ -1,8 +1,8 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 Delete 1 session
 
-› [x] Delete /home/tester/Workspace/data/ws-log/rsync-backup (8.0 KB)
+› [x] Delete /home/tester/Workspace/data/sessions/rsync-backup (8.0 KB)
 
 
 

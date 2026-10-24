@@ -10,7 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	wslog "github.com/mugenkunou/ws-tool/internal/log"
+	wssession "github.com/mugenkunou/ws-tool/internal/session"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
@@ -23,8 +23,8 @@ import (
 var now = time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC)
 
 // fixtureRows: the recording in progress, a month-old session and yesterday's.
-func fixtureRows() []wslog.Session {
-	return []wslog.Session{
+func fixtureRows() []wssession.Session {
+	return []wssession.Session{
 		{Tag: "live", StartedAt: now.Add(-time.Hour), Active: true, SizeBytes: 100},
 		{Tag: "new1", StartedAt: now.Add(-24 * time.Hour), SizeBytes: 2000},
 		{Tag: "old1", StartedAt: now.Add(-40 * 24 * time.Hour), SizeBytes: 3000},
@@ -32,7 +32,7 @@ func fixtureRows() []wslog.Session {
 	}
 }
 
-func screenCap(t *testing.T, rows []wslog.Session, capMB int) nav.Component {
+func screenCap(t *testing.T, rows []wssession.Session, capMB int) nav.Component {
 	t.Helper()
 	cfg := wsconfig.Default()
 	cfg.Session.CapMB = capMB
@@ -42,7 +42,7 @@ func screenCap(t *testing.T, rows []wslog.Session, capMB int) nav.Component {
 	return c
 }
 
-func screen(t *testing.T, rows []wslog.Session) nav.Component { return screenCap(t, rows, 0) }
+func screen(t *testing.T, rows []wssession.Session) nav.Component { return screenCap(t, rows, 0) }
 
 func keyMsg(k string) tea.KeyPressMsg {
 	switch k {
@@ -272,7 +272,7 @@ func TestGrepNarrowsTheListAndEscClearsIt(t *testing.T) {
 	if cmd == nil || c.(Model).pending != "kube ctl" {
 		t.Fatal(":grep should search for the words joined by a space")
 	}
-	c, _ = c.Update(grepMsg{query: "kube ctl", matches: []wslog.Match{{Tag: "old1", Line: 3}, {Tag: "old1", Line: 9}, {Tag: "new1", Line: 1}}})
+	c, _ = c.Update(grepMsg{query: "kube ctl", matches: []wssession.Match{{Tag: "old1", Line: 3}, {Tag: "old1", Line: 9}, {Tag: "new1", Line: 1}}})
 	v := plain(c)
 	if strings.Contains(v, "old2") || strings.Contains(v, "live") || !strings.Contains(v, "old1") || !strings.Contains(v, "new1") {
 		t.Errorf("only sessions with a match:\n%s", v)
@@ -314,7 +314,7 @@ func TestGrepWithNoMatchesSaysSo(t *testing.T) {
 		t.Errorf("notice = %q", n.Text)
 	}
 	c, _ = command(screen(t, fixtureRows()), "grep new")
-	c, _ = c.Update(grepMsg{query: "old", matches: []wslog.Match{{Tag: "old1"}}})
+	c, _ = c.Update(grepMsg{query: "old", matches: []wssession.Match{{Tag: "old1"}}})
 	if c.(Model).query != "" {
 		t.Error("a stale answer replaced the grep")
 	}

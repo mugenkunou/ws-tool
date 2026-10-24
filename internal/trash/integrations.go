@@ -443,19 +443,6 @@ func DisableActions() []plan.Action {
 	return actions
 }
 
-// Disable runs DisableActions without a plan, for the callers that have their own
-// confirmation. It returns what it did.
-func Disable() ([]string, error) {
-	var done []string
-	for _, a := range DisableActions() {
-		if err := a.Execute(); err != nil {
-			return done, fmt.Errorf("%s: %w", a.Description, err)
-		}
-		done = append(done, a.Description)
-	}
-	return done, nil
-}
-
 func fileExists(p string) bool {
 	_, err := os.Lstat(p)
 	return err == nil

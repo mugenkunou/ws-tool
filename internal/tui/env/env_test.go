@@ -42,7 +42,7 @@ func TestLoadResolvesDirs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(o.Workspace, "data", "ws-log"); e.LogDir != want {
+	if want := filepath.Join(o.Workspace, "data", "sessions"); e.LogDir != want {
 		t.Errorf("log dir = %q, want %q", e.LogDir, want)
 	}
 	if !filepath.IsAbs(e.ScratchDir) {

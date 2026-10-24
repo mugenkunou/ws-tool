@@ -1,9 +1,9 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- System path                                    Workspace copy                  Status         Sudo
- ~/.bashrc                                      configs/dotfiles/bashrc         ✔ ok
- ~/.gitconfig                                   configs/dotfiles/gitconfig      ✘ broken
- /etc/hosts                                     configs/dotfiles/etc/hosts      ⚠ overwritten  yes
+ Host path                                   Workspace copy                App     Status      Sudo
+ ~/.bashrc                                   symlinks/home/.bashrc                 ✔ ok
+ ~/.gitconfig                                symlinks/home/.gitconfig              ✘ broken
+ /etc/hosts                                  symlinks/system/etc/hosts             ⚠ drifted   yes
 
 
 
@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secret
 
 
 
-:do▏tfile   dotfiles · dotfile add · dotfile link · dotfile unlink --all · dotfile backup enable · d
+:do▏

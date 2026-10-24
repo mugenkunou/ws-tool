@@ -1,4 +1,4 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 🌅 Good morning  ·  ~/Workspace
 
@@ -6,7 +6,7 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secret
 
 📋 Overview
 ╭──────────────────────────────╮ ╭──────────────────────────────╮ ╭──────────────────────────────╮
-│ 📦 Repos                  🌑 │ │ 🔗 Dotfiles               🌑 │ │ 🧪 Scratch                🌑 │
+│ 📦 Repos                  🌑 │ │ 🔗 Symlinks               🌑 │ │ 🧪 Scratch                🌑 │
 │ scanning…                    │ │ scanning…                    │ │ scanning…                    │
 │                              │ │                              │ │                              │
 ╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯

@@ -15,7 +15,7 @@ import (
 // Aliases are hidden: help, completion and docs never show them. A typed alias
 // prints one stderr line, `ws: "<old>" is now "<new>"`. A plumbing alias is
 // called by other programs (crontab lines, git, shell rc files) and stays
-// silent. dev.md §12.6 requires every rename to be a row here.
+// silent. HANDBOOK.md §9.7 requires every rename to be a row here.
 type alias struct {
 	Old []string
 	New []string
@@ -36,8 +36,6 @@ type alias struct {
 // noun's rows go live in the commit that implements its new commands, so the
 // old and new handlers never disagree about which names exist.
 var aliasLive = map[string]bool{
-	"dotfile":               true,
-	"log":                   true,
 	"scratch":               true,
 	"trash":                 true,
 	"cron":                  true,
@@ -61,28 +59,7 @@ var aliases = []alias{
 	{Old: []string{"repo", "add-root"}, New: []string{"repo", "root", "add"}},
 	{Old: []string{"repo", "ls-roots"}, New: []string{"repo", "root", "ls"}},
 
-	{Old: []string{"dotfile", "scan"}, New: []string{"dotfile", "ls"}},
-	{Old: []string{"dotfile", "rm"}, New: []string{"dotfile", "unlink"}},
-	{Old: []string{"dotfile", "reset"}, New: []string{"dotfile", "unlink", "--all"}},
-	{Old: []string{"dotfile", "fix"}, New: []string{"dotfile", "link"}},
-	{Old: []string{"dotfile", "sync"}, New: []string{"dotfile", "add"}},
-	{Old: []string{"dotfile", "link"}, New: []string{"dotfile", "link"}, Hint: "dotfile link <path> --to <ws-path>", Rewrite: dotfileLinkRewrite},
-	{Old: []string{"dotfile", "git", "setup"}, New: []string{"dotfile", "backup", "enable"}},
-	{Old: []string{"dotfile", "git", "enable"}, New: []string{"dotfile", "backup", "enable"}},
-	{Old: []string{"dotfile", "git", "connect"}, New: []string{"dotfile", "backup", "enable"}},
-	{Old: []string{"dotfile", "git", "remote"}, New: []string{"dotfile", "backup", "enable"}, Hint: "dotfile backup enable --remote <url>", Rewrite: gitRemoteRewrite([]string{"dotfile", "backup", "enable"})},
-	{Old: []string{"dotfile", "git", "disconnect"}, New: []string{"dotfile", "backup", "disable"}},
-	{Old: []string{"dotfile", "git", "status"}, New: []string{"dotfile", "backup", "status"}},
-	{Old: []string{"dotfile", "git", "log"}, New: []string{"dotfile", "backup", "status"}},
-	{Old: []string{"dotfile", "git", "push"}, New: []string{"dotfile", "backup", "push"}},
-
 	{Old: []string{"scratch", "search"}, New: []string{"scratch", "ls"}, Hint: "scratch ls --filter", Rewrite: scratchSearchRewrite},
-
-	{Old: []string{"log", "start"}, New: []string{"session", "record"}, Rewrite: logStartRewrite},
-	{Old: []string{"log", "stop"}, New: []string{"session", "stop"}},
-	{Old: []string{"log", "ls"}, New: []string{"session", "ls"}},
-	{Old: []string{"log", "rm"}, New: []string{"session", "rm"}},
-	{Old: []string{"log", "prune"}, New: []string{"session", "prune"}},
 
 	{Old: []string{"ignore", "scan"}, New: []string{"ignore", "lint"}, Hint: "ignore lint", Rewrite: ignoreScanRewrite},
 	{Old: []string{"ignore", "fix"}, Removed: `ws: "ignore fix" is gone: use ws ignore add, ws ignore mute, ws scratch add, or rm`},
@@ -129,8 +106,8 @@ var aliases = []alias{
 	{Old: []string{"completions", "install"}, New: []string{"completion", "enable"}},
 	{Old: []string{"completions", "uninstall"}, New: []string{"completion", "disable"}},
 
-	{Old: []string{"reset"}, Removed: `ws: "reset" was removed; use ws dotfile unlink --all, ws trash disable, ws cron rm <job>`},
-	{Old: []string{"restore"}, Removed: `ws: "restore" was removed; on a new machine run ws init, ws dotfile link, ws trash enable, ws cron apply`},
+	{Old: []string{"reset"}, Removed: `ws: "reset" was removed; use ws symlink unlink --all, ws trash disable, ws cron rm <job>`},
+	{Old: []string{"restore"}, Removed: `ws: "restore" was removed; on a new machine run ws init, ws symlink link, ws trash enable, ws cron apply`},
 }
 
 // leadingPrefix reports whether the first len(old) words of rest are old.
@@ -225,31 +202,6 @@ func repoScanRewrite(rest []string, _ *globalFlags) ([]string, bool) {
 	return append(append(words, "--fetch"), rest...), true
 }
 
-// dotfileLinkRewrite: the old `dotfile link <path> <ws-path>` takes the second
-// path as `--to` when it lies inside the workspace, where no system path can.
-func dotfileLinkRewrite(rest []string, g *globalFlags) ([]string, bool) {
-	pos := positionals(rest, "class")
-	if len(pos) != 2 || slices.Contains(rest, "--to") {
-		return nil, false
-	}
-	ws, _, err := resolveWorkspacePaths(*g)
-	if err != nil {
-		return nil, false
-	}
-	second := expandForAlias(pos[1])
-	if !insideDir(ws, second) {
-		return nil, false
-	}
-	words := []string{"dotfile", "link"}
-	for _, a := range rest {
-		if a == pos[1] {
-			words = append(words, "--to")
-		}
-		words = append(words, a)
-	}
-	return words, true
-}
-
 // expandForAlias resolves a path argument the way every command does: `~`
 // expanded, relative to the current directory.
 func expandForAlias(p string) string {
@@ -294,32 +246,6 @@ func scratchSearchRewrite(rest []string, _ *globalFlags) ([]string, bool) {
 			continue
 		}
 		words = append(words, a)
-	}
-	return words, true
-}
-
-// logStartRewrite: `log start --tag t` is `session record t`, and
-// `--quiet-start` is `--quiet`.
-func logStartRewrite(rest []string, g *globalFlags) ([]string, bool) {
-	words := []string{"session", "record"}
-	var tag string
-	for i := 0; i < len(rest); i++ {
-		a := rest[i]
-		switch {
-		case a == "--tag" && i+1 < len(rest):
-			i++
-			tag = rest[i]
-		case strings.HasPrefix(a, "--tag="):
-			tag = strings.TrimPrefix(a, "--tag=")
-		case a == "--quiet-start":
-			g.quiet = true
-			words = append(words, "--quiet")
-		default:
-			words = append(words, a)
-		}
-	}
-	if tag != "" {
-		words = append(words[:2], append([]string{tag}, words[2:]...)...)
 	}
 	return words, true
 }

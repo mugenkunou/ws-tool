@@ -40,7 +40,7 @@ func Launch(c *exec.Cmd, tag any) tea.Cmd {
 
 // WS builds a command that runs this ws binary against the same workspace,
 // for interactive CLI wizards the TUI hands the terminal to (e.g.
-// `ws dotfile git setup`).
+// `ws pass backup enable`).
 func WS(p workspace.Paths, args ...string) *exec.Cmd {
 	bin, err := os.Executable()
 	if err != nil {

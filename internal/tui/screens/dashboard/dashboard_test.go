@@ -8,8 +8,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/mugenkunou/ws-tool/internal/symlink"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/symlinks"
 )
 
 func model(areas map[nav.Screen]area) Model {
@@ -47,7 +49,7 @@ func enter(m Model) (Model, []tea.Msg) {
 var passAdvice = issue{
 	sev: sevInfo, screen: nav.ScreenSecrets, advice: true,
 	text:    "Your pass store syncs only through its own git remote. A copy in the workspace would sync with MEGA too.",
-	prefill: "dotfile add ~/.password-store --dir --to ~/Workspace/secrets/dotfiles/password-store",
+	prefill: "symlink add ~/.password-store --dir",
 }
 
 func TestAdviceIsListedLastAndOpensTheCommandBar(t *testing.T) {
@@ -66,7 +68,7 @@ func TestAdviceIsListedLastAndOpensTheCommandBar(t *testing.T) {
 		t.Fatalf("messages: %v", msgs)
 	}
 	open, ok := msgs[0].(nav.OpenCommandBarMsg)
-	if !ok || !strings.HasPrefix(open.Prefill, "dotfile add ~/.password-store --dir --to ") {
+	if !ok || open.Prefill != "symlink add ~/.password-store --dir" {
 		t.Fatalf("enter on advice: %#v", msgs[0])
 	}
 }
@@ -86,7 +88,7 @@ func TestAdviceNeverCountsTowardsACardsStatus(t *testing.T) {
 
 func TestProblemRowsOpenTheirScreen(t *testing.T) {
 	m := model(map[nav.Screen]area{
-		nav.ScreenDotfiles: {loaded: true, issues: []issue{{sev: sevError, screen: nav.ScreenDotfiles, text: "2 dotfile links broken", filter: "status!=ok"}}},
+		nav.ScreenSymlinks: {loaded: true, issues: []issue{{sev: sevError, screen: nav.ScreenSymlinks, text: "2 symlinks broken", filter: "status=broken"}}},
 		nav.ScreenTrash:    {loaded: true, issues: []issue{{sev: sevWarn, screen: nav.ScreenTrash, text: "Soft-delete is off"}}},
 	})
 	m.section, m.att = sectionAttention, 0
@@ -97,7 +99,7 @@ func TestProblemRowsOpenTheirScreen(t *testing.T) {
 			f = &fm
 		}
 	}
-	if f == nil || f.Filter != "status!=ok" || f.Screen != nav.ScreenDotfiles {
+	if f == nil || f.Filter != "status=broken" || f.Screen != nav.ScreenSymlinks {
 		t.Fatalf("messages: %v", msgs)
 	}
 	m.att = 1
@@ -117,5 +119,53 @@ func TestNoActionKeys(t *testing.T) {
 		if _, cmd := m.Update(tea.KeyPressMsg{Code: []rune(k)[0], Text: k}); len(collect(cmd)) != 0 {
 			t.Errorf("%s does something on the Dashboard", k)
 		}
+	}
+}
+
+// TestSymlinksAreaCountsEntriesAndNamesProblems: "N symlinks managed" counts ws.json
+// entries only; broken, missing and drifted entries are one problem line; found
+// configs are an info line; untracked links and orphans are not alarms.
+func TestSymlinksAreaCountsEntriesAndNamesProblems(t *testing.T) {
+	row := func(sys string, st symlink.Status, registered bool) symlink.Entry {
+		return symlink.Entry{System: sys, Status: st, Registered: registered}
+	}
+	a := symlinksArea(symlinks.LoadedMsg{
+		Entries: []symlink.Entry{
+			row("/h/.ok", symlink.StatusOK, true),
+			row("/h/.broken", symlink.StatusBroken, true),
+			row("/h/.missing", symlink.StatusMissing, true),
+			row("/h/.drifted", symlink.StatusDrifted, true),
+			row("/h/.untracked", symlink.StatusUntracked, false),
+			row("/h/.orphan", symlink.StatusOrphan, false),
+		},
+		Found: 4,
+	})
+	if got := a.lines[0]; got != "4 symlinks managed" {
+		t.Errorf("first line = %q", got)
+	}
+	if len(a.issues) != 2 {
+		t.Fatalf("issues = %+v", a.issues)
+	}
+	if is := a.issues[0]; is.sev != sevError || is.text != "3 symlinks broken, missing or drifted" {
+		t.Errorf("problem line = %+v", is)
+	}
+	if is := a.issues[1]; is.sev != sevInfo || is.text != "4 known configs found, not symlinked" || is.advice {
+		t.Errorf("info line = %+v", is)
+	}
+	if a := symlinksArea(symlinks.LoadedMsg{Entries: []symlink.Entry{row("/h/.ok", symlink.StatusOK, true)}}); len(a.issues) != 0 {
+		t.Errorf("a healthy list raises nothing: %+v", a.issues)
+	}
+}
+
+// TestDashboardIgnoresTheWalkedLoad: the Dashboard summarizes the load without the
+// $HOME walk; the screen's second, walked load must not replace it.
+func TestDashboardIgnoresTheWalkedLoad(t *testing.T) {
+	m := model(map[nav.Screen]area{})
+	next, _ := m.Update(symlinks.LoadedMsg{Entries: []symlink.Entry{{System: "/h/.a", Status: symlink.StatusOK, Registered: true}}})
+	m = next.(Model)
+	next, _ = m.Update(symlinks.LoadedMsg{Walked: true, Entries: nil})
+	m = next.(Model)
+	if got := m.areas[nav.ScreenSymlinks].lines; len(got) == 0 || got[0] != "1 symlink managed" {
+		t.Fatalf("area after the walked load = %v", got)
 	}
 }

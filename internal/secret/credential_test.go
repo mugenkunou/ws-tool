@@ -248,13 +248,13 @@ func TestResolveGitTokenFindsTheEntry(t *testing.T) {
 		"git/github.com": "host-token",
 		"work/gh-api":    "explicit-token",
 	})
-	if got := ResolveGitToken("https://github.com/me/dotfiles.git", "work/gh-api"); got != "explicit-token" {
+	if got := ResolveGitToken("https://github.com/me/configs.git", "work/gh-api"); got != "explicit-token" {
 		t.Errorf("explicit pass_entry: got %q, want explicit-token", got)
 	}
-	if got := ResolveGitToken("https://github.com/me/dotfiles.git", ""); got != "host-token" {
+	if got := ResolveGitToken("https://github.com/me/configs.git", ""); got != "host-token" {
 		t.Errorf("default git/<host>: got %q, want host-token", got)
 	}
-	if got := ResolveGitToken("git@github.com:me/dotfiles.git", "missing/entry"); got != "host-token" {
+	if got := ResolveGitToken("git@github.com:me/configs.git", "missing/entry"); got != "host-token" {
 		t.Errorf("a missing pass_entry falls back to git/<host>: got %q", got)
 	}
 	if got := ResolveGitToken("https://gitlab.com/me/x.git", ""); got != "" {

@@ -1,0 +1,30 @@
+ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Host path                                   Workspace copy                App     Status      Sudo
+ /etc/hosts                                  symlinks/system/etc/hosts             ⚠ drifted   yes
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+filter status!=ok (1 of 3) — l link act on these 1
+a add • ctrl+d unlink • l link • space mark … • tab screens • : command • ? help • q quit

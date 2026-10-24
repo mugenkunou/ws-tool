@@ -56,17 +56,19 @@ func TestResolve(t *testing.T) {
 	}
 }
 
-// TestDeleteTouchesOnlyTheNamedDirectory is plan 0002's scratch bug: Delete
-// removed every directory whose name contained the argument (in the TUI too), so
-// deleting `foo` also deleted `foo-2` and `myfoo`.
+// TestDeleteTouchesOnlyTheNamedDirectory: deleting `foo` must not also delete
+// `foo-2` and `myfoo`.
 func TestDeleteTouchesOnlyTheNamedDirectory(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", filepath.Join(t.TempDir(), "data"))
 	root := t.TempDir()
 	mkdirs(t, root, "foo", "foo-2", "myfoo")
 
-	res, err := Delete(DeleteOptions{RootDir: root, Name: "foo"})
-	if err != nil || !reflect.DeepEqual(res.Removed, []string{"foo"}) {
-		t.Fatalf("Delete = %+v, %v", res, err)
+	entry, err := Resolve(root, "foo")
+	if err != nil || entry.Name != "foo" {
+		t.Fatalf("Resolve = %+v, %v", entry, err)
+	}
+	if err := Remove(entry); err != nil {
+		t.Fatal(err)
 	}
 	for _, keep := range []string{"foo-2", "myfoo"} {
 		if _, err := os.Stat(filepath.Join(root, keep)); err != nil {
@@ -75,7 +77,7 @@ func TestDeleteTouchesOnlyTheNamedDirectory(t *testing.T) {
 	}
 
 	// An ambiguous substring deletes nothing.
-	if _, err := Delete(DeleteOptions{RootDir: root, Name: "o"}); err == nil {
+	if _, err := Resolve(root, "o"); err == nil {
 		t.Fatal("a substring that matches several must delete nothing")
 	}
 	for _, keep := range []string{"foo-2", "myfoo"} {
@@ -149,7 +151,7 @@ func TestPlanAddRefusals(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "Scratch")
 	ws := filepath.Join(t.TempDir(), "Workspace")
 	mkdirs(t, root, "existing")
-	mkdirs(t, ws, "agent", "configs/dotfiles")
+	mkdirs(t, ws, "agent", "symlinks/home")
 	cfg := filepath.Join(ws, "ws.json")
 	if err := os.WriteFile(cfg, []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
@@ -158,14 +160,14 @@ func TestPlanAddRefusals(t *testing.T) {
 	if err := os.WriteFile(original, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	dirOriginal := filepath.Join(ws, "secrets", "dotfiles", "password-store")
-	mkdirs(t, filepath.Join(ws, "secrets", "dotfiles"), "password-store")
+	dirOriginal := filepath.Join(ws, "symlinks", "home", "password-store")
+	mkdirs(t, filepath.Join(ws, "symlinks", "home"), "password-store")
 	if err := os.WriteFile(filepath.Join(dirOriginal, "a.gpg"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	links := []wsconfig.Link{
 		{System: "/home/u/.claude/CLAUDE.md", Original: "agent/AGENTS.md"},
-		{System: "/home/u/.password-store", Original: "secrets/dotfiles/password-store", Dir: true},
+		{System: "/home/u/.password-store", Original: "symlinks/home/password-store", Dir: true},
 	}
 	plan := func(p string) error {
 		_, err := PlanAdd(AddOptions{RootDir: root, WorkspacePath: ws, ConfigPath: cfg, Links: links, Paths: []string{p}})
@@ -178,9 +180,9 @@ func TestPlanAddRefusals(t *testing.T) {
 		filepath.Dir(root):                  "contains the scratch root",
 		ws:                                  "contains the workspace",
 		cfg:                                 "ws.json",
-		original:                            "dotfile original",
-		filepath.Join(dirOriginal, "a.gpg"): "dotfile original",
-		filepath.Join(ws, "secrets"):        "dotfile original",
+		original:                            "symlink original",
+		filepath.Join(dirOriginal, "a.gpg"): "symlink original",
+		filepath.Join(ws, "symlinks"):       "symlink original",
 	}
 	for p, want := range cases {
 		if err := plan(p); err == nil || !strings.Contains(err.Error(), want) {

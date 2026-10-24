@@ -12,29 +12,22 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
 
-// ws dotfile backup and ws pass backup work exactly alike (spec §5 pass
-// backup): the same four verbs, flags, plan lines, status layout and JSON keys.
-// One runner serves both, so they cannot drift. A backupSpec says where the
-// repository is and how the noun's own settings and git steps differ.
+// ws pass backup (spec §5 pass backup): enable, disable, status and push. The
+// runner is split from pass.go so the verbs read as one unit. A backupSpec says
+// where the repository is and how the pass store's settings and git steps work.
 
-// backupSettings are the ws.json values a backup keeps, whichever noun owns it.
+// backupSettings are the ws.json values the pass backup keeps.
 type backupSettings struct {
-	RemoteURL  string
-	Branch     string
-	PassEntry  string
-	AutoCommit bool // dotfile only
-	AutoPush   bool // dotfile only
+	RemoteURL string
+	Branch    string
+	PassEntry string
 }
 
-// backupSpec describes one backup: its repository, settings and git steps.
+// backupSpec describes the pass backup: its repository, settings and git steps.
 type backupSpec struct {
-	noun      string // "dotfile" or "pass": the command words and JSON prefix
-	job       string // the cron job that pushes it ("dotfile-backup")
-	oldJobs   []string
+	job       string // the cron job that pushes it ("pass-backup")
 	repoPath  string
 	workspace string
-	// hasAutos is true when the settings include auto_commit and auto_push.
-	hasAutos bool
 
 	// requires, when set, is checked before `enable` does anything: it returns
 	// the error that stops it (pass needs an initialized store).
@@ -48,23 +41,22 @@ type backupSpec struct {
 
 	load func() (backupSettings, error)
 	save func(backupSettings) error
-	// commit commits pending changes (a dotfile commit carries a copy of
-	// ws.json) and reports whether a commit was made.
+	// commit commits pending changes and reports whether a commit was made.
 	commit func(message string) (bool, error)
 	// defaultMessage is the commit message of `backup push`.
 	defaultMessage string
 	// entryCount, when set, adds the store's entry count to the repository line.
 	entryCount func() int
-	// tip, when set, is printed after enable and init (spec: the pass store's
+	// tip, when set, is printed after enable and init (the pass store's
 	// workspace-copy tip).
 	tip func() string
 }
 
-// runBackup dispatches `ws <noun> backup <verb>`.
+// runBackup dispatches `ws pass backup <verb>`.
 func runBackup(spec backupSpec, args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintf(stderr, "unknown command: %s backup\n", spec.noun)
-		fmt.Fprintf(stderr, "usage: ws %s backup <enable|disable|status|push>\n", spec.noun)
+		fmt.Fprintln(stderr, "unknown command: pass backup")
+		fmt.Fprintln(stderr, "usage: ws pass backup <enable|disable|status|push>")
 		return 1
 	}
 	switch args[0] {
@@ -77,12 +69,12 @@ func runBackup(spec backupSpec, args []string, globals globalFlags, stdin io.Rea
 	case "push":
 		return runBackupPush(spec, args[1:], globals, stdin, stdout, stderr)
 	}
-	fmt.Fprintf(stderr, "unknown command: %s backup %s\n", spec.noun, args[0])
-	fmt.Fprintf(stderr, "usage: ws %s backup <enable|disable|status|push>\n", spec.noun)
+	fmt.Fprintf(stderr, "unknown command: pass backup %s\n", args[0])
+	fmt.Fprintln(stderr, "usage: ws pass backup <enable|disable|status|push>")
 	return 1
 }
 
-func (s backupSpec) command(verb string) string { return s.noun + ".backup." + verb }
+func (s backupSpec) command(verb string) string { return "pass.backup." + verb }
 
 // cronRemoval is the plan that removes the backup's cron job from the live
 // crontab and from configs/crontab, under every name it has had, so a later
@@ -93,14 +85,14 @@ func (s backupSpec) cronRemoval() []Action {
 	if s.workspace != "" {
 		opts.Declared = cron.DeclaredPath(s.workspace)
 	}
-	acts, _, err := cron.RemoveActions(append([]string{s.job}, s.oldJobs...), opts)
+	acts, _, err := cron.RemoveActions([]string{s.job}, opts)
 	if err != nil {
 		return nil
 	}
 	return acts
 }
 
-// visibilityJSON is the shape of data.visibility (spec §5 dotfile backup enable).
+// visibilityJSON is the shape of data.visibility (spec §5 pass backup enable).
 func visibilityJSON(v repo.VisibilityResult) map[string]any {
 	return map[string]any{
 		"provider": v.Provider,
@@ -132,7 +124,7 @@ func checkRemote(url, passEntry string, globals globalFlags, out, stderr io.Writ
 // ── enable ─────────────────────────────────────────────────────────
 
 func runBackupEnable(spec backupSpec, args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet(spec.noun+"-backup-enable", flag.ContinueOnError)
+	fs := flag.NewFlagSet("pass-backup-enable", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	remote := fs.String("remote", "", "")
 	passEntry := fs.String("pass-entry", "", "")
@@ -142,7 +134,7 @@ func runBackupEnable(spec backupSpec, args []string, globals globalFlags, stdin 
 		return 1
 	}
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(stderr, "usage: ws %s backup enable [--remote <url>] [--pass-entry <entry>]\n", spec.noun)
+		fmt.Fprint(stderr, "usage: ws pass backup enable [--remote <url>] [--pass-entry <entry>]\n")
 		return 1
 	}
 	out := quietOut(globals, stdout)
@@ -174,10 +166,10 @@ func runBackupEnable(spec backupSpec, args []string, globals globalFlags, stdin 
 			fmt.Fprintln(stderr, "--remote <url> is required")
 			return 1
 		}
-		fmt.Fprintln(out, style.Mutedf(nc, "  A private git remote gives your %s an off-machine backup. Create a PRIVATE repository first.", spec.noun))
+		fmt.Fprintln(out, style.Mutedf(nc, "  A private git remote gives your pass store an off-machine backup. Create a PRIVATE repository first."))
 		url = promptLine(stdin, stdout, globals, "Remote URL of a PRIVATE repository", "")
 		if url == "" {
-			fmt.Fprintln(stderr, "a remote is required: ws "+spec.noun+" backup enable --remote <url>")
+			fmt.Fprintln(stderr, "a remote is required: ws pass backup enable --remote <url>")
 			return 1
 		}
 	}
@@ -224,20 +216,6 @@ func runBackupEnable(spec backupSpec, args []string, globals globalFlags, stdin 
 			},
 		})
 	}
-	if spec.hasAutos && (!cur.AutoCommit || !cur.AutoPush) {
-		plan.Actions = append(plan.Actions, Action{
-			ID:          "auto",
-			Description: "Turn on auto-commit and auto-push",
-			Execute: func() error {
-				s, err := spec.load()
-				if err != nil {
-					return err
-				}
-				s.AutoCommit, s.AutoPush = true, true
-				return spec.save(s)
-			},
-		})
-	}
 
 	if len(plan.Actions) == 0 {
 		if globals.json {
@@ -257,7 +235,7 @@ func runBackupEnable(spec backupSpec, args []string, globals globalFlags, stdin 
 	}
 	if planResult.ExecutedCount() > 0 && !planResult.HasFailures() {
 		fmt.Fprintln(out)
-		fmt.Fprintf(out, "  ws %s backup push           pushes now\n", spec.noun)
+		fmt.Fprintln(out, "  ws pass backup push           pushes now")
 		fmt.Fprintf(out, "  ws cron add %-12s pushes every 30 minutes\n", spec.job)
 		if spec.tip != nil {
 			if t := spec.tip(); t != "" {
@@ -271,7 +249,7 @@ func runBackupEnable(spec backupSpec, args []string, globals globalFlags, stdin 
 // ── disable ────────────────────────────────────────────────────────
 
 func runBackupDisable(spec backupSpec, args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet(spec.noun+"-backup-disable", flag.ContinueOnError)
+	fs := flag.NewFlagSet("pass-backup-disable", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	registerGlobalFlags(fs, &globals)
 	if err := parseInterspersed(fs, args); err != nil {
@@ -343,8 +321,7 @@ func runBackupDisable(spec backupSpec, args []string, globals globalFlags, stdin
 
 // ── status ─────────────────────────────────────────────────────────
 
-// backupStatusData is the JSON of `backup status`: the same keys for both
-// nouns (spec §5), with entry_count added for pass.
+// backupStatusData is the JSON of `pass backup status` (spec §5).
 func backupStatusData(spec backupSpec, st backup.State, s backupSettings) map[string]any {
 	data := map[string]any{
 		"enabled":     s.RemoteURL != "",
@@ -359,25 +336,14 @@ func backupStatusData(spec backupSpec, st backup.State, s backupSettings) map[st
 		"last_commit": st.LastCommit,
 		"commits":     st.Commits,
 	}
-	if spec.hasAutos {
-		data["auto_commit"] = s.AutoCommit
-		data["auto_push"] = s.AutoPush
-	}
 	if spec.entryCount != nil {
 		data["entry_count"] = spec.entryCount()
 	}
 	return data
 }
 
-func onOff(b bool) string {
-	if b {
-		return "on"
-	}
-	return "off"
-}
-
 func runBackupStatus(spec backupSpec, args []string, globals globalFlags, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet(spec.noun+"-backup-status", flag.ContinueOnError)
+	fs := flag.NewFlagSet("pass-backup-status", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	count := fs.Int("n", 20, "")
 	registerGlobalFlags(fs, &globals)
@@ -407,7 +373,7 @@ func runBackupStatus(spec backupSpec, args []string, globals globalFlags, stdout
 		if !st.Initialized {
 			fmt.Fprintf(out, "%-13s %s\n", "Repository", spec.repoPath+"  (not a git repository yet)")
 		}
-		fmt.Fprintln(out, style.Mutedf(nc, "  ws %s backup enable --remote <url>", spec.noun))
+		fmt.Fprintln(out, style.Mutedf(nc, "  ws pass backup enable --remote <url>"))
 		return 0
 	}
 
@@ -420,10 +386,6 @@ func runBackupStatus(spec backupSpec, args []string, globals globalFlags, stdout
 	fmt.Fprintf(out, "%-13s %s\n", "Remote", s.RemoteURL)
 	fmt.Fprintf(out, "%-13s %s\n", "Branch", st.Branch)
 	fmt.Fprintf(out, "%-13s ↑%d ↓%d\n", "Ahead/behind", st.Ahead, st.Behind)
-	if spec.hasAutos {
-		fmt.Fprintf(out, "%-13s %s\n", "Auto-commit", onOff(s.AutoCommit))
-		fmt.Fprintf(out, "%-13s %s\n", "Auto-push", onOff(s.AutoPush))
-	}
 	if st.LastCommit != "" {
 		fmt.Fprintf(out, "%-13s %s\n", "Last commit", st.LastCommit)
 	}
@@ -447,10 +409,10 @@ func runBackupStatus(spec backupSpec, args []string, globals globalFlags, stdout
 // ── push ───────────────────────────────────────────────────────────
 
 func runBackupPush(spec backupSpec, args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet(spec.noun+"-backup-push", flag.ContinueOnError)
+	fs := flag.NewFlagSet("pass-backup-push", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	message := fs.String("m", "", "")
-	// The old `dotfile git push --pass-entry` was parsed and ignored; it is still accepted.
+	// The old `git push --pass-entry` was parsed and ignored; it is still accepted.
 	_ = fs.String("pass-entry", "", "")
 	registerGlobalFlags(fs, &globals)
 	if err := parseInterspersed(fs, args); err != nil {
@@ -466,7 +428,7 @@ func runBackupPush(spec backupSpec, args []string, globals globalFlags, stdin io
 		return 1
 	}
 	if s.RemoteURL == "" {
-		fmt.Fprintf(stderr, "%s\n", style.ResultError(nc, "Backup is not enabled. Run: ws %s backup enable --remote <url>", spec.noun))
+		fmt.Fprintf(stderr, "%s\n", style.ResultError(nc, "Backup is not enabled. Run: ws pass backup enable --remote <url>"))
 		return 1
 	}
 	branch := s.Branch

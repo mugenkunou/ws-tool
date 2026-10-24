@@ -201,7 +201,7 @@ func TestHeaderCue(t *testing.T) {
 	if strings.Contains(view(newModel(t, h)), "no workspace copy") {
 		t.Error("cue shown although the store has a workspace copy")
 	}
-	h.CopyCommand = "dotfile add ~/.password-store --dir --to ~/Workspace/secrets/dotfiles/password-store"
+	h.CopyCommand = "symlink add ~/.password-store --dir"
 	first := strings.SplitN(view(newModel(t, h)), "\n", 2)[0]
 	if !strings.HasSuffix(strings.TrimSpace(first), "ℹ no workspace copy") {
 		t.Errorf("header should end with the cue:\n%s", first)

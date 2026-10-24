@@ -10,9 +10,9 @@ import (
 // Coverage records how the TUI covers one CLI subcommand. cmd's
 // TestCLICoverage fails when a CLI subcommand has no entry here, so adding a
 // command forces a TUI decision; TestCoverageKeysExist fails when an entry
-// names a key its screen does not offer. See docs/adr/0001-….
+// names a key its screen does not offer. See HANDBOOK.md §7.5.
 type Coverage struct {
-	CLI    string     // "dotfile add"
+	CLI    string     // "symlink add"
 	Screen nav.Screen // where it lives in the TUI
 	// Key runs it. Zero with no Note means the screen's list itself is the
 	// coverage (ls, scan, status: the same records, fields, filter, sort).
@@ -29,7 +29,7 @@ type Coverage struct {
 // CLICoverage is every CLI subcommand and its TUI counterpart.
 var CLICoverage = func() []Coverage {
 	rp, sc, lg := keys.Repos(), keys.Scratch(), keys.Sessions()
-	df, ig, se, cr, tr := keys.Dotfiles(), keys.Ignore(), keys.Secrets(), keys.Cron(), keys.Trash()
+	df, ig, se, cr, tr := keys.Symlinks(), keys.Ignore(), keys.Secrets(), keys.Cron(), keys.Trash()
 	none := key.Binding{}
 	shell := "shell integration; nothing to show in a TUI"
 	plumbing := "git plumbing, called by git itself"
@@ -54,15 +54,10 @@ var CLICoverage = func() []Coverage {
 		{"cron log", nav.ScreenCron, cr.Output, "", ""},
 		{"cron apply", nav.ScreenCron, none, "", "apply"}, // :apply
 
-		{"dotfile ls", nav.ScreenDotfiles, none, "", ""},
-		{"dotfile add", nav.ScreenDotfiles, df.Add, "", "add"},
-		{"dotfile link", nav.ScreenDotfiles, df.Link, "", "link"},
-		{"dotfile unlink", nav.ScreenDotfiles, df.Unlink, "", "unlink --all"},
-		{"dotfile edit", nav.ScreenDotfiles, df.Edit, "", ""},
-		{"dotfile backup enable", nav.ScreenDotfiles, none, "", "backup enable"},
-		{"dotfile backup disable", nav.ScreenDotfiles, none, "", "backup disable"},
-		{"dotfile backup status", nav.ScreenDotfiles, none, "", "backup status"},
-		{"dotfile backup push", nav.ScreenDotfiles, df.Backup, "", "backup push"},
+		{"symlink ls", nav.ScreenSymlinks, none, "", ""},
+		{"symlink add", nav.ScreenSymlinks, df.Add, "", "add"},
+		{"symlink link", nav.ScreenSymlinks, df.Link, "", "link"},
+		{"symlink unlink", nav.ScreenSymlinks, df.Unlink, "", "unlink --all"},
 
 		{"ignore ls", nav.ScreenIgnore, ig.NextView, "", ""},       // the Muted and Ignored views
 		{"ignore lint", nav.ScreenIgnore, none, "", "lint"},        // the Warnings view; :lint <path>

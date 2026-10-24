@@ -40,13 +40,13 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/cron"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/dashboard"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/dotfiles"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/repos"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/scratch"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/secrets"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/sessions"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/setup"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/symlinks"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui/selection"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
@@ -131,7 +131,7 @@ func (m Model) withEnv(e env.Env, loadErr error) Model {
 		m.screens = make([]nav.Component, len(nav.Screens()))
 		m.screens[nav.ScreenDashboard] = dashboard.New(e)
 		m.screens[nav.ScreenRepos] = repos.New(e)
-		m.screens[nav.ScreenDotfiles] = dotfiles.New(e)
+		m.screens[nav.ScreenSymlinks] = symlinks.New(e)
 		m.screens[nav.ScreenScratch] = scratch.New(e)
 		m.screens[nav.ScreenSessions] = sessions.New(e)
 		m.screens[nav.ScreenIgnore] = ignore.New(e)

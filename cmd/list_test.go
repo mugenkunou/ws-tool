@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mugenkunou/ws-tool/internal/dotfile"
 	"github.com/mugenkunou/ws-tool/internal/resource"
+	"github.com/mugenkunou/ws-tool/internal/symlink"
 	"github.com/mugenkunou/ws-tool/internal/trash"
 )
 
@@ -107,33 +107,33 @@ func TestTrashLs(t *testing.T) {
 	}
 }
 
-func TestDotfileLsFieldsAndFilter(t *testing.T) {
+func TestSymlinkLsFieldsAndFilter(t *testing.T) {
 	workspace := initWorkspace(t)
 	sys := t.TempDir()
-	for _, name := range []string{".bashrc", "id_rsa"} { // a private key goes under secrets/
+	for _, name := range []string{".bashrc", "id_rsa"} { // both mirror under symlinks/
 		p := filepath.Join(sys, name)
 		if err := os.WriteFile(p, []byte("x\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		var out, errOut bytes.Buffer
-		if code := Execute([]string{"--workspace", workspace, "dotfile", "add", p}, strings.NewReader("y\ny\n"), &out, &errOut); code != 0 {
+		if code := Execute([]string{"--workspace", workspace, "symlink", "add", p}, strings.NewReader("y\ny\n"), &out, &errOut); code != 0 {
 			t.Fatalf("add %s: %s", name, errOut.String())
 		}
 	}
 
-	recs := listRecords(t, "--workspace", workspace, "dotfile", "ls")
+	recs := listRecords(t, "--workspace", workspace, "symlink", "ls")
 	if len(recs) != 2 {
 		t.Fatalf("records = %d, want 2", len(recs))
 	}
-	assertKeys(t, recs[0], dotfile.Schema(resource.CLIView()).Keys())
+	assertKeys(t, recs[0], symlink.Schema(resource.CLIView()).Keys())
 	for _, r := range recs {
 		if r["status"] != "ok" {
 			t.Errorf("%v status = %v", r["system"], r["status"])
 		}
 	}
 
-	recs = listRecords(t, "--workspace", workspace, "dotfile", "ls", "--filter", "workspace_path=secrets/dotfiles")
+	recs = listRecords(t, "--workspace", workspace, "symlink", "ls", "--filter", "original=symlinks/system"+filepath.ToSlash(filepath.Join(sys, "id_rsa")))
 	if len(recs) != 1 || !strings.HasSuffix(recs[0]["system"].(string), "id_rsa") {
-		t.Errorf("--filter workspace_path=secrets/dotfiles = %v", recs)
+		t.Errorf("--filter original = %v", recs)
 	}
 }

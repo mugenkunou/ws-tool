@@ -47,7 +47,7 @@ func TestPlanInitOnAnEmptyDirectory(t *testing.T) {
 		t.Fatal("planning writes nothing")
 	}
 	runPlan(t, p)
-	for _, rel := range []string{"ws.json", ".megaignore", "configs/dotfiles", "secrets/pass", "data/ws-log", "agent/skills"} {
+	for _, rel := range []string{"ws.json", ".megaignore", "symlinks", "configs", "secrets", "data/sessions", "agent/skills"} {
 		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
 			t.Errorf("%s: %v", rel, err)
 		}
@@ -66,7 +66,7 @@ func TestPlanInitOnAnEmptyDirectory(t *testing.T) {
 func TestPlanInitFillsKeysAndKeepsValues(t *testing.T) {
 	root := t.TempDir()
 	cfg := filepath.Join(root, "ws.json")
-	if err := os.WriteFile(cfg, []byte(`{"schema": 1, "repo": {"roots": ["experiments"], "max_parallel": 3}, "log": {"cap_mb": 9}}`), 0o644); err != nil {
+	if err := os.WriteFile(cfg, []byte(`{"schema": 1, "repo": {"roots": ["experiments"], "max_parallel": 3}, "session": {"cap_mb": 9}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, ".megaignore"), []byte("mine\n"), 0o644); err != nil {

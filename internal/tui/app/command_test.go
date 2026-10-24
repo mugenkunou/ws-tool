@@ -42,7 +42,7 @@ func (fakeKeys) FullHelp() [][]key.Binding { return nil }
 
 var screenCommands = map[nav.Screen][]nav.CommandInfo{
 	nav.ScreenRepos:    {{Name: "push", Help: "push"}, {Name: "root ls"}, {Name: "root rm", Args: "<dir>"}},
-	nav.ScreenDotfiles: {{Name: "add", Args: "<path…>"}, {Name: "backup enable"}, {Name: "backup push"}, {Name: "backup status"}},
+	nav.ScreenSymlinks: {{Name: "add", Args: "<path…>"}, {Name: "backup enable"}, {Name: "backup push"}, {Name: "backup status"}},
 	nav.ScreenSecrets:  {{Name: "pass audit"}, {Name: "credential status"}},
 }
 
@@ -128,8 +128,8 @@ func TestCommandBarDoesNotOpenInsideADialogOrFilter(t *testing.T) {
 func TestCommandBarRoutes(t *testing.T) {
 	t.Run("screen prefix", func(t *testing.T) {
 		for line, want := range map[string]nav.Screen{
-			"dot": nav.ScreenDotfiles, "rep": nav.ScreenRepos, "sess": nav.ScreenSessions, "dash": nav.ScreenDashboard,
-			"dotfiles": nav.ScreenDotfiles, "secret": nav.ScreenSecrets, "trash": nav.ScreenTrash,
+			"sym": nav.ScreenSymlinks, "rep": nav.ScreenRepos, "sess": nav.ScreenSessions, "dash": nav.ScreenDashboard,
+			"symlinks": nav.ScreenSymlinks, "secret": nav.ScreenSecrets, "trash": nav.ScreenTrash,
 		} {
 			m, _, _ := withCommands(t)
 			m = runLineKeys(t, m, line)
@@ -147,9 +147,9 @@ func TestCommandBarRoutes(t *testing.T) {
 	})
 	t.Run("the active screen's command", func(t *testing.T) {
 		m, got, _ := withCommands(t)
-		m = send(m, press("3")) // Dotfiles
+		m = send(m, press("3")) // Symlinks
 		m = runLineKeys(t, m, "backup push")
-		if m.active != nav.ScreenDotfiles || len(*got) != 1 || strings.Join((*got)[0].Words, " ") != "backup push" {
+		if m.active != nav.ScreenSymlinks || len(*got) != 1 || strings.Join((*got)[0].Words, " ") != "backup push" {
 			t.Fatalf("active %v got %+v", m.active.Title(), *got)
 		}
 	})
@@ -165,8 +165,8 @@ func TestCommandBarRoutes(t *testing.T) {
 			t.Fatalf("active %v got %+v", m.active.Title(), *got)
 		}
 		m, got, _ = withCommands(t)
-		m = runLineKeys(t, m, "dotfile add ~/.bashrc --dir")
-		if m.active != nav.ScreenDotfiles || len(*got) != 1 || strings.Join((*got)[0].Words, " ") != "add ~/.bashrc --dir" {
+		m = runLineKeys(t, m, "symlink add ~/.bashrc --dir")
+		if m.active != nav.ScreenSymlinks || len(*got) != 1 || strings.Join((*got)[0].Words, " ") != "add ~/.bashrc --dir" {
 			t.Fatalf("active %v got %+v", m.active.Title(), *got)
 		}
 	})
@@ -217,20 +217,20 @@ func TestCommandBarRoutes(t *testing.T) {
 		}
 		m, _, _ = withCommands(t)
 		m = send(m, press("3"))
-		m = runLineKeys(t, m, "dotfle")
+		m = runLineKeys(t, m, "symlnk")
 		if !strings.Contains(lastNotice(m), "did you mean") {
 			t.Fatalf("notice %q", lastNotice(m))
 		}
 	})
 	t.Run("a prefilled advice command runs as typed", func(t *testing.T) {
 		m, got, _ := withCommands(t)
-		m = send(m, nav.OpenCommandBarMsg{Prefill: "dotfile add ~/.password-store --dir --to ~/Workspace/secrets/dotfiles/password-store"})
-		if m.bar == nil || !strings.HasPrefix(m.bar.Value(), "dotfile add") {
+		m = send(m, nav.OpenCommandBarMsg{Prefill: "symlink add ~/.password-store --dir"})
+		if m.bar == nil || !strings.HasPrefix(m.bar.Value(), "symlink add") {
 			t.Fatal("the bar opens prefilled")
 		}
 		m, cmd := sendRun(m, press("enter"))
 		m = pump(t, m, cmd)
-		if m.active != nav.ScreenDotfiles || len(*got) != 1 || (*got)[0].Words[0] != "add" {
+		if m.active != nav.ScreenSymlinks || len(*got) != 1 || (*got)[0].Words[0] != "add" {
 			t.Fatalf("active %v got %+v", m.active.Title(), *got)
 		}
 	})
@@ -240,7 +240,7 @@ func TestCandidates(t *testing.T) {
 	m, _, _ := withCommands(t)
 	m = send(m, press("3"))
 	c := m.candidates()
-	for _, want := range []string{"backup push", "dotfile", "dotfiles", "dashboard", "sessions", "session", "repo push", "secret pass audit", "config show", "config edit", "help", "q", "quit"} {
+	for _, want := range []string{"symlink", "symlinks", "dashboard", "sessions", "session", "repo push", "secret pass audit", "config show", "config edit", "help", "q", "quit"} {
 		found := false
 		for _, x := range c {
 			found = found || x == want
@@ -261,7 +261,7 @@ func TestCtrlRRefreshesOnlyTheActiveScreen(t *testing.T) {
 	// through the Model: no panic, no quit, no bar.
 	m = send(m, press("3"))
 	m2, cmd := sendRun(m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
-	if m2.bar != nil || m2.active != nav.ScreenDotfiles {
+	if m2.bar != nil || m2.active != nav.ScreenSymlinks {
 		t.Fatal("ctrl+r changes nothing visible")
 	}
 	_ = cmd

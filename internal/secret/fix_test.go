@@ -160,7 +160,7 @@ func TestSanitizeEntryName(t *testing.T) {
 		{"myapp/password", "myapp/password"},
 		{"my app/pass word", "my_app/pass_word"},
 		{"dir:name/key", "dir_name/key"},
-		{".hidden/.dotfile/secret", "hidden/dotfile/secret"},
+		{".hidden/.symlink/secret", "hidden/symlink/secret"},
 		{"a\\b\\c", "a_b_c"},
 		{"clean/path/ok", "clean/path/ok"},
 		{"///", "entry"},

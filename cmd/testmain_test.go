@@ -33,6 +33,13 @@ func TestMain(m *testing.M) {
 		defer os.RemoveAll(xdgDir)
 	}
 
+	// symlink detection reads /etc paths (hosts, docker); point it at an empty
+	// root so a test never depends on the machine it runs on.
+	if rootDir, err := os.MkdirTemp("", "ws-tool-test-root-"); err == nil {
+		_ = os.Setenv("WS_SYMLINK_ROOT", rootDir)
+		defer os.RemoveAll(rootDir)
+	}
+
 	// Isolate git global config so tests never clobber the real ~/.gitconfig.
 	// This prevents credential-helper setup (and any other global git config
 	// mutation) from overwriting the user's real configuration.
@@ -70,12 +77,6 @@ func testSetXDG(t *testing.T) {
 		t.Fatalf("testSetXDG: create crontab file: %v", err)
 	}
 	t.Setenv("WS_CRONTAB_FILE", cronFile)
-}
-
-// testConfigPath returns a per-test config path inside a test-scoped temp dir.
-func testConfigPath(t *testing.T) string {
-	t.Helper()
-	return filepath.Join(t.TempDir(), "ws-tool", "config.json")
 }
 
 // initWorkspace initialises a workspace with an isolated XDG config.

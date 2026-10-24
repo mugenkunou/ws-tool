@@ -51,21 +51,10 @@ func (h cmdHelp) String() string {
 	return strings.Join(parts, "\n")
 }
 
-// UsageError returns the lowercase usage line for stderr.
-func (h cmdHelp) UsageError() string {
-	return "usage: " + h.Usage
-}
-
 // printCmdHelp writes the full help text to stdout and returns 0.
 func printCmdHelp(stdout io.Writer, h cmdHelp) int {
 	fmt.Fprintln(stdout, h.String())
 	return 0
-}
-
-// printUsageError writes the usage-error line to stderr and returns 1.
-func printUsageError(stderr io.Writer, h cmdHelp) int {
-	fmt.Fprintln(stderr, h.UsageError())
-	return 1
 }
 
 // ── Help rendered from the command table ───────────────────────────
@@ -272,15 +261,47 @@ func writeCommandHelp(stdout io.Writer, c command, noColor bool) {
 		fmt.Fprintln(stdout, style.Boldf(noColor, "Flags:"))
 		writeFlagDocs(stdout, flags)
 	}
+	if len(c.Examples) > 0 {
+		fmt.Fprintln(stdout)
+		fmt.Fprintln(stdout, style.Boldf(noColor, "Examples:"))
+		for _, ex := range c.Examples {
+			fmt.Fprintf(stdout, "  %s\n", ex)
+		}
+	}
 	if c.Fields != nil {
 		fmt.Fprintln(stdout)
-		fmt.Fprintf(stdout, "Fields (for --filter, --sort and --wide): %s\n", strings.Join(c.Fields(), ", "))
+		fmt.Fprintln(stdout, wrapHelp("Fields (for --filter, --sort and --wide): "+strings.Join(c.Fields(), ", "), "  "))
 	}
 	if !c.RO {
 		fmt.Fprintln(stdout)
-		fmt.Fprintln(stdout, "Also: --dry-run prints the plan and changes nothing; --quiet and --json accept every action.")
+		fmt.Fprintln(stdout, wrapHelp("Also: --dry-run prints the plan and changes nothing; --quiet and --json accept every action.", "  "))
 	}
 	fmt.Fprintln(stdout, helpFlag)
+}
+
+// helpWidth is the column limit of help text.
+const helpWidth = 80
+
+// wrapHelp breaks text at spaces so no line is longer than helpWidth; later lines
+// start with indent.
+func wrapHelp(text, indent string) string {
+	var lines []string
+	line := ""
+	for _, w := range strings.Fields(text) {
+		switch {
+		case line == "":
+			line = w
+		case len([]rune(line))+1+len([]rune(w)) > helpWidth:
+			lines = append(lines, line)
+			line = indent + w
+		default:
+			line += " " + w
+		}
+	}
+	if line != "" {
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func writeFlagDocs(stdout io.Writer, flags []flagDoc) {

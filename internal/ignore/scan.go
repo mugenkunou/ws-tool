@@ -53,7 +53,7 @@ func Scan(opts ScanOptions) ([]Violation, error) {
 		rel = filepath.ToSlash(rel)
 
 		// Evaluate inclusion and muted status in a single pass. A warning is
-		// muted when the path lies under an always-sync directory or under an
+		// muted when the path lies under an included directory or under an
 		// ignore.muted entry.
 		muted := false
 		if opts.Engine != nil {
@@ -64,7 +64,7 @@ func Scan(opts ScanOptions) ([]Violation, error) {
 				}
 				return nil
 			}
-			muted = eval.SafeHarbor
+			muted = eval.ByInclude
 		}
 		if !muted {
 			_, muted = MutedBy(opts.Muted, rel)
@@ -217,7 +217,7 @@ func metaSeverity(muted bool) string {
 }
 
 // includePath reports whether absPath syncs and whether its warnings are muted
-// (under an always-sync directory or an ignore.muted entry).
+// (under an included directory or an ignore.muted entry).
 func includePath(opts ScanOptions, absPath string) (included, muted bool) {
 	rel, err := filepath.Rel(opts.WorkspacePath, absPath)
 	if err != nil {
@@ -237,7 +237,7 @@ func includePath(opts ScanOptions, absPath string) (included, muted bool) {
 	if !eval.Included {
 		return false, false
 	}
-	muted = eval.SafeHarbor
+	muted = eval.ByInclude
 	if !muted {
 		_, muted = MutedBy(opts.Muted, rel)
 	}

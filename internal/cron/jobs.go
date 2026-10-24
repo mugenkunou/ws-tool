@@ -28,16 +28,6 @@ pkill megasync || true`,
 	},
 }
 
-var dotfileBackupJob = &BuiltinJob{
-	Name:         "dotfile-backup",
-	Schedule:     "*/30 * * * *",
-	IntervalSecs: 30 * 60,
-	Description:  "Commit and push the dotfile backup (needs ws dotfile backup enable)",
-	scriptBody: func(wsBin, display, workspace string) string {
-		return fmt.Sprintf("%s --workspace %s dotfile backup push --quiet", wsBin, workspace)
-	},
-}
-
 var passBackupJob = &BuiltinJob{
 	Name:         "pass-backup",
 	Schedule:     "*/30 * * * *",

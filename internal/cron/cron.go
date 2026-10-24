@@ -46,26 +46,20 @@ type BuiltinJob struct {
 
 // Builtins is the registry of all built-in named cron jobs.
 var Builtins = map[string]*BuiltinJob{
-	"mega-sync":      megaSyncJob,
-	"dotfile-backup": dotfileBackupJob,
-	"pass-backup":    passBackupJob,
-	"session-prune":  sessionPruneJob,
+	"mega-sync":     megaSyncJob,
+	"pass-backup":   passBackupJob,
+	"session-prune": sessionPruneJob,
 }
 
 // Presets maps a composite name to the ordered list of job names it expands to.
 var Presets = map[string][]string{
 	"maintenance": {"session-prune"},
-	"sync":        {"mega-sync", "dotfile-backup", "pass-backup"},
+	"sync":        {"mega-sync", "pass-backup"},
 }
 
 // Aliases maps an old job name to the job that replaced it. Old crontab lines
-// keep working (`cron run` takes the old name silently), and a block, a state
-// record or a log line under the old name counts as the new job's, so history and
-// missed-run checks carry over.
-var Aliases = map[string]string{
-	"dotfile-sync": "dotfile-backup",
-	"log-prune":    "session-prune",
-}
+// keep working (`cron run` takes the old name silently). None are defined now.
+var Aliases = map[string]string{}
 
 // Retired are jobs that no longer exist. `cron add` rejects them, `cron rm` still
 // removes their blocks, and `cron run` logs a skip and exits 0, so old crontab

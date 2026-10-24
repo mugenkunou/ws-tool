@@ -27,7 +27,7 @@ func TestAliasTableIsHidden(t *testing.T) {
 	for _, a := range aliases {
 		if _, ok := findCommand(a.Old); ok && !slices.Equal(a.Old, a.New) {
 			// An alias that keeps its command name only rewrites old arguments
-			// (`dotfile link <path> <ws-path>`).
+			// (`repo scan`).
 			t.Errorf("alias %q is also a command in the table", strings.Join(a.Old, " "))
 		}
 		if len(a.Old) == 1 {
@@ -58,6 +58,9 @@ func TestAliasTargetsExist(t *testing.T) {
 		if _, ok := findCommand(target); ok {
 			continue
 		}
+		if len(target) == 1 && isNoun(target[0]) {
+			continue // a whole noun renamed
+		}
 		if slices.Contains(plumbingCommands, strings.Join(target, " ")) {
 			continue
 		}
@@ -70,7 +73,6 @@ func TestAliasTargetsExist(t *testing.T) {
 func TestAliasRewrites(t *testing.T) {
 	withAllAliasesLive(t)
 	ws := filepath.Join(t.TempDir(), "Workspace")
-	other := filepath.Join(t.TempDir(), ".bashrc")
 	cases := []struct {
 		name string
 		in   []string
@@ -81,19 +83,8 @@ func TestAliasRewrites(t *testing.T) {
 		{"repo doctor", []string{"repo", "doctor"}, []string{"repo", "ls"}},
 		{"repo add-root", []string{"repo", "add-root", "/x"}, []string{"repo", "root", "add", "/x"}},
 		{"trash purge", []string{"trash", "purge", "--older-than", "30"}, []string{"trash", "prune", "--older-than", "30"}},
-		{"dotfile reset", []string{"dotfile", "reset"}, []string{"dotfile", "unlink", "--all"}},
-		{"dotfile sync", []string{"dotfile", "sync", "/h/.x"}, []string{"dotfile", "add", "/h/.x"}},
-		{"dotfile link two paths", []string{"dotfile", "link", other, filepath.Join(ws, "agent", "A.md")},
-			[]string{"dotfile", "link", other, "--to", filepath.Join(ws, "agent", "A.md")}},
-		{"dotfile link already --to", []string{"dotfile", "link", other, "--to", filepath.Join(ws, "x")}, nil},
-		{"dotfile git remote", []string{"dotfile", "git", "remote", "git@h:r.git", "--pass-entry", "e"},
-			[]string{"dotfile", "backup", "enable", "--remote", "git@h:r.git", "--pass-entry", "e"}},
-		{"dotfile git log -n", []string{"dotfile", "git", "log", "-n", "5"}, []string{"dotfile", "backup", "status", "-n", "5"}},
 		{"scratch search", []string{"scratch", "search", "dns", "proxy"},
 			[]string{"scratch", "ls", "--filter", "dns", "--filter", "proxy"}},
-		{"log start --tag", []string{"log", "start", "--tag", "demo", "--quiet-start"},
-			[]string{"session", "record", "demo", "--quiet"}},
-		{"log prune", []string{"log", "prune", "--older-than", "30"}, []string{"session", "prune", "--older-than", "30"}},
 		{"ignore scan", []string{"ignore", "scan"}, []string{"ignore", "lint"}},
 		{"ignore scan expand", []string{"ignore", "scan", "--expand-suppressed"}, []string{"ignore", "ls", "--muted"}},
 		{"secret scan", []string{"secret", "scan", "--skip-dir", "d"}, []string{"secret", "ls", "--skip-dir", "d"}},
@@ -178,8 +169,8 @@ func TestPlumbingAliasesAreSilent(t *testing.T) {
 func TestRemovedCommandsPointToSuccessors(t *testing.T) {
 	withAllAliasesLive(t)
 	cases := map[string]string{
-		"reset":      "ws dotfile unlink --all, ws trash disable, ws cron rm <job>",
-		"restore":    "ws init, ws dotfile link, ws trash enable, ws cron apply",
+		"reset":      "ws symlink unlink --all, ws trash disable, ws cron rm <job>",
+		"restore":    "ws init, ws symlink link, ws trash enable, ws cron apply",
 		"ignore fix": "ws ignore add",
 		"secret fix": "ws secret allow",
 	}
@@ -197,10 +188,8 @@ func TestRemovedCommandsPointToSuccessors(t *testing.T) {
 func TestAliasesReachTheirTarget(t *testing.T) {
 	workspace := initWorkspace(t)
 	pairs := [][2][]string{
-		{{"dotfile", "scan"}, {"dotfile", "ls"}},
 		{{"cron", "list"}, {"cron", "ls"}},
 		{{"config", "view"}, {"config", "show"}},
-		{{"log", "ls"}, {"session", "ls"}},
 		{{"scratch", "search"}, {"scratch", "ls"}},
 		{{"trash", "setup", "--dry-run"}, {"trash", "enable", "--dry-run"}},
 		{{"secret", "scan"}, {"secret", "ls"}},

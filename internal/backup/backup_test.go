@@ -48,7 +48,7 @@ func TestCommitPushAndInspect(t *testing.T) {
 		t.Fatalf("pending change not reported: %+v", st)
 	}
 
-	committed, err := CommitAll(work, "dotfile add: x")
+	committed, err := CommitAll(work, "symlink add: x")
 	if err != nil || !committed {
 		t.Fatalf("CommitAll = %v, %v", committed, err)
 	}
@@ -63,10 +63,10 @@ func TestCommitPushAndInspect(t *testing.T) {
 	if st.Ahead != 0 || st.Behind != 0 || len(st.Uncommitted) != 0 {
 		t.Fatalf("after a push: %+v", st)
 	}
-	if len(st.Commits) != 1 || st.Commits[0].Subject != "dotfile add: x" || st.Commits[0].Hash == "" {
+	if len(st.Commits) != 1 || st.Commits[0].Subject != "symlink add: x" || st.Commits[0].Hash == "" {
 		t.Fatalf("commits: %+v", st.Commits)
 	}
-	if !strings.HasSuffix(st.LastCommit, "dotfile add: x") {
+	if !strings.HasSuffix(st.LastCommit, "symlink add: x") {
 		t.Fatalf("last commit %q", st.LastCommit)
 	}
 

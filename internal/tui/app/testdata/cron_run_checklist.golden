@@ -1,8 +1,8 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Run dotfile-backup
+Run pass-backup
 
-› [x] Run dotfile-backup now
+› [x] Run pass-backup now
 
 
 

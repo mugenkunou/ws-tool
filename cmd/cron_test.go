@@ -50,7 +50,7 @@ func TestCronLs(t *testing.T) {
 		t.Fatalf("cron ls: code=%d stderr=%s stdout=%s", code, errOut.String(), out.String())
 	}
 	// All built-in job names must appear.
-	for _, name := range []string{"mega-sync", "dotfile-backup", "pass-backup", "session-prune"} {
+	for _, name := range []string{"mega-sync", "pass-backup", "session-prune"} {
 		if !strings.Contains(out.String(), name) {
 			t.Errorf("cron ls output missing job %q: %s", name, out.String())
 		}

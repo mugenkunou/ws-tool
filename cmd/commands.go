@@ -5,18 +5,18 @@ import (
 	"strings"
 
 	cronpkg "github.com/mugenkunou/ws-tool/internal/cron"
-	"github.com/mugenkunou/ws-tool/internal/dotfile"
 	"github.com/mugenkunou/ws-tool/internal/ignore"
-	"github.com/mugenkunou/ws-tool/internal/log"
 	"github.com/mugenkunou/ws-tool/internal/repo"
 	"github.com/mugenkunou/ws-tool/internal/resource"
 	"github.com/mugenkunou/ws-tool/internal/scratch"
 	"github.com/mugenkunou/ws-tool/internal/secret"
+	"github.com/mugenkunou/ws-tool/internal/session"
+	"github.com/mugenkunou/ws-tool/internal/symlink"
 	"github.com/mugenkunou/ws-tool/internal/trash"
 )
 
 // flagDoc documents one flag of a command. It drives help, and completion
-// reads it too, so the two cannot drift (dev.md §12.6).
+// reads it too, so the two cannot drift (HANDBOOK.md §9.7).
 type flagDoc struct {
 	Name  string // "--rebase"
 	Short string // "-m" (optional)
@@ -32,6 +32,8 @@ type command struct {
 	Summary string
 	RO      bool
 	Flags   []flagDoc
+	// Examples are command lines `ws <cmd> --help` shows under "Examples:".
+	Examples []string
 	// Fields lists the field names --filter, --sort and --wide accept. It is
 	// set for ls and lint, from the domain's resource schema.
 	Fields func() []string
@@ -103,22 +105,27 @@ var commands = []command{
 	{Path: []string{"repo", "root", "ls"}, Summary: "list discovery roots", RO: true},
 	{Path: []string{"repo", "root", "rm"}, Args: "<dir>", Summary: "remove a discovery root"},
 
-	{Path: []string{"dotfile", "ls"}, Summary: "managed dotfiles with link health", RO: true,
-		Fields: fieldsOf(func() resource.Schema[dotfile.Entry] { return dotfile.Schema(resource.CLIView()) })},
-	{Path: []string{"dotfile", "add"}, Args: "<path…>", Summary: "take live files into the workspace, symlink back (new, or again)",
+	{Path: []string{"symlink", "ls"}, Summary: "managed symlinks, problems, and what was found", RO: true,
+		Fields:   fieldsOf(func() resource.Schema[symlink.Entry] { return symlink.Schema(resource.CLIView()) }),
+		Examples: []string{"ws symlink ls", "ws symlink ls --filter status=found"}},
+	{Path: []string{"symlink", "add"}, Args: "[<host-path> [<ws-path>]]", Summary: "take into the workspace; no path: a checklist",
 		Flags: []flagDoc{
-			{Name: "--to", Arg: "<ws-path>", Desc: "store the workspace copy here (exactly one path)"},
-			{Name: "--dir", Desc: "move a directory whole, as one entry"},
+			{Name: "--dir", Desc: "take a folder whole, as one entry"},
+			{Name: "--files", Desc: "take every file in a folder as its own entry"},
+			{Name: "--app", Arg: "<name>", Desc: "add everything found for one app, without asking"},
+		},
+		Examples: []string{
+			"ws symlink add                                a checklist of what was found",
+			"ws symlink add ~/.gitconfig                   to symlinks/home/.gitconfig",
+			"ws symlink add ~/Screenshots artifacts/shots  to artifacts/shots",
+			"ws symlink add --app git",
+			"ws symlink add ~/.password-store --dir",
 		}},
-	{Path: []string{"dotfile", "link"}, Args: "[path…]", Summary: "point paths at their workspace copies (all broken ones by default)",
-		Flags: []flagDoc{{Name: "--to", Arg: "<ws-path>", Desc: "manage <path> as a link to a file already in the workspace"}}},
-	{Path: []string{"dotfile", "unlink"}, Args: "<path…> | --all", Summary: "put the real file back, stop managing it",
-		Flags: []flagDoc{allFlag("every entry")}},
-	{Path: []string{"dotfile", "edit"}, Args: "<path>", Summary: "open the workspace copy in your editor"},
-	{Path: []string{"dotfile", "backup", "enable"}, Summary: "set up the private git backup", Flags: []flagDoc{remoteFlag, passEntry}},
-	{Path: []string{"dotfile", "backup", "disable"}, Summary: "stop backing up"},
-	{Path: []string{"dotfile", "backup", "status"}, Summary: "remote, ahead/behind, uncommitted, recent commits", RO: true, Flags: []flagDoc{commitsFlag}},
-	{Path: []string{"dotfile", "backup", "push"}, Summary: "commit pending changes and push", Flags: []flagDoc{messageFlag("ws dotfile backup push")}},
+	{Path: []string{"symlink", "link"}, Args: "[<host-path>…]", Summary: "make or repair links from the workspace copies",
+		Examples: []string{"ws symlink link", "ws symlink link ~/.zshrc"}},
+	{Path: []string{"symlink", "unlink"}, Args: "<host-path>… | --all", Summary: "put the real content back, stop managing it",
+		Flags:    []flagDoc{allFlag("every entry")},
+		Examples: []string{"ws symlink unlink ~/.gitconfig", "ws symlink unlink --all"}},
 
 	{Path: []string{"scratch", "ls"}, Summary: "scratch directories", RO: true,
 		Fields: fieldsOf(func() resource.Schema[scratch.Entry] { return scratch.Schema(resource.CLIView()) })},
@@ -132,7 +139,7 @@ var commands = []command{
 	{Path: []string{"scratch", "rm"}, Args: "<name…>", Summary: "soft-delete"},
 
 	{Path: []string{"session", "ls"}, Summary: "recorded sessions", RO: true,
-		Fields: fieldsOf(func() resource.Schema[log.Session] { return log.Schema(resource.CLIView()) })},
+		Fields: fieldsOf(func() resource.Schema[session.Session] { return session.Schema(resource.CLIView()) })},
 	{Path: []string{"session", "record"}, Args: "[tag]", Summary: "record a shell session",
 		Flags: []flagDoc{{Name: "--no-prompt", Desc: "do not add the prompt indicator"}}},
 	{Path: []string{"session", "stop"}, Summary: "stop the running recording"},
@@ -236,7 +243,7 @@ var commands = []command{
 // nounSummaries are the lines of `ws help`, in display order.
 var nounSummaries = []struct{ Name, Summary string }{
 	{"repo", "Git repositories under the repo roots"},
-	{"dotfile", "Dotfiles kept in the workspace and linked back"},
+	{"symlink", "Files and folders kept in the workspace and linked back"},
 	{"scratch", "Scratch directories"},
 	{"session", "Recorded terminal sessions"},
 	{"ignore", "MEGA sync rules and warnings"},

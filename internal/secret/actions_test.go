@@ -293,7 +293,7 @@ func TestStoreActionAllowsOnlyAfterInsert(t *testing.T) {
 func TestWorkspaceCopy(t *testing.T) {
 	root := t.TempDir()
 	ws := filepath.Join(root, "Workspace")
-	target := filepath.Join(ws, "secrets", "dotfiles", "password-store")
+	target := filepath.Join(ws, "symlinks", "home", ".password-store")
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		t.Fatal(err)
 	}

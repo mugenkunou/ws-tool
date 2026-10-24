@@ -11,7 +11,7 @@ import (
 )
 
 // topLevelKeys is spec §2.3, in the file's order.
-var topLevelKeys = []string{"schema", "editor", "scratch", "repo", "dotfile", "secret", "pass", "ignore", "ignore_rules", "session", "links"}
+var topLevelKeys = []string{"schema", "editor", "scratch", "repo", "secret", "pass", "ignore", "ignore_rules", "session", "symlinks"}
 
 // keysOf reads the keys of a JSON object in file order.
 func keysOf(t *testing.T, raw []byte) []string {
@@ -61,7 +61,7 @@ func TestSaveWritesEveryKey(t *testing.T) {
 		"secret":       {"allowlist", "skip_dirs"},
 		"pass":         {"pass_entry"},
 		"ignore":       {"warn_size_mb", "crit_size_mb", "max_depth", "muted"},
-		"ignore_rules": {"schema", "exclude", "safe_harbors", "suppress_defaults", "suppress_harbors"},
+		"ignore_rules": {"schema", "exclude", "include", "suppress_defaults"},
 		"session":      {"cap_mb", "max_session_mb"},
 	}
 	for section, keys := range want {
@@ -79,14 +79,8 @@ func TestSaveWritesEveryKey(t *testing.T) {
 			}
 		}
 	}
-	git := generic["dotfile"].(map[string]any)["git"].(map[string]any)
-	for _, k := range []string{"remote_url", "branch", "auto_commit", "auto_push", "pass_entry"} {
-		if _, ok := git[k]; !ok {
-			t.Errorf("dotfile.git.%s is missing", k)
-		}
-	}
-	if generic["links"] == nil {
-		t.Error("links is null, want []")
+	if generic["symlinks"] == nil {
+		t.Error("symlinks is null, want []")
 	}
 }
 
@@ -95,18 +89,18 @@ func TestSaveWritesEveryKey(t *testing.T) {
 func TestLinkWritesEveryKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ws.json")
 	cfg := Default()
-	cfg.Links = []Link{{System: "/home/u/.bashrc", Original: "configs/dotfiles/bashrc"}}
+	cfg.Symlinks = []Link{{System: "/home/u/.bashrc", Original: "symlinks/home/bashrc"}}
 	if err := Save(path, cfg); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := os.ReadFile(path)
 	var generic struct {
-		Links []map[string]any `json:"links"`
+		Symlinks []map[string]any `json:"symlinks"`
 	}
 	if err := json.Unmarshal(raw, &generic); err != nil {
 		t.Fatal(err)
 	}
-	link := generic.Links[0]
+	link := generic.Symlinks[0]
 	for _, k := range []string{"system", "original", "dir", "sudo"} {
 		if _, ok := link[k]; !ok {
 			t.Errorf("link.%s is missing: %v", k, link)
@@ -127,7 +121,7 @@ func TestRoundTripKeepsEveryValue(t *testing.T) {
 	cfg.Pass.PassEntry = "git/github.com"
 	cfg.Secret.SkipDirs = []string{"references/vendor"}
 	cfg.Session.CapMB = 250
-	cfg.Links = []Link{{System: "/etc/hosts", Original: "secrets/dotfiles/etc/hosts", Dir: false, Sudo: true}}
+	cfg.Symlinks = []Link{{System: "/etc/hosts", Original: "symlinks/system/etc/hosts", Dir: false, Sudo: true}}
 	if err := Save(path, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +150,7 @@ func TestMissingKeysTakeDefaultsAndNextWriteFillsThem(t *testing.T) {
 		t.Fatalf("values already set must be kept: %+v", cfg)
 	}
 	def := Default()
-	if cfg.Session != def.Session || cfg.Ignore.CritSizeMB != def.Ignore.CritSizeMB || cfg.Dotfile.Git.Branch != "main" {
+	if cfg.Session != def.Session || cfg.Ignore.CritSizeMB != def.Ignore.CritSizeMB {
 		t.Fatalf("missing keys must take their defaults: %+v", cfg)
 	}
 	if !slices.Equal(cfg.Repo.Roots, []string{"."}) || !slices.Equal(cfg.Repo.ExcludeDirs, def.Repo.ExcludeDirs) {
@@ -175,74 +169,42 @@ func TestMissingKeysTakeDefaultsAndNextWriteFillsThem(t *testing.T) {
 	}
 }
 
-// TestOldLogKeyIsRead: ws.json written before the rename holds "log"; it is
-// read, and only "session" is written back.
-func TestOldLogKeyIsRead(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ws.json")
-	old := `{"schema": 1, "log": {"cap_mb": 123, "max_session_mb": 45}}`
-	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Session.CapMB != 123 || cfg.Session.MaxSessionMB != 45 {
-		t.Fatalf("log must be read as session: %+v", cfg.Session)
-	}
-	if err := Save(path, cfg); err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := os.ReadFile(path)
-	if strings.Contains(string(raw), `"log"`) || !strings.Contains(string(raw), `"session"`) {
-		t.Fatalf("only the new name is written:\n%s", raw)
-	}
-
-	// session wins when both are present.
-	both := `{"schema": 1, "log": {"cap_mb": 1, "max_session_mb": 1}, "session": {"cap_mb": 9, "max_session_mb": 8}}`
-	_ = os.WriteFile(path, []byte(both), 0o644)
-	cfg, _ = Load(path)
-	if cfg.Session.CapMB != 9 {
-		t.Fatalf("session must win over log: %+v", cfg.Session)
-	}
-}
-
-// TestEditorCmdAndClassAreNotReadOrWritten: scratch.editor_cmd and links[].class
-// are gone (spec §2.3). A file that still has them loads, ignores them, and the
-// next write drops them.
-func TestEditorCmdAndClassAreNotReadOrWritten(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ws.json")
-	old := `{"schema": 1, "scratch": {"root_dir": "~/S", "editor_cmd": "emacs"},
-	 "links": [{"system": "/home/u/.x", "original": "configs/dotfiles/x", "class": "secret"}]}`
-	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Editor != "" {
-		t.Fatalf("editor_cmd must not become the editor: %q", cfg.Editor)
-	}
-	if err := Save(path, cfg); err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := os.ReadFile(path)
-	for _, gone := range []string{"editor_cmd", `"class"`, "emacs"} {
-		if strings.Contains(string(raw), gone) {
-			t.Fatalf("%s must not be written:\n%s", gone, raw)
-		}
-	}
-}
-
 func TestConfigShowResolvesLinkOriginals(t *testing.T) {
 	cfg := Default()
-	cfg.Links = []Link{{System: "/home/u/.x", Original: "configs/dotfiles/x"}}
+	cfg.Symlinks = []Link{{System: "/home/u/.x", Original: "symlinks/home/x"}}
 	got := WithAbsPaths(cfg, "/home/u/Workspace")
-	if got.Links[0].Original != "/home/u/Workspace/configs/dotfiles/x" {
-		t.Fatalf("link original not absolute: %q", got.Links[0].Original)
+	if got.Symlinks[0].Original != "/home/u/Workspace/symlinks/home/x" {
+		t.Fatalf("link original not absolute: %q", got.Symlinks[0].Original)
 	}
-	if cfg.Links[0].Original != "configs/dotfiles/x" {
+	if cfg.Symlinks[0].Original != "symlinks/home/x" {
 		t.Fatal("WithAbsPaths must not modify its argument")
+	}
+}
+
+// TestSymlinksKeyAndHomeForm: the registry is written under "symlinks", with ~ for
+// $HOME, and read back absolute.
+func TestSymlinksKeyAndHomeForm(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(t.TempDir(), "ws.json")
+
+	cfg := Default()
+	cfg.Symlinks = []Link{
+		{System: filepath.Join(home, ".gitconfig"), Original: "symlinks/home/.gitconfig"},
+		{System: "/etc/hosts", Original: "symlinks/system/etc/hosts", Sudo: true},
+	}
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(path)
+	if !strings.Contains(string(raw), `"system": "~/.gitconfig"`) || !strings.Contains(string(raw), `"system": "/etc/hosts"`) || strings.Contains(string(raw), home) {
+		t.Fatalf("inside $HOME is written with ~, outside as is:\n%s", raw)
+	}
+	got, err := Load(path)
+	if err != nil || got.Symlinks[0].System != filepath.Join(home, ".gitconfig") || got.Symlinks[1].System != "/etc/hosts" {
+		t.Fatalf("read back absolute: %v %+v", err, got.Symlinks)
+	}
+	if cfg.Symlinks[0].System != filepath.Join(home, ".gitconfig") {
+		t.Fatal("Save must not modify its argument")
 	}
 }

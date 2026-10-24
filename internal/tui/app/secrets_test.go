@@ -13,7 +13,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/tuitest"
 )
 
-const copyCommand = "dotfile add /home/tester/.password-store --dir --to /home/tester/Workspace/secrets/dotfiles/password-store"
+const copyCommand = "symlink add /home/tester/.password-store --dir"
 
 // noCopy is the Secrets load of a pass store that is not in the workspace.
 func noCopy() secrets.LoadedMsg {
@@ -91,7 +91,7 @@ func TestPassAdviceOpensTheCommandBar(t *testing.T) {
 		t.Fatalf("enter on the advice: %+v", open)
 	}
 	bar := send(m, nav.OpenCommandBarMsg{Prefill: open.Prefill})
-	if got := ansi.Strip(view(bar)); !strings.Contains(got, ":dotfile add /home/tester/.password-store --dir") {
+	if got := ansi.Strip(view(bar)); !strings.Contains(got, ":symlink add /home/tester/.password-store --dir") {
 		t.Errorf("the bar should show the prefilled command:\n%s", got)
 	}
 }

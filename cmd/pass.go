@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/mugenkunou/ws-tool/internal/backup"
@@ -100,8 +99,7 @@ func (r passReport) copyTip() string {
 	if r.CopyTarget != "" || r.Workspace == "" || r.Health.StorePath == "" {
 		return ""
 	}
-	return fmt.Sprintf("ws dotfile add %s --dir --to %s", r.Health.StorePath,
-		filepath.Join(r.Workspace, "secrets", "dotfiles", "password-store"))
+	return "ws " + secret.CopyCommand(r.Health.StorePath)
 }
 
 // passTip is the tip line for the commands that end with one, "" when none.
@@ -175,7 +173,7 @@ func printPassReport(out io.Writer, r passReport, nc bool) {
 	if r.CopyTarget != "" {
 		line(style.IconCheck(nc), "workspace copy", r.CopyTarget)
 	} else if tip := r.copyTip(); tip != "" {
-		line(style.IconInfo(nc), "workspace copy", "none: the store syncs only through its git remote")
+		line(style.IconInfo(nc), "workspace copy", "none: the store syncs only through its git remote (a copy in the workspace is a second sync path)")
 		fmt.Fprintf(out, "  Tip: %s\n", tip)
 	}
 }
@@ -371,7 +369,6 @@ func passBackupSpec(globals globalFlags) backupSpec {
 	workspacePath, configPath, hasConfig := optionalWorkspace(globals)
 	store := secret.CheckPass().StorePath
 	return backupSpec{
-		noun:      "pass",
 		job:       "pass-backup",
 		repoPath:  store,
 		workspace: workspacePath,

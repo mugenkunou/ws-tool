@@ -44,7 +44,7 @@ type Health struct {
 	Pass       secret.PassHealth
 	RemoteURL  string
 	CredHelper bool
-	// CopyCommand is the `dotfile add` command that would put the pass store
+	// CopyCommand is the `symlink add` command that would put the pass store
 	// into the workspace, what `ws pass status` shows as its tip. Empty when the
 	// store is already there or there is no store to copy.
 	CopyCommand string
@@ -134,8 +134,7 @@ func Load(e env.Env) tea.Cmd {
 		}
 		if h.Pass.Initialized && h.Pass.StorePath != "" {
 			if _, ok := secret.WorkspaceCopy(h.Pass.StorePath, e.Paths.Workspace); !ok {
-				h.CopyCommand = fmt.Sprintf("dotfile add %s --dir --to %s", h.Pass.StorePath,
-					filepath.Join(e.Paths.Workspace, "secrets", "dotfiles", "password-store"))
+				h.CopyCommand = secret.CopyCommand(h.Pass.StorePath)
 			}
 		}
 		if out, err := exec.Command("git", "config", "--global", "credential.helper").Output(); err == nil {

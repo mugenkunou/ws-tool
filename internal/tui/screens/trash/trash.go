@@ -79,12 +79,6 @@ func New(e env.Env) Model {
 	}
 }
 
-// root is the trash directory (always the XDG trash).
-func root(env.Env) string {
-	r, _ := wstrash.Root()
-	return r
-}
-
 // Load reads trash status, size, and the trashed items (under the trash
 // root's files/ subdirectory — see internal/trash for the on-disk layout).
 func Load(e env.Env) tea.Cmd {

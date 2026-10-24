@@ -41,18 +41,6 @@ type ListOptions struct {
 	SortBy  string
 }
 
-type DeleteResult struct {
-	Removed    []string `json:"removed"`
-	FreedBytes int64    `json:"freed_bytes"`
-	DryRun     bool     `json:"dry_run"`
-}
-
-type DeleteOptions struct {
-	RootDir string
-	Name    string
-	DryRun  bool
-}
-
 func New(opts NewOptions) (NewResult, error) {
 	root := strings.TrimSpace(opts.RootDir)
 	if root == "" {
@@ -169,35 +157,6 @@ func Resolve(rootDir, name string) (Entry, error) {
 // substring must not decide what is deleted.
 func Remove(entry Entry) error {
 	return trash.SoftDelete(entry.Path)
-}
-
-// Delete resolves name to exactly one directory (see Resolve) and moves it to
-// the trash. It used to delete every directory whose name contained the
-// argument, so deleting `foo` also deleted `foo-2` and `myfoo`.
-func Delete(opts DeleteOptions) (DeleteResult, error) {
-	entry, err := Resolve(opts.RootDir, opts.Name)
-	if err != nil {
-		return DeleteResult{Removed: []string{}, DryRun: opts.DryRun}, err
-	}
-	res := DeleteResult{Removed: []string{entry.Name}, FreedBytes: entry.SizeBytes, DryRun: opts.DryRun}
-	if opts.DryRun {
-		return res, nil
-	}
-	if err := Remove(entry); err != nil {
-		return DeleteResult{Removed: []string{}}, err
-	}
-	return res, nil
-}
-
-// stripDateSuffix removes a trailing .YYYY-MM date suffix for matching purposes.
-func stripDateSuffix(name string) string {
-	if idx := strings.LastIndex(name, "."); idx > 0 {
-		suffix := name[idx+1:]
-		if len(suffix) == 7 && suffix[4] == '-' {
-			return name[:idx]
-		}
-	}
-	return name
 }
 
 func uniqueName(root, base string) string {

@@ -1,7 +1,7 @@
 package ignore
 
 // defaultExcludeRules are the built-in exclude rules baked into the ws binary.
-// These are the equivalent of the megaignore template rules. Users can suppress
+// Users can suppress
 // individual rules via suppress_defaults in ws/ignore.json.
 var defaultExcludeRules = []Rule{
 	// OS junk
@@ -10,6 +10,16 @@ var defaultExcludeRules = []Rule{
 	{Raw: "-:~*", Include: false, Glob: false, Pattern: "~*"},
 	{Raw: "-g:*~", Include: false, Glob: true, Pattern: "*~"},
 	{Raw: "-:.*", Include: false, Glob: false, Pattern: ".*"},
+
+	// Temp and partial files (hidden ones, such as .foo.swp, .#foo and
+	// .~lock.*#, are already caught by -:.*)
+	{Raw: "-g:*.tmp", Include: false, Glob: true, Pattern: "*.tmp"},
+	{Raw: "-g:*.temp", Include: false, Glob: true, Pattern: "*.temp"},
+	{Raw: "-g:*.swp", Include: false, Glob: true, Pattern: "*.swp"},
+	{Raw: "-g:*.swo", Include: false, Glob: true, Pattern: "*.swo"},
+	{Raw: "-g:*.part", Include: false, Glob: true, Pattern: "*.part"},
+	{Raw: "-g:*.crdownload", Include: false, Glob: true, Pattern: "*.crdownload"},
+	{Raw: "-g:#*#", Include: false, Glob: true, Pattern: "#*#"},
 
 	// Build artifact directories
 	{Raw: "-:node_modules", Include: false, Glob: false, Pattern: "node_modules"},
@@ -67,26 +77,4 @@ var defaultExcludeRules = []Rule{
 	{Raw: "-g:*.csv", Include: false, Glob: true, Pattern: "*.csv"},
 	{Raw: "-g:*.orc", Include: false, Glob: true, Pattern: "*.orc"},
 	{Raw: "-g:*.parquet", Include: false, Glob: true, Pattern: "*.parquet"},
-}
-
-// LayoutHarborBlocks are the layout blocks whose sync column is "all":
-// everything in them syncs, dot-files and .git included (phase-1 layout).
-// The other blocks (notes, experiments, references, scripts, agent) are
-// filtered by the default excludes.
-var LayoutHarborBlocks = []string{"artifacts", "configs", "secrets", "data", "archive"}
-
-// defaultHarborRules are the built-in safe harbor include overrides, one per
-// "all" block. They appear after all excludes, and MEGA evaluates rules
-// last-match-wins, so they win over them. Each is a path glob: MEGA treats a
-// pattern with a "/" as a path rule, and its "*" also matches "/", so
-// "+g:secrets/**" covers everything below secrets/. A name rule (+:secrets)
-// would match only items named secrets, not their contents.
-var defaultHarborRules = layoutHarborRules()
-
-func layoutHarborRules() []Rule {
-	rules := make([]Rule, 0, len(LayoutHarborBlocks))
-	for _, b := range LayoutHarborBlocks {
-		rules = append(rules, Rule{Raw: "+g:" + b + "/**", Include: true, Glob: true, Pattern: b + "/**"})
-	}
-	return rules
 }

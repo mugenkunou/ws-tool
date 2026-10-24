@@ -66,7 +66,7 @@ func (m machine) opts() PlanOptions {
 // ── registry ───────────────────────────────────────────────────────
 
 func TestRegistry(t *testing.T) {
-	want := []string{"dotfile-backup", "maintenance", "mega-sync", "pass-backup", "session-prune", "sync"}
+	want := []string{"maintenance", "mega-sync", "pass-backup", "session-prune", "sync"}
 	if got := AllNames(); !slices.Equal(got, want) {
 		t.Fatalf("AllNames = %v, want %v (no aliases, no retired names)", got, want)
 	}
@@ -76,7 +76,7 @@ func TestRegistry(t *testing.T) {
 		}
 	}
 	// Schedules per spec: every 30 minutes, session-prune at 02:00.
-	for _, n := range []string{"mega-sync", "dotfile-backup", "pass-backup"} {
+	for _, n := range []string{"mega-sync", "pass-backup"} {
 		if Builtins[n].Schedule != "*/30 * * * *" || Builtins[n].IntervalSecs != 1800 {
 			t.Errorf("%s schedule = %q interval %d", n, Builtins[n].Schedule, Builtins[n].IntervalSecs)
 		}
@@ -84,7 +84,7 @@ func TestRegistry(t *testing.T) {
 	if Builtins["session-prune"].Schedule != "0 2 * * *" || Builtins["session-prune"].IntervalSecs != 86400 {
 		t.Errorf("session-prune = %+v", Builtins["session-prune"])
 	}
-	if !slices.Equal(Presets["sync"], []string{"mega-sync", "dotfile-backup", "pass-backup"}) || !slices.Equal(Presets["maintenance"], []string{"session-prune"}) {
+	if !slices.Equal(Presets["sync"], []string{"mega-sync", "pass-backup"}) || !slices.Equal(Presets["maintenance"], []string{"session-prune"}) {
 		t.Errorf("presets = %v", Presets)
 	}
 	for preset, members := range Presets {
@@ -98,9 +98,8 @@ func TestRegistry(t *testing.T) {
 
 func TestJobBodies(t *testing.T) {
 	bodies := map[string]string{
-		"dotfile-backup": "/ws --workspace /W dotfile backup push --quiet",
-		"pass-backup":    "/ws --workspace /W pass backup push --quiet",
-		"session-prune":  "/ws --workspace /W session prune --quiet",
+		"pass-backup":   "/ws --workspace /W pass backup push --quiet",
+		"session-prune": "/ws --workspace /W session prune --quiet",
 	}
 	for name, want := range bodies {
 		if got := Builtins[name].scriptBody("/ws", ":1", "/W"); got != want {
@@ -113,16 +112,11 @@ func TestJobBodies(t *testing.T) {
 }
 
 func TestAliasesAndRetired(t *testing.T) {
-	if c, old := Canonical("dotfile-sync"); c != "dotfile-backup" || !old {
-		t.Errorf("dotfile-sync -> %s %v", c, old)
-	}
-	if c, old := Canonical("log-prune"); c != "session-prune" || !old {
-		t.Errorf("log-prune -> %s %v", c, old)
-	}
+	// No job has an old name now: every name is its own canonical one.
 	if c, old := Canonical("mega-sync"); c != "mega-sync" || old {
 		t.Errorf("mega-sync -> %s %v", c, old)
 	}
-	if got := Names("dotfile-backup"); !slices.Equal(got, []string{"dotfile-backup", "dotfile-sync"}) {
+	if got := Names("mega-sync"); !slices.Equal(got, []string{"mega-sync"}) {
 		t.Errorf("Names = %v", got)
 	}
 	for _, r := range []string{"secret-scan", "ignore-scan", "repo-sync"} {
@@ -137,12 +131,16 @@ func TestAliasesAndRetired(t *testing.T) {
 
 func TestResolve(t *testing.T) {
 	jobs, aliased, err := Resolve("sync")
-	if err != nil || aliased || len(jobs) != 3 || jobs[0].Name != "mega-sync" || jobs[2].Name != "pass-backup" {
+	if err != nil || aliased || len(jobs) != 2 || jobs[0].Name != "mega-sync" || jobs[1].Name != "pass-backup" {
 		t.Fatalf("preset: %v %v %v", jobs, aliased, err)
 	}
-	jobs, aliased, err = Resolve("dotfile-sync")
-	if err != nil || !aliased || len(jobs) != 1 || jobs[0].Name != "dotfile-backup" {
-		t.Fatalf("old name: %v %v %v", jobs, aliased, err)
+	for _, gone := range []string{"secret-scan", "ignore-scan", "repo-sync"} {
+		if _, _, err = Resolve(gone); err == nil || !strings.Contains(err.Error(), "was removed") {
+			t.Fatalf("%s is retired: %v", gone, err)
+		}
+	}
+	if len(Presets["sync"]) != 2 {
+		t.Fatalf("the sync preset changed: %v", Presets["sync"])
 	}
 	if _, _, err = Resolve("nope"); err == nil || !strings.Contains(err.Error(), "unknown cron job") {
 		t.Fatalf("unknown: %v", err)
@@ -163,15 +161,15 @@ SHELL=/usr/bin/bash
 		t.Fatalf("block:\n%s\nwant:\n%s", got, want)
 	}
 	// Only mega-sync carries --display.
-	if blk := BlockFor(Builtins["dotfile-backup"], "/ws", "/W", ":1"); strings.Contains(blk, "--display") || !strings.Contains(blk, "/ws --workspace /W cron run --if-due dotfile-backup") {
-		t.Fatalf("dotfile-backup block:\n%s", blk)
+	if blk := BlockFor(Builtins["pass-backup"], "/ws", "/W", ":1"); strings.Contains(blk, "--display") || !strings.Contains(blk, "/ws --workspace /W cron run --if-due pass-backup") {
+		t.Fatalf("pass-backup block:\n%s", blk)
 	}
 }
 
 func TestParseBlocksIsGeneric(t *testing.T) {
-	ct := "MAILTO=me\n\n# >>> ws:dotfile-sync >>>\n*/30 * * * * x\n# <<< ws:dotfile-sync <<<\n0 5 * * * backup\n# >>> ws:secret-scan >>>\n0 * * * * y\n# <<< ws:secret-scan <<<\n"
+	ct := "MAILTO=me\n\n# >>> ws:ignore-scan >>>\n*/30 * * * * x\n# <<< ws:ignore-scan <<<\n0 5 * * * backup\n# >>> ws:secret-scan >>>\n0 * * * * y\n# <<< ws:secret-scan <<<\n"
 	blocks, other := ParseBlocks(ct)
-	if len(blocks) != 2 || blocks[0].Name != "dotfile-sync" || blocks[1].Name != "secret-scan" {
+	if len(blocks) != 2 || blocks[0].Name != "ignore-scan" || blocks[1].Name != "secret-scan" {
 		t.Fatalf("blocks = %+v (every ws name counts, retired and old included)", blocks)
 	}
 	if !slices.Equal(other, []string{"MAILTO=me", "0 5 * * * backup"}) {
@@ -194,18 +192,18 @@ func TestRemoveBlocksKeepsOtherLines(t *testing.T) {
 }
 
 func TestOutdated(t *testing.T) {
-	cur := Block{Name: "dotfile-backup", Text: "# >>> ws:dotfile-backup >>>\n*/30 * * * * /a/ws --workspace /W cron run --if-due dotfile-backup\n@reboot /a/ws --workspace /W cron run --if-due dotfile-backup\n# <<< ws:dotfile-backup <<<\n"}
+	cur := Block{Name: "pass-backup", Text: "# >>> ws:pass-backup >>>\n*/30 * * * * /a/ws --workspace /W cron run --if-due pass-backup\n@reboot /a/ws --workspace /W cron run --if-due pass-backup\n# <<< ws:pass-backup <<<\n"}
 	if Outdated(cur) {
 		t.Error("a current block is not outdated")
 	}
 	// A different binary or workspace does not make it outdated.
-	moved := Block{Name: "dotfile-backup", Text: strings.ReplaceAll(cur.Text, "/a/ws", "/home/u/tmp/wsux/ws")}
+	moved := Block{Name: "pass-backup", Text: strings.ReplaceAll(cur.Text, "/a/ws", "/home/u/tmp/wsux/ws")}
 	if Outdated(moved) {
 		t.Error("a build in another directory must not mark everything outdated")
 	}
-	old := Block{Name: "dotfile-sync", Text: "# >>> ws:dotfile-sync >>>\n*/30 * * * * /a/ws cron run dotfile-sync\n# <<< ws:dotfile-sync <<<\n"}
+	old := Block{Name: "ignore-scan", Text: "# >>> ws:ignore-scan >>>\n*/30 * * * * /a/ws cron run ignore-scan\n# <<< ws:ignore-scan <<<\n"}
 	if !Outdated(old) {
-		t.Error("a block under an old name is outdated")
+		t.Error("a block without --if-due is outdated")
 	}
 	noDue := Block{Name: "mega-sync", Text: "# >>> ws:mega-sync >>>\n*/30 * * * * /a/ws cron run mega-sync\n# <<< ws:mega-sync <<<\n"}
 	if !Outdated(noDue) {
@@ -241,49 +239,46 @@ func writeState(t *testing.T, m machine, lines ...string) {
 	}
 }
 
-func TestLastRunCountsOldNames(t *testing.T) {
+func TestLastRunNewestWins(t *testing.T) {
 	m := newMachine(t)
 	writeState(t, m,
-		`{"job":"dotfile-sync","ts":"2026-10-20T10:00:00Z","exit":1}`,
-		`{"job":"dotfile-backup","ts":"2026-10-21T10:00:00Z","exit":0}`,
-		`{"job":"dotfile-sync","ts":"2026-10-22T10:00:00Z","exit":3}`,
-		`{"job":"mega-sync","ts":"2026-10-22T11:00:00Z","exit":0}`)
+		`{"job":"mega-sync","ts":"2026-10-20T10:00:00Z","exit":1}`,
+		`{"job":"mega-sync","ts":"2026-10-22T10:00:00Z","exit":3}`,
+		`{"job":"mega-sync","ts":"2026-10-21T10:00:00Z","exit":0}`,
+		`{"job":"session-prune","ts":"2026-10-22T11:00:00Z","exit":0}`)
 	statePath, _ := StateFilePath()
-	r, err := LastRun(statePath, "dotfile-backup")
+	r, err := LastRun(statePath, "mega-sync")
 	if err != nil || r.ExitCode != 3 || !r.Time.Equal(time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)) {
-		t.Fatalf("a record under the old name counts as the new job's, newest wins: %+v %v", r, err)
-	}
-	if r, _ := LastRun(statePath, "dotfile-sync"); r.ExitCode != 3 {
-		t.Fatalf("asking by the old name finds the same history: %+v", r)
+		t.Fatalf("the newest record wins: %+v %v", r, err)
 	}
 	if r, _ := LastRun(statePath, "pass-backup"); !r.Time.IsZero() {
 		t.Fatalf("no history: %+v", r)
 	}
 }
 
-func TestReadLogFiltersAndCountsOldNames(t *testing.T) {
+func TestReadLogFilters(t *testing.T) {
 	m := newMachine(t)
 	dir := filepath.Join(m.state, "ws-tool")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	logText := "t1 [dotfile-sync] Starting\nt2 [mega-sync] Starting\nt3 [dotfile-backup] Done (exit 0)\nt4 [session-prune] Starting\n"
+	logText := "t1 [pass-backup] Starting\nt2 [mega-sync] Starting\nt3 [mega-sync] Done (exit 0)\nt4 [session-prune] Starting\n"
 	if err := os.WriteFile(filepath.Join(dir, "cron.log"), []byte(logText), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	logPath, _ := LogFilePath()
 
-	got, _ := ReadLog(logPath, []string{"dotfile-backup"}, 0)
-	if !slices.Equal(got, []string{"t1 [dotfile-sync] Starting", "t3 [dotfile-backup] Done (exit 0)"}) {
-		t.Fatalf("one job, old name included: %v", got)
+	got, _ := ReadLog(logPath, []string{"mega-sync"}, 0)
+	if !slices.Equal(got, []string{"t2 [mega-sync] Starting", "t3 [mega-sync] Done (exit 0)"}) {
+		t.Fatalf("one job: %v", got)
 	}
 	if all, _ := ReadLog(logPath, nil, 0); len(all) != 4 {
 		t.Fatalf("no job means all: %v", all)
 	}
-	if two, _ := ReadLog(logPath, []string{"mega-sync", "session-prune"}, 0); len(two) != 2 {
+	if two, _ := ReadLog(logPath, []string{"pass-backup", "session-prune"}, 0); len(two) != 2 {
 		t.Fatalf("several jobs: %v", two)
 	}
-	if last, _ := ReadLog(logPath, nil, 2); !slices.Equal(last, []string{"t3 [dotfile-backup] Done (exit 0)", "t4 [session-prune] Starting"}) {
+	if last, _ := ReadLog(logPath, nil, 2); !slices.Equal(last, []string{"t3 [mega-sync] Done (exit 0)", "t4 [session-prune] Starting"}) {
 		t.Fatalf("the last n lines: %v", last)
 	}
 	if none, err := ReadLog(filepath.Join(dir, "absent.log"), nil, 0); err != nil || none != nil {
@@ -332,17 +327,19 @@ func TestJobStates(t *testing.T) {
 	if got := stateOf(t, m, "mega-sync"); got != StateOutdated {
 		t.Fatalf("no --if-due: %s", got)
 	}
-	// A block under an old name counts as the new job's, and is outdated.
-	m.setLive(t, "# >>> ws:dotfile-sync >>>\n*/30 * * * * /ws cron run dotfile-sync\n# <<< ws:dotfile-sync <<<\n")
-	if got := stateOf(t, m, "dotfile-backup"); got != StateOutdated {
-		t.Fatalf("old name: %s", got)
+	// A block of a retired job is not a built-in job's: mega-sync is untouched by it.
+	m.setLive(t, "")
+	m.setDeclared(t, "")
+	m.setLive(t, "# >>> ws:ignore-scan >>>\n*/30 * * * * /ws cron run ignore-scan\n# <<< ws:ignore-scan <<<\n")
+	if got := stateOf(t, m, "mega-sync"); got != StateNotInstalled {
+		t.Fatalf("a retired block must not count for another job: %s", got)
 	}
 }
 
 func TestPresetStatesAndRetiredRows(t *testing.T) {
 	m := newMachine(t)
-	m.setLive(t, BlockFor(Builtins["mega-sync"], "/ws", "/W", ":1")+BlockFor(Builtins["pass-backup"], "/ws", "/W", ":1"))
-	if got := stateOf(t, m, "sync"); got != "2 of 3 installed" {
+	m.setLive(t, BlockFor(Builtins["mega-sync"], "/ws", "/W", ":1"))
+	if got := stateOf(t, m, "sync"); got != "1 of 2 installed" {
 		t.Fatalf("sync preset: %s", got)
 	}
 	if got := stateOf(t, m, "maintenance"); got != StateNotInstalled {
@@ -373,10 +370,10 @@ func TestPresetStatesAndRetiredRows(t *testing.T) {
 	}
 	// Rows: jobs, then presets, then retired.
 	names := []string{}
-	for _, j := range jobs[:6] {
+	for _, j := range jobs[:5] {
 		names = append(names, j.Name)
 	}
-	if !slices.Equal(names, []string{"dotfile-backup", "mega-sync", "pass-backup", "session-prune", "maintenance", "sync"}) {
+	if !slices.Equal(names, []string{"mega-sync", "pass-backup", "session-prune", "maintenance", "sync"}) {
 		t.Fatalf("row order = %v", names)
 	}
 }
@@ -401,7 +398,7 @@ func TestAddActionsWriteBothFilesTogether(t *testing.T) {
 	m.setDeclared(t, "CRON_TZ=UTC\n")
 	jobs, _, _ := Resolve("sync")
 	acts, already, err := AddActions(jobs, m.opts())
-	if err != nil || len(already) != 0 || len(acts) != 3 {
+	if err != nil || len(already) != 0 || len(acts) != 2 {
 		t.Fatalf("actions=%d already=%v err=%v", len(acts), already, err)
 	}
 	if !strings.Contains(acts[0].Description, "Install mega-sync (*/30 * * * * + @reboot) in the crontab and "+m.declared) {
@@ -413,7 +410,7 @@ func TestAddActionsWriteBothFilesTogether(t *testing.T) {
 		}
 	}
 	for _, text := range []string{m.liveText(t), m.declaredText(t)} {
-		for _, job := range []string{"mega-sync", "dotfile-backup", "pass-backup"} {
+		for _, job := range []string{"mega-sync", "pass-backup"} {
 			if !strings.Contains(text, "ws:"+job) {
 				t.Fatalf("%s missing from:\n%s", job, text)
 			}
@@ -431,31 +428,18 @@ func TestAddActionsWriteBothFilesTogether(t *testing.T) {
 
 	// Adding again: every job is already installed, no action.
 	acts, already, _ = AddActions(jobs, m.opts())
-	if len(acts) != 0 || !slices.Equal(already, []string{"mega-sync", "dotfile-backup", "pass-backup"}) {
+	if len(acts) != 0 || !slices.Equal(already, []string{"mega-sync", "pass-backup"}) {
 		t.Fatalf("second add: actions=%d already=%v", len(acts), already)
 	}
 }
 
-func TestAddReplacesAnOldNameInBothFiles(t *testing.T) {
-	m := newMachine(t)
-	old := "# >>> ws:dotfile-sync >>>\n*/30 * * * * /bin/ws cron run dotfile-sync\n@reboot /bin/ws cron run dotfile-sync\n# <<< ws:dotfile-sync <<<\n"
-	m.setLive(t, "MAILTO=me\n"+old)
-	m.setDeclared(t, old)
-	jobs, _, _ := Resolve("dotfile-backup")
-	acts, _, err := AddActions(jobs, m.opts())
-	if err != nil || len(acts) != 1 || !strings.Contains(acts[0].Description, "replacing dotfile-sync") {
-		t.Fatalf("acts=%v err=%v", acts, err)
-	}
-	if err := acts[0].Execute(); err != nil {
-		t.Fatal(err)
-	}
-	for _, text := range []string{m.liveText(t), m.declaredText(t)} {
-		if strings.Contains(text, "dotfile-sync") || !strings.Contains(text, "ws:dotfile-backup") {
-			t.Fatalf("the old block must be replaced in both files:\n%s", text)
+// TestAddOfARetiredJobIsRefused: retired jobs are
+// gone, and `cron add` says so instead of installing anything (plan 0003).
+func TestAddOfARetiredJobIsRefused(t *testing.T) {
+	for _, name := range []string{"repo-sync", "ignore-scan", "secret-scan"} {
+		if _, _, err := Resolve(name); err == nil || !strings.Contains(err.Error(), "was removed") {
+			t.Errorf("Resolve(%s) = %v, want a was-removed error", name, err)
 		}
-	}
-	if !strings.Contains(m.liveText(t), "MAILTO=me") {
-		t.Fatal("other lines stay")
 	}
 }
 
@@ -486,14 +470,13 @@ func TestAddFixesAnUndeclaredOrUnappliedJob(t *testing.T) {
 
 func TestRemoveActions(t *testing.T) {
 	m := newMachine(t)
-	old := "# >>> ws:dotfile-sync >>>\n*/30 * * * * /bin/ws cron run dotfile-sync\n# <<< ws:dotfile-sync <<<\n"
+	old := "# >>> ws:ignore-scan >>>\n*/30 * * * * /bin/ws cron run ignore-scan\n# <<< ws:ignore-scan <<<\n"
 	retired := "# >>> ws:secret-scan >>>\n0 * * * * /bin/ws secret scan\n# <<< ws:secret-scan <<<\n"
 	mega := BlockFor(Builtins["mega-sync"], "/ws", m.workspace, ":7")
 	m.setLive(t, "MAILTO=me\n"+old+retired+mega)
 	m.setDeclared(t, old+mega)
-	script, _ := ScriptPath("dotfile-backup")
-	oldScript, _ := ScriptPath("dotfile-sync")
-	for _, p := range []string{script, oldScript} {
+	script, _ := ScriptPath("ignore-scan")
+	for _, p := range []string{script} {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -502,14 +485,14 @@ func TestRemoveActions(t *testing.T) {
 		}
 	}
 
-	acts, notInstalled, err := RemoveActions([]string{"dotfile-backup", "secret-scan", "pass-backup", "dotfile-sync"}, m.opts())
+	acts, notInstalled, err := RemoveActions([]string{"ignore-scan", "secret-scan", "pass-backup"}, m.opts())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(acts) != 2 || !slices.Equal(notInstalled, []string{"pass-backup"}) {
-		t.Fatalf("actions=%d notInstalled=%v (a repeat under its old name counts once)", len(acts), notInstalled)
+		t.Fatalf("actions=%d notInstalled=%v", len(acts), notInstalled)
 	}
-	if !strings.Contains(acts[0].Description, "Remove dotfile-backup from the crontab and "+m.declared) {
+	if !strings.Contains(acts[0].Description, "Remove ignore-scan from the crontab and "+m.declared) {
 		t.Fatalf("description: %q", acts[0].Description)
 	}
 	for _, a := range acts {
@@ -518,13 +501,13 @@ func TestRemoveActions(t *testing.T) {
 		}
 	}
 	live := m.liveText(t)
-	if strings.Contains(live, "dotfile-sync") || strings.Contains(live, "secret-scan") || !strings.Contains(live, "ws:mega-sync") || !strings.Contains(live, "MAILTO=me") {
+	if strings.Contains(live, "ignore-scan") || strings.Contains(live, "secret-scan") || !strings.Contains(live, "ws:mega-sync") || !strings.Contains(live, "MAILTO=me") {
 		t.Fatalf("live:\n%s", live)
 	}
-	if strings.Contains(m.declaredText(t), "dotfile-sync") || !strings.Contains(m.declaredText(t), "ws:mega-sync") {
+	if strings.Contains(m.declaredText(t), "ignore-scan") || !strings.Contains(m.declaredText(t), "ws:mega-sync") {
 		t.Fatalf("declared:\n%s", m.declaredText(t))
 	}
-	for _, p := range []string{script, oldScript} {
+	for _, p := range []string{script} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Fatalf("the legacy wrapper script %s must go", p)
 		}
@@ -549,28 +532,29 @@ func applyAll(t *testing.T, m machine) ApplyResult {
 
 func TestApplyRegeneratesBlocksForThisMachine(t *testing.T) {
 	m := newMachine(t)
-	// Declared on another machine: other paths, an old name, and a plain line.
+	// Declared on another machine: other paths, a retired name, and a plain line.
 	m.setDeclared(t, "CRON_TZ=UTC\n"+
-		"# >>> ws:dotfile-sync >>>\n*/30 * * * * /home/other/ws --workspace /home/other/Workspace cron run dotfile-sync\n# <<< ws:dotfile-sync <<<\n"+
+		"# >>> ws:ignore-scan >>>\n*/30 * * * * /home/other/ws --workspace /home/other/Workspace cron run ignore-scan\n# <<< ws:ignore-scan <<<\n"+
+		"# >>> ws:pass-backup >>>\n*/30 * * * * /home/other/ws --workspace /home/other/Workspace cron run pass-backup\n# <<< ws:pass-backup <<<\n"+
 		"# >>> ws:secret-scan >>>\n0 * * * * old\n# <<< ws:secret-scan <<<\n")
 	m.setLive(t, "MAILTO=me\n# >>> ws:mega-sync >>>\n*/30 * * * * x\n# <<< ws:mega-sync <<<\n")
 
 	res := applyAll(t, m)
-	if !slices.Equal(res.Installed, []string{"dotfile-backup"}) || !slices.Equal(res.Removed, []string{"mega-sync"}) ||
-		!slices.Equal(res.Skipped, []string{"secret-scan"}) || res.LinesAdded != 1 {
+	if !slices.Equal(res.Installed, []string{"pass-backup"}) || !slices.Equal(res.Removed, []string{"mega-sync"}) ||
+		!slices.Equal(res.Skipped, []string{"ignore-scan", "secret-scan"}) || res.LinesAdded != 1 {
 		t.Fatalf("result = %+v", res)
 	}
 	live := m.liveText(t)
-	if !strings.Contains(live, m.opts().Bin+" --workspace "+m.workspace+" cron run --if-due dotfile-backup") {
+	if !strings.Contains(live, m.opts().Bin+" --workspace "+m.workspace+" cron run --if-due pass-backup") {
 		t.Fatalf("the block is regenerated for this machine, not copied:\n%s", live)
 	}
-	if strings.Contains(live, "/home/other") || strings.Contains(live, "dotfile-sync") || strings.Contains(live, "secret-scan") || strings.Contains(live, "ws:mega-sync") {
+	if strings.Contains(live, "/home/other") || strings.Contains(live, "ignore-scan") || strings.Contains(live, "secret-scan") || strings.Contains(live, "ws:mega-sync") {
 		t.Fatalf("other machines' paths, old and retired names and undeclared blocks must go:\n%s", live)
 	}
 	if !strings.Contains(live, "MAILTO=me") || !strings.Contains(live, "CRON_TZ=UTC") {
 		t.Fatalf("live lines stay, and declared plain lines are added:\n%s", live)
 	}
-	if strings.Contains(m.declaredText(t), "ws:dotfile-backup") {
+	if strings.Contains(m.declaredText(t), "ws:mega-sync") {
 		t.Fatal("apply never changes configs/crontab")
 	}
 }
@@ -684,20 +668,20 @@ func TestIfDueSkipsAndPlainRunAlwaysRuns(t *testing.T) {
 	_ = m
 }
 
-func TestRunUnderAnOldNameIsSilentAndRecordsUnderTheNewOne(t *testing.T) {
+// TestRunOfRetiredJobsIsASilentNoOp: crontab lines on machines that have
+// not run `cron rm` yet keep calling `cron run ignore-scan`. It exits 0 and runs
+// nothing (plan 0003 step 1).
+func TestRunOfRetiredJobsIsASilentNoOp(t *testing.T) {
 	newMachine(t)
-	saved := Builtins["dotfile-backup"].scriptBody
-	t.Cleanup(func() { Builtins["dotfile-backup"].scriptBody = saved })
-	Builtins["dotfile-backup"].scriptBody = func(_, _, _ string) string { return "echo pushed" }
-
-	res, err := RunJob("dotfile-sync", RunOptions{})
-	if err != nil || res.Job != "dotfile-backup" || res.ExitCode != 0 {
-		t.Fatalf("%+v %v", res, err)
+	for _, name := range []string{"ignore-scan", "repo-sync", "secret-scan"} {
+		res, err := RunJob(name, RunOptions{WorkspacePath: "/W"})
+		if err != nil || !res.Skipped || res.ExitCode != 0 {
+			t.Fatalf("%s: %+v %v", name, res, err)
+		}
 	}
 	statePath, _ := StateFilePath()
-	records, _ := ReadState(statePath)
-	if len(records) != 1 || records[0].Job != "dotfile-backup" {
-		t.Fatalf("new records use the new name: %+v", records)
+	if records, _ := ReadState(statePath); len(records) != 0 {
+		t.Fatalf("a retired job records no run: %+v", records)
 	}
 }
 

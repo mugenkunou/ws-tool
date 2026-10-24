@@ -203,24 +203,24 @@ func TestIgnoreAddInvalidTargetChangesNothing(t *testing.T) {
 	}
 }
 
-func TestIgnoreAddRefusesDotfileOriginal(t *testing.T) {
+func TestIgnoreAddRefusesSymlinkOriginal(t *testing.T) {
 	e := newIgEnv(t)
-	orig := e.write(t, "configs/dotfiles/.bashrc", "export A=1\n")
-	e.write(t, "configs/dotfiles/dir/x", "x")
+	orig := e.write(t, "symlinks/home/.bashrc", "export A=1\n")
+	e.write(t, "symlinks/home/dir/x", "x")
 	e.setCfg(t, func(c *wsconfig.WsConfig) {
-		c.Links = append(c.Links,
-			wsconfig.Link{System: "/home/u/.bashrc", Original: "configs/dotfiles/.bashrc"},
-			wsconfig.Link{System: "/home/u/.d", Original: "configs/dotfiles/dir", Dir: true})
+		c.Symlinks = append(c.Symlinks,
+			wsconfig.Link{System: "/home/u/.bashrc", Original: "symlinks/home/.bashrc"},
+			wsconfig.Link{System: "/home/u/.d", Original: "symlinks/home/dir", Dir: true})
 	})
 
-	for _, p := range []string{orig, e.abs("configs/dotfiles/dir"), e.abs("configs/dotfiles/dir/x"), e.abs("configs/dotfiles"), e.abs("configs")} {
+	for _, p := range []string{orig, e.abs("symlinks/home/dir"), e.abs("symlinks/home/dir/x"), e.abs("symlinks/home"), e.abs("symlinks")} {
 		code, _, errOut := e.run("a\n", "ignore", "add", p)
-		if code != 1 || !strings.Contains(errOut, "dotfile") {
-			t.Errorf("%s: exit %d stderr %q, want a refusal naming the dotfile", p, code, errOut)
+		if code != 1 || !strings.Contains(errOut, "symlink") {
+			t.Errorf("%s: exit %d stderr %q, want a refusal naming the symlink", p, code, errOut)
 		}
 	}
 	if len(e.excludes(t)) != 0 {
-		t.Fatalf("a dotfile original must never be ignored: %v", e.excludes(t))
+		t.Fatalf("a symlink original must never be ignored: %v", e.excludes(t))
 	}
 }
 
@@ -273,16 +273,18 @@ func TestIgnoreAddJSONReportsActions(t *testing.T) {
 	}
 }
 
-// TestIgnoreAddWorksInsideAlwaysSyncDirectories: user excludes come last, so
-// adding a file under configs/ or archive/ (always-sync) or under a user
-// always-sync directory really stops it syncing.
-func TestIgnoreAddWorksInsideAlwaysSyncDirectories(t *testing.T) {
+// TestIgnoreAddWorksInsideIncludedDirectories: user excludes come last, so
+// adding a file under an included directory (configs/, archive/ or labs/)
+// really stops it syncing.
+func TestIgnoreAddWorksInsideIncludedDirectories(t *testing.T) {
 	e := newIgEnv(t)
+	e.includeDir(t, "configs")
+	e.includeDir(t, "archive")
 	e.write(t, "configs/app/old.conf", "x")
 	e.write(t, "archive/2026/dump.sql", "x")
 	e.write(t, "labs/run.bin", "x")
 	e.setCfg(t, func(c *wsconfig.WsConfig) {
-		c.IgnoreRules.SafeHarbors = append(c.IgnoreRules.SafeHarbors, ruleEntry("labs/**"))
+		c.IgnoreRules.Include = append(c.IgnoreRules.Include, ruleEntry("labs/**"))
 	})
 	for _, p := range []string{"configs/app/old.conf", "archive/2026/dump.sql", "labs/run.bin"} {
 		e.do(t, "ignore", "add", e.abs(p))
@@ -292,20 +294,22 @@ func TestIgnoreAddWorksInsideAlwaysSyncDirectories(t *testing.T) {
 	mega := e.readFile(t, ".megaignore")
 	if strings.Index(mega, "-:configs/app/old.conf") < strings.Index(mega, "+g:configs/**") ||
 		strings.Index(mega, "-:labs/run.bin") < strings.Index(mega, "+g:labs/**") {
-		t.Fatalf("user excludes must follow every always-sync rule:\n%s", mega)
+		t.Fatalf("user excludes must follow every include rule:\n%s", mega)
 	}
 }
 
 // TestActivatedExcludeRulesTakeEffect: an ignore_rules.exclude entry written
-// when user excludes still came before the always-sync rules (a silent no-op,
+// when user excludes still came before the include rules (a silent no-op,
 // for instance from the old `secret fix --secret-mode exclude`) now ignores its
 // file, and the next rewrite puts it into .megaignore.
 func TestActivatedExcludeRulesTakeEffect(t *testing.T) {
 	e := newIgEnv(t)
+	e.includeDir(t, "secrets")
+	e.includeDir(t, "configs")
 	secret := e.write(t, "secrets/old.env", "TOKEN=x")
-	dot := e.write(t, "configs/dotfiles/.bashrc", "export A=1\n")
+	dot := e.write(t, "symlinks/home/.bashrc", "export A=1\n")
 	e.setCfg(t, func(c *wsconfig.WsConfig) {
-		c.IgnoreRules.Exclude = append(c.IgnoreRules.Exclude, ruleEntry("secrets/old.env"), ruleEntry("configs/dotfiles/.bashrc"))
+		c.IgnoreRules.Exclude = append(c.IgnoreRules.Exclude, ruleEntry("secrets/old.env"), ruleEntry("symlinks/home/.bashrc"))
 	})
 
 	_, ls, _ := e.run("", "ignore", "ls")
@@ -314,13 +318,13 @@ func TestActivatedExcludeRulesTakeEffect(t *testing.T) {
 	igHas(t, "check", check, "IGNORED", "(ws.json)")
 
 	// The hand-written entries are not in .megaignore yet: ws warns, then the
-	// next rewrite writes them after the always-sync rules.
+	// next rewrite writes them after the include rules.
 	_, _, errOut := e.run("", "ignore", "ls")
 	igHas(t, "stale warning", errOut, "differs from what ws.json generates")
 	f := e.write(t, "notes/x.bin", "x")
 	e.do(t, "ignore", "add", f)
 	mega := e.readFile(t, ".megaignore")
-	igHas(t, ".megaignore", mega, "-:secrets/old.env", "-:configs/dotfiles/.bashrc", "-:notes/x.bin")
+	igHas(t, ".megaignore", mega, "-:secrets/old.env", "-:symlinks/home/.bashrc", "-:notes/x.bin")
 	if strings.Index(mega, "-:secrets/old.env") < strings.Index(mega, "+g:secrets/**") {
 		t.Fatalf("activated excludes must follow +g:secrets/**:\n%s", mega)
 	}
@@ -463,7 +467,7 @@ func TestIgnoreMuteHidesWarningsAndLeavesSyncAlone(t *testing.T) {
 		t.Fatal("mute must not touch .megaignore")
 	}
 	after := e.cfg(t).IgnoreRules
-	if len(after.Exclude) != len(rulesBefore.Exclude) || len(after.SafeHarbors) != len(rulesBefore.SafeHarbors) {
+	if len(after.Exclude) != len(rulesBefore.Exclude) || len(after.Include) != len(rulesBefore.Include) {
 		t.Fatal("mute must add no rule")
 	}
 	_, check, _ := e.run("", "ignore", "check", e.abs("ml/model.bin"))
@@ -516,6 +520,7 @@ func TestIgnoreMuteRefusals(t *testing.T) {
 
 func TestIgnoreMuteAlreadyMutedSaysWhy(t *testing.T) {
 	e := newIgEnv(t)
+	e.includeDir(t, "archive")
 	e.bigFile(t, "ml/sub/m.bin")
 	e.bigFile(t, "archive/a.bin")
 	e.do(t, "ignore", "mute", e.abs("ml"))
@@ -525,7 +530,7 @@ func TestIgnoreMuteAlreadyMutedSaysWhy(t *testing.T) {
 	_, out, _ = e.run("a\n", "ignore", "mute", e.abs("ml/sub"))
 	igHas(t, "parent", out, "Already muted", "parent "+e.abs("ml"))
 	_, out, _ = e.run("a\n", "ignore", "mute", e.abs("archive/a.bin"))
-	igHas(t, "always-sync", out, "Already muted", "always-sync directory", "+g:archive/**")
+	igHas(t, "include", out, "Already muted", "included directory", "+g:archive/**")
 	if got := e.muted(t); len(got) != 1 {
 		t.Fatalf("ignore.muted = %v", got)
 	}
@@ -588,6 +593,7 @@ func TestIgnoreUnmuteHandWrittenAbsoluteEntry(t *testing.T) {
 
 func TestIgnoreUnmuteRefusals(t *testing.T) {
 	e := newIgEnv(t)
+	e.includeDir(t, "archive")
 	e.bigFile(t, "ml/sub/a.bin")
 	e.bigFile(t, "archive/a.bin")
 	e.do(t, "ignore", "mute", e.abs("ml"))
@@ -601,9 +607,9 @@ func TestIgnoreUnmuteRefusals(t *testing.T) {
 
 	code, _, errOut = e.run("a\n", "ignore", "unmute", e.abs("archive"))
 	if code != 1 {
-		t.Fatalf("always-sync: exit %d", code)
+		t.Fatalf("include: exit %d", code)
 	}
-	igHas(t, "always-sync", errOut, "always-sync directory", "stay muted", "ws ignore edit")
+	igHas(t, "include", errOut, "included directory", "stay muted", "ws ignore edit")
 
 	if code, _, _ := e.run("a\n", "ignore", "unmute"); code != 1 {
 		t.Fatalf("no path: exit %d", code)
@@ -666,6 +672,7 @@ func TestIgnoreLintPathsRestrictAndValidate(t *testing.T) {
 
 func TestIgnoreLintJSONRecords(t *testing.T) {
 	e := newIgEnv(t)
+	e.includeDir(t, "archive")
 	e.bigFile(t, "a/big.bin")
 	e.bigFile(t, "archive/muted.bin")
 	code, env := e.jsonOf(t, "ignore", "lint")
@@ -761,6 +768,7 @@ func TestIgnoreLsJSONFields(t *testing.T) {
 
 func TestIgnoreLsMutedAndUnknownField(t *testing.T) {
 	e := newIgEnv(t)
+	e.includeDir(t, "archive")
 	e.bigFile(t, "archive/a.bin")
 	_, out, _ := e.run("", "ignore", "ls", "--muted")
 	igHas(t, "muted view", out, e.abs("archive/a.bin"))
@@ -814,6 +822,7 @@ func TestIgnoreLsWarnsOnStaleMegaignore(t *testing.T) {
 
 func TestIgnoreScanAliasIsLint(t *testing.T) {
 	e := newIgEnv(t)
+	e.includeDir(t, "archive")
 	e.bigFile(t, "a/big.bin")
 	code, out, errOut := e.run("", "ignore", "scan")
 	if code != 0 {
@@ -853,6 +862,7 @@ func TestIgnoreUnknownVerb(t *testing.T) {
 
 func TestIgnoreCheckReasons(t *testing.T) {
 	e := newIgEnv(t)
+	e.includeDir(t, "archive")
 	csv := e.write(t, "exp/m.csv", "123")
 	arch := e.write(t, "archive/inc.bin", "x")
 	e.write(t, "plain/n.txt", "x")
@@ -864,7 +874,7 @@ func TestIgnoreCheckReasons(t *testing.T) {
 	igHas(t, "ignored", out, "IGNORED", csv, "Reason: rule `-g:*.csv` (built-in)", "Size:")
 
 	_, out, _ = e.run("", "ignore", "check", arch)
-	igHas(t, "always-sync", out, "SYNCED", "Reason: always-sync directory `+g:archive/**` (built-in)")
+	igHas(t, "include", out, "SYNCED", "Reason: included directory `+g:archive/**` (ws.json)")
 
 	_, out, _ = e.run("", "ignore", "check", e.abs("plain/n.txt"))
 	igHas(t, "no rule", out, "SYNCED", "Reason: no rule matches")
@@ -880,11 +890,11 @@ func TestIgnoreCheckUserRuleAndUserAlwaysSyncSource(t *testing.T) {
 	e.write(t, "labs/x.csv", "1")
 	e.write(t, "exp/z.bin", "1")
 	e.setCfg(t, func(c *wsconfig.WsConfig) {
-		c.IgnoreRules.SafeHarbors = append(c.IgnoreRules.SafeHarbors, ruleEntry("labs/**"))
+		c.IgnoreRules.Include = append(c.IgnoreRules.Include, ruleEntry("labs/**"))
 		c.IgnoreRules.Exclude = append(c.IgnoreRules.Exclude, ruleEntry("exp/z.bin"))
 	})
 	_, out, _ := e.run("", "ignore", "check", e.abs("labs/x.csv"))
-	igHas(t, "user always-sync", out, "SYNCED", "always-sync directory `+g:labs/**` (ws.json)")
+	igHas(t, "user include", out, "SYNCED", "included directory `+g:labs/**` (ws.json)")
 	_, out, _ = e.run("", "ignore", "check", e.abs("exp/z.bin"))
 	igHas(t, "user exclude", out, "IGNORED", "rule `-:exp/z.bin` (ws.json)")
 }
@@ -900,8 +910,8 @@ func TestIgnoreCheckJSONKeys(t *testing.T) {
 	if d["path"] != csv || d["included"] != false || d["rule"] != "-g:*.csv" || d["rule_source"] != "builtin" || d["muted"] != false || d["size_bytes"] != float64(3) {
 		t.Fatalf("data = %v", d)
 	}
-	if _, old := d["safe_harbor"]; old {
-		t.Fatalf("safe_harbor was renamed: %v", d)
+	if _, old := d["by_include"]; old {
+		t.Fatalf("by_include was renamed: %v", d)
 	}
 
 	e.write(t, "plain/n.txt", "x")
@@ -1038,7 +1048,7 @@ func TestIgnoreEditUnchangedIsNothingToDo(t *testing.T) {
 
 func TestIgnoreEditSavesChangedRulesAndRewritesMegaignore(t *testing.T) {
 	e := newIgEnv(t)
-	shim := editorShim(t, `{"schema":1,"exclude":[{"pattern":"scratchpad/out.bin","note":"big"}],"safe_harbors":[],"suppress_defaults":["*.csv"],"suppress_harbors":[]}`)
+	shim := editorShim(t, `{"schema":1,"exclude":[{"pattern":"scratchpad/out.bin","note":"big"}],"include":[],"suppress_defaults":["*.csv"]}`)
 	code, out, errOut := e.run("a\n", "ignore", "edit", "--editor", shim)
 	if code != 0 {
 		t.Fatalf("exit %d stderr %s", code, errOut)
@@ -1096,7 +1106,7 @@ func TestIgnoreEditDryRunAndStaleMegaignore(t *testing.T) {
 
 func TestIgnoreEditJSONHasStats(t *testing.T) {
 	e := newIgEnv(t)
-	shim := editorShim(t, `{"schema":1,"exclude":[{"pattern":"a/b"}],"safe_harbors":[],"suppress_defaults":[],"suppress_harbors":[]}`)
+	shim := editorShim(t, `{"schema":1,"exclude":[{"pattern":"a/b"}],"include":[],"suppress_defaults":[]}`)
 	code, env := e.jsonOf(t, "ignore", "edit", "--editor", shim)
 	if code != 0 || env["command"] != "ignore.edit" {
 		t.Fatalf("exit %d envelope %v", code, env)
@@ -1108,6 +1118,15 @@ func TestIgnoreEditJSONHasStats(t *testing.T) {
 	if d["stats"].(map[string]any)["UserExclude"] != float64(1) {
 		t.Fatalf("stats = %v", d["stats"])
 	}
+}
+
+// includeDir adds an include rule for dir/** to ws.json: no include rule is
+// built in, so a test that needs an included directory writes one.
+func (e igEnv) includeDir(t *testing.T, dir string) {
+	t.Helper()
+	e.setCfg(t, func(c *wsconfig.WsConfig) {
+		c.IgnoreRules.Include = append(c.IgnoreRules.Include, ruleEntry(dir+"/**"))
+	})
 }
 
 func ruleEntry(p string) ignore.RuleEntry { return ignore.RuleEntry{Pattern: p} }

@@ -234,7 +234,7 @@ func (e scratchEnv) add(args []string, globals globalFlags, stdin io.Reader, std
 		return 1
 	}
 	plans, err := scratch.PlanAdd(scratch.AddOptions{
-		RootDir: e.root, WorkspacePath: e.workspace, ConfigPath: e.configPath, Links: e.cfg.Links, Paths: paths,
+		RootDir: e.root, WorkspacePath: e.workspace, ConfigPath: e.configPath, Links: e.cfg.Symlinks, Paths: paths,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())

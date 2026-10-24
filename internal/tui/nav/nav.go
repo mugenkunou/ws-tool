@@ -14,7 +14,7 @@ type Screen int
 const (
 	ScreenDashboard Screen = iota
 	ScreenRepos
-	ScreenDotfiles
+	ScreenSymlinks
 	ScreenScratch
 	ScreenSessions
 	ScreenIgnore
@@ -41,7 +41,7 @@ func (s Screen) Icon() string {
 		return "🏠"
 	case ScreenRepos:
 		return "📦"
-	case ScreenDotfiles:
+	case ScreenSymlinks:
 		return "🔗"
 	case ScreenScratch:
 		return "🧪"
@@ -67,8 +67,8 @@ func (s Screen) Title() string {
 		return "Dashboard"
 	case ScreenRepos:
 		return "Repos"
-	case ScreenDotfiles:
-		return "Dotfiles"
+	case ScreenSymlinks:
+		return "Symlinks"
 	case ScreenScratch:
 		return "Scratch"
 	case ScreenSessions:
@@ -167,8 +167,8 @@ func (s Screen) Noun() string {
 	switch s {
 	case ScreenRepos:
 		return "repo"
-	case ScreenDotfiles:
-		return "dotfile"
+	case ScreenSymlinks:
+		return "symlink"
 	case ScreenScratch:
 		return "scratch"
 	case ScreenSessions:
@@ -187,7 +187,7 @@ func (s Screen) Noun() string {
 }
 
 // CommandMsg carries a `:` command to a screen: the CLI words after the noun
-// (`backup push` for `:backup push` on Dotfiles) and the same line as typed.
+// (`backup push` for `:backup push` on Symlinks) and the same line as typed.
 type CommandMsg struct {
 	Words []string
 	Line  string
@@ -218,6 +218,3 @@ type FilterMsg struct {
 // OpenCommandBarMsg asks the app to open the command bar with text typed in,
 // for the Dashboard's advice rows.
 type OpenCommandBarMsg struct{ Prefill string }
-
-// Refresh is a command that emits RefreshMsg.
-func Refresh() tea.Msg { return RefreshMsg{} }

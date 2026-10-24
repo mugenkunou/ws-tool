@@ -117,7 +117,7 @@ func TestPassStatusWorkspaceCopyTip(t *testing.T) {
 
 	// None: an info line and the command, never an error.
 	code, out, _ := passRun(t, "", "--workspace", workspace, "pass", "status", "--no-color")
-	want := "Tip: ws dotfile add " + shims.store + " --dir --to " + filepath.Join(workspace, "secrets", "dotfiles", "password-store")
+	want := "Tip: ws symlink add ~/.password-store --dir"
 	if code != 0 || !strings.Contains(out, "[i] workspace copy") || !strings.Contains(out, "none: the store syncs only through its git remote") || !strings.Contains(out, want) {
 		t.Fatalf("code=%d, want the info line and %q:\n%s", code, want, out)
 	}
@@ -125,8 +125,8 @@ func TestPassStatusWorkspaceCopyTip(t *testing.T) {
 		t.Fatalf("the workspace copy is advice, never a warning:\n%s", out)
 	}
 
-	// The store moved into the workspace and linked back (dotfile add --dir).
-	target := filepath.Join(workspace, "secrets", "dotfiles", "password-store")
+	// The store moved into the workspace and linked back (symlink add --dir).
+	target := filepath.Join(workspace, "symlinks", "home", ".password-store")
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		t.Fatal(err)
 	}

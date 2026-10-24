@@ -7,10 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
-	"syscall"
-	"unsafe"
 
 	"github.com/mugenkunou/ws-tool/internal/editor"
 	"github.com/mugenkunou/ws-tool/internal/style"
@@ -57,8 +54,8 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runInit(commandArgs, globals, stdin, stdout, stderr)
 	case "config":
 		return runConfig(commandArgs, globals, stdin, stdout, stderr)
-	case "dotfile":
-		return runDotfile(commandArgs, globals, stdin, stdout, stderr)
+	case "symlink":
+		return runSymlink(commandArgs, globals, stdin, stdout, stderr)
 	case "ignore":
 		return runIgnore(commandArgs, globals, stdin, stdout, stderr)
 	case "secret":
@@ -378,63 +375,6 @@ func requireWorkspaceInitialized(globals globalFlags, stderr ...io.Writer) (stri
 	}
 
 	return resolvedWorkspace, configPath, nil
-}
-
-func maybePageOutput(stdout io.Writer, text string) bool {
-	if text == "" {
-		return false
-	}
-	f, ok := stdout.(*os.File)
-	if !ok {
-		return false
-	}
-	fi, err := f.Stat()
-	if err != nil || (fi.Mode()&os.ModeCharDevice) == 0 {
-		return false
-	}
-	if os.Getenv("PAGER") == "cat" {
-		return false
-	}
-
-	// Only page when the output exceeds the terminal height.
-	lineCount := strings.Count(text, "\n")
-	if lineCount <= terminalHeight(f) {
-		return false
-	}
-
-	pager := strings.TrimSpace(os.Getenv("PAGER"))
-	if pager == "" {
-		pager = "less"
-	}
-	cmd := exec.Command(pager, "-R")
-	cmd.Stdout = f
-	cmd.Stderr = os.Stderr
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return false
-	}
-	if err := cmd.Start(); err != nil {
-		_ = stdin.Close()
-		return false
-	}
-	_, _ = io.WriteString(stdin, text)
-	_ = stdin.Close()
-	_ = cmd.Wait()
-	return true
-}
-
-type winsize struct {
-	Row, Col, Xpixel, Ypixel uint16
-}
-
-// terminalHeight returns the number of rows of the given terminal file,
-// falling back to 24 when the size cannot be determined.
-func terminalHeight(f *os.File) int {
-	var ws winsize
-	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), syscall.TIOCGWINSZ, uintptr(unsafe.Pointer(&ws))); errno == 0 && ws.Row > 0 {
-		return int(ws.Row)
-	}
-	return 24
 }
 
 // ── Interactive prompt helpers ──

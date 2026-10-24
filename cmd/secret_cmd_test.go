@@ -613,7 +613,7 @@ func TestSecretStoreFindingWithoutAValue(t *testing.T) {
 
 func TestSecretStoreStripsQuotesAndComments(t *testing.T) {
 	workspace := initWorkspace(t)
-	f := writeWs(t, workspace, "configs/svc/.env", `DB_PASSWORD = "p4ss w0rd!"  # prod`+"\n")
+	f := writeWs(t, workspace, "symlinks/svc/.env", `DB_PASSWORD = "p4ss w0rd!"  # prod`+"\n")
 	shims := newPassShims(t)
 	shims.initStore(t)
 	if code, _, e := wsRun(t, workspace, "", "secret", "store", f+":1", "--quiet"); code != 0 {

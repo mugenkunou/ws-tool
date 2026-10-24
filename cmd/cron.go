@@ -55,7 +55,7 @@ func cronPlanOptions(globals globalFlags, display string) (cron.PlanOptions, err
 // would (spec §3.5): `cron add`, `rm` and `log` do; `cron run` is plumbing and
 // stays silent.
 func aliasNote(globals globalFlags, stderr io.Writer, name string) {
-	if canon, old := cron.Canonical(name); old && !globals.quiet && !globals.json {
+	if canon, old := cron.Canonical(name); old && !cron.IsRetired(canon) && !globals.quiet && !globals.json {
 		fmt.Fprintf(stderr, "ws: %q is now %q\n", name, canon)
 	}
 }

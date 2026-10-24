@@ -189,40 +189,36 @@ func (k ReposMap) FullHelp() [][]key.Binding {
 	}
 }
 
-// DotfilesMap is the binding set for the dotfiles screen (spec §6.5).
-type DotfilesMap struct {
+// SymlinksMap is the binding set for the Symlinks screen (spec §6.5).
+type SymlinksMap struct {
 	Table  table.KeyMap
 	Add    key.Binding // a: take the marked rows' live files, else prompt for a path
 	Unlink key.Binding // ctrl+d
 	Link   key.Binding // l: repair the broken and overwritten links
-	Edit   key.Binding // e: the workspace copy
-	Backup key.Binding // b: commit pending changes and push
 	Back   key.Binding
 }
 
-// Dotfiles returns bindings for the dotfiles screen.
-func Dotfiles() DotfilesMap {
-	return DotfilesMap{
+// Symlinks returns bindings for the Symlinks screen.
+func Symlinks() SymlinksMap {
+	return SymlinksMap{
 		Table:  Table(),
 		Add:    Add(),
 		Unlink: keyDelete("unlink"),
 		Link:   key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "link")),
-		Edit:   Edit(),
-		Backup: key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "back up")),
 		Back:   back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
-func (k DotfilesMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Add, k.Unlink, k.Link, k.Edit, k.Backup}
+func (k SymlinksMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Add, k.Unlink, k.Link}
 }
 
 // FullHelp implements help.KeyMap.
-func (k DotfilesMap) FullHelp() [][]key.Binding {
+func (k SymlinksMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
-		{k.Add, k.Unlink, k.Link, k.Edit, k.Backup},
+		{k.Add, k.Unlink, k.Link},
 		{k.Back},
 	}
 }

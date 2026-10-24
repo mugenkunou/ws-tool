@@ -10,9 +10,8 @@ import (
 type UserRules struct {
 	Schema           int         `json:"schema"`
 	Exclude          []RuleEntry `json:"exclude"`
-	SafeHarbors      []RuleEntry `json:"safe_harbors"`
+	Include          []RuleEntry `json:"include"`
 	SuppressDefaults []string    `json:"suppress_defaults"`
-	SuppressHarbors  []string    `json:"suppress_harbors"`
 }
 
 // RuleEntry is a single user-defined rule with an optional note.
@@ -28,9 +27,8 @@ func DefaultUserRules() UserRules {
 	return UserRules{
 		Schema:           UserRulesSchema,
 		Exclude:          []RuleEntry{},
-		SafeHarbors:      []RuleEntry{},
+		Include:          []RuleEntry{},
 		SuppressDefaults: []string{},
-		SuppressHarbors:  []string{},
 	}
 }
 
@@ -52,22 +50,16 @@ func builtinExcludes(u UserRules) []Rule {
 	return out
 }
 
-// builtinHarbors is the built-in always-sync directories minus
-// suppress_harbors, each rule tagged SourceBuiltin.
-func builtinHarbors(u UserRules) []Rule {
-	off := make(map[string]bool, len(u.SuppressHarbors))
-	for _, s := range u.SuppressHarbors {
-		off[s] = true
-	}
-	var out []Rule
-	for _, r := range defaultHarborRules {
-		if off[r.Pattern] {
-			continue
-		}
-		r.Source = SourceBuiltin
-		out = append(out, r)
-	}
-	return out
+// SymlinksIncludeRule is the one built-in included directory: the mirrored
+// storage tree of `ws symlink` keeps host names (.gitconfig, .ssh/, .config/), and
+// the built-in `-:.*` exclude would drop all of them. It sits where the user's
+// included directories sit, so a user's ignored path still wins. It is not stored
+// in ws.json and cannot be suppressed.
+const SymlinksIncludeRule = "+g:symlinks/**"
+
+// builtinInclude is SymlinksIncludeRule as a Rule, tagged SourceBuiltin.
+func builtinInclude() Rule {
+	return Rule{Raw: SymlinksIncludeRule, Include: true, Glob: true, Pattern: "symlinks/**", Source: SourceBuiltin}
 }
 
 // userRulesOf converts entries to rules, skipping blank patterns.
@@ -88,14 +80,14 @@ func userRulesOf(entries []RuleEntry, include bool) []Rule {
 // BuildEngine creates an Engine from built-in defaults + user rules, in the
 // order MEGA reads .megaignore (the last matching rule decides):
 //  1. built-in excludes (minus suppress_defaults)
-//  2. built-in always-sync directories (minus suppress_harbors)
-//  3. user always-sync directories (safe_harbors)
-//  4. user excludes (ignore_rules.exclude): last, so `ignore add` always wins
+//  2. the built-in included directory symlinks/** and the user's included
+//     directories (include)
+//  3. user excludes (ignore_rules.exclude): last, so `ignore add` always wins
 func BuildEngine(userRules UserRules) *Engine {
 	var rules []Rule
 	rules = append(rules, builtinExcludes(userRules)...)
-	rules = append(rules, builtinHarbors(userRules)...)
-	rules = append(rules, userRulesOf(userRules.SafeHarbors, true)...)
+	rules = append(rules, builtinInclude())
+	rules = append(rules, userRulesOf(userRules.Include, true)...)
 	rules = append(rules, userRulesOf(userRules.Exclude, false)...)
 	return &Engine{Rules: rules}
 }
@@ -139,17 +131,15 @@ func GenerateMegaignore(userRules UserRules) string {
 		sb.WriteString(r.Raw + "\n")
 	}
 
-	sb.WriteString("\n# Built-in always-sync directories\n")
-	for _, r := range builtinHarbors(userRules) {
-		sb.WriteString(r.Raw + "\n")
+	sb.WriteString("\n# Built-in included directory (the ws symlink storage tree)\n")
+	sb.WriteString(SymlinksIncludeRule + "\n")
+
+	if len(userRules.Include) > 0 {
+		sb.WriteString("\n# Included directories (ws.json include)\n")
+		writeEntries(&sb, userRules.Include, true)
 	}
 
-	if len(userRules.SafeHarbors) > 0 {
-		sb.WriteString("\n# Always-sync directories (ws.json safe_harbors)\n")
-		writeEntries(&sb, userRules.SafeHarbors, true)
-	}
-
-	// Ignored paths come last so they win over every always-sync directory.
+	// Ignored paths come last so they win over every included directory.
 	if len(userRules.Exclude) > 0 {
 		sb.WriteString("\n# Ignored paths (ws ignore add)\n")
 		writeEntries(&sb, userRules.Exclude, false)
@@ -196,11 +186,9 @@ func Stale(megaignorePath string, userRules UserRules) (bool, error) {
 // DefaultRuleStats returns counts of default and user rules for display.
 type RuleStats struct {
 	DefaultExclude     int
-	DefaultHarbors     int
 	UserExclude        int
-	UserHarbors        int
+	UserInclude        int
 	SuppressedDefaults int
-	SuppressedHarbors  int
 	Total              int
 }
 
@@ -214,24 +202,12 @@ func GetRuleStats(userRules UserRules) RuleStats {
 			}
 		}
 	}
-	suppH := 0
-	for _, s := range userRules.SuppressHarbors {
-		for _, hr := range defaultHarborRules {
-			if hr.Pattern == s {
-				suppH++
-				break
-			}
-		}
-	}
-
 	stats := RuleStats{
 		DefaultExclude:     len(defaultExcludeRules) - suppD,
-		DefaultHarbors:     len(defaultHarborRules) - suppH,
 		UserExclude:        len(userRules.Exclude),
-		UserHarbors:        len(userRules.SafeHarbors),
+		UserInclude:        len(userRules.Include),
 		SuppressedDefaults: suppD,
-		SuppressedHarbors:  suppH,
 	}
-	stats.Total = stats.DefaultExclude + stats.DefaultHarbors + stats.UserExclude + stats.UserHarbors
+	stats.Total = stats.DefaultExclude + stats.UserExclude + stats.UserInclude
 	return stats
 }

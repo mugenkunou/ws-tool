@@ -19,9 +19,9 @@ func TestEngineEvaluateLastMatchWins(t *testing.T) {
 		t.Fatalf("load engine failed: %v", err)
 	}
 
-	res := engine.Evaluate("ws/ws-log/session/stdout.log", false)
+	res := engine.Evaluate("ws/sessions/session/stdout.log", false)
 	if !res.Included {
-		t.Fatalf("expected ws safe harbor to be included, got excluded by %s", res.Rule)
+		t.Fatalf("expected ws include rule to be included, got excluded by %s", res.Rule)
 	}
 
 	res = engine.Evaluate(".git/config", false)
@@ -30,7 +30,7 @@ func TestEngineEvaluateLastMatchWins(t *testing.T) {
 	}
 }
 
-func TestEvaluateSafeHarborFlag(t *testing.T) {
+func TestEvaluateByIncludeFlag(t *testing.T) {
 	tmp := t.TempDir()
 	megaignorePath := filepath.Join(tmp, ".megaignore")
 	content := "-:.*\n-g:*.log\n+:ws\n+g:ws/**\n-s:*\n"
@@ -43,31 +43,31 @@ func TestEvaluateSafeHarborFlag(t *testing.T) {
 		t.Fatalf("load engine failed: %v", err)
 	}
 
-	// ws/ path excluded by -g:*.log but re-included by +g:ws/** — safe harbor
-	res := engine.Evaluate("ws/ws-log/session.log", false)
+	// ws/ path excluded by -g:*.log but re-included by +g:ws/** — include rule
+	res := engine.Evaluate("ws/sessions/session.log", false)
 	if !res.Included {
-		t.Fatal("expected ws safe harbor path to be included")
+		t.Fatal("expected ws include rule path to be included")
 	}
-	if !res.SafeHarbor {
-		t.Fatal("expected SafeHarbor=true for ws/ws-log/session.log")
+	if !res.ByInclude {
+		t.Fatal("expected ByInclude=true for ws/sessions/session.log")
 	}
 
-	// Normal file not excluded then re-included — not a safe harbor
+	// Normal file not excluded then re-included — not an include rule
 	res = engine.Evaluate("README.md", false)
 	if !res.Included {
 		t.Fatal("expected README.md to be included")
 	}
-	if res.SafeHarbor {
-		t.Fatal("expected SafeHarbor=false for README.md (never excluded)")
+	if res.ByInclude {
+		t.Fatal("expected ByInclude=false for README.md (never excluded)")
 	}
 
-	// Excluded file — not a safe harbor
+	// Excluded file — not an include rule
 	res = engine.Evaluate(".git/config", false)
 	if res.Included {
 		t.Fatal("expected .git/config to be excluded")
 	}
-	if res.SafeHarbor {
-		t.Fatal("expected SafeHarbor=false for excluded path")
+	if res.ByInclude {
+		t.Fatal("expected ByInclude=false for excluded path")
 	}
 }
 
@@ -179,14 +179,14 @@ func TestScanSkipsBrokenSymlinksAndMissingDirs(t *testing.T) {
 	_ = violations // no assertion on content — just that it didn't crash
 }
 
-func TestScanSafeHarborDowngradesToInfo(t *testing.T) {
+func TestScanByIncludeDowngradesToInfo(t *testing.T) {
 	tmp := t.TempDir()
 	ws := filepath.Join(tmp, "Workspace")
 	if err := os.MkdirAll(ws, 0o755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
 	}
 
-	// Template: exclude hidden files and large files, but safe-harbor ws/
+	// Template: exclude hidden files and large files, but include ws/
 	megaignore := "-:.*\n-g:*.bin\n+:ws\n+g:ws/**\n-s:*\n"
 	if err := os.WriteFile(filepath.Join(ws, ".megaignore"), []byte(megaignore), 0o644); err != nil {
 		t.Fatalf("write megaignore failed: %v", err)
@@ -196,17 +196,17 @@ func TestScanSafeHarborDowngradesToInfo(t *testing.T) {
 		t.Fatalf("load engine failed: %v", err)
 	}
 
-	// Big file inside safe harbor — should be INFO
-	harborDir := filepath.Join(ws, "ws", "ws-log")
-	if err := os.MkdirAll(harborDir, 0o755); err != nil {
+	// Big file inside include rule — should be INFO
+	includeDir := filepath.Join(ws, "ws", "sessions")
+	if err := os.MkdirAll(includeDir, 0o755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
 	}
 	big := make([]byte, 2*1024*1024)
-	if err := os.WriteFile(filepath.Join(harborDir, "session.bin"), big, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(includeDir, "session.bin"), big, 0o644); err != nil {
 		t.Fatalf("write big failed: %v", err)
 	}
 
-	// Big file outside safe harbor — should be WARNING/CRITICAL
+	// Big file outside include rule — should be WARNING/CRITICAL
 	if err := os.WriteFile(filepath.Join(ws, "data.bin"), big, 0o644); err != nil {
 		t.Fatalf("write big failed: %v", err)
 	}
@@ -222,29 +222,29 @@ func TestScanSafeHarborDowngradesToInfo(t *testing.T) {
 		t.Fatalf("scan failed: %v", err)
 	}
 
-	var harborViolation, normalViolation *Violation
+	var includeViolation, normalViolation *Violation
 	for i, v := range violations {
 		if v.Type == "bloat" && v.Muted {
-			harborViolation = &violations[i]
+			includeViolation = &violations[i]
 		}
 		if v.Type == "bloat" && !v.Muted {
 			normalViolation = &violations[i]
 		}
 	}
 
-	if harborViolation == nil {
-		t.Fatal("expected a safe harbor bloat violation for ws/ws-log/session.bin")
+	if includeViolation == nil {
+		t.Fatal("expected an include rule bloat violation for ws/sessions/session.bin")
 	}
-	if harborViolation.Severity != "INFO" {
-		t.Fatalf("safe harbor violation should be INFO, got %s", harborViolation.Severity)
+	if includeViolation.Severity != "INFO" {
+		t.Fatalf("include rule violation should be INFO, got %s", includeViolation.Severity)
 	}
 
 	if normalViolation != nil {
 		t.Fatal("data.bin should be excluded by -g:*.bin and not appear as a violation")
 	}
 
-	// Verify depth violation inside safe harbor is also INFO.
-	// The path must match an exclude rule that the safe harbor overrides.
+	// Verify depth violation inside include rule is also INFO.
+	// The path must match an exclude rule that the include rule overrides.
 	// Use a hidden directory name so -:.* fires, then +g:ws/** re-includes.
 	deepPath := filepath.Join(ws, "ws", ".deep", "a", "b", "c", "file.txt")
 	if err := os.MkdirAll(filepath.Dir(deepPath), 0o755); err != nil {
@@ -268,10 +268,10 @@ func TestScanSafeHarborDowngradesToInfo(t *testing.T) {
 	for _, v := range violations {
 		if v.Type == "depth" && v.Muted {
 			if v.Severity != "INFO" {
-				t.Fatalf("safe harbor depth violation should be INFO, got %s", v.Severity)
+				t.Fatalf("include rule depth violation should be INFO, got %s", v.Severity)
 			}
 			return
 		}
 	}
-	t.Fatal("expected a safe harbor depth violation inside ws/")
+	t.Fatal("expected an include rule depth violation inside ws/")
 }

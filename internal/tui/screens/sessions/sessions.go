@@ -21,8 +21,8 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/mugenkunou/ws-tool/internal/age"
-	wslog "github.com/mugenkunou/ws-tool/internal/log"
 	"github.com/mugenkunou/ws-tool/internal/plan"
+	wssession "github.com/mugenkunou/ws-tool/internal/session"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
@@ -40,7 +40,7 @@ import (
 // LoadedMsg carries the session list, newest first. Other components (the
 // dashboard) may observe it.
 type LoadedMsg struct {
-	Sessions []wslog.Session
+	Sessions []wssession.Session
 	Err      error
 }
 
@@ -62,7 +62,7 @@ type showMsg struct {
 // grepMsg carries what `session grep` found.
 type grepMsg struct {
 	query   string
-	matches []wslog.Match
+	matches []wssession.Match
 	err     error
 }
 
@@ -100,15 +100,15 @@ type Model struct {
 	env        env.Env
 	keys       keys.SessionsMap
 	viewerKeys keys.ViewerMap
-	list       reslist.Model[wslog.Session]
+	list       reslist.Model[wssession.Session]
 	viewer     viewport.Model
 	level      level
 	modal      modal.Model
 
-	sessions []wslog.Session // every session; the list shows those the grep leaves
-	query    string          // the active `:grep` text; "" when none
-	pending  string          // the `:grep` text being searched for
-	hits     map[string]bool // the tags with a match
+	sessions []wssession.Session // every session; the list shows those the grep leaves
+	query    string              // the active `:grep` text; "" when none
+	pending  string              // the `:grep` text being searched for
+	hits     map[string]bool     // the tags with a match
 	viewTag  string
 	viewMode string
 	width    int
@@ -128,13 +128,13 @@ func New(e env.Env) Model {
 		viewerKeys: keys.ViewerMap{Detail: dk, ToggleMode: k.ToggleMode},
 		viewer:     vp,
 		viewMode:   modeFull,
-		list: reslist.New(wslog.Schema(e.View()), []reslist.Col[wslog.Session]{
+		list: reslist.New(wssession.Schema(e.View()), []reslist.Col[wssession.Session]{
 			{Key: "tag", Min: 14, Weight: 3},
 			{Key: "started_at", Min: 16},
 			{Key: "duration_sec", Min: 8},
 			{Key: "commands", Min: 4},
 			{Key: "size_bytes", Min: 9},
-			{Key: "active", Min: 11, Style: func(s wslog.Session, t string) string {
+			{Key: "active", Min: 11, Style: func(s wssession.Session, t string) string {
 				if s.Active {
 					return theme.Error.Render("● " + t)
 				}
@@ -147,7 +147,7 @@ func New(e env.Env) Model {
 // Load lists recorded sessions.
 func Load(e env.Env) tea.Cmd {
 	return func() tea.Msg {
-		sessions, err := wslog.List(e.LogDir, stateDir())
+		sessions, err := wssession.List(e.LogDir, stateDir())
 		return LoadedMsg{Sessions: sessions, Err: err}
 	}
 }
@@ -162,14 +162,14 @@ func stateDir() string {
 func show(e env.Env, tag, mode string) tea.Cmd {
 	return func() tea.Msg {
 		// Recordings are raw PTY streams: Show strips escapes and carriage returns.
-		res, err := wslog.Show(e.LogDir, tag, mode == modeCommands)
+		res, err := wssession.Show(e.LogDir, tag, mode == modeCommands)
 		return showMsg{tag: tag, mode: mode, text: res.Text, err: err}
 	}
 }
 
 func grep(e env.Env, query string) tea.Cmd {
 	return func() tea.Msg {
-		found, err := wslog.Grep(e.LogDir, stateDir(), query, 0)
+		found, err := wssession.Grep(e.LogDir, stateDir(), query, 0)
 		return grepMsg{query: query, matches: found, err: err}
 	}
 }
@@ -326,13 +326,13 @@ func firstMatch(text, query string) int {
 	return 0
 }
 
-func (m Model) active() (wslog.Session, bool) {
+func (m Model) active() (wssession.Session, bool) {
 	for _, s := range m.sessions {
 		if s.Active {
 			return s, true
 		}
 	}
-	return wslog.Session{}, false
+	return wssession.Session{}, false
 }
 
 func (m Model) openViewer(tag string) (Model, tea.Cmd) {
@@ -344,9 +344,9 @@ func (m Model) openViewer(tag string) (Model, tea.Cmd) {
 }
 
 // actions is every sessions key and the rows it acts on (spec §6.5).
-var actions = func() []reslist.Action[Model, wslog.Session] {
+var actions = func() []reslist.Action[Model, wssession.Session] {
 	k := keys.Sessions()
-	return []reslist.Action[Model, wslog.Session]{
+	return []reslist.Action[Model, wssession.Session]{
 		{Key: k.View, Scope: reslist.Cursor, Do: Model.show},
 		{Key: k.Record, Scope: reslist.Global, Do: Model.promptRecord},
 		// Prune takes all the sessions, like `ws session prune`: not the marks,
@@ -357,7 +357,7 @@ var actions = func() []reslist.Action[Model, wslog.Session] {
 }()
 
 // commands is every `:` command: the CLI's words after `session`.
-var commands = []reslist.Command[Model, wslog.Session]{
+var commands = []reslist.Command[Model, wssession.Session]{
 	{Name: "stop", Scope: reslist.Global,
 		Help: "stop the recording in progress", Do: Model.stop},
 	{Name: "grep", Args: "<text>", Scope: reslist.Global,
@@ -406,11 +406,11 @@ func (m Model) updateViewer(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 
 // show is enter: the transcript of the cursor row. After a `:grep` it opens at
 // the first match.
-func (m Model) show(rows []wslog.Session) (Model, tea.Cmd) { return m.openViewer(rows[0].Tag) }
+func (m Model) show(rows []wssession.Session) (Model, tea.Cmd) { return m.openViewer(rows[0].Tag) }
 
 // promptRecord is r: ask for a tag, then hand the terminal to the recorded
 // shell.
-func (m Model) promptRecord(_ []wslog.Session) (Model, tea.Cmd) {
+func (m Model) promptRecord(_ []wssession.Session) (Model, tea.Cmd) {
 	if s, ok := m.active(); ok {
 		return m, nav.Notify(nav.LevelWarn, "Already recording: "+s.Tag)
 	}
@@ -425,7 +425,7 @@ func (m Model) promptRecord(_ []wslog.Session) (Model, tea.Cmd) {
 
 // stop is `:stop`, mirroring `ws session stop`: signal the recorder, wait up to
 // 3s, then finalize the session metadata.
-func (m Model) stop(_ []wslog.Session, _ []string) (Model, tea.Cmd) {
+func (m Model) stop(_ []wssession.Session, _ []string) (Model, tea.Cmd) {
 	s, ok := m.active()
 	if !ok {
 		return m, nav.Notify(nav.LevelInfo, "No recording in progress")
@@ -435,7 +435,7 @@ func (m Model) stop(_ []wslog.Session, _ []string) (Model, tea.Cmd) {
 		ID:          "session-stop",
 		Description: "Stop recording session " + s.Tag,
 		Execute: func() error {
-			_, err := wslog.StopActive(wslog.StopOptions{LogDir: logDir, StateDir: stateDir()})
+			_, err := wssession.StopActive(wssession.StopOptions{LogDir: logDir, StateDir: stateDir()})
 			return err
 		},
 	}}}
@@ -447,7 +447,7 @@ func (m Model) stop(_ []wslog.Session, _ []string) (Model, tea.Cmd) {
 
 // grepCommand is `:grep <text>`: search every session's commands and transcript
 // and narrow the list to the sessions with a match.
-func (m Model) grepCommand(_ []wslog.Session, args []string) (Model, tea.Cmd) {
+func (m Model) grepCommand(_ []wssession.Session, args []string) (Model, tea.Cmd) {
 	text := strings.TrimSpace(strings.Join(args, " "))
 	if text == "" {
 		return m, nav.Notify(nav.LevelWarn, "usage: grep <text>")
@@ -460,7 +460,7 @@ func (m Model) grepCommand(_ []wslog.Session, args []string) (Model, tea.Cmd) {
 
 // delete is ctrl+d: remove finished sessions (the recording one is never
 // offered), as `ws session rm`.
-func (m Model) delete(rows []wslog.Session) (Model, tea.Cmd) {
+func (m Model) delete(rows []wssession.Session) (Model, tea.Cmd) {
 	done := finished(rows)
 	if len(done) == 0 {
 		return m, nav.Notify(nav.LevelWarn, "Stop the recording before deleting it")
@@ -473,7 +473,7 @@ func (m Model) delete(rows []wslog.Session) (Model, tea.Cmd) {
 			ID:          "session-rm-" + tag,
 			Description: fmt.Sprintf("Delete %s (%s)", filepath.Join(logDir, tag), style.HumanBytes(s.SizeBytes)),
 			Execute: func() error {
-				return wslog.Remove(wslog.RemoveOptions{LogDir: logDir, StateDir: stateDir(), Tag: tag})
+				return wssession.Remove(wssession.RemoveOptions{LogDir: logDir, StateDir: stateDir(), Tag: tag})
 			},
 		})
 	}
@@ -482,8 +482,8 @@ func (m Model) delete(rows []wslog.Session) (Model, tea.Cmd) {
 }
 
 // finished drops the session being recorded.
-func finished(rows []wslog.Session) []wslog.Session {
-	var out []wslog.Session
+func finished(rows []wssession.Session) []wssession.Session {
+	var out []wssession.Session
 	for _, s := range rows {
 		if !s.Active {
 			out = append(out, s)
@@ -494,7 +494,7 @@ func finished(rows []wslog.Session) []wslog.Session {
 
 // promptPrune is p: an age, or blank to enforce the size cap, then a checklist
 // of what goes (`ws session prune`). It covers all the sessions.
-func (m Model) promptPrune(_ []wslog.Session) (Model, tea.Cmd) {
+func (m Model) promptPrune(_ []wssession.Session) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.modal, cmd = m.modal.Prompt(stepPruneAge, prompt.New("Prune sessions older than (age)",
 		prompt.WithHint("An age such as 30d, 12h or 2w (a bare number is days). Blank enforces the size cap (session.cap_mb)."),
@@ -514,7 +514,7 @@ func (m Model) promptPrune(_ []wslog.Session) (Model, tea.Cmd) {
 func (m Model) openPrune(raw string) (Model, tea.Cmd) {
 	raw = strings.TrimSpace(raw)
 	now := m.env.Now()
-	sel := wslog.PruneSelection{CapMB: m.env.Config.Session.CapMB, Now: now}
+	sel := wssession.PruneSelection{CapMB: m.env.Config.Session.CapMB, Now: now}
 	if raw != "" {
 		d, err := age.Parse(raw)
 		if err != nil {
@@ -522,7 +522,7 @@ func (m Model) openPrune(raw string) (Model, tea.Cmd) {
 		}
 		sel.OlderThan = d
 	}
-	chosen := wslog.SelectPrune(m.sessions, sel)
+	chosen := wssession.SelectPrune(m.sessions, sel)
 	if len(chosen) == 0 {
 		switch {
 		case raw != "":
@@ -530,7 +530,7 @@ func (m Model) openPrune(raw string) (Model, tea.Cmd) {
 		case sel.CapMB <= 0:
 			return m, nav.Notify(nav.LevelInfo, "Nothing to prune: no size cap is set (session.cap_mb).")
 		}
-		return m, nav.Notify(nav.LevelInfo, fmt.Sprintf("Nothing to prune: %s of the %d MB cap.", style.HumanBytes(wslog.TotalBytes(m.sessions)), sel.CapMB))
+		return m, nav.Notify(nav.LevelInfo, fmt.Sprintf("Nothing to prune: %s of the %d MB cap.", style.HumanBytes(wssession.TotalBytes(m.sessions)), sel.CapMB))
 	}
 	logDir := m.env.LogDir
 	p := plan.Plan{Command: "session.prune"}
@@ -541,7 +541,7 @@ func (m Model) openPrune(raw string) (Model, tea.Cmd) {
 			ID:          "session-rm-" + tag,
 			Description: fmt.Sprintf("Delete %s (%s, %dd old)", filepath.Join(logDir, tag), style.HumanBytes(s.SizeBytes), days),
 			Execute: func() error {
-				return wslog.Remove(wslog.RemoveOptions{LogDir: logDir, StateDir: stateDir(), Tag: tag})
+				return wssession.Remove(wssession.RemoveOptions{LogDir: logDir, StateDir: stateDir(), Tag: tag})
 			},
 		})
 	}

@@ -1,9 +1,9 @@
-ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
+ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 🌅 Good morning  ·  ~/Workspace
 
 🚨 Needs attention (8)
-› ✘ 2 dotfile links broken or overwritten                                                🔗 Dotfiles
+› ✘ 2 symlinks broken, missing or drifted                                                🔗 Symlinks
   ✘ 1 possible secret in workspace files                                                  🔐 Secrets
   ✘ Cron job repo-sync failing (exit 2)                                                      ⏰ Cron
   ! 2 repos out of sync (1 dirty, 1 behind, 1 ahead)                                        📦 Repos
@@ -14,14 +14,14 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secret
 
 📋 Overview
 ╭──────────────────────────────╮ ╭──────────────────────────────╮ ╭──────────────────────────────╮
-│ 📦 Repos                   ! │ │ 🔗 Dotfiles                ✘ │ │ 🧪 Scratch                 ✔ │
-│ 4 repos · 1 dirty            │ │ 3 dotfiles managed           │ │ 2 dirs · 5.0 MB              │
+│ 📦 Repos                   ! │ │ 🔗 Symlinks                ✘ │ │ 🧪 Scratch                 ✔ │
+│ 4 repos · 1 dirty            │ │ 3 symlinks managed           │ │ 2 dirs · 5.0 MB              │
 │ ↑ 1 ahead · ↓ 1 behind       │ │ 2 links need fixing          │ │ newest dns-debug.2026-09     │
 ╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
 ╭──────────────────────────────╮ ╭──────────────────────────────╮ ╭──────────────────────────────╮
 │ 📼 Sessions                ✔ │ │ 🧹 Ignore                  ! │ │ 🔐 Secrets                 ✘ │
 │ 2 sessions                   │ │ 2 violations                 │ │ 1 finding                    │
-│ ● recording deploy-fix       │ │ 1 in safe harbors            │ │ pass: 42 entries             │
+│ ● recording deploy-fix       │ │ 1 in included paths          │ │ pass: 42 entries             │
 ╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
 ╭──────────────────────────────╮ ╭──────────────────────────────╮
 │ ⏰ Cron                    ✘ │ │ 🚮 Trash                   ! │

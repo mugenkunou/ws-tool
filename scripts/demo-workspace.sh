@@ -9,7 +9,7 @@
 #   scripts/demo-workspace.sh [dir]     build it (dir must not exist yet)
 #   source <dir>/env.sh && ws tui       use it in this shell
 #
-# The demo has: dotfiles (one broken, one overwritten), repos (clean, dirty,
+# The demo has: symlinks (one broken, one drifted, one found but not added), repos (clean, dirty,
 # ahead, behind, diverged, no upstream, detached HEAD), scratch directories,
 # a big dump and deep paths for the Ignore screen, fake secrets in a deploy script, cron jobs
 # and a few trashed items.
@@ -28,7 +28,7 @@ fi
 demo=$(cd "$demo" && pwd)
 
 # Build first, with your own Go environment: the demo's HOME has no module cache.
-mkdir -p "$demo"/{home,bin,xdg/config,xdg/state,xdg/data,remotes}
+mkdir -p "$demo"/{home,bin,xdg/config,xdg/state,xdg/data,remotes,root}
 echo "building ws…"
 (cd "$here" && go build -o "$demo/bin/ws" .)
 
@@ -41,6 +41,7 @@ export XDG_STATE_HOME="$demo/xdg/state"
 export XDG_DATA_HOME="$demo/xdg/data"
 export WS_WORKSPACE="$demo/home/Workspace"
 export WS_CRONTAB_FILE="$demo/crontab"
+export WS_SYMLINK_ROOT="$demo/root"
 export GIT_CONFIG_GLOBAL="$demo/gitconfig"
 export GIT_TERMINAL_PROMPT=0
 export PASSWORD_STORE_DIR="$demo/home/.password-store"
@@ -60,17 +61,21 @@ ws() { "$demo/bin/ws" "$@"; }
 ws init --quiet
 W=$WS_WORKSPACE
 
-# ── dotfiles ──────────────────────────────────────────────────────
+# ── symlinks ──────────────────────────────────────────────────────
 printf 'alias ll="ls -la"\nexport EDITOR=vim\n' > "$HOME/.bashrc"
 printf '[user]\n\tname = Demo User\n' > "$HOME/.gitconfig"
 printf 'set number\n' > "$HOME/.vimrc"
 printf 'Host *\n  ServerAliveInterval 60\n' > "$HOME/.sshconfig"
-ws dotfile add --quiet "$HOME/.bashrc" "$HOME/.gitconfig" "$HOME/.vimrc" "$HOME/.sshconfig"
+for f in .bashrc .gitconfig .vimrc .sshconfig; do
+  ws symlink add --quiet "$HOME/$f"
+done
 # broken: the workspace copy is gone
-rm -f "$W/configs/dotfiles/vimrc" 2>/dev/null || rm -f "$W/configs/dotfiles/.vimrc"
-# overwritten: something replaced the link with a real file
+rm -f "$W/symlinks/home/.vimrc"
+# drifted: something replaced the link with a real file
 rm -f "$HOME/.sshconfig"
 printf 'Host *\n  ServerAliveInterval 5\n' > "$HOME/.sshconfig"
+# found: a known config that is not symlinked yet (`ws symlink add` offers it)
+printf 'export ZDOTDIR=$HOME\n' > "$HOME/.zshrc"
 
 # ── repos ─────────────────────────────────────────────────────────
 mkrepo() { # name state

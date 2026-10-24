@@ -30,7 +30,7 @@ func TestCronScopes(t *testing.T) {
 func TestCronRunIsACheckedOneActionChecklist(t *testing.T) {
 	m := send(loaded(t, 100, 30), press("8"), press("r"))
 	v := tuitest.Plain(view(m))
-	if !strings.Contains(v, "[x] Run dotfile-backup now") || strings.Contains(v, "repo-sync") {
+	if !strings.Contains(v, "[x] Run pass-backup now") || strings.Contains(v, "repo-sync") {
 		t.Fatalf("r on the cursor row:\n%s", v)
 	}
 	tuitest.Golden(t, "cron_run_checklist", view(m))
@@ -38,7 +38,7 @@ func TestCronRunIsACheckedOneActionChecklist(t *testing.T) {
 
 func TestCronEnterShowsOutputAndEscReturns(t *testing.T) {
 	m := send(loaded(t, 100, 30), press("8"), press("enter"))
-	if v := tuitest.Plain(view(m)); !strings.Contains(v, "Cron log: dotfile-backup") {
+	if v := tuitest.Plain(view(m)); !strings.Contains(v, "Cron log: pass-backup") {
 		t.Fatalf("enter did not open the job's output:\n%s", v)
 	}
 	m = send(m, press("esc"))

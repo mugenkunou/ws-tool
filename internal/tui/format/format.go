@@ -12,9 +12,6 @@ import (
 // Age renders a duration as its largest whole unit: "45s", "12m", "5h", "3d".
 func Age(d time.Duration) string { return style.Age(d) }
 
-// Duration renders seconds as "42s", "3m 05s" or "1h 02m".
-func Duration(seconds int64) string { return style.Duration(seconds) }
-
 // Plural renders a count with its noun: "1 issue", "2 issues",
 // "2 entries". The last word is pluralized ("2 cron jobs").
 func Plural(n int, noun string) string {

@@ -42,13 +42,12 @@ type WsConfig struct {
 	Editor      string           `json:"editor"`
 	Scratch     Scratch          `json:"scratch"`
 	Repo        Repo             `json:"repo"`
-	Dotfile     Dotfile          `json:"dotfile"`
 	Secret      Secret           `json:"secret"`
 	Pass        Pass             `json:"pass"`
 	Ignore      Ignore           `json:"ignore"`
 	IgnoreRules ignore.UserRules `json:"ignore_rules"`
 	Session     Session          `json:"session"`
-	Links       []Link           `json:"links"`
+	Symlinks    []Link           `json:"symlinks"`
 }
 
 // Scratch holds scratch-directory settings.
@@ -62,20 +61,6 @@ type Repo struct {
 	Roots       []string `json:"roots"`
 	ExcludeDirs []string `json:"exclude_dirs"`
 	MaxParallel int      `json:"max_parallel"`
-}
-
-// Dotfile holds dotfile-management settings.
-type Dotfile struct {
-	Git DotfileGit `json:"git"`
-}
-
-// DotfileGit holds dotfile git-backup settings (synced with the workspace).
-type DotfileGit struct {
-	RemoteURL  string `json:"remote_url"`
-	Branch     string `json:"branch"`
-	AutoCommit bool   `json:"auto_commit"`
-	AutoPush   bool   `json:"auto_push"`
-	PassEntry  string `json:"pass_entry"` // pass(1) entry holding an API token for the visibility check
 }
 
 // Secret holds secret-scanning settings and the allowlist.
@@ -97,18 +82,21 @@ type Ignore struct {
 	Muted      []string `json:"muted"` // paths whose sync warnings are hidden (they keep syncing)
 }
 
-// Session holds session-recording settings (the old "log" key).
+// Session holds session-recording settings.
 type Session struct {
 	CapMB        int `json:"cap_mb"`
 	MaxSessionMB int `json:"max_session_mb"`
 }
 
-// Link is a single entry in the link registry.
-// It records a system path → workspace-relative original mapping.
-// When Dir is true, the system path is a directory link (e.g. ~/.password-store).
+// Link is a single entry in the symlinks registry.
+// It records a host path → workspace-relative original mapping.
+// When Dir is true, the host path is a directory link (e.g. ~/.password-store).
 // When Sudo is true, creating the symlink requires root.
+//
+// In ws.json System is written with "~" for $HOME, so a machine with another
+// user name still works. Load expands it, so every Link a caller sees is absolute.
 type Link struct {
-	System   string `json:"system"`   // absolute system path (symlink source)
+	System   string `json:"system"`   // host path (symlink source); absolute in memory, "~/…" in the file
 	Original string `json:"original"` // workspace-relative path of the original
 	Dir      bool   `json:"dir"`      // true if the system path is a directory link
 	Sudo     bool   `json:"sudo"`     // true if the symlink needs sudo
@@ -127,13 +115,6 @@ func Default() WsConfig {
 			ExcludeDirs: []string{"node_modules", ".venv"},
 			MaxParallel: 8,
 		},
-		Dotfile: Dotfile{
-			Git: DotfileGit{
-				Branch:     "main",
-				AutoCommit: true,
-				AutoPush:   true,
-			},
-		},
 		Secret: Secret{
 			Allowlist: []string{},
 			SkipDirs:  []string{},
@@ -149,7 +130,7 @@ func Default() WsConfig {
 			CapMB:        500,
 			MaxSessionMB: 100,
 		},
-		Links: []Link{},
+		Symlinks: []Link{},
 	}
 }
 
@@ -177,17 +158,14 @@ func normalize(cfg *WsConfig) {
 	if cfg.IgnoreRules.Exclude == nil {
 		cfg.IgnoreRules.Exclude = []ignore.RuleEntry{}
 	}
-	if cfg.IgnoreRules.SafeHarbors == nil {
-		cfg.IgnoreRules.SafeHarbors = []ignore.RuleEntry{}
+	if cfg.IgnoreRules.Include == nil {
+		cfg.IgnoreRules.Include = []ignore.RuleEntry{}
 	}
 	if cfg.IgnoreRules.SuppressDefaults == nil {
 		cfg.IgnoreRules.SuppressDefaults = []string{}
 	}
-	if cfg.IgnoreRules.SuppressHarbors == nil {
-		cfg.IgnoreRules.SuppressHarbors = []string{}
-	}
-	if cfg.Links == nil {
-		cfg.Links = []Link{}
+	if cfg.Symlinks == nil {
+		cfg.Symlinks = []Link{}
 	}
 }
 
@@ -284,48 +262,6 @@ func RemoveIgnoreMuted(configPath, workspacePath, rel string) (bool, error) {
 	return true, Save(configPath, cfg)
 }
 
-// AddIgnoreSafeHarbor atomically adds a safe-harbor pattern.
-// Returns true if the pattern was added.
-func AddIgnoreSafeHarbor(configPath, pattern, note string) (bool, error) {
-	if pattern == "ws" || pattern == "ws/**" {
-		return false, errors.New("ws/ safe harbor cannot be modified via user rules")
-	}
-	cfg, err := Load(configPath)
-	if err != nil {
-		return false, err
-	}
-	for _, h := range cfg.IgnoreRules.SafeHarbors {
-		if h.Pattern == pattern {
-			return false, nil
-		}
-	}
-	cfg.IgnoreRules.SafeHarbors = append(cfg.IgnoreRules.SafeHarbors, ignore.RuleEntry{Pattern: pattern, Note: note})
-	return true, Save(configPath, cfg)
-}
-
-// RemoveIgnoreSafeHarbor atomically removes a safe-harbor pattern.
-// Returns true if the pattern was found and removed.
-func RemoveIgnoreSafeHarbor(configPath, pattern string) (bool, error) {
-	cfg, err := Load(configPath)
-	if err != nil {
-		return false, err
-	}
-	updated := cfg.IgnoreRules.SafeHarbors[:0:0]
-	found := false
-	for _, h := range cfg.IgnoreRules.SafeHarbors {
-		if h.Pattern == pattern {
-			found = true
-			continue
-		}
-		updated = append(updated, h)
-	}
-	if !found {
-		return false, nil
-	}
-	cfg.IgnoreRules.SafeHarbors = updated
-	return true, Save(configPath, cfg)
-}
-
 // AddToAllowlist records anchor in the secret allowlist (idempotent).
 func AddToAllowlist(configPath, anchor string) error {
 	cfg, err := Load(configPath)
@@ -358,7 +294,7 @@ func ConfigPath(workspaceRoot string) string {
 // Load reads and parses ws.json from the given path.
 // Returns an error if the file is missing, invalid JSON, or from a newer schema.
 // Keys missing from the file take their defaults, and the next Save writes
-// them. The old "log" key is read when "session" is absent.
+// them.
 func Load(path string) (WsConfig, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
@@ -369,15 +305,16 @@ func Load(path string) (WsConfig, error) {
 	if err := json.Unmarshal(content, &cfg); err != nil {
 		return WsConfig{}, fmt.Errorf("parsing %s: %w", path, err)
 	}
-
-	// Renamed keys are still read; only the new name is written.
-	var legacy struct {
-		Session json.RawMessage `json:"session"`
-		Log     json.RawMessage `json:"log"`
+	// Files written before the noun became "symlink" hold the entries under
+	// "links". Read them silently; the next Save writes "symlinks".
+	var old struct {
+		Symlinks json.RawMessage `json:"symlinks"`
+		Links    []Link          `json:"links"`
 	}
-	if err := json.Unmarshal(content, &legacy); err == nil && legacy.Session == nil && legacy.Log != nil {
-		_ = json.Unmarshal(legacy.Log, &cfg.Session)
+	if err := json.Unmarshal(content, &old); err == nil && old.Symlinks == nil && len(old.Links) > 0 {
+		cfg.Symlinks = old.Links
 	}
+	cfg.Symlinks = mapSystems(cfg.Symlinks, expandHome)
 
 	if cfg.Schema <= 0 {
 		return WsConfig{}, errors.New("ws.json: schema must be a positive integer")
@@ -399,6 +336,7 @@ func Save(path string, cfg WsConfig) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
+	cfg.Symlinks = mapSystems(cfg.Symlinks, collapseHome)
 	encoded, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
@@ -407,19 +345,58 @@ func Save(path string, cfg WsConfig) error {
 	return os.WriteFile(path, encoded, 0o644)
 }
 
+// mapSystems returns a copy of links with fn applied to every System path.
+func mapSystems(links []Link, fn func(string) string) []Link {
+	if links == nil {
+		return nil
+	}
+	out := make([]Link, len(links))
+	for i, l := range links {
+		l.System = fn(l.System)
+		out[i] = l
+	}
+	return out
+}
+
+// expandHome turns a leading "~" into $HOME. Any other path is returned as is.
+func expandHome(p string) string {
+	if p != "~" && !strings.HasPrefix(p, "~/") {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return p
+	}
+	return filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(p, "~"), "/"))
+}
+
+// collapseHome writes a path inside $HOME as "~/…". A path outside it, or $HOME
+// itself, is returned as is.
+func collapseHome(p string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return p
+	}
+	home = filepath.Clean(home)
+	if c := filepath.Clean(p); strings.HasPrefix(c, home+string(os.PathSeparator)) {
+		return "~/" + filepath.ToSlash(strings.TrimPrefix(c, home+string(os.PathSeparator)))
+	}
+	return p
+}
+
 // AddLink adds or replaces a link entry (matched by system path).
 func AddLink(path string, link Link) error {
 	cfg, err := Load(path)
 	if err != nil {
 		return err
 	}
-	for i, l := range cfg.Links {
+	for i, l := range cfg.Symlinks {
 		if filepath.Clean(l.System) == filepath.Clean(link.System) {
-			cfg.Links[i] = link
+			cfg.Symlinks[i] = link
 			return Save(path, cfg)
 		}
 	}
-	cfg.Links = append(cfg.Links, link)
+	cfg.Symlinks = append(cfg.Symlinks, link)
 	return Save(path, cfg)
 }
 
@@ -430,9 +407,9 @@ func RemoveLink(path, systemPath string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	n := len(cfg.Links)
-	filtered := cfg.Links[:0:0]
-	for _, l := range cfg.Links {
+	n := len(cfg.Symlinks)
+	filtered := cfg.Symlinks[:0:0]
+	for _, l := range cfg.Symlinks {
 		if filepath.Clean(l.System) != filepath.Clean(systemPath) {
 			filtered = append(filtered, l)
 		}
@@ -440,14 +417,8 @@ func RemoveLink(path, systemPath string) (bool, error) {
 	if len(filtered) == n {
 		return false, nil
 	}
-	cfg.Links = filtered
+	cfg.Symlinks = filtered
 	return true, Save(path, cfg)
-}
-
-// Exists reports whether the config file exists at path.
-func Exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }
 
 // ExpandUserPath expands a leading ~ to the user's home directory.
@@ -530,10 +501,10 @@ func WithAbsPaths(cfg WsConfig, workspacePath string) WsConfig {
 	out.Repo.Roots = absAll(cfg.Repo.Roots)
 	out.Repo.ExcludeDirs = absAll(cfg.Repo.ExcludeDirs)
 	out.Secret.SkipDirs = absAll(cfg.Secret.SkipDirs)
-	out.Links = make([]Link, len(cfg.Links))
-	for i, l := range cfg.Links {
+	out.Symlinks = make([]Link, len(cfg.Symlinks))
+	for i, l := range cfg.Symlinks {
 		l.Original = abs(l.Original)
-		out.Links[i] = l
+		out.Symlinks[i] = l
 	}
 	return out
 }

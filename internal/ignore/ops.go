@@ -190,20 +190,20 @@ type MuteState struct {
 	Muted bool
 	// Entry is the ignore.muted entry (normalized) that mutes it, if one does.
 	Entry string
-	// Rule is the always-sync rule that mutes it, when no entry does.
+	// Rule is the include rule that mutes it, when no entry does.
 	Rule string
 	// RuleSource is the source of Rule.
 	RuleSource string
 }
 
 // MuteStateOf reports whether rel's warnings are muted: by an ignore.muted
-// entry (itself or a parent) or by an always-sync directory.
+// entry (itself or a parent) or by an included directory.
 func MuteStateOf(engine *Engine, muted []string, rel string, isDir bool) MuteState {
 	if e, ok := MutedBy(muted, rel); ok {
 		return MuteState{Muted: true, Entry: e}
 	}
 	if engine != nil {
-		if res := engine.Evaluate(rel, isDir); res.SafeHarbor {
+		if res := engine.Evaluate(rel, isDir); res.ByInclude {
 			return MuteState{Muted: true, Rule: res.Rule, RuleSource: res.RuleSource}
 		}
 	}

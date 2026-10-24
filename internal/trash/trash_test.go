@@ -491,9 +491,9 @@ func TestEnableCreatesTheRCFileOfTheShell(t *testing.T) {
 
 func TestEnableReplacesTheLegacyAliasAndFollowsSymlinkedRC(t *testing.T) {
 	m := newMachine(t)
-	// ~/.bashrc is a dotfile: a symlink into the workspace. The alias goes into the
+	// ~/.bashrc is a symlink into the workspace. The alias goes into the
 	// file it points at, through the link.
-	real := filepath.Join(m.home, "Workspace", "configs", "dotfiles", "bashrc")
+	real := filepath.Join(m.home, "Workspace", "symlinks", "home", "bashrc")
 	write(t, real, "export A=1\nalias rm='ws-trash-rm'\n")
 	if err := os.Symlink(real, filepath.Join(m.home, ".bashrc")); err != nil {
 		t.Fatal(err)
@@ -585,8 +585,10 @@ func TestDisableRemovesTheShellIntegration(t *testing.T) {
 	if len(actions) != 2 {
 		t.Fatalf("one action for the shell integration and one for the legacy state file, got %d", len(actions))
 	}
-	if _, err := Disable(); err != nil {
-		t.Fatal(err)
+	for _, a := range actions {
+		if err := a.Execute(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for _, rc := range []string{".bashrc", ".zshrc"} {
 		if got := read(t, filepath.Join(m.home, rc)); strings.Contains(got, "ws-trash-rm") {

@@ -8,18 +8,11 @@ import (
 	"sort"
 )
 
-// strictConfig is WsConfig plus the old key names ws still reads, so a strict
-// decode accepts them.
-type strictConfig struct {
-	WsConfig
-	Log json.RawMessage `json:"log"`
-}
-
 // Validate checks the content of a ws.json: it must be JSON, its schema must be
-// from 1 to CurrentSchema, and it must have no unknown keys. Old key names that
-// Load still reads ("log") are accepted. It returns the parsed config.
+// from 1 to CurrentSchema, and it must have no unknown keys. It returns the
+// parsed config.
 func Validate(content []byte) (WsConfig, error) {
-	cfg := strictConfig{WsConfig: Default()}
+	cfg := Default()
 	dec := json.NewDecoder(bytes.NewReader(content))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&cfg); err != nil {
@@ -34,25 +27,17 @@ func Validate(content []byte) (WsConfig, error) {
 	if cfg.Schema > CurrentSchema {
 		return WsConfig{}, fmt.Errorf("ws.json: unsupported schema %d (this build supports up to %d)", cfg.Schema, CurrentSchema)
 	}
-	out := cfg.WsConfig
-	if cfg.Log != nil && !bytes.Contains(content, []byte(`"session"`)) {
-		_ = json.Unmarshal(cfg.Log, &out.Session)
-	}
-	normalize(&out)
-	return out, nil
+	cfg.Symlinks = mapSystems(cfg.Symlinks, expandHome)
+	normalize(&cfg)
+	return cfg, nil
 }
 
 // MissingKeys lists the keys (dotted paths) that the defaults have and content
-// lacks. Arrays are leaves. An old "log" key counts as "session".
+// lacks. Arrays are leaves.
 func MissingKeys(content []byte) ([]string, error) {
 	var have map[string]any
 	if err := json.Unmarshal(content, &have); err != nil {
 		return nil, fmt.Errorf("parsing ws.json: %w", err)
-	}
-	if _, ok := have["session"]; !ok {
-		if log, ok := have["log"]; ok {
-			have["session"] = log
-		}
 	}
 	encoded, err := json.Marshal(Default())
 	if err != nil {

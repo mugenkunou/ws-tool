@@ -37,7 +37,7 @@ type AddOptions struct {
 // Any one of these stops the whole command before anything moves: the path does
 // not exist; it is the scratch root or inside it; it is a directory that
 // contains the scratch root or the workspace root; it is ws.json; it is a
-// dotfile original that ws.json links[] points to (or contains one, or is
+// symlink original that ws.json symlinks[] points to (or contains one, or is
 // inside a directory original).
 func PlanAdd(opts AddOptions) ([]AddPlan, error) {
 	root := filepath.Clean(opts.RootDir)
@@ -67,7 +67,7 @@ func PlanAdd(opts AddOptions) ([]AddPlan, error) {
 		}
 		for i, orig := range originals {
 			if within(orig, src) || within(src, orig) {
-				return nil, fmt.Errorf("%s is a dotfile original (%s links to it); run ws dotfile unlink %s first", src, opts.Links[i].System, opts.Links[i].System)
+				return nil, fmt.Errorf("%s is a symlink original (%s links to it); run ws symlink unlink %s first", src, opts.Links[i].System, opts.Links[i].System)
 			}
 		}
 

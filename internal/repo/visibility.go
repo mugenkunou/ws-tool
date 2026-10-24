@@ -240,14 +240,14 @@ func checkBitbucket(owner, repoName, token string) VisibilityResult {
 }
 
 // ErrPublicRepository is returned when a backup remote is public.
-var ErrPublicRepository = errors.New("ws requires dotfile Git remotes to be private repositories")
+var ErrPublicRepository = errors.New("ws requires Git remotes for backups to be private repositories")
 
 // ErrRepositoryNotFound is returned when an authenticated lookup finds no such
 // repository: pushing there cannot be checked, and is refused.
 var ErrRepositoryNotFound = errors.New("repository not found")
 
 // Refusal returns the error that stops a backup push or a remote from being
-// saved, or nil when the push may go ahead (spec §5 dotfile backup). The API
+// saved, or nil when the push may go ahead (spec §5 pass backup). The API
 // reporting the repository public is refused, and so is an authenticated
 // lookup that finds no repository. A result that could not be determined (an
 // unknown or self-hosted host, an unauthenticated 404, a network error) is not

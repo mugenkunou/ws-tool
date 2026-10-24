@@ -1,12 +1,6 @@
 package cmd
 
 import (
-	"fmt"
-	"io"
-	"strings"
-
-	"github.com/mugenkunou/ws-tool/internal/ignore"
-	"github.com/mugenkunou/ws-tool/internal/secret"
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
 
@@ -15,24 +9,6 @@ import (
 // Ignore and secret violations carry workspace-relative paths internally
 // (rule matching needs them). Every renderer converts a copy to absolute paths
 // first, for both text and --json output (spec "Path Rules").
-
-func absIgnoreViolations(workspacePath string, vs []ignore.Violation) []ignore.Violation {
-	out := make([]ignore.Violation, len(vs))
-	for i, v := range vs {
-		v.Path = style.AbsPath(workspacePath, v.Path)
-		out[i] = v
-	}
-	return out
-}
-
-func absSecretViolations(workspacePath string, vs []secret.Violation) []secret.Violation {
-	out := make([]secret.Violation, len(vs))
-	for i, v := range vs {
-		v.Path = style.AbsPath(workspacePath, v.Path)
-		out[i] = v
-	}
-	return out
-}
 
 func absPaths(workspacePath string, ps []string) []string {
 	if ps == nil {
@@ -53,86 +29,3 @@ func absPaths(workspacePath string, ps []string) []string {
 // Each printer accepts an "indent" flag:
 //   indent=true  → used by aggregate views (2-space indent, section header)
 //   indent=false → used by ws ignore scan / ws secret scan / etc. (no indent, no header)
-
-// printIgnoreViolationsSplit prints violations in two sections:
-// actionable violations first, then a suppressed summary. When expandHarbors
-// is true, suppressed items are listed individually; otherwise they are
-// collapsed to a single summary line.
-func printIgnoreViolationsSplit(w io.Writer, violations []ignore.Violation, nc bool, expandHarbors bool) {
-	var actionable, suppressed []ignore.Violation
-	var suppressedBytes int64
-	for _, v := range violations {
-		if v.Muted {
-			suppressed = append(suppressed, v)
-			suppressedBytes += v.SizeBytes
-		} else {
-			actionable = append(actionable, v)
-		}
-	}
-
-	if len(actionable) > 0 {
-		fmt.Fprintf(w, "%s (%d)\n", style.Boldf(nc, "Violations"), len(actionable))
-		for _, v := range actionable {
-			sev := severityLabel(v.Severity, nc)
-			detail := v.Path
-			if v.Message != "" {
-				detail = fmt.Sprintf("%s  %s", v.Path, style.Mutedf(nc, "(%s)", v.Message))
-			}
-			fmt.Fprintf(w, "  %s  %-14s %s\n", sev, v.Type, detail)
-		}
-	}
-
-	if len(suppressed) > 0 {
-		if len(actionable) > 0 {
-			fmt.Fprintln(w)
-		}
-		sizePart := ""
-		if suppressedBytes > 0 {
-			sizePart = fmt.Sprintf(", %s", style.HumanBytes(suppressedBytes))
-		}
-		fmt.Fprintf(w, "%s (%d items%s)\n",
-			style.Mutedf(nc, "Suppressed"), len(suppressed), sizePart)
-		if expandHarbors {
-			for _, v := range suppressed {
-				detail := v.Path
-				if v.Message != "" {
-					detail = fmt.Sprintf("%s  %s", v.Path, style.Mutedf(nc, "(%s)", v.Message))
-				}
-				fmt.Fprintf(w, "  %s  %-14s %s\n", severityLabel(v.Severity, nc), v.Type, detail)
-			}
-		} else {
-			fmt.Fprintf(w, "  %s\n", style.Mutedf(nc, "Use --expand-suppressed to see details."))
-		}
-	}
-}
-
-func printSecretViolations(w io.Writer, violations []secret.Violation, nc bool, indent bool) {
-	if len(violations) == 0 {
-		return
-	}
-	pfx := ""
-	if indent {
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, style.Boldf(nc, "  [Secret]"))
-		pfx = "  "
-	}
-	for _, v := range violations {
-		sev := severityLabel(v.Severity, nc)
-		detail := v.Path
-		if v.Line > 0 {
-			detail = fmt.Sprintf("%s:%d: %s", v.Path, v.Line, strings.TrimSpace(v.Snippet))
-		}
-		fmt.Fprintf(w, "%s%s  %s\n", pfx, sev, detail)
-	}
-}
-
-func severityLabel(sev string, nc bool) string {
-	switch sev {
-	case "CRITICAL":
-		return style.Errorf(nc, "%-8s", "CRITICAL")
-	case "INFO":
-		return style.Mutedf(nc, "%-8s", "INFO")
-	default:
-		return style.Warningf(nc, "%-8s", "WARNING")
-	}
-}
