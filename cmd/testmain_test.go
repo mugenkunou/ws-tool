@@ -7,7 +7,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-
 )
 
 func TestMain(m *testing.M) {
