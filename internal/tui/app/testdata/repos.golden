@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secret
 
 
 
-enter details • s sync (merge) • p pull (ff-only) … • tab screens • : command • ? help • q quit
+f fetch • p pull • s save • r run • c config • a add … • tab screens • : command • ? help • q quit

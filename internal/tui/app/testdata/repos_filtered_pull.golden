@@ -1,11 +1,9 @@
 ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Pull 2 repos (ff-only)
-
-› [x] Pull Projects/api
-  [x] Pull Projects/old
-
-
+Fetching 2 repos…
+ Repo                                           State        ↑    ↓    Issues  Branch
+ Projects/api                                   ✔ clean      ·    ·            main
+ Projects/old                                   ✔ clean      ·    5            (detached)
 
 
 
@@ -27,4 +25,6 @@ Pull 2 repos (ff-only)
 
 
 
-space toggle • ctrl+a all/none • enter apply • esc back
+
+filter state=clean (2 of 4) — f fetch · p pull · s save · r run act on these 2
+f fetch • p pull • s save • r run • c config • a add … • tab screens • : command • ? help • q quit

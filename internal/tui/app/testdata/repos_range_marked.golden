@@ -26,5 +26,5 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secret
 
 
 
-3 marked — f fetch · p pull (ff-only) · P pull --rebase · s sync (merge) · S sync (rebase) · x run c
-enter details • s sync (merge) • p pull (ff-only) … • tab screens • : command • ? help • q quit
+3 marked — f fetch · p pull · s save · r run · c config act on them · esc clears
+f fetch • p pull • s save • r run • c config • a add … • tab screens • : command • ? help • q quit

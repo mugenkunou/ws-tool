@@ -1,0 +1,29 @@
+Output of `echo "in $(basename "$PWD")"; [ "$(basename "$PWD")" = a ]`
+
+✔ a
+in a
+
+✘ (exit 1) b
+in b
+
+
+esc back
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

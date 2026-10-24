@@ -144,40 +144,39 @@ func (k DashboardMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{{k.Up, k.Down, k.Left, k.Right}, {k.Top, k.Bottom}, {k.Open}}
 }
 
-// ReposMap is the binding set for the repo fleet screen. Fleet actions
-// open a checklist covering every repo, which can then be narrowed.
+// ReposMap is the binding set for the repo fleet screen (spec §6.5). The
+// fleet keys act on the marked repos, else every repo the filter shows.
 type ReposMap struct {
-	Table      table.KeyMap
-	Open       key.Binding
-	Fetch      key.Binding
-	Pull       key.Binding
-	PullRebase key.Binding
-	Sync       key.Binding
-	SyncRebase key.Binding
-	Run        key.Binding
-	AddRoot    key.Binding
-	Back       key.Binding
+	Table     table.KeyMap
+	Open      key.Binding
+	Fetch     key.Binding
+	Pull      key.Binding
+	Save      key.Binding
+	Run       key.Binding
+	Configure key.Binding
+	AddRoot   key.Binding
+	Back      key.Binding
 }
 
 // Repos returns bindings for the repo fleet screen.
 func Repos() ReposMap {
 	return ReposMap{
-		Table:      Table(),
-		Open:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "details")),
-		Fetch:      key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "fetch")),
-		Pull:       key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "pull (ff-only)")),
-		PullRebase: key.NewBinding(key.WithKeys("P"), key.WithHelp("P", "pull --rebase")),
-		Sync:       key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sync (merge)")),
-		SyncRebase: key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "sync (rebase)")),
-		Run:        key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "run command")),
-		AddRoot:    key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add root")),
-		Back:       back(),
+		Table:     Table(),
+		Open:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "show")),
+		Fetch:     key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "fetch")),
+		Pull:      key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "pull")),
+		Save:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "save")),
+		Run:       key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "run")),
+		Configure: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "config")),
+		AddRoot:   Add(),
+		Back:      back(),
 	}
 }
 
-// ShortHelp implements help.KeyMap.
+// ShortHelp implements help.KeyMap. enter is left to the full help so the
+// footer fits 100 columns.
 func (k ReposMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Open, k.Sync, k.Pull, k.Fetch, k.Run}
+	return []key.Binding{k.Fetch, k.Pull, k.Save, k.Run, k.Configure, k.AddRoot}
 }
 
 // FullHelp implements help.KeyMap.
@@ -185,8 +184,8 @@ func (k ReposMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
 		{k.Open, k.Fetch, k.Back},
-		{k.Sync, k.SyncRebase, k.Pull, k.PullRebase},
-		{k.Run, k.AddRoot},
+		{k.Pull, k.Save, k.Run},
+		{k.Configure, k.AddRoot},
 	}
 }
 

@@ -222,7 +222,7 @@ func TestSnapshots(t *testing.T) {
 		{"dashboard_grid_cursor", []string{"down", "down", "down", "down", "down", "down", "down", "down", "down", "right", "down"}},
 		{"repos", []string{"2"}},
 		{"repos_detail", []string{"2", "down", "enter"}},
-		{"repos_pull_checklist", []string{"2", "p"}},
+		{"repos_pull_fetching", []string{"2", "p"}},
 		{"repos_filtered_pull", []string{"2", "/", "s", "t", "a", "t", "e", "=", "c", "l", "e", "a", "n", "enter", "p"}},
 		{"repos_marked_fetch", []string{"2", "space", "down", "space", "down", "space", "f"}},
 		{"repos_marked", []string{"2", "space", "down", "space", "down", "space"}},

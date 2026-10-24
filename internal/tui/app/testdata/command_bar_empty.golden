@@ -27,4 +27,4 @@ ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secret
 
 
 
-:▏dashboard   repo · repos · dotfile · dotfiles · scratch · session · sessions · ignore · secret · s
+:▏push   root ls · root rm · ls --fetch · dashboard · repo · repos · dotfile · dotfiles · scratch ·

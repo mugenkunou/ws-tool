@@ -1,11 +1,11 @@
 ws  Dashboard¹  Repos²  Dotfiles³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Pull 4 repos (ff-only)
+Pull 2 repos
 
-› [x] Pull Projects/api
-  [x] Pull Projects/web
-  [x] Pull Projects/old
-  [x] Pull ~/.password-store
+› [x] Pull Projects/api (3 behind, fast-forward)
+  [x] Pull Projects/web (diverged, rebase)
+
+
 
 
 

@@ -80,16 +80,16 @@ var CLICoverage = func() []Coverage {
 		{"session prune", nav.ScreenSessions, lg.Prune, ""},
 
 		{"repo ls", nav.ScreenRepos, none, ""},
-		{"repo show", nav.ScreenRepos, none, "enter on a row opens the detail view"},
-		{"repo fetch", nav.ScreenRepos, rp.Fetch, ""},
+		{"repo show", nav.ScreenRepos, rp.Open, ""},
+		{"repo fetch", nav.ScreenRepos, rp.Fetch, ""}, // :ls --fetch is the same function
 		{"repo pull", nav.ScreenRepos, rp.Pull, ""},
-		{"repo push", nav.ScreenRepos, none, pending},
-		{"repo save", nav.ScreenRepos, rp.Sync, ""},
-		{"repo configure", nav.ScreenRepos, none, pending},
+		{"repo push", nav.ScreenRepos, none, ":push in the command bar (the shown or marked repos, through the checklist)"},
+		{"repo save", nav.ScreenRepos, rp.Save, ""},
+		{"repo configure", nav.ScreenRepos, rp.Configure, ""},
 		{"repo run", nav.ScreenRepos, rp.Run, ""},
 		{"repo root add", nav.ScreenRepos, rp.AddRoot, ""},
-		{"repo root ls", nav.ScreenRepos, rp.AddRoot, ""}, // the add-root prompt lists the roots
-		{"repo root rm", nav.ScreenRepos, none, pending},
+		{"repo root ls", nav.ScreenRepos, none, ":root ls in the command bar (read-only view)"},
+		{"repo root rm", nav.ScreenRepos, none, ":root rm [<dir>] in the command bar (through the checklist)"},
 
 		{"scratch ls", nav.ScreenScratch, none, ""},
 		{"scratch new", nav.ScreenScratch, sc.New, ""},
