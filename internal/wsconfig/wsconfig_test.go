@@ -11,7 +11,7 @@ import (
 )
 
 // topLevelKeys is spec §2.3, in the file's order.
-var topLevelKeys = []string{"schema", "editor", "scratch", "repo", "secret", "pass", "ignore", "ignore_rules", "session", "trash", "symlinks"}
+var topLevelKeys = []string{"schema", "editor", "scratch", "repo", "secret", "pass", "ignore", "ignore_rules", "session", "trash", "sync", "symlinks"}
 
 // keysOf reads the keys of a JSON object in file order.
 func keysOf(t *testing.T, raw []byte) []string {
@@ -64,6 +64,7 @@ func TestSaveWritesEveryKey(t *testing.T) {
 		"ignore_rules": {"schema", "exclude", "include", "suppress_defaults"},
 		"session":      {"root_dir", "max_session_mb"},
 		"trash":        {"warn_size_mb"},
+		"sync":         {"mirror", "exclude", "max_delete_pct"},
 	}
 	for section, keys := range want {
 		obj, ok := generic[section].(map[string]any)

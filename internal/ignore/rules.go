@@ -211,3 +211,10 @@ func GetRuleStats(userRules UserRules) RuleStats {
 	stats.Total = stats.DefaultExclude + stats.UserExclude + stats.UserInclude
 	return stats
 }
+
+// ExcludeEngine builds an engine from exclude patterns alone (ignore_rules
+// syntax), for extra lists such as sync.exclude. A path it does not match
+// evaluates as included.
+func ExcludeEngine(entries []RuleEntry) *Engine {
+	return &Engine{Rules: userRulesOf(entries, false)}
+}

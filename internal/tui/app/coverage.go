@@ -122,6 +122,10 @@ var CLICoverage = func() []Coverage {
 		{"git-credential-helper store", nav.ScreenSecrets, none, plumbing, ""},
 		{"git-credential-helper erase", nav.ScreenSecrets, none, plumbing, ""},
 
+		{"sync push", nav.ScreenDashboard, none, "CLI and cron only (ws cron add sync-push)", ""},
+		{"sync status", nav.ScreenDashboard, none, "CLI only", ""},
+		{"sync restore", nav.ScreenDashboard, none, "CLI only: run once on a fresh machine", ""},
+
 		{"trash ls", nav.ScreenTrash, none, "", ""},
 		{"trash restore", nav.ScreenTrash, tr.Restore, "", ""},
 		{"trash rm", nav.ScreenTrash, tr.Delete, "", ""},

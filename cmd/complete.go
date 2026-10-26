@@ -83,6 +83,8 @@ var resolvers = map[string]resolver{
 	"cron run": cronTargets,
 	"cron log": cronTargets,
 
+	"sync restore": dirTargets,
+
 	"trash restore": trashTargets,
 	"trash rm":      trashTargets,
 }

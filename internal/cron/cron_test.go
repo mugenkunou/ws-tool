@@ -66,7 +66,7 @@ func (m machine) opts() PlanOptions {
 // ── registry ───────────────────────────────────────────────────────
 
 func TestRegistry(t *testing.T) {
-	want := []string{"mega-sync", "pass-backup"}
+	want := []string{"mega-sync", "pass-backup", "sync-push"}
 	if got := AllNames(); !slices.Equal(got, want) {
 		t.Fatalf("AllNames = %v, want %v (no aliases, no retired names)", got, want)
 	}

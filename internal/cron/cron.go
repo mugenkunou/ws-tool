@@ -48,6 +48,7 @@ type BuiltinJob struct {
 var Builtins = map[string]*BuiltinJob{
 	"mega-sync":   megaSyncJob,
 	"pass-backup": passBackupJob,
+	"sync-push":   syncPushJob,
 }
 
 // Aliases maps an old job name to the job that replaced it. Old crontab lines

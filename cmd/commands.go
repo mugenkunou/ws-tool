@@ -204,6 +204,10 @@ var commands = []command{
 	{Path: []string{"credential", "disable"}, Summary: "stop it"},
 	{Path: []string{"credential", "status"}, Summary: "helper config, pass entries, remote coverage", RO: true},
 
+	{Path: []string{"sync", "push"}, Summary: "mirror the workspace one way into sync.mirror.target"},
+	{Path: []string{"sync", "status"}, Summary: "mirror, last push, stamp, pending changes", RO: true},
+	{Path: []string{"sync", "restore"}, Args: "[<mirror-dir>]", Summary: "copy the mirror into the workspace (fresh machine)"},
+
 	{Path: []string{"cron", "ls"}, Summary: "jobs: schedule, installed, last run, exit, next run", RO: true,
 		Fields: fieldsOf(func() resource.Schema[cronpkg.Job] { return cronpkg.Schema(resource.CLIView()) })},
 	{Path: []string{"cron", "add"}, Args: "<job…>", Summary: "install jobs", Flags: []flagDoc{displayFlag}},
@@ -260,6 +264,7 @@ var nounSummaries = []struct{ Name, Summary string }{
 	{"secret", "Secret findings in the workspace"},
 	{"pass", "The pass password store"},
 	{"credential", "Git credential helper backed by pass"},
+	{"sync", "One-way mirror for folder-sync clients"},
 	{"cron", "Scheduled ws jobs"},
 	{"trash", "Trashed files and soft-delete integrations"},
 }

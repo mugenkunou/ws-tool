@@ -1,5 +1,20 @@
 # Plan 0004: `ws sync`, a one-way mirror for folder-sync clients
 
+> **Status: implemented** in `internal/mirror` + `cmd/sync.go` (not `internal/sync/` as §8
+> says). HANDBOOK §5 `ws sync` is authoritative. Deviations from this plan:
+>
+> - **No `--force`** (HANDBOOK Factor X, consent model). The delete guard, a foreign stamp
+>   and a restore over an existing `ws.json` ask interactively, and are refused under
+>   `--quiet`/`--json`, so cron refuses.
+> - **`ws sync restore [<mirror-dir>]`** takes an optional mirror dir (defaults to
+>   `sync.mirror.target`; needed on a fresh machine without `ws.json`). It adopts the
+>   mirror's stamp afterwards.
+> - **Empty dirs are mirrored**: no `--prune-empty-dirs`.
+> - **The filter uses `--from0`** (NUL-separated rules).
+> - The `sync` block is in the default `ws.json` (empty target, empty `exclude`, 20), since
+>   `ws.json` always holds every key (HANDBOOK §2.3); §3's "init does not write it" no
+>   longer holds.
+
 **For:** the agent who changes the code. Read this whole file and HANDBOOK Factor XII
 ("Sync is one-way") before touching anything. If something cannot be built as written, stop
 and report it instead of choosing silently.

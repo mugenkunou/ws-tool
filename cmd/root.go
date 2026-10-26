@@ -69,6 +69,8 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runRepo(commandArgs, globals, stdin, stdout, stderr)
 	case "trash":
 		return runTrash(commandArgs, globals, stdin, stdout, stderr)
+	case "sync":
+		return runSync(commandArgs, globals, stdin, stdout, stderr)
 	case "cron":
 		return runCron(commandArgs, globals, stdin, stdout, stderr)
 	case "tui":

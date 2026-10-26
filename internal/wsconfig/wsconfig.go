@@ -48,6 +48,7 @@ type WsConfig struct {
 	IgnoreRules ignore.UserRules `json:"ignore_rules"`
 	Session     Session          `json:"session"`
 	Trash       Trash            `json:"trash"`
+	Sync        Sync             `json:"sync"`
 	Symlinks    []Link           `json:"symlinks"`
 }
 
@@ -94,6 +95,22 @@ type Trash struct {
 	WarnSizeMB int `json:"warn_size_mb"` // `trash status` warns above this size
 }
 
+// Sync holds the one-way mirror settings (spec Factor XII, plan 0004).
+// Target has no default: `ws sync` refuses until the user sets it.
+type Sync struct {
+	Mirror       SyncMirror         `json:"mirror"`
+	Exclude      []ignore.RuleEntry `json:"exclude"`        // extra patterns, mirror only (ignore_rules syntax)
+	MaxDeletePct int                `json:"max_delete_pct"` // a push deleting more than this share of the mirror asks first
+}
+
+// SyncMirror is the folder ws copies the workspace into; a sync client uploads it.
+type SyncMirror struct {
+	Target string `json:"target"`
+}
+
+// DefaultMaxDeletePct is the delete guard used when max_delete_pct is 0.
+const DefaultMaxDeletePct = 20
+
 // Link is a single entry in the symlinks registry.
 // It records a host path → workspace-relative original mapping.
 // When Dir is true, the host path is a directory link (e.g. ~/.password-store).
@@ -137,6 +154,7 @@ func Default() WsConfig {
 			MaxSessionMB: 100,
 		},
 		Trash:    Trash{WarnSizeMB: 10240},
+		Sync:     Sync{Exclude: []ignore.RuleEntry{}, MaxDeletePct: DefaultMaxDeletePct},
 		Symlinks: []Link{},
 	}
 }
@@ -170,6 +188,9 @@ func normalize(cfg *WsConfig) {
 	}
 	if cfg.IgnoreRules.SuppressDefaults == nil {
 		cfg.IgnoreRules.SuppressDefaults = []string{}
+	}
+	if cfg.Sync.Exclude == nil {
+		cfg.Sync.Exclude = []ignore.RuleEntry{}
 	}
 	if cfg.Symlinks == nil {
 		cfg.Symlinks = []Link{}

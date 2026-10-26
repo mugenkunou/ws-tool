@@ -151,7 +151,7 @@ func TestConfigDefaultsFlag(t *testing.T) {
 var allDispatchedCommands = []string{
 	"help", "version", "init", "config",
 	"symlink", "ignore", "secret", "pass", "session", "scratch", "repo",
-	"trash", "cron", "credential", "git-credential-helper",
+	"trash", "sync", "cron", "credential", "git-credential-helper",
 	"completion", "tui",
 }
 

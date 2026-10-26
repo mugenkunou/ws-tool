@@ -52,6 +52,7 @@ Section numbers are stable: code comments cite them as `spec §x.y`.
   - [`ws credential`](#ws-credential)
   - [`ws cron`](#ws-cron)
   - [`ws trash`](#ws-trash)
+  - [`ws sync`](#ws-sync)
   - [Workspace commands](#workspace-commands)
 - [6. TUI](#6-tui)
   - [6.1 Frame](#61-frame)
@@ -135,7 +136,7 @@ fast. Each factor below names the ws feature that carries it.
 | IX | Always soft delete | Delete means a recoverable move to the trash | `ws trash` |
 | X | Per-action consent | Confirm each mutation, not the batch | the action plan (§4.7) |
 | XI | Pin the clipboard | The clipboard forgets, your workspace shouldn't | a habit; `ws scratch` |
-| XII | Sync is one-way | The laptop is the truth, the cloud copy is a mirror | `ws ignore`; `ws sync push` (planned) |
+| XII | Sync is one-way | The laptop is the truth, the cloud copy is a mirror | `ws ignore`, `ws sync` |
 
 #### I. Single source of truth
 
@@ -385,9 +386,9 @@ loses work. One-way keeps the copy predictable and lets ws own exactly what goes
 ignore rules decide (Factor VIII), and symlinks never sync (`ws ignore lint` warns about
 them).
 
-Planned: `ws sync push` mirrors `~/Workspace` into a folder the sync client watches (for
-example `~/Zoho WorkDrive/My Folders/Workspace`), and `ws sync restore` is the reverse, for
-a fresh machine. Neither exists yet.
+`ws sync push` mirrors `~/Workspace` into a folder the sync client watches (for example
+`~/Zoho WorkDrive/My Folders/Workspace`), and `ws sync restore` is the reverse, for a fresh
+machine (§5 `ws sync`).
 
 ---
 
@@ -403,7 +404,7 @@ a fresh machine. Neither exists yet.
 | Symlink originals | `<workspace>/symlinks/home/<path under $HOME>` and `<workspace>/symlinks/system/<absolute path>`, or the workspace path you gave as the second argument of `ws symlink add` | yes |
 | Recorded sessions | `session.root_dir` (default `~/Sessions`), one `<tag>/` directory per session, outside the workspace | no |
 | Scratch directories | `scratch.root_dir` (default `~/Scratch`), outside the workspace | no |
-| Machine-local state | `$XDG_STATE_HOME/ws-tool/` (default `~/.local/state/ws-tool/`): cron run state and logs, trash integration state, the running recording's marker (`session-active.json`) | no |
+| Machine-local state | `$XDG_STATE_HOME/ws-tool/` (default `~/.local/state/ws-tool/`): cron run state and logs, trash integration state, the running recording's marker (`session-active.json`), `ws sync` state (`sync/`) | no |
 | Trash | `$XDG_DATA_HOME/Trash` (default `~/.local/share/Trash`), shared with the desktop file manager | no |
 | Pass store | `$PASSWORD_STORE_DIR` → `~/.password-store` | via its own git remote |
 
@@ -465,6 +466,7 @@ valid JSON. `ws config edit` checks before saving.
   "ignore_rules": { "schema": 1, "exclude": [], "include": [], "suppress_defaults": [] },
   "session": { "root_dir": "~/Sessions", "max_session_mb": 100 },
   "trash": { "warn_size_mb": 10240 },
+  "sync": { "mirror": { "target": "" }, "exclude": [], "max_delete_pct": 20 },
   "symlinks": []
 }
 ```
@@ -486,6 +488,9 @@ valid JSON. `ws config edit` checks before saving.
 | `ignore_rules.include` | included directories (`<dir>/**`) | `ignore edit` |
 | `session.root_dir`, `max_session_mb` | where recordings are stored (default `~/Sessions`); size at which one recording ends (default 100) | hand |
 | `trash.warn_size_mb` | trash size in MB above which `trash status` warns (default 10240, i.e. 10 GiB) | hand |
+| `sync.mirror.target` | the mirror folder `ws sync push` fills (a folder the sync client watches); no default, and `ws sync` refuses while it is empty | hand |
+| `sync.exclude` | extra paths kept out of the mirror only, same pattern syntax as `ignore_rules.exclude`; empty by default | hand |
+| `sync.max_delete_pct` | delete guard: a push that would delete more than this percentage of the mirror's files (and more than 10 files) asks first (default 20) | hand |
 | `symlinks[]` | managed symlinks: `system` (the host path, written with `~` for `$HOME`), `original` (workspace-relative), `dir`, `sudo` | `symlink add\|link\|unlink` |
 
 To use a GUI editor such as `code`, set `editor`.
@@ -508,9 +513,12 @@ The workspace root resolves first, then the state file inside it, then every oth
 
 On a new machine, or after losing one:
 
-1. Install the sync client, sign in, and sync `~/Workspace` (§2.6).
+1. Install the sync client, sign in, and sync `~/Workspace` (§2.6). With a mirror client
+   such as WorkDrive, the mirror folder arrives instead.
 2. Install `ws` (§9.2).
-3. Put it back together:
+3. Mirror clients only: `ws sync restore <mirror-dir>` copies the mirror into `~/Workspace`
+   (§5 `ws sync`).
+4. Put it back together:
 
 ```bash
 ws init              # adds anything missing, including ws.json keys; keeps your values
@@ -525,7 +533,7 @@ Your SSH config, shell setup, Kubernetes context and editor settings are back wh
 belong. Machine setup stays separate from `ws init` on purpose: `init` only makes the
 workspace a ws workspace, and each integration is a command you run once per machine.
 
-Step 1 is the only time data flows from the cloud copy to a machine (Factor XII). Once
+Steps 1 and 3 are the only time data flows from the cloud copy to a machine (Factor XII). Once
 the machine is set up, it pushes; it does not pull.
 
 ### 2.6 Sync clients
@@ -539,9 +547,10 @@ workspace reach the other machines. What ws does for you depends on the client:
 
 | | MEGA | Zoho WorkDrive, other clients |
 | --- | --- | --- |
-| Exclusion rules | ws generates `<workspace>/.megaignore` (§5 `ws ignore`), which MEGA reads | WorkDrive does not read `.megaignore`. ws does not generate its client's rules, so configure exclusions in the client |
+| Exclusion rules | ws generates `<workspace>/.megaignore` (§5 `ws ignore`), which MEGA reads | WorkDrive does not read `.megaignore`, and its app can only sync its own folder. `ws sync push` copies the workspace one way into `sync.mirror.target` inside that folder, applying ws's rules while it copies (§5 `ws sync`). Other clients: configure exclusions in the client, or use `ws sync` the same way |
 | `ws ignore ls`, `check`, `tree`, `lint` | evaluate the rules ws holds in `ws.json` | the same: they report what ws's rules would exclude, whichever client runs |
 | `mega-sync` cron job | restarts MEGAsync for a 5-minute window every 30 minutes (§5 `ws cron`) | not needed when the client syncs by itself. Install `pass-backup` alone |
+| `sync-push` cron job | not needed | runs `ws sync push` every 30 minutes, for a mirror client such as WorkDrive |
 
 With a client other than MEGA, `ws ignore lint` still finds files that should not sync
 (bloat, excessive depth, build output), and `ws ignore ls` shows the rules to copy into the
@@ -588,6 +597,7 @@ such as `rclone bisync`.
 | `pass` | the pass(1) password store | Secrets (header, `:pass …`) |
 | `credential` | ws as git's credential helper, backed by pass | Secrets (header, `:credential …`) |
 | `cron` | ws-managed cron jobs | Cron |
+| `sync` | the one-way mirror of the workspace for folder-sync clients (`sync.mirror.target`) | — (CLI and cron only) |
 | `trash` | the XDG trash and the soft-delete integrations | Trash |
 | `config` | `ws.json` | `:config …` |
 | `completion` | shell completion | — |
@@ -607,13 +617,13 @@ prints help.
 | `edit` | open a file in your editor (§4.10) | ignore, config |
 | `open` | open a directory in your editor (§4.10) | scratch |
 | `enable` / `disable` | switch an integration on or off | trash, credential, completion, pass backup |
-| `status` | the health of an integration (not a list of rows) | trash, credential, pass, backup |
+| `status` | the health of an integration (not a list of rows) | trash, credential, pass, backup, sync |
 | `mute` / `unmute` | hide / show warnings for a path and everything under it; nothing else changes | ignore, secret |
 | `prune` | delete rows by age (`--older-than`) | trash |
 | `grep` | search inside contents | session |
 | `run` | execute now | repo (a command in each repo), cron (a job) |
 | `save` | stage and commit everything with a timestamped message, pull, push | repo |
-| `push` | git push, nothing else | repo, pass backup |
+| `push` | git push, nothing else; for `sync`, copy the workspace into the mirror | repo, pass backup, sync |
 | `lint` | report what isn't hygienic | ignore |
 | `configure` | ask for what a setup is missing, then set it | repo |
 | `apply` | write the declared state into the live system | cron |
@@ -624,7 +634,7 @@ prints help.
 | `check`, `tree` | will this path sync?; browse the tree with sync status | ignore |
 | `allow`, `store` | mark a finding as a false positive; copy its value into pass | secret |
 | `init`, `audit` | create; inspect entries for problems | pass (and `ws init`) |
-| `restore`, `empty` | put a trashed item back; delete everything in the trash | trash |
+| `restore`, `empty` | put a trashed item back (sync: copy the mirror into the workspace); delete everything in the trash | trash, sync (`restore`) |
 | `log` | recent output of a job | cron |
 | `scan`, `install`, `uninstall` | which skills each tool has; link a skill into one tool; remove that link | skill |
 
@@ -718,6 +728,10 @@ ws trash prune --older-than <age>         RW  delete items trashed before then
 ws trash enable [flags]                   RW  make shell rm, VS Code and the file explorer soft-delete
 ws trash disable                          RW  undo that
 ws trash status                           RO  integrations and trash size
+
+ws sync push                              RW  mirror the workspace one way into sync.mirror.target
+ws sync status                            RO  target, last push, stamp, pending changes and deletions
+ws sync restore [<mirror-dir>]            RW  copy the mirror into the workspace (fresh machine)
 
 ws config show [--defaults]               RO  resolved config, or the built-in defaults
 ws config edit                            RW  edit ws.json in your editor
@@ -907,6 +921,8 @@ deterministic, and they are safe in pipes (`ws repo ls --json | jq`).
 - Each action is confirmed on its own: `y` (default, Enter) do it, `n` skip it, `a` accept
   all the rest, `q` skip all the rest. EOF on stdin counts as `y`.
 - `--dry-run` prints the plan and stops. `--quiet` and `--json` accept every action.
+  The exception is `ws sync`: its safety questions (the delete guard, a foreign stamp,
+  a restore over an existing workspace) are refused under them, so cron never forces one.
 - A failed action never stops the others. The exit code is 0, 1 or 3 by outcome (§4.6),
   and `--json` includes every action's status.
 - Destructive plans (`symlink unlink --all`, `trash empty`) start with every action
@@ -3304,9 +3320,10 @@ binary and `<W>` the absolute workspace path.
 | --- | --- | --- | --- |
 | `mega-sync` | `*/30 * * * *` | 30m | MEGA only: restarts `megasync` for a 5-minute sync window, using `DISPLAY` |
 | `pass-backup` | `*/30 * * * *` | 30m | `<ws> --workspace <W> pass backup push --quiet` |
+| `sync-push` | `*/30 * * * *` | 30m | `<ws> --workspace <W> sync push --quiet` (§5 `ws sync`) |
 
 Each job is installed on its own. `mega-sync` suits MEGA; with another sync client,
-install `pass-backup` alone (§2.6).
+install `pass-backup` alone, plus `sync-push` for a mirror client such as WorkDrive (§2.6).
 
 **Retired names.** `secret-scan`, `ignore-scan`, `repo-sync` (nothing should commit your
 work unattended; use `ws repo save`) and `session-prune` (use `ws session rm --older-than`) are retired. `cron add` rejects them (`cron job
@@ -3828,6 +3845,120 @@ size are reported, not a failure (exit 2 is retired).
 
 TUI: the Trash screen header. It shows the same lines, with "over the limit" when the trash
 passes 1 GB.
+
+### `ws sync`
+
+A one-way mirror for sync clients that can only sync their own folder (Zoho WorkDrive Sync,
+OneDrive, a USB stick). `ws sync push` copies the workspace into `sync.mirror.target`, a
+folder the client watches, and the client uploads it (Factor XII). The mirror is ws's: you
+never edit it. MEGA does not need this noun (§2.6).
+
+There is no TUI screen: `sync` is CLI and cron only (§6.9). Every command needs `rsync` on
+`PATH`.
+
+| Command | RO/RW | Does |
+| --- | --- | --- |
+| `ws sync push` | RW | mirror the workspace one way into `sync.mirror.target` |
+| `ws sync status` | RO | target, last push, stamp state, pending changes and deletions |
+| `ws sync restore [<mirror-dir>]` | RW | copy the mirror into the workspace, on a fresh machine |
+
+Settings, under `sync` in `ws.json` (§2.3):
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `mirror.target` | none | the mirror folder, for example `~/Zoho WorkDrive/My Folders/Workspace` |
+| `exclude` | `[]` | extra paths kept out of the mirror only; the pattern syntax of `ignore_rules.exclude` |
+| `max_delete_pct` | `20` | the delete guard's threshold, in percent of the mirror's files |
+
+**Checks**, before push and status. An empty `sync.mirror.target` is refused with a hint to
+set it in `ws.json` (`ws config edit`). The target's parent must exist, so a moved or
+reinstalled client never gets a stray folder. The target and the workspace must not
+contain each other. `rsync` must be on `PATH`.
+
+**What goes out.** ws's own ignore engine (§5 `ws ignore`) plus `sync.exclude` decides,
+not rsync's rule syntax: ws walks the workspace and writes the exact list of synced paths
+as an rsync filter (`--from0`). Symbolic links are skipped, and a warning line counts them
+(`ws ignore lint` names them). File modes are not carried, and there is no manifest.
+
+**The stamp.** `.ws-sync-stamp` in the mirror root holds `{push_id, host, time}`, and is
+protected from deletion. The machine keeps its own record in
+`$XDG_STATE_HOME/ws-tool/sync/` (`last-push.json`, plus `lock`, `filter` and rsync's
+`tmp/`). Before each push:
+
+| Mirror stamp | Means | Push |
+| --- | --- | --- |
+| matches `last-push.json` | normal | pushes |
+| missing, but a last push exists | the mirror was wiped, locally or from the cloud | warns loudly ("mirror was wiped"), then pushes everything |
+| another `push_id`, or a stamp with no local record | foreign: another machine pushes here | asks; refused under `--quiet`/`--json` |
+| missing, no last push | first push | pushes |
+
+**The delete guard.** A push that would delete more than `max_delete_pct`% of the mirror's
+files, and more than 10 files, asks first. Like the foreign stamp, it is refused under
+`--quiet`/`--json`, so cron never mass-deletes. There is no `--force` (§4.7).
+
+**One push at a time.** The lock is `flock`. A second run prints that another push is
+running and exits 0, so overlapping cron runs are harmless.
+
+#### `ws sync push`
+
+```text
+ws sync push [--dry-run] [--quiet]
+```
+
+Runs the checks, reads the stamp, writes the filter, and does an rsync dry run to count
+changes and deletions (the delete guard). Then it copies:
+
+```bash
+rsync -rt --delete --delete-excluded --from0 \
+      --filter="P /.ws-sync-stamp" --filter="merge <state>/sync/filter" \
+      --temp-dir=<state>/sync/tmp  <workspace>/  <target>/
+```
+
+`-rt`: no links, no modes, times kept so unchanged files are skipped. `--delete-excluded`:
+files deleted or newly ignored in the workspace leave the mirror. The temp dir is outside
+the mirror, so the client never sees half-written files. Empty directories are mirrored.
+Finally it writes the stamp and `last-push.json`, and reports the changed, deleted, file
+and byte counts.
+
+`--dry-run` shows the counts and the changes, and changes nothing. `--quiet` prints only
+errors and warnings.
+
+Exit: 0, including a busy lock. 1 on a failed check, a refusal, or an rsync error.
+
+Cron: the `sync-push` job runs `ws sync push --quiet` every 30 minutes. It is not installed
+by default: `ws cron add sync-push`.
+
+#### `ws sync status`
+
+```text
+ws sync status [--json]
+```
+
+Shows the target, the last push (time, files, bytes, changed, deleted), the stamp state
+(the table above), and what is pending: changes and deletions from an rsync dry run.
+Changes nothing.
+
+JSON: `sync.status`.
+
+Exit: 0, whatever the state. 1 on a failed check.
+
+#### `ws sync restore`
+
+```text
+ws sync restore [<mirror-dir>] [--dry-run]
+```
+
+The one way back (Factor XII, §2.5): copies the mirror into the workspace with rsync. It
+never deletes anything in the workspace and skips the stamp. `<mirror-dir>` defaults to
+`sync.mirror.target` when `ws.json` exists; on a fresh machine, pass it.
+
+If the workspace already has a `ws.json`, the restore is one action you confirm (`y`/`n`),
+and it is refused under `--quiet`/`--json`. Afterwards ws adopts the mirror's stamp as its
+own last push, so this machine's next push is recognised rather than foreign. It ends with
+two reminders: executable bits are not restored (`chmod +x` your scripts), and
+`ws symlink link` puts the symlinks back.
+
+Exit: 0, 1.
 
 ### Workspace commands
 
@@ -4402,7 +4533,7 @@ Everything else is native.
 
 Every CLI command is reachable in the TUI as a key, a `:` command, or the screen's list.
 The only exceptions are plumbing (`git-credential-helper get|store|erase`), shell output
-(`completion …`), and `version`, `help` and `tui` themselves. A test enforces this (§9.10).
+(`completion …`), `sync …` (CLI and cron only), and `version`, `help` and `tui` themselves. A test enforces this (§9.10).
 
 ### 6.10 Cues
 
@@ -4598,8 +4729,9 @@ for run, record and restore).
 
 ws never syncs anything itself. It assumes a client keeps `<workspace>` in step across
 machines (§2.6). The pieces that know a particular client are few and named: the generated
-`.megaignore` and the `mega-sync` cron job are MEGA's, and everything else is client
-neutral.
+`.megaignore` and the `mega-sync` cron job are MEGA's. `ws sync` serves clients that sync
+only their own folder (WorkDrive): it copies the workspace into that folder and stays
+client neutral itself. Everything else is client neutral.
 
 ---
 
@@ -4620,6 +4752,7 @@ and matching. It runs these programs:
 | `sudo` | sudo | symlinks whose host path needs root (`/etc/…`) | for those symlinks |
 | your editor: `ws.json` `editor`, `$VISUAL`, `$EDITOR`, else `vim` | vim | `edit` commands, `scratch new\|open` | for editing (the path is printed if it can't start) |
 | `$PAGER` / `less` | less | paged output | optional |
+| `rsync` | rsync | `sync push\|status\|restore` | for `ws sync` |
 | `megasync`, `pgrep`, `pkill` | MEGAsync, procps | the `mega-sync` cron job (MEGA only) | for that job |
 | `wl-copy` / `xclip` / `xsel` | wl-clipboard / xclip / xsel | TUI copy (OSC 52 is always sent too) | optional |
 

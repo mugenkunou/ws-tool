@@ -28,6 +28,16 @@ pkill megasync || true`,
 	},
 }
 
+var syncPushJob = &BuiltinJob{
+	Name:         "sync-push",
+	Schedule:     "*/30 * * * *",
+	IntervalSecs: 30 * 60,
+	Description:  "Mirror the workspace into sync.mirror.target (ws sync push)",
+	scriptBody: func(wsBin, display, workspace string) string {
+		return fmt.Sprintf("%s --workspace %s sync push --quiet", wsBin, workspace)
+	},
+}
+
 var passBackupJob = &BuiltinJob{
 	Name:         "pass-backup",
 	Schedule:     "*/30 * * * *",
