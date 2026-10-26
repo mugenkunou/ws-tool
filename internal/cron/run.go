@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -103,7 +104,7 @@ func RunJob(name string, opts RunOptions) (RunResult, error) {
 	}
 
 	logLine(logPath, job.Name, "Starting")
-	exitCode := runBash(body, job.Name, logPath, opts.Stdout, opts.Stderr)
+	exitCode, lines := runBash(body, job.Name, logPath, opts.Stdout, opts.Stderr)
 
 	if err := appendState(statePath, job.Name, exitCode); err != nil {
 		// Non-fatal: log it but don't fail the job.
@@ -112,7 +113,7 @@ func RunJob(name string, opts RunOptions) (RunResult, error) {
 	if exitCode == 0 {
 		logLine(logPath, job.Name, "Done (exit 0)")
 	} else {
-		logLine(logPath, job.Name, fmt.Sprintf("Failed (exit %d)", exitCode))
+		logFailure(logPath, job.Name, body, exitCode, lines)
 	}
 	return RunResult{Job: job.Name, ExitCode: exitCode}, nil
 }
@@ -120,28 +121,30 @@ func RunJob(name string, opts RunOptions) (RunResult, error) {
 // runBash runs a bash script body in a subprocess and returns its exit code. Its
 // stdout and stderr are read line by line into the cron log under the job's
 // name, and copied to the writers. stdin is not connected.
-func runBash(body, job, logPath string, stdout, stderr io.Writer) int {
+func runBash(body, job, logPath string, stdout, stderr io.Writer) (exitCode, lines int) {
 	cmd := exec.Command("bash", "-c", body)
 	outPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return 1
+		return 1, 0
 	}
 	errPipe, err := cmd.StderrPipe()
 	if err != nil {
-		return 1
+		return 1, 0
 	}
 	if err := cmd.Start(); err != nil {
 		logLine(logPath, job, "error: "+err.Error())
-		return 1
+		return 1, 0
 	}
 
-	var mu sync.Mutex // serializes the log and the writers
+	var mu sync.Mutex // serializes the log, the writers and n
+	n := 0
 	pump := func(r io.Reader, w io.Writer) {
 		sc := bufio.NewScanner(r)
 		sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
 		for sc.Scan() {
 			line := sc.Text()
 			mu.Lock()
+			n++
 			logLine(logPath, job, line)
 			if w != nil {
 				fmt.Fprintln(w, line)
@@ -157,11 +160,35 @@ func runBash(body, job, logPath string, stdout, stderr io.Writer) int {
 
 	if err := cmd.Wait(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode()
+			return exitErr.ExitCode(), n
 		}
-		return 1
+		return 1, 0
 	}
-	return 0
+	return 0, n
+}
+
+// failureEnv are the variables that most often explain a job that works in a
+// shell but fails under cron: a missing HOME or PATH, or no display, gpg agent
+// or session bus.
+var failureEnv = []string{"HOME", "USER", "PATH", "DISPLAY", "GNUPGHOME", "GPG_TTY", "DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"}
+
+// logFailure writes why a job failed: the exit code, the command, whether it
+// printed anything, and the environment it ran in. A job that dies without
+// output (a --quiet command, a killed process) is otherwise a bare "Failed".
+func logFailure(logPath, job, body string, exitCode, lines int) {
+	logLine(logPath, job, fmt.Sprintf("Failed (exit %d)", exitCode))
+	if lines == 0 {
+		logLine(logPath, job, "The job printed no output before failing.")
+	}
+	logLine(logPath, job, "command: "+strings.Join(strings.Fields(body), " "))
+	for _, k := range failureEnv {
+		v, ok := os.LookupEnv(k)
+		if !ok {
+			v = "(unset)"
+		}
+		logLine(logPath, job, fmt.Sprintf("env %s=%s", k, v))
+	}
+	logLine(logPath, job, fmt.Sprintf("To reproduce: ws cron run %s", job))
 }
 
 // trimLog keeps only the last logKeep bytes of cron.log when it is over logLimit.
