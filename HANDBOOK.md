@@ -3438,7 +3438,7 @@ are untouched.
 | `--dry-run` | false | print the plan; change nothing |
 
 ```text
-$ ws cron add sync
+$ ws cron add mega-sync pass-backup
   Install mega-sync (*/30 * * * * + @reboot) in the crontab and /home/user/Workspace/configs/crontab  [y/n/a/q] a
   ✔ Install mega-sync (*/30 * * * * + @reboot) in the crontab and /home/user/Workspace/configs/crontab
   ✔ Install pass-backup (*/30 * * * * + @reboot) in the crontab and /home/user/Workspace/configs/crontab

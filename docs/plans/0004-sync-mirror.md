@@ -92,7 +92,7 @@ ws sync push
  ├─ 4. file list   walk with ignore.BuildEngine + sync.exclude, skip symlinks
  │                 → state/sync/filter  ("+ /dir/" for each parent, "+ /file", then "- *")
  ├─ 5. dry run     rsync -n --itemize-changes …   count "*deleting" lines
- │                 > max_delete_pct of mirror files (and > 10 files)?  ⚠️ refuse unless --force
+ │                 > max_delete_pct of mirror files (and > 10 files)?  ⚠️ ask y/N; refuse under --quiet/--json
  ├─ 6. copy        rsync for real
  ├─ 7. stamp write mirror/.ws-sync-stamp + state/sync/last-push.json
  └─ 8. report      "pushed: 12 changed, 3 deleted, 1,650 files, 118 MB"
@@ -116,17 +116,17 @@ rsync -rt --delete --delete-excluded --prune-empty-dirs \
 | `P /.ws-sync-stamp` | Protects the stamp from `--delete-excluded`. |
 
 Flags: `-n/--dry-run` (show the itemized changes and the delete count, change nothing),
-`--force` (skip the delete guard and the foreign-stamp check), `--quiet` (cron; print only
-errors and §6 warnings).
+`--quiet` (cron; print only errors and §6 warnings). There is no `--force`: the delete
+guard and a foreign stamp ask y/N, and refuse under `--quiet`/`--json`.
 
 ## 5. `ws sync status` and `ws sync restore`
 
 - **status:** target, last push (time, files, bytes, deleted), stamp state (§6), and a
   dry-run count of files waiting to go out.
 - **restore:** rsync `target/` → workspace with the same flags minus the delete flags and
-  the filter. Refuses unless the workspace is empty or missing (ws.json absent), unless
-  `--force`. Never deletes anything in the workspace. Prints a reminder that executable
-  bits are not restored (D4), then suggests `ws symlink link`.
+  the filter. Over an existing workspace (ws.json present) it asks y/N first,
+  and refuses under `--quiet`/`--json`. Never deletes anything in the workspace. Prints a
+  reminder that executable bits are not restored (D4), then suggests `ws symlink link`.
 
 ## 6. The stamp: detecting a wiped or foreign mirror
 
@@ -137,7 +137,7 @@ state dir holds the same. Before each push:
 |---|---|---|
 | matches last push | normal | push |
 | missing, but a last push exists | mirror was emptied (locally or via the cloud) | ⚠️ warn loudly ("mirror was wiped since <time>; re-uploading N files, restore older copies from the WorkDrive trash if needed"), then push |
-| from another host or push_id | a second machine pushes to this mirror, against Factor XII | ❌ refuse unless `--force` |
+| from another host or push_id | a second machine pushes to this mirror, against Factor XII | ❓ ask y/N; refuse under `--quiet`/`--json` |
 | missing, no last push | first push | push |
 
 ## 7. Cron
@@ -165,7 +165,7 @@ internal/cron/jobs.go   syncPushJob
 |---|---|---|
 | 1 | `wsconfig.Sync` + validation | unset target; target inside workspace; workspace inside target; bad pct |
 | 2 | `filter.go` | for a fixture tree, the filter admits exactly the paths `Engine.Evaluate` includes; symlinks and `sync.exclude` left out; wildcard chars escaped |
-| 3 | `push.go` | push; delete a file and push → gone from mirror; ignore a dir and push → gone; mass delete refused without `--force`; missing ws.json refused; missing target parent refused |
+| 3 | `push.go` | push; delete a file and push → gone from mirror; ignore a dir and push → gone; mass delete asks, refused under `--quiet`; missing ws.json refused; missing target parent refused |
 | 4 | stamp (§6) | wiped mirror warns and refills; foreign stamp refused |
 | 5 | `restore.go`, `status.go` | push → empty workspace → restore → same tree; non-empty workspace refused |
 | 6 | `cmd/sync.go`, cron job, completion, help | parity and complete tests |
