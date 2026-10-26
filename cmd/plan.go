@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/mugenkunou/ws-tool/internal/plan"
@@ -111,7 +112,13 @@ func RunPlan(plan Plan, stdin io.Reader, stdout io.Writer, globals globalFlags) 
 					Status: "failed",
 					Error:  err.Error(),
 				})
-				fmt.Fprintf(out, "  %s %s: %s\n",
+				// --quiet hides progress, not failures: a cron job runs with it,
+				// and its log would otherwise say only "Failed (exit 1)".
+				failOut := out
+				if globals.quiet && !globals.json {
+					failOut = os.Stderr
+				}
+				fmt.Fprintf(failOut, "  %s %s: %s\n",
 					style.IconCross(nc),
 					a.Description,
 					style.Errorf(nc, "%s", err.Error()))
