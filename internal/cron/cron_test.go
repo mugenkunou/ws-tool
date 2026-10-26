@@ -66,7 +66,7 @@ func (m machine) opts() PlanOptions {
 // ── registry ───────────────────────────────────────────────────────
 
 func TestRegistry(t *testing.T) {
-	want := []string{"mega-sync", "pass-backup", "sync-push"}
+	want := []string{"mega-sync", "pass-backup", "sync-push", "zoho-sync"}
 	if got := AllNames(); !slices.Equal(got, want) {
 		t.Fatalf("AllNames = %v, want %v (no aliases, no retired names)", got, want)
 	}
@@ -76,7 +76,7 @@ func TestRegistry(t *testing.T) {
 		}
 	}
 	// Schedules per spec: every 30 minutes.
-	for _, n := range []string{"mega-sync", "pass-backup"} {
+	for _, n := range []string{"mega-sync", "pass-backup", "zoho-sync"} {
 		if Builtins[n].Schedule != "*/30 * * * *" || Builtins[n].IntervalSecs != 1800 {
 			t.Errorf("%s schedule = %q interval %d", n, Builtins[n].Schedule, Builtins[n].IntervalSecs)
 		}
@@ -94,6 +94,17 @@ func TestJobBodies(t *testing.T) {
 	}
 	if body := Builtins["mega-sync"].scriptBody("/ws", ":9", "/W"); !strings.Contains(body, "export DISPLAY=:9") || !strings.Contains(body, "megasync") {
 		t.Errorf("mega-sync body = %q", body)
+	}
+	// zoho-sync matches processes by exact name: the job's own `bash -c`
+	// command line contains these names, so pkill -f would kill the job itself.
+	zoho := Builtins["zoho-sync"].scriptBody("/ws", ":9", "/W")
+	for _, want := range []string{"export DISPLAY=:9", "-sstart", "pkill -x zohoworkdrived", "pgrep -x zohoworkdrived"} {
+		if !strings.Contains(zoho, want) {
+			t.Errorf("zoho-sync body lacks %q: %q", want, zoho)
+		}
+	}
+	if strings.Contains(zoho, "pkill -f") || strings.Contains(zoho, "pgrep -f") {
+		t.Errorf("zoho-sync body must not match by command line: %q", zoho)
 	}
 }
 

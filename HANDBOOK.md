@@ -3321,6 +3321,7 @@ binary and `<W>` the absolute workspace path.
 | `mega-sync` | `*/30 * * * *` | 30m | MEGA only: restarts `megasync` for a 5-minute sync window, using `DISPLAY` |
 | `pass-backup` | `*/30 * * * *` | 30m | `<ws> --workspace <W> pass backup push --quiet` |
 | `sync-push` | `*/30 * * * *` | 30m | `<ws> --workspace <W> sync push --quiet` (§5 `ws sync`) |
+| `zoho-sync` | `*/30 * * * *` | 30m | Zoho WorkDrive only: restarts `zohoworkdrive -sstart` (tray, no window) for a 5-minute sync window, using `DISPLAY`; the launcher itself waits 30s, so about 4 minutes remain to sync |
 
 Each job is installed on its own. `mega-sync` suits MEGA; with another sync client,
 install `pass-backup` alone, plus `sync-push` for a mirror client such as WorkDrive (§2.6).
@@ -3434,7 +3435,7 @@ are untouched.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--display <d>` | `$DISPLAY`, else `:1` | X display written into the `mega-sync` lines; ignored for other jobs |
+| `--display <d>` | `$DISPLAY`, else `:1` | X display written into the `mega-sync` and `zoho-sync` lines; ignored for other jobs |
 | `--dry-run` | false | print the plan; change nothing |
 
 ```text
@@ -3499,7 +3500,7 @@ crontab lines do not fail (decision).
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--if-due` | false | run only when the job is due (used by ws's crontab lines) |
-| `--display <d>` | `$DISPLAY`, else `:1` | X display for `mega-sync` |
+| `--display <d>` | `$DISPLAY`, else `:1` | X display for `mega-sync` and `zoho-sync` |
 | `--dry-run` | false | print the job's command; run and record nothing |
 
 `--json`: command `cron.run`; data `job`, `exit_code` (the job's own code), `skipped` (bool).

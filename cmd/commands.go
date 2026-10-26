@@ -73,7 +73,7 @@ var (
 		return flagDoc{Short: "-m", Name: "-m", Arg: "<message>", Desc: "the commit message (default: " + def + ")"}
 	}
 	olderThan    = flagDoc{Name: "--older-than", Arg: "<age>", Desc: "age such as 30d, 12h or 2w; a bare number means days"}
-	displayFlag  = flagDoc{Name: "--display", Arg: "<d>", Desc: "X display written into the mega-sync lines (default $DISPLAY, else :1)"}
+	displayFlag  = flagDoc{Name: "--display", Arg: "<d>", Desc: "X display written into the mega-sync and zoho-sync lines (default $DISPLAY, else :1)"}
 	allFlag      = func(d string) flagDoc { return flagDoc{Name: "--all", Desc: d} }
 	noEditorOpen = flagDoc{Name: "--no-open", Desc: "do not start the editor"}
 )

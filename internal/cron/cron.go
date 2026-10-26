@@ -49,6 +49,7 @@ var Builtins = map[string]*BuiltinJob{
 	"mega-sync":   megaSyncJob,
 	"pass-backup": passBackupJob,
 	"sync-push":   syncPushJob,
+	"zoho-sync":   zohoSyncJob,
 }
 
 // Aliases maps an old job name to the job that replaced it. Old crontab lines
