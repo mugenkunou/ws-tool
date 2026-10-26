@@ -75,6 +75,9 @@ Point your client at `~/Workspace`, once, and you're done. Two setups below.
 | Client | MEGAsync (GUI) or MEGAcmd | `rclone` (its `zoho` backend), or Zoho's own desktop sync app where one exists for your OS |
 | Honours ws's ignore rules | ✅ reads `.megaignore` | ⚠️ not yet: ws writes only `.megaignore` |
 | Scheduled by `ws cron` | ✅ `mega-sync` job | 🛠️ your own crontab line (below) |
+| Symlinks | ❌ skipped (`.megaignore` ends with `-s:*`) | ❌ not synced |
+
+Neither client carries symlinks, so ws never syncs them: `ws ignore lint` warns about any symlink in a synced path. Replace it with a real file or folder, or `ws ignore add` it.
 
 ### 🔴 MEGA
 

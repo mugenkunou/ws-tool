@@ -275,3 +275,52 @@ func TestScanByIncludeDowngradesToInfo(t *testing.T) {
 	}
 	t.Fatal("expected an include rule depth violation inside ws/")
 }
+
+func TestScanWarnsOnSyncedSymlinks(t *testing.T) {
+	tmp := t.TempDir()
+	ws := filepath.Join(tmp, "Workspace")
+	for _, d := range []string{"notes/2026", "proj/node_modules/.bin"} {
+		if err := os.MkdirAll(filepath.Join(ws, d), 0o755); err != nil {
+			t.Fatalf("mkdir failed: %v", err)
+		}
+	}
+	engine := BuildEngine(DefaultUserRules())
+
+	links := map[string]string{
+		"notes/current":              "2026",          // synced dir link: warn
+		"notes/gone":                 "no-such-file",  // broken link: warn
+		"proj/node_modules/.bin/tsc": "../typescript", // ignored path: silent
+	}
+	for link, target := range links {
+		if err := os.Symlink(target, filepath.Join(ws, link)); err != nil {
+			t.Fatalf("symlink failed: %v", err)
+		}
+	}
+
+	violations, err := Scan(ScanOptions{WorkspacePath: ws, MaxDepth: 10, Engine: engine})
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+
+	got := map[string]Violation{}
+	for _, v := range violations {
+		if v.Type == "symlink" {
+			got[v.Path] = v
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 symlink warnings, got %d: %+v", len(got), got)
+	}
+	for _, p := range []string{"notes/current", "notes/gone"} {
+		v, ok := got[p]
+		if !ok {
+			t.Fatalf("missing symlink warning for %s", p)
+		}
+		if v.Severity != "WARNING" {
+			t.Fatalf("%s: want WARNING, got %s", p, v.Severity)
+		}
+	}
+	if _, ok := got["proj/node_modules/.bin/tsc"]; ok {
+		t.Fatal("a link under an ignored path must not warn")
+	}
+}

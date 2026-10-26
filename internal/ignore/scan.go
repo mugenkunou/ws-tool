@@ -87,6 +87,26 @@ func Scan(opts ScanOptions) ([]Violation, error) {
 			})
 		}
 
+		// A synced symlink never arrives: .megaignore ends with -s:*, and
+		// other clients (WorkDrive, rclone by default, Windows) drop links too.
+		// WalkDir does not follow links, so this entry is the link itself.
+		if d.Type()&os.ModeSymlink != 0 {
+			sev := "WARNING"
+			if muted {
+				sev = "INFO"
+			}
+			target, _ := os.Readlink(path)
+			violations = append(violations, Violation{
+				Group:    "Ignore",
+				Type:     "symlink",
+				Severity: sev,
+				Path:     rel,
+				Message:  fmt.Sprintf("symlink to %s does not sync; replace it with a real file or folder, or ignore it", target),
+				Muted:    muted,
+			})
+			return nil
+		}
+
 		if d.IsDir() {
 			return nil
 		}
