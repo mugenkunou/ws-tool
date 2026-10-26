@@ -816,15 +816,21 @@ func needsWrapperInstall(wrapperPath string) bool {
 	if err != nil {
 		return true
 	}
-	return !strings.Contains(string(content), "ws git-credential-helper")
+	return string(content) != credentialWrapperScript
 }
 
 // installCredentialWrapper writes the stable wrapper script to wrapperPath.
-// The script execs `ws git-credential-helper "$@"`, resolving ws from PATH.
+// The script execs `ws git-credential-helper "$@"`, resolving ws from PATH and
+// falling back to ~/.local/bin, which cron and GUI git clients often lack.
 func installCredentialWrapper(wrapperPath string) error {
 	if err := os.MkdirAll(filepath.Dir(wrapperPath), 0o755); err != nil {
 		return err
 	}
-	script := "#!/bin/sh\nexec ws git-credential-helper \"$@\"\n"
-	return os.WriteFile(wrapperPath, []byte(script), 0o755)
+	return os.WriteFile(wrapperPath, []byte(credentialWrapperScript), 0o755)
 }
+
+// credentialWrapperScript is the wrapper's whole text. needsWrapperInstall
+// compares against it, so an older wrapper is rewritten on the next connect.
+const credentialWrapperScript = "#!/bin/sh\n" +
+	"command -v ws >/dev/null 2>&1 || PATH=\"$HOME/.local/bin:$PATH\"\n" +
+	"exec ws git-credential-helper \"$@\"\n"

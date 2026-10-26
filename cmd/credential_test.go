@@ -231,7 +231,7 @@ func TestCredentialEnableWritesWrapperAndConfig(t *testing.T) {
 		t.Fatalf("enable: %d %s%s", code, out, errOut)
 	}
 	script, err := os.ReadFile(wrapper)
-	if err != nil || string(script) != "#!/bin/sh\nexec ws git-credential-helper \"$@\"\n" {
+	if err != nil || string(script) != credentialWrapperScript {
 		t.Fatalf("wrapper: %q (%v)", script, err)
 	}
 	if info, _ := os.Stat(wrapper); info.Mode()&0o111 == 0 {

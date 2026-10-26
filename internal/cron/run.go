@@ -123,6 +123,9 @@ func RunJob(name string, opts RunOptions) (RunResult, error) {
 // name, and copied to the writers. stdin is not connected.
 func runBash(body, job, logPath string, stdout, stderr io.Writer) (exitCode, lines int) {
 	cmd := exec.Command("bash", "-c", body)
+	// Cron's PATH is /usr/bin:/bin. Helpers that run `ws` by name (the git
+	// credential wrapper) need the directory ws was started from.
+	cmd.Env = append(os.Environ(), "PATH="+filepath.Dir(WSBinary())+string(os.PathListSeparator)+os.Getenv("PATH"))
 	outPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return 1, 0
