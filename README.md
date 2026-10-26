@@ -89,6 +89,8 @@ Neither client carries symlinks, so ws never syncs them: `ws ignore lint` warns 
 
 ### 🟠 Zoho WorkDrive
 
+> ⚠️ `bisync` is two-way, which conflicts with ws's [one-way sync principle](HANDBOOK.md#xii-sync-is-one-way). A mirror-based `ws sync push` is planned to replace it.
+
 1. Install [rclone](https://rclone.org/downloads/) and run `rclone config`.
 2. New remote → type `zoho` → name it `workdrive` → pick your data-centre region → finish the browser sign-in.
 3. First sync, once, by hand. Mind the direction: the first argument is the source of truth.
@@ -143,12 +145,13 @@ Nothing changes until you confirm a checklist.
 
 ---
 
-## 🧭 Philosophy, in four lines
+## 🧭 Philosophy, in five lines
 
 - 🏠 **One source of truth.** Originals live in the workspace; the rest are symlinks.
 - 🤝 **Consent per action.** Every write shows its plan: `y` do it · `n` skip · `a` all · `q` stop. `--dry-run` previews, and there is no `--force`.
 - ♻️ **Soft delete first.** Whatever ws deletes goes to the trash and can come back.
 - 🔧 **Offload, don't reimplement.** `git`, `pass`, `crontab`, `script(1)` do the work; ws orchestrates.
+- ➡️ **Sync is one-way.** Your laptop's `~/Workspace` is the truth; the cloud copy is a mirror you never edit. The only way back is a deliberate restore onto a fresh machine.
 
 The long version is in the handbook.
 

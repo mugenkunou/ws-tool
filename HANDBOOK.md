@@ -135,6 +135,7 @@ fast. Each factor below names the ws feature that carries it.
 | IX | Always soft delete | Delete means a recoverable move to the trash | `ws trash` |
 | X | Per-action consent | Confirm each mutation, not the batch | the action plan (§4.7) |
 | XI | Pin the clipboard | The clipboard forgets, your workspace shouldn't | a habit; `ws scratch` |
+| XII | Sync is one-way | The laptop is the truth, the cloud copy is a mirror | `ws ignore`; `ws sync push` (planned) |
 
 #### I. Single source of truth
 
@@ -369,6 +370,25 @@ applies: the closest relevant file is the right file.
 This is not a note-taking system. It is a net for knowledge that would otherwise be lost to
 clipboard amnesia.
 
+#### XII. Sync is one-way
+
+*The machine you work on is the truth. The cloud copy is a mirror.*
+
+`~/Workspace` on the machine you work on is the only source of truth. Sync goes one way,
+laptop to cloud. The cloud copy is a backup: you never edit it. The only reverse direction
+is a deliberate restore onto a new or empty machine (§2.5), not continuous two-way sync.
+
+Two-way sync needs conflict detection that the clients and backends can't give reliably.
+rclone's Zoho WorkDrive backend has no modtimes or hashes, and the office WorkDrive client
+maps the whole account, not one folder. When conflict detection fails, a silent overwrite
+loses work. One-way keeps the copy predictable and lets ws own exactly what goes out: its
+ignore rules decide (Factor VIII), and symlinks never sync (`ws ignore lint` warns about
+them).
+
+Planned: `ws sync push` mirrors `~/Workspace` into a folder the sync client watches (for
+example `~/Zoho WorkDrive/My Folders/Workspace`), and `ws sync restore` is the reverse, for
+a fresh machine. Neither exists yet.
+
 ---
 
 ## 2. Workspace and state
@@ -505,6 +525,9 @@ Your SSH config, shell setup, Kubernetes context and editor settings are back wh
 belong. Machine setup stays separate from `ws init` on purpose: `init` only makes the
 workspace a ws workspace, and each integration is a command you run once per machine.
 
+Step 1 is the only time data flows from the cloud copy to a machine (Factor XII). Once
+the machine is set up, it pushes; it does not pull.
+
 ### 2.6 Sync clients
 
 ws does not sync. A sync client keeps `<workspace>` identical on every machine, and ws
@@ -523,6 +546,9 @@ workspace reach the other machines. What ws does for you depends on the client:
 With a client other than MEGA, `ws ignore lint` still finds files that should not sync
 (bloat, excessive depth, build output), and `ws ignore ls` shows the rules to copy into the
 client's own exclusion settings.
+
+Whatever the client, run it one way: workspace to cloud (Factor XII). Avoid two-way modes
+such as `rclone bisync`.
 
 ---
 
