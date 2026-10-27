@@ -279,6 +279,18 @@ func (m Model) issues() []*issue {
 	return out
 }
 
+// Attention returns every "Needs attention" problem, in display order, each
+// led by its subsystem's icon. Advice rows are left out: they are not problems.
+func (m Model) Attention() []string {
+	var out []string
+	for _, is := range m.issues() {
+		if !is.advice {
+			out = append(out, theme.Icon(is.screen.Icon())+is.text)
+		}
+	}
+	return out
+}
+
 func (m Model) allLoaded() bool {
 	for _, s := range areas {
 		if !m.areas[s].loaded {

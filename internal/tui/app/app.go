@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -467,8 +468,52 @@ func (m Model) View() tea.View {
 	if m.mouse {
 		v.MouseMode = tea.MouseModeCellMotion
 	}
-	v.WindowTitle = "ws"
+	v.WindowTitle = m.windowTitle()
 	return v
+}
+
+// titleRotate is how many animation frames each problem stays in the tab title.
+const titleRotate = 67 // ~10s
+
+// titleMax caps the problem text so tab bars do not cut the marker off.
+const titleMax = 40
+
+// windowTitle is "ws", or "ws<em space><icon> <problem>" cycling through the dashboard's
+// "Needs attention" rows one at a time.
+//
+// Anything unexpected (no workspace, no problems, a terminal that cannot show
+// titles, empty or control-laden text) falls back to plain "ws".
+func (m Model) windowTitle() string {
+	if m.screens == nil || titleUnsupported() {
+		return "ws"
+	}
+	d, ok := m.screens[nav.ScreenDashboard].(dashboard.Model)
+	if !ok {
+		return "ws"
+	}
+	items := d.Attention()
+	if len(items) == 0 {
+		return "ws"
+	}
+	text := strings.Join(strings.Fields(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, items[(m.frame/titleRotate)%len(items)])), " ")
+	if text == "" {
+		return "ws"
+	}
+	if r := []rune(text); len(r) > titleMax {
+		text = string(r[:titleMax-1]) + "…"
+	}
+	return "ws\u2003" + text
+}
+
+// titleUnsupported reports terminals that cannot show a window title.
+func titleUnsupported() bool {
+	t := os.Getenv("TERM")
+	return t == "" || t == "linux" || t == "dumb"
 }
 
 func (m Model) render() string {
