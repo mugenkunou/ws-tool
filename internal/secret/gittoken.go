@@ -1,9 +1,17 @@
 package secret
 
-import "strings"
+import (
+	"bytes"
+	"net/url"
+	"os"
+	"os/exec"
+	"strings"
+)
 
-// ResolveGitToken tries to find a token for a git remote via pass: first the
-// explicit passEntry (if any), then the auto-derived "git/<host>" entry.
+// ResolveGitToken finds the token for a git remote: the explicit passEntry if
+// it has one, else whatever `git credential fill` returns. Asking git means
+// the lookup runs through the same helper (and so the same entry, down to
+// git/<host>/<owner>/<repo>) that a push to the remote would use.
 // Returns "" when no token is available (non-fatal).
 func ResolveGitToken(remoteURL, passEntry string) string {
 	if passEntry != "" {
@@ -11,12 +19,7 @@ func ResolveGitToken(remoteURL, passEntry string) string {
 			return tok
 		}
 	}
-	if host := HostFromGitURL(remoteURL); host != "" {
-		if tok, ok := passToken("git/" + host); ok {
-			return tok
-		}
-	}
-	return ""
+	return gitCredentialToken(remoteURL)
 }
 
 // passToken returns the password (token) of the pass entry named entry, if
@@ -30,19 +33,31 @@ func passToken(entry string) (string, bool) {
 	return "", false
 }
 
-// HostFromGitURL extracts the hostname from an HTTPS or SSH git URL.
-func HostFromGitURL(rawURL string) string {
-	rawURL = strings.TrimSpace(rawURL)
-	if idx := strings.Index(rawURL, "://"); idx >= 0 {
-		rest := rawURL[idx+3:]
-		if slashIdx := strings.Index(rest, "/"); slashIdx >= 0 {
-			return rest[:slashIdx]
-		}
-		return rest
+// gitCredentialToken runs `git credential fill` for an HTTPS remote. It never
+// prompts: a missing credential is "", the same as no helper at all. SSH and
+// other remotes have no token to fill.
+func gitCredentialToken(remoteURL string) string {
+	u, err := url.Parse(strings.TrimSpace(remoteURL))
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
+		return ""
 	}
-	if strings.HasPrefix(rawURL, "git@") {
-		if colonIdx := strings.Index(rawURL, ":"); colonIdx >= 0 {
-			return rawURL[4:colonIdx]
+	var in bytes.Buffer
+	in.WriteString("protocol=https\nhost=" + u.Host + "\n")
+	if p := strings.Trim(u.Path, "/"); p != "" {
+		in.WriteString("path=" + p + "\n")
+	}
+	in.WriteString("\n")
+
+	cmd := exec.Command("git", "-c", "credential.useHttpPath=true", "credential", "fill")
+	cmd.Stdin = &in
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=true", "SSH_ASKPASS=true")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if v, ok := strings.CutPrefix(line, "password="); ok {
+			return strings.TrimRight(v, "\r")
 		}
 	}
 	return ""

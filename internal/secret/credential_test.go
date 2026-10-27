@@ -240,24 +240,46 @@ func fakePassCommand(t *testing.T, entries map[string]string) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
-// TestResolveGitTokenFindsTheEntry: the token lookup read git/git/<host> and
-// git/<pass_entry> (LookupCredential prefixes git/ again), so it never found
-// the entry it was given (plan 0002 bug B6).
-func TestResolveGitTokenFindsTheEntry(t *testing.T) {
-	fakePassCommand(t, map[string]string{
-		"git/github.com": "host-token",
-		"work/gh-api":    "explicit-token",
-	})
+// fakeCredentialHelper points git at a credential helper that answers for the
+// per-repo path me/configs.git with repo-token and for any other path on
+// github.com with host-token, like the ws helper's candidate order.
+func fakeCredentialHelper(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\n[ \"$1\" = get ] || exit 0\ninput=$(cat)\ncase \"$input\" in\n" +
+		"  *path=me/configs.git*) echo password=repo-token ;;\n" +
+		"  *host=github.com*) echo password=host-token ;;\n" +
+		"esac\n"
+	helper := filepath.Join(dir, "helper")
+	if err := os.WriteFile(helper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(dir, "gitconfig")
+	if err := os.WriteFile(cfg, []byte("[credential]\n\thelper = "+helper+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", cfg)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+}
+
+// TestResolveGitTokenAsksGit: the visibility check used its own shorter lookup
+// (git/<host> only) and missed per-repo entries that a push would use.
+func TestResolveGitTokenAsksGit(t *testing.T) {
+	fakePassCommand(t, map[string]string{"work/gh-api": "explicit-token"})
+	fakeCredentialHelper(t)
 	if got := ResolveGitToken("https://github.com/me/configs.git", "work/gh-api"); got != "explicit-token" {
 		t.Errorf("explicit pass_entry: got %q, want explicit-token", got)
 	}
-	if got := ResolveGitToken("https://github.com/me/configs.git", ""); got != "host-token" {
-		t.Errorf("default git/<host>: got %q, want host-token", got)
+	if got := ResolveGitToken("https://github.com/me/configs.git", ""); got != "repo-token" {
+		t.Errorf("per-repo entry: got %q, want repo-token", got)
 	}
-	if got := ResolveGitToken("git@github.com:me/configs.git", "missing/entry"); got != "host-token" {
-		t.Errorf("a missing pass_entry falls back to git/<host>: got %q", got)
+	if got := ResolveGitToken("https://github.com/me/other.git", "missing/entry"); got != "host-token" {
+		t.Errorf("a missing pass_entry falls back to git: got %q, want host-token", got)
 	}
 	if got := ResolveGitToken("https://gitlab.com/me/x.git", ""); got != "" {
-		t.Errorf("no entry: got %q, want empty", got)
+		t.Errorf("no credential: got %q, want empty", got)
+	}
+	if got := ResolveGitToken("git@github.com:me/configs.git", ""); got != "" {
+		t.Errorf("ssh remote: got %q, want empty", got)
 	}
 }
