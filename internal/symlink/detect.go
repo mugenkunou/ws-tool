@@ -394,7 +394,7 @@ func (d *detector) walkHome() {
 				if err != nil {
 					continue
 				}
-				if rel, in := d.insideWorkspace(target); in && !d.seen[p] && !d.isEntrySystem(p) && !d.managed(p) {
+				if rel, in := d.insideWorkspace(target); in && !skillLink(rel) && !d.seen[p] && !d.isEntrySystem(p) && !d.managed(p) {
 					app, secret := d.appOf(p)
 					d.seen[p] = true
 					kind := KindFile
@@ -425,6 +425,12 @@ func (d *detector) walkHome() {
 	walk(d.home, 1)
 	sort.Slice(found, func(i, j int) bool { return found[i].System < found[j].System })
 	d.res.Records = append(d.res.Records, found...)
+}
+
+// skillLink reports whether a workspace-relative target is a skill: ws skill
+// install links those into each tool, so they are not for ws.json.
+func skillLink(rel string) bool {
+	return strings.HasPrefix(filepath.ToSlash(rel), "agent/skills/")
 }
 
 func itoa(n int) string {

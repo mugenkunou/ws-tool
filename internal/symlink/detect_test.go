@@ -323,6 +323,15 @@ func TestDetectUntrackedNeedsWalk(t *testing.T) {
 	}
 }
 
+func TestDetectWalkIgnoresSkillLinks(t *testing.T) {
+	m := newMachine(t)
+	skill := m.wsFile(t, "agent/skills/review/SKILL.md", "x")
+	m.link(t, filepath.Dir(skill), m.home_(".claude/skills/review")) // ws skill install made this
+	if r := m.detect("linux", true); len(by(r, StatusUntracked)) != 0 {
+		t.Fatalf("a skill link is ws's own: %+v", r.Records)
+	}
+}
+
 func TestDetectWalkSkipsHeavyFoldersAndDepth(t *testing.T) {
 	m := newMachine(t)
 	orig := m.wsFile(t, "notes/a.md", "x")
