@@ -5,15 +5,15 @@ ws  Dashboard   Repos   Symlinks   Scratch   Sessions   Ignore   Secrets   Cron 
  Projects/api                                   ✔ clean      ·    ·            main
  ╭────────────────────────────────────────────────────────────────────────────────────────────────╮
  │  This screen    Lists                     General                 Commands                     │
- │  enter  show    ↑/k         up            tab        next screen  :push           push the…    │
- │  f      fetch   ↓/j         down          shift+tab  prev screen  :root ls        list the…    │
- │  p      pull    g           top           ctrl+r     refresh      :root rm <dir>  remove a…    │
- │  s      save    G           bottom        :          command      :ls --fetch     fetch th…    │
- │  r      run     pgup        page up       ?          help         :config show    print th…    │
- │  c      config  pgdn        page down     q          quit         :config edit    edit ws.…    │
- │  a      add     /           filter        esc        back         :help  :q       this hel…    │
- │                 >           sort by nex…                                                       │
- │                 <           reverse sort                                                       │
+ │  !      git     ↑/k         up            tab        next screen  :git <args…>     run a g…    │
+ │  c      config  ↓/j         down          shift+tab  prev screen  :run <cmd…>      run any…    │
+ │  enter  show    g           top           ctrl+r     refresh      :configure       fix the…    │
+ │                 G           bottom        :          command      :root add <dir>  add a d…    │
+ │                 pgup        page up       ?          help         :root ls         list th…    │
+ │                 pgdn        page down     q          quit         :root rm <dir>   remove …    │
+ │                 /           filter        esc        back         :config show     print t…    │
+ │                 >           sort by nex…                          :config edit     edit ws…    │
+ │                 <           reverse sort                          :help  :q        this he…    │
  │                 d           describe                                                           │
  │                 y           json                                                               │
  │                 space       mark                                                               │
@@ -27,4 +27,4 @@ ws  Dashboard   Repos   Symlinks   Scratch   Sessions   Ignore   Secrets   Cron 
 
 
 
-f fetch • p pull • s save • r run • c config … • ctrl+r refresh • : command • ? help • q quit
+! git • c config • enter show • space mark … • ctrl+r refresh • : command • ? help • q quit

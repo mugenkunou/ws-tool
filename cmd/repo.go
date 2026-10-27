@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/mugenkunou/ws-tool/internal/repo"
 	"github.com/mugenkunou/ws-tool/internal/resource"
@@ -27,23 +26,17 @@ func runRepo(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		return repoLs(rest, globals, stdout, stderr)
 	case "show":
 		return repoShow(rest, globals, stdout, stderr)
-	case "fetch":
-		return repoFetch(rest, globals, stdout, stderr)
-	case "pull":
-		return repoPull(rest, globals, stdin, stdout, stderr)
-	case "push":
-		return repoPush(rest, globals, stdin, stdout, stderr)
-	case "save":
-		return repoSave(rest, globals, stdin, stdout, stderr)
-	case "configure":
-		return repoConfigure(rest, globals, stdin, stdout, stderr)
+	case "git":
+		return repoGit(rest, globals, stdin, stdout, stderr)
 	case "run":
 		return repoRun(rest, globals, stdin, stdout, stderr)
+	case "configure":
+		return repoConfigure(rest, globals, stdin, stdout, stderr)
 	case "root":
 		return repoRoot(rest, globals, stdin, stdout, stderr)
 	}
 	fmt.Fprintf(stderr, "unknown command: repo %s\n", verb)
-	fmt.Fprintln(stderr, "usage: ws repo <ls|show|fetch|pull|push|save|configure|run|root> …")
+	fmt.Fprintln(stderr, "usage: ws repo <ls|show|git|run|configure|root> …")
 	return 1
 }
 
@@ -203,11 +196,6 @@ func pathsOf(statuses []repo.RepoStatus) []repo.Repository {
 // short is a repo path as the CLI prints it: absolute.
 func (e *repoEnv) short(path string) string { return style.AbsPath(e.workspace, path) }
 
-// fetchAll fetches every repo, one at a time, and returns the results.
-func (e *repoEnv) fetchAll(repos []repo.Repository) []repo.FetchResult {
-	return repo.FetchAll(e.workspace, repos)
-}
-
 // oneLine flattens git's multi-line error text for a single-line message.
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
@@ -226,7 +214,6 @@ func validateHygieneChecks(checks []string) string {
 func repoLs(args []string, globals globalFlags, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("repo-ls", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	fetch := fs.Bool("fetch", false, "fetch each repo first")
 	var checks stringSliceFlag
 	fs.Var(&checks, "check", "run only this hygiene check (repeatable)")
 	var filters repoFilterFlags
@@ -259,30 +246,13 @@ func repoLs(args []string, globals globalFlags, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	// A fetch has no plan and no prompt: it changes only remote-tracking refs.
-	// --dry-run skips it.
-	var fetchWarnings []string
-	if *fetch && !globals.dryRun {
-		for _, r := range e.fetchAll(repos) {
-			if !r.Success {
-				fetchWarnings = append(fetchWarnings, r.Path+": "+oneLine(r.Error))
-				fmt.Fprintf(stderr, "ws: fetch failed: %s: %s\n", r.Path, oneLine(r.Error))
-			}
-		}
-	}
-
 	statuses := e.scan(repos, filters)
-	// Hygiene runs last, so fetch-staleness reflects the fetch.
 	findings := repo.Doctor(e.workspace, pathsOf(statuses), repo.DoctorOptions{Checks: checks})
 	entries, ok := applyList(schema, repo.Entries(statuses, findings), lf, stderr)
 	if !ok {
 		return 1
 	}
 
-	code := 0
-	if len(fetchWarnings) > 0 {
-		code = 3
-	}
 	if globals.json {
 		var shown []repo.Finding
 		for _, en := range entries {
@@ -291,25 +261,18 @@ func repoLs(args []string, globals globalFlags, stdout, stderr io.Writer) int {
 		if shown == nil {
 			shown = []repo.Finding{}
 		}
-		data := map[string]any{"statuses": schema.Records(entries), "findings": shown}
-		if len(fetchWarnings) > 0 {
-			data["fetch_warnings"] = fetchWarnings
-		}
-		if c := writeJSON(stdout, stderr, "repo.ls", data); c != 0 {
-			return c
-		}
-		return code
+		return writeJSON(stdout, stderr, "repo.ls", map[string]any{"statuses": schema.Records(entries), "findings": shown})
 	}
 	out := textOut(globals, stdout)
 	if len(entries) == 0 {
 		fmt.Fprintln(out, "No repositories found.")
-		return code
+		return 0
 	}
 	if err := schema.WriteTable(out, entries, lf.wide); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	return code
+	return 0
 }
 
 // ── show ───────────────────────────────────────────────────────────
@@ -354,202 +317,5 @@ func repoShow(args []string, globals globalFlags, stdout, stderr io.Writer) int 
 	return 0
 }
 
-// ── fetch ──────────────────────────────────────────────────────────
-
-func repoFetch(args []string, globals globalFlags, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("repo-fetch", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	var filters repoFilterFlags
-	registerRepoFilterFlags(fs, &filters)
-	registerGlobalFlags(fs, &globals)
-	if err := parseInterspersed(fs, args); err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	if err := filters.resolve(); err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	e, ok := loadRepoEnv(globals, nil, stdout, stderr)
-	if !ok {
-		return 1
-	}
-	repos, ok := e.targets(fs.Args(), filters)
-	if !ok {
-		return 1
-	}
-	repos = e.narrow(repos, filters)
-
-	out := textOut(globals, stdout)
-	nc := globals.noColor
-	if globals.dryRun {
-		results := []repo.FetchResult{}
-		for _, r := range repos {
-			results = append(results, repo.FetchResult{Path: r.Path, Error: "not fetched (dry run)"})
-			if !globals.json {
-				fmt.Fprintf(out, "Would fetch %s\n", r.Path)
-			}
-		}
-		if globals.json {
-			return writeJSONDryRun(stdout, stderr, "repo.fetch", true, results)
-		}
-		return 0
-	}
-
-	results := e.fetchAll(repos)
-	if results == nil {
-		results = []repo.FetchResult{}
-	}
-	failed := 0
-	for _, r := range results {
-		if !r.Success {
-			failed++
-		}
-	}
-	// 0 when every fetch succeeds, 3 when some fail, 1 when all fail.
-	code := 0
-	switch {
-	case failed == 0:
-	case failed == len(results):
-		code = 1
-	default:
-		code = 3
-	}
-	if globals.json {
-		if c := writeJSON(stdout, stderr, "repo.fetch", results); c != 0 {
-			return c
-		}
-		return code
-	}
-	if len(results) == 0 {
-		fmt.Fprintln(out, "No repositories found.")
-		return 0
-	}
-	for _, r := range results {
-		if r.Success {
-			fmt.Fprintln(out, style.ResultSuccess(nc, "%s fetched", r.Path))
-		} else {
-			fmt.Fprintln(out, style.ResultError(nc, "%s failed: %s", r.Path, oneLine(r.Error)))
-		}
-	}
-	return code
-}
-
-// ── shared by pull, push, save ─────────────────────────────────────
-
 // repoInteractive reports whether prompts can reach a person. Tests replace it.
 var repoInteractive = isInteractive
-
-// strategyFlagsOf registers --rebase and --merge.
-func strategyFlagsOf(fs *flag.FlagSet) (rebase, merge *bool) {
-	return fs.Bool("rebase", false, "rebase diverged repos"), fs.Bool("merge", false, "merge diverged repos")
-}
-
-// chooser answers "rebase, merge or skip" for a diverged repo: the flag when
-// there is one, else the person at the terminal, else a skip. ws never
-// chooses for you.
-func (e *repoEnv) chooser(rebase, merge bool) repo.Chooser {
-	return func(path string, local, remote int) (repo.Strategy, string) {
-		switch {
-		case rebase:
-			return repo.StrategyRebase, ""
-		case merge:
-			return repo.StrategyMerge, ""
-		}
-		if e.globals.quiet || e.globals.json || !repoInteractive(e.stdin, e.stdout) {
-			return repo.StrategySkip, repo.ReasonDiverged
-		}
-		commits := "commits"
-		if remote == 1 {
-			commits = "commit"
-		}
-		fmt.Fprintf(e.stdout, "%s has diverged (%d local, %d remote %s).\n", e.short(path), local, remote, commits)
-		for {
-			fmt.Fprint(e.stdout, "Pull with [r]ebase, [m]erge, or [s]kip this repo? ")
-			line, err := readLine(e.stdin)
-			if err != nil {
-				return repo.StrategySkip, "diverged: skipped"
-			}
-			switch strings.ToLower(strings.TrimSpace(line)) {
-			case "r", "rebase":
-				return repo.StrategyRebase, ""
-			case "m", "merge":
-				return repo.StrategyMerge, ""
-			case "", "s", "skip":
-				return repo.StrategySkip, "diverged: skipped"
-			}
-		}
-	}
-}
-
-// fetchTargets fetches repos for pull and save, and returns the failures by path.
-// With --dry-run nothing is fetched.
-func (e *repoEnv) fetchTargets(repos []repo.Repository) map[string]string {
-	failed := map[string]string{}
-	if e.globals.dryRun {
-		return failed
-	}
-	for _, r := range e.fetchAll(repos) {
-		if !r.Success {
-			failed[r.Path] = oneLine(r.Error)
-		}
-	}
-	return failed
-}
-
-// printSkipped lists the repos a command leaves out.
-func (e *repoEnv) printSkipped(skipped []repo.Skip) {
-	out := quietOut(e.globals, e.stdout)
-	for _, s := range skipped {
-		fmt.Fprintf(out, "Skipped: %s (%s)\n", e.short(s.Path), s.Reason)
-	}
-}
-
-// printDryRunAge says how old the last fetch is, because a dry run plans from it.
-func (e *repoEnv) printDryRunAge(statuses []repo.RepoStatus) {
-	if !e.globals.dryRun || len(statuses) == 0 {
-		return
-	}
-	var oldest time.Time
-	never := 0
-	for _, s := range statuses {
-		t, ok := repo.LastFetch(s.Path)
-		if !ok {
-			never++
-			continue
-		}
-		if oldest.IsZero() || t.Before(oldest) {
-			oldest = t
-		}
-	}
-	note := "Planned from the last fetch"
-	switch {
-	case never > 0 && oldest.IsZero():
-		note += ", which never happened"
-	case never > 0:
-		note += fmt.Sprintf(": oldest %s ago, %d never fetched", humanAge(time.Since(oldest)), never)
-	default:
-		note += fmt.Sprintf(": oldest %s ago", humanAge(time.Since(oldest)))
-	}
-	fmt.Fprintln(quietOut(e.globals, e.stdout), note+".")
-}
-
-func humanAge(d time.Duration) string {
-	switch {
-	case d < time.Minute:
-		return "under a minute"
-	case d < time.Hour:
-		return pluralize(int(d.Minutes()), "minute")
-	case d < 48*time.Hour:
-		return pluralize(int(d.Hours()), "hour")
-	}
-	return pluralize(int(d.Hours()/24), "day")
-}
-
-// noneSkipped keeps the JSON list a list.
-func noneSkipped(s []repo.Skip) []repo.Skip {
-	if s == nil {
-		return []repo.Skip{}
-	}
-	return s
-}

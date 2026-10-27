@@ -128,17 +128,14 @@ func (k DashboardMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{{k.Up, k.Down, k.Left, k.Right}, {k.Top, k.Bottom}, {k.Open}}
 }
 
-// ReposMap is the binding set for the repo fleet screen (spec §6.5). The
-// fleet keys act on the marked repos, else every repo the filter shows.
+// ReposMap is the binding set for the repo fleet screen (spec §6.5). There
+// is one action key: ! opens a prompt pre-filled with `git ` for the marked
+// repos, else every repo the filter shows. Erasing the `git ` runs any command.
 type ReposMap struct {
 	Table     table.KeyMap
 	Open      key.Binding
-	Fetch     key.Binding
-	Pull      key.Binding
-	Save      key.Binding
-	Run       key.Binding
+	Git       key.Binding
 	Configure key.Binding
-	AddRoot   key.Binding
 	Back      key.Binding
 }
 
@@ -147,30 +144,48 @@ func Repos() ReposMap {
 	return ReposMap{
 		Table:     Table(),
 		Open:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "show")),
-		Fetch:     key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "fetch")),
-		Pull:      key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "pull")),
-		Save:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "save")),
-		Run:       key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "run")),
+		Git:       key.NewBinding(key.WithKeys("!"), key.WithHelp("!", "git")),
 		Configure: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "config")),
-		AddRoot:   Add(),
 		Back:      back(),
 	}
 }
 
-// ShortHelp implements help.KeyMap. enter is left to the full help so the
-// footer fits 100 columns.
+// ShortHelp implements help.KeyMap.
 func (k ReposMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Fetch, k.Pull, k.Save, k.Run, k.Configure, k.AddRoot}
+	return []key.Binding{k.Git, k.Configure, k.Open}
 }
 
 // FullHelp implements help.KeyMap.
 func (k ReposMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
-		{k.Open, k.Fetch, k.Back},
-		{k.Pull, k.Save, k.Run},
-		{k.Configure, k.AddRoot},
+		{k.Git, k.Configure},
+		{k.Open, k.Back},
 	}
+}
+
+// ReposDetailMap is the repo detail level: the pane scrolls, and ! and c act
+// on the one repo it shows.
+type ReposDetailMap struct {
+	DetailMap
+	Git       key.Binding
+	Configure key.Binding
+}
+
+// ReposDetail returns bindings for the repo detail level.
+func ReposDetail() ReposDetailMap {
+	r := Repos()
+	return ReposDetailMap{DetailMap: Detail(), Git: r.Git, Configure: r.Configure}
+}
+
+// ShortHelp implements help.KeyMap.
+func (k ReposDetailMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Git, k.Configure, k.Viewport.Up, k.Viewport.Down, k.Back}
+}
+
+// FullHelp implements help.KeyMap.
+func (k ReposDetailMap) FullHelp() [][]key.Binding {
+	return append([][]key.Binding{{k.Git, k.Configure}}, k.DetailMap.FullHelp()...)
 }
 
 // SymlinksMap is the binding set for the Symlinks screen (spec §6.5).
@@ -617,6 +632,10 @@ type PromptMap struct {
 	Submit   key.Binding
 	Complete key.Binding
 	Cancel   key.Binding
+	// Older and Newer step through the prompt's history. They are disabled
+	// unless the prompt has one.
+	Older key.Binding
+	Newer key.Binding
 }
 
 // Prompt returns bindings for a text prompt.
@@ -625,15 +644,19 @@ func Prompt() PromptMap {
 		Submit:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "submit")),
 		Complete: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "complete")),
 		Cancel:   back(),
+		Older:    key.NewBinding(key.WithKeys("up"), key.WithHelp("↑↓", "history"), key.WithDisabled()),
+		Newer:    key.NewBinding(key.WithKeys("down"), key.WithDisabled()),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
-func (k PromptMap) ShortHelp() []key.Binding { return []key.Binding{k.Submit, k.Complete, k.Cancel} }
+func (k PromptMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Submit, k.Complete, k.Older, k.Cancel}
+}
 
 // FullHelp implements help.KeyMap.
 func (k PromptMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.Submit, k.Complete, k.Cancel}}
+	return [][]key.Binding{{k.Submit, k.Complete, k.Older, k.Cancel}}
 }
 
 // ChooseMap is the binding set for a single-choice list.

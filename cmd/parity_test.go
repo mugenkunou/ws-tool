@@ -14,8 +14,8 @@ import (
 // name shells, not verbs, and are exempt.
 var glossaryVerbs = []string{
 	"ls", "show", "add", "new", "rm", "edit", "open", "enable", "disable", "status",
-	"mute", "unmute", "prune", "grep", "run", "save", "push", "lint", "configure",
-	"apply", "fetch", "pull", "link", "unlink", "tag", "record", "stop", "check",
+	"mute", "unmute", "prune", "grep", "run", "git", "push", "lint", "configure",
+	"apply", "link", "unlink", "tag", "record", "stop", "check",
 	"tree", "allow", "store", "init", "audit", "restore", "empty", "log",
 	"scan", "install", "uninstall",
 }

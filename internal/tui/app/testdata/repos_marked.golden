@@ -26,5 +26,5 @@ ws  Dashboard   Repos   Symlinks   Scratch   Sessions   Ignore   Secrets   Cron 
 
 
 
-3 marked — f fetch · p pull · s save · r run · c config act on them · esc clears
-f fetch • p pull • s save • r run • c config … • ctrl+r refresh • : command • ? help • q quit
+3 marked — ! git · c config act on them · esc clears
+! git • c config • enter show • space mark … • ctrl+r refresh • : command • ? help • q quit

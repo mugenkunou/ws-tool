@@ -42,12 +42,9 @@ type resolver func(args []string, toComplete string, ctx completionCtx) ([]strin
 var resolvers = map[string]resolver{
 	"repo ls":        repoTargets,
 	"repo show":      repoTargets,
-	"repo fetch":     repoTargets,
-	"repo pull":      repoTargets,
-	"repo push":      repoTargets,
-	"repo save":      repoTargets,
-	"repo configure": repoTargets,
+	"repo git":       repoTargets,
 	"repo run":       repoTargets,
+	"repo configure": repoTargets,
 	"repo root add":  func([]string, string, completionCtx) ([]string, int) { return nil, compDirectiveFilterDirs },
 	"repo root rm":   rootTargets,
 

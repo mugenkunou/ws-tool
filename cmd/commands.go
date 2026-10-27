@@ -61,10 +61,8 @@ var (
 		{Name: "--behind", Desc: "only repos behind their upstream"},
 		{Name: "--detached", Desc: "only repos on a detached HEAD"},
 	}
-	strategyFlags = []flagDoc{
-		{Name: "--rebase", Desc: "rebase diverged repos, without asking"},
-		{Name: "--merge", Desc: "merge diverged repos, without asking"},
-	}
+	// runFlags are the flags of `repo git` and `repo run`.
+	runFlags    = append([]flagDoc{{Short: "-y", Name: "--yes", Desc: "run in every repo without asking"}}, repoFilters...)
 	editorFlag  = flagDoc{Name: "--editor", Arg: "<cmd>", Desc: "editor for this run (default: ws.json editor, $VISUAL, $EDITOR, vim)"}
 	remoteFlag  = flagDoc{Name: "--remote", Arg: "<url>", Desc: "the private remote"}
 	passEntry   = flagDoc{Name: "--pass-entry", Arg: "<entry>", Desc: "the pass entry holding an API token for the visibility check"}
@@ -87,20 +85,15 @@ func fieldsOf[T any](s func() resource.Schema[T]) func() []string {
 var commands = []command{
 	{Path: []string{"repo", "ls"}, Args: "[repo…]", Summary: "repos with status and hygiene findings", RO: true,
 		Flags: append([]flagDoc{
-			{Name: "--fetch", Desc: "fetch each repo before reading its status"},
 			{Name: "--check", Arg: "<id>", Desc: "run only this hygiene check (repeatable)"},
 		}, repoFilters...),
 		Fields: fieldsOf(func() resource.Schema[repo.Entry] { return repo.Schema(resource.CLIView()) })},
 	{Path: []string{"repo", "show"}, Args: "<repo>", Summary: "one repo in full", RO: true},
-	{Path: []string{"repo", "fetch"}, Args: "[repo…]", Summary: "git fetch", Flags: repoFilters},
-	{Path: []string{"repo", "pull"}, Args: "[repo…]", Summary: "git pull; asks rebase or merge where diverged",
-		Flags: append(slices.Clone(strategyFlags), repoFilters...)},
-	{Path: []string{"repo", "push"}, Args: "[repo…]", Summary: "git push, nothing else", Flags: repoFilters},
-	{Path: []string{"repo", "save"}, Args: "[repo…]", Summary: "stage, commit (timestamped), pull, push",
-		Flags: append(append([]flagDoc{messageFlag("ws save <date time> (<host>)")}, strategyFlags...), repoFilters...)},
+	{Path: []string{"repo", "git"}, Args: "[repo…] -- <git args…>", Summary: "run a git command in each repo", Flags: runFlags,
+		Examples: []string{"ws repo git status -s", "ws repo git --behind pull --ff-only", "ws repo git ~/Workspace/notes -- commit -am wip"}},
+	{Path: []string{"repo", "run"}, Args: "[repo…] -- <cmd…>", Summary: "run any command in each repo", Flags: runFlags},
 	{Path: []string{"repo", "configure"}, Args: "[repo…]", Summary: "ask for missing identity, upstream, default branch, credentials",
 		Flags: repoFilters},
-	{Path: []string{"repo", "run"}, Args: "[repo…] -- <cmd…>", Summary: "run a command in each repo", Flags: repoFilters},
 	{Path: []string{"repo", "root", "add"}, Args: "<dir>", Summary: "add a discovery root"},
 	{Path: []string{"repo", "root", "ls"}, Summary: "list discovery roots", RO: true},
 	{Path: []string{"repo", "root", "rm"}, Args: "<dir>", Summary: "remove a discovery root"},

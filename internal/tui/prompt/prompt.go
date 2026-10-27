@@ -4,7 +4,8 @@
 // Suggestions are either a fixed list or produced by a Completer, which runs
 // in a tea.Cmd (it may read the filesystem) whenever the value changes.
 // enter validates and submits; tab completes to the first match; esc cancels.
-// The owner receives a ResultMsg.
+// A prompt with a history steps through it with ↑ and ↓. The owner receives a
+// ResultMsg.
 package prompt
 
 import (
@@ -53,7 +54,10 @@ type Model struct {
 	completer   Completer
 	validate    func(string) error
 	allowEmpty  bool
-	separator   string // when set, suggestions apply to the last segment
+	separator   string   // when set, suggestions apply to the last segment
+	history     []string // most recent first
+	histIdx     int      // the history line shown, or -1 for the typed draft
+	draft       string   // what was typed before stepping into history
 	err         string
 	keys        keys.PromptMap
 	width       int
@@ -85,6 +89,15 @@ func WithValidate(v func(string) error) Option { return func(m *Model) { m.valid
 // tab completes the last segment only.
 func WithSeparator(sep string) Option { return func(m *Model) { m.separator = sep } }
 
+// WithHistory lets ↑ and ↓ step through lines, the most recent first.
+func WithHistory(lines []string) Option {
+	return func(m *Model) {
+		m.history = lines
+		m.keys.Older.SetEnabled(len(lines) > 0)
+		m.keys.Newer.SetEnabled(len(lines) > 0)
+	}
+}
+
 // AllowEmpty lets an empty value be submitted (default: rejected).
 func AllowEmpty() Option { return func(m *Model) { m.allowEmpty = true } }
 
@@ -94,7 +107,7 @@ func New(title string, opts ...Option) Model {
 	in.Prompt = "› "
 	in.KeyMap.AcceptSuggestion.SetEnabled(false) // tab is handled here
 	in.Focus()
-	m := Model{id: nextID.Add(1), title: title, input: in, keys: keys.Prompt()}
+	m := Model{id: nextID.Add(1), title: title, input: in, keys: keys.Prompt(), histIdx: -1}
 	for _, o := range opts {
 		o(&m)
 	}
@@ -141,6 +154,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			id := m.id
 			return m, func() tea.Msg { return ResultMsg{ID: id, Value: v} }
+		case key.Matches(msg, m.keys.Older) && m.histIdx+1 < len(m.history):
+			if m.histIdx < 0 {
+				m.draft = m.input.Value()
+			}
+			m.histIdx++
+			return m.show(m.history[m.histIdx])
+		case key.Matches(msg, m.keys.Newer) && m.histIdx >= 0:
+			m.histIdx--
+			if m.histIdx < 0 {
+				return m.show(m.draft)
+			}
+			return m.show(m.history[m.histIdx])
 		case key.Matches(msg, m.keys.Complete):
 			if match := m.matches(); len(match) > 0 {
 				head, _ := m.split()
@@ -162,6 +187,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
+}
+
+// show puts v in the input, as a history step does.
+func (m Model) show(v string) (Model, tea.Cmd) {
+	m.input.SetValue(v)
+	m.input.CursorEnd()
+	m.err = ""
+	return m, m.complete()
 }
 
 func (m Model) complete() tea.Cmd {

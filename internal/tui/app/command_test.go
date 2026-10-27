@@ -41,7 +41,7 @@ func (fakeKeys) ShortHelp() []key.Binding  { return nil }
 func (fakeKeys) FullHelp() [][]key.Binding { return nil }
 
 var screenCommands = map[nav.Screen][]nav.CommandInfo{
-	nav.ScreenRepos:    {{Name: "push", Help: "push"}, {Name: "root ls"}, {Name: "root rm", Args: "<dir>"}},
+	nav.ScreenRepos:    {{Name: "git", Args: "<args…>", Help: "git"}, {Name: "root ls"}, {Name: "root rm", Args: "<dir>"}},
 	nav.ScreenSymlinks: {{Name: "add", Args: "<path…>"}, {Name: "backup enable"}, {Name: "backup push"}, {Name: "backup status"}},
 	nav.ScreenSecrets:  {{Name: "pass audit"}, {Name: "credential status"}},
 }
@@ -172,8 +172,8 @@ func TestCommandBarRoutes(t *testing.T) {
 	})
 	t.Run("an active command beats a screen of the same prefix", func(t *testing.T) {
 		m, got, _ := withCommands(t)
-		m = send(m, press("2")) // Repos has `push`
-		m = runLineKeys(t, m, "push")
+		m = send(m, press("2")) // Repos has `git`
+		m = runLineKeys(t, m, "git")
 		if m.active != nav.ScreenRepos || len(*got) != 1 {
 			t.Fatalf("active %v got %+v", m.active.Title(), *got)
 		}
@@ -240,7 +240,7 @@ func TestCandidates(t *testing.T) {
 	m, _, _ := withCommands(t)
 	m = send(m, press("3"))
 	c := m.candidates()
-	for _, want := range []string{"symlink", "symlinks", "dashboard", "sessions", "session", "repo push", "secret pass audit", "config show", "config edit", "help", "q", "quit"} {
+	for _, want := range []string{"symlink", "symlinks", "dashboard", "sessions", "session", "repo git", "secret pass audit", "config show", "config edit", "help", "q", "quit"} {
 		found := false
 		for _, x := range c {
 			found = found || x == want

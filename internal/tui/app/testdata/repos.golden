@@ -27,4 +27,4 @@ ws  Dashboard   Repos   Symlinks   Scratch   Sessions   Ignore   Secrets   Cron 
 
 
 
-f fetch • p pull • s save • r run • c config … • ctrl+r refresh • : command • ? help • q quit
+! git • c config • enter show • space mark … • ctrl+r refresh • : command • ? help • q quit

@@ -25,7 +25,7 @@ const (
 	// delete, tag.
 	Selected
 	// All actions act on the marked rows, else every row shown (filtered):
-	// fleet actions such as fetch, pull, run, empty, purge.
+	// fleet actions such as git, run, empty, purge.
 	All
 	// Marked actions act on the marked rows, and with no marks on none: the
 	// action still runs, with no rows (spec §6.5 Symlinks `a`).

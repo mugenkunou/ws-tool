@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mugenkunou/ws-tool/internal/repo"
 	"github.com/mugenkunou/ws-tool/internal/resource"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
@@ -26,6 +27,9 @@ type Env struct {
 	ExcludeDirs []string
 	ScratchDir  string // absolute
 	LogDir      string // absolute
+	// HistoryFile is where the Repos screen keeps the command lines it ran
+	// (machine-local state). Empty keeps the history in memory only.
+	HistoryFile string
 
 	// Clock is the time source for display-only uses (greetings, ages). Nil
 	// means time.Now; tests pin it.
@@ -70,6 +74,9 @@ func Load(o workspace.PathOverrides) (Env, error) {
 	}
 	if dir, err := wsconfig.ResolvePath(p.Workspace, cfg.Scratch.RootDir); err == nil {
 		e.ScratchDir = dir
+	}
+	if dir, err := wsconfig.StateDir(); err == nil {
+		e.HistoryFile = repo.HistoryFile(dir)
 	}
 	return e, nil
 }

@@ -1,0 +1,30 @@
+ws  Dashboard   Repos   Symlinks   Scratch   Sessions   Ignore   Secrets   Cron   Trash   Skills
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Run in 4 repos
+Runs with sh -c in each repo root; you can untick repos next. Erase `git` to run any command.
+
+› git
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+enter submit • tab complete • esc back

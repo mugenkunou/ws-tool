@@ -121,8 +121,8 @@ func TestCompleteSubcommands(t *testing.T) {
 		},
 		{
 			args:      []string{"repo", ""},
-			wantSome:  []string{"ls", "show", "fetch", "pull", "push", "save", "configure", "run", "root"},
-			wantNone:  []string{"scan", "sync", "add-root", "ls-roots"},
+			wantSome:  []string{"ls", "show", "git", "run", "configure", "root"},
+			wantNone:  []string{"scan", "sync", "add-root", "ls-roots", "fetch", "pull", "push", "save"},
 			directive: compDirectiveNoFileComp,
 		},
 		{
@@ -194,8 +194,8 @@ func TestCompleteCommandFlags(t *testing.T) {
 			wantSome: []string{"--older-than", "--dry-run"},
 		},
 		{
-			args:     []string{"repo", "pull", "--"},
-			wantSome: []string{"--rebase", "--merge", "--dirty", "--path"},
+			args:     []string{"repo", "git", "--"},
+			wantSome: []string{"--yes", "--dirty", "--path"},
 		},
 	}
 

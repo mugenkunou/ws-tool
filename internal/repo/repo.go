@@ -3,7 +3,6 @@ package repo
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -195,46 +194,6 @@ func Scan(workspacePath string, repos []Repository) []RepoStatus {
 		statuses = append(statuses, scanOne(absPath, r.Path))
 	}
 	return statuses
-}
-
-func FetchAll(workspacePath string, repos []Repository) []FetchResult {
-	results := make([]FetchResult, 0, len(repos))
-	for _, r := range repos {
-		absPath := absRepoPath(workspacePath, r.Path)
-		_, err := runGit(absPath, "fetch", "--all", "--prune")
-		if err != nil {
-			results = append(results, FetchResult{Path: r.Path, Success: false, Error: err.Error()})
-			continue
-		}
-		results = append(results, FetchResult{Path: r.Path, Success: true})
-	}
-	return results
-}
-
-// RunOne runs command in one repo; see RunAll.
-func RunOne(workspacePath string, r Repository, command []string) OperationResult {
-	cmd := exec.Command(command[0], command[1:]...)
-	cmd.Dir = absRepoPath(workspacePath, r.Path)
-	cmd.Env = gitEnv()
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	res := OperationResult{Path: r.Path}
-	err := cmd.Run()
-	res.Output = strings.TrimSpace(buf.String())
-	if err == nil {
-		res.Success = true
-		return res
-	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) {
-		res.ExitCode = exitErr.ExitCode()
-		res.Error = fmt.Sprintf("exit %d", res.ExitCode)
-	} else {
-		res.ExitCode = -1
-		res.Error = err.Error()
-	}
-	return res
 }
 
 func FetchOne(workspacePath string, r Repository) FetchResult {

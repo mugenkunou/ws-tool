@@ -260,8 +260,8 @@ synced files live in `~/Workspace` without git. Reality has exceptions:
   even if the git host is down.
 
 For these, both coexist. `.git/` stays out of the sync (the built-in `-:.*` rule), so the
-client syncs the working tree while git tracks history on its own. `ws repo` finds and
-saves such repos (`ws repo save`).
+client syncs the working tree while git tracks history on its own. `ws repo` finds such
+repos and runs git in them (`ws repo git`).
 
 #### VII. Sync scripts, quarantine state
 
@@ -336,8 +336,8 @@ of actions, each with a description and an effect. Each action is offered on its
 
 Why per action:
 
-- **Precision.** `ws repo pull` across 12 repos lets you skip the one with uncommitted
-  changes.
+- **Precision.** `ws repo git pull` across 12 repos lets you skip the one with
+  uncommitted changes.
 - **Partial success.** If action 3 of 5 fails, actions 1 and 2 are already done and 4 and
   5 are still offered. No all-or-nothing rollback is needed.
 - **Muscle memory.** The `y/n/a/q` vocabulary is `git add -p`'s.
@@ -571,8 +571,8 @@ such as `rclone bisync`.
    the same fields as its `--json` records. The Ignore screen also has a view for
    `ignore lint`, and opens on it.
 3. **One meaning per verb.** The glossary (§3.3) is closed. A new command uses a glossary
-   verb, or a domain word that its users already know (git's `fetch`, the trash's
-   `restore`). It never reuses a verb with a different meaning.
+   verb, or a domain word that its users already know (`git` for git command lines, the
+   trash's `restore`). It never reuses a verb with a different meaning.
 4. **No umbrella verbs.** There is no `scan`, `fix`, `reset` or `setup`. A command says what
    it changes: `link`, `allow`, `mute`, `unlink --all`.
 5. **Targets are arguments.** Paths, names or `file:line` anchors. Without targets, a command
@@ -622,12 +622,11 @@ prints help.
 | `prune` | delete rows by age (`--older-than`) | trash |
 | `grep` | search inside contents | session |
 | `run` | execute now | repo (a command in each repo), cron (a job) |
-| `save` | stage and commit everything with a timestamped message, pull, push | repo |
-| `push` | git push, nothing else; for `sync`, copy the workspace into the mirror | repo, pass backup, sync |
+| `git` | run a git command line, as typed, in each repo | repo |
+| `push` | git push, nothing else; for `sync`, copy the workspace into the mirror | pass backup, sync |
 | `lint` | report what isn't hygienic | ignore |
 | `configure` | ask for what a setup is missing, then set it | repo |
 | `apply` | write the declared state into the live system | cron |
-| `fetch`, `pull` | git fetch; git pull (fast-forward, or the rebase or merge you choose) | repo |
 | `link`, `unlink` | point a host path at its workspace copy (the workspace copy wins; also repairs); put the real content back and stop managing it | symlink (`add` is its other direction: the live file wins) |
 | `tag` | label a row | scratch |
 | `record`, `stop` | record a shell session; stop the recording | session |
@@ -646,14 +645,11 @@ glossary.
 RO commands never change anything. RW commands build an action plan (§4.7).
 
 ```text
-ws repo ls [repo…] [--fetch]              RO  repos with status and hygiene findings
+ws repo ls [repo…]                        RO  repos with status and hygiene findings
 ws repo show <repo>                       RO  one repo in full
-ws repo fetch [repo…]                     RW  git fetch
-ws repo pull [repo…] [--rebase|--merge]   RW  git pull; asks rebase or merge where diverged
-ws repo push [repo…]                      RW  git push, nothing else
-ws repo save [repo…] [-m msg] [--rebase|--merge]  RW  stage, commit (timestamped), pull, push
+ws repo git [repo…] -- <git args…>        RW  run a git command in each repo
+ws repo run [repo…] -- <cmd…>             RW  run any command in each repo
 ws repo configure [repo…]                 RW  ask for missing identity, upstream, default branch, credentials
-ws repo run [repo…] -- <cmd…>             RW  run a command in each repo
 ws repo root add <dir>                    RW  add a discovery root
 ws repo root ls                           RO  list discovery roots
 ws repo root rm <dir>                     RW  remove a discovery root
@@ -749,19 +745,22 @@ ws help [noun [verb…]]                    RO  help
 ### 3.5 Renamed and removed commands
 
 Every old name below still works as a hidden alias (§3.1 rule 6), except the interactive
-`ignore fix` and `secret fix`. Those have no single successor: typed, they print the
-commands that replace them and exit 1.
+`ignore fix` and `secret fix`, and the git verbs `repo fetch`, `pull`, `push`, `save` and
+`sync`. Those have no single successor: typed, they print the commands that replace them
+and exit 1. (decision: `ws repo git pull` is plain git, with no fetch first and no
+rebase-or-merge question, so an alias would promise the old behaviour.)
 
 | Old | New |
 | --- | --- |
-| `repo scan` | `repo ls` (add `--fetch` to fetch first) |
+| `repo scan` | `repo ls` (it no longer fetches; `ws repo git fetch` does) |
 | `repo add-root`, `repo ls-roots` | `repo root add`, `repo root ls` |
 | `scratch search` | `scratch ls --filter` (names and tags) |
 | `ignore scan` | `ignore lint` |
 | `ignore scan --expand-suppressed` | `ignore ls --muted` |
 | `repo doctor` | `repo ls` |
 | `config --defaults` | `config show --defaults` |
-| `repo sync` | `repo save` |
+| `repo fetch`, `repo pull`, `repo push` | `repo git fetch`, `repo git pull`, `repo git push` |
+| `repo save`, `repo sync` | `repo git commit -am <msg>`, then `repo git pull`, `repo git push` |
 | `ignore fix` | `ignore add`, `ignore mute`, `scratch add`, or shell `rm` |
 | `secret scan` | `secret ls` |
 | `secret scan --pass` | `pass audit` |
@@ -932,8 +931,8 @@ Exemptions, which run without a plan:
 
 - `session record` (it hands the terminal to a recorded shell, and leaving the shell ends
   it) and `session stop`;
-- `repo fetch` and `repo ls --fetch`, which change only remote-tracking refs, never a branch
-  or the working tree;
+- `repo git` and `repo run` on one repo at a terminal, which hand the terminal to the
+  command, so the line you typed is the confirmation;
 - `cron run`, which crontab lines call, so the command itself is the confirmation;
 - the `edit` commands (`ignore edit`, `config edit`), where the editor is the
   confirmation. `ignore edit` and `config edit` validate before they save.
@@ -993,17 +992,19 @@ command discovers them again by walking the discovery roots in `ws.json` `repo.r
 row pairs the repo's git status (branch, dirty, ahead/behind its upstream) with its hygiene
 findings. The Repos screen shows the same rows.
 
+ws adds discovery, status, hygiene and fleet scope. The verbs are git's own: ws has no
+`pull`, `push` or `save` of its own, and `ws repo git` runs any git command line in the
+selected repos (decision, by the user: the frequent commands come forward through the
+TUI's prompt history, not through dedicated verbs or keys).
+
 | Command | RO/RW | Does | TUI |
 | --- | --- | --- | --- |
-| `ws repo ls [repo…] [--fetch]` | RO | List status and hygiene findings; `--fetch` fetches first | screen |
+| `ws repo ls [repo…]` | RO | List status and hygiene findings | screen |
 | `ws repo show <repo>` | RO | Show one repo in full: status, upstream, every finding | `enter` |
-| `ws repo fetch [repo…]` | RW | `git fetch --all --prune` in each repo | `f` |
-| `ws repo pull [repo…] [--rebase \| --merge]` | RW | Pull each repo; asks rebase or merge where it has diverged | `p` |
-| `ws repo push [repo…]` | RW | Push each repo's commits to its upstream | `:push` |
-| `ws repo save [repo…] [-m <msg>] [--rebase \| --merge]` | RW | Stage and commit everything with a timestamped message, pull, push | `s` |
-| `ws repo configure [repo…]` | RW | Ask for whatever a repo's git setup is missing (identity, upstream, default branch, credentials) and set it | `c` |
-| `ws repo run [repo…] -- <cmd…>` | RW | Run a command in each repo | `r` |
-| `ws repo root add <dir>` | RW | Add a discovery root | `a` |
+| `ws repo git [repo…] -- <git args…>` | RW | Run a git command in each repo | `!`, `:git` |
+| `ws repo run [repo…] -- <cmd…>` | RW | Run any command in each repo | `!` with `git` erased, `:run` |
+| `ws repo configure [repo…]` | RW | Ask for whatever a repo's git setup is missing (identity, upstream, default branch, credentials) and set it | `c`, `:configure` |
+| `ws repo root add <dir>` | RW | Add a discovery root | `:root add` |
 | `ws repo root ls` | RO | List the discovery roots | `:root ls` |
 | `ws repo root rm <dir>` | RW | Remove a discovery root | `:root rm` |
 
@@ -1027,11 +1028,9 @@ work. If one matches no repo, it prints `ws: no repo at <abs path>` and exits `1
 targets count once, and output keeps path order. With no targets, the command covers every
 discovered repo.
 
-**Filter flags.** `ls`, `fetch`, `pull`, `push`, `save`, `configure` and `run` take these. Each flag narrows the
+**Filter flags.** `ls`, `git`, `run` and `configure` take these. Each flag narrows the
 targets further, and all of them must match. A target that a filter removes is left out
-quietly. Filters read the repo state as of the last fetch, except in `pull`, `save` and
-`ls --fetch`, which fetch first and filter afterwards. With `--dry-run`, nothing fetches:
-the plan comes from the last fetch, and says how old it is.
+quietly. Filters read the repo state as of the last fetch (`ws repo git fetch` updates it).
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
@@ -1041,9 +1040,10 @@ the plan comes from the last fetch, and says how old it is.
 | `--behind` | off | Only repos behind their upstream |
 | `--detached` | off | Only repos on a detached HEAD |
 
-**Git.** Commands run one repo at a time. Every git command that ws itself runs uses
-`GIT_TERMINAL_PROMPT=0`, so git never asks for credentials. A repo that needs them fails
-with git's own message.
+**Git.** Commands run one repo at a time. Every git command that ws itself runs (status,
+hygiene, `configure`) uses `GIT_TERMINAL_PROMPT=0`, so git never asks for credentials. A
+repo that needs them fails with git's own message. What `ws repo git` and `ws repo run`
+run follows their own rules (see `ws repo git`).
 
 **Row fields** (`internal/repo/fields.go`; the keys for `--sort`, `--filter`, `--wide` and
 `--json`):
@@ -1075,37 +1075,19 @@ field reports it.
 
 Every finding's detail ends with its fix: `ws repo configure <repo>`.
 
-**Diverged repos.** When a repo and its upstream have both moved, a pull must rebase or
-merge. ws never chooses for you. `pull` and `save` ask once per diverged repo:
-
-```text
-/home/user/Workspace/data/bruno has diverged (2 local, 1 remote commit).
-Pull with [r]ebase, [m]erge, or [s]kip this repo?
-```
-
-`--rebase` or `--merge` answers for every repo ahead of time. Without a terminal (cron,
-pipes, `--quiet`, `--json`), and without one of those flags, a diverged repo is skipped
-with the reason `diverged: choose --rebase or --merge`. A fast-forward needs no choice. A
-failed rebase or merge is aborted, so no repo is left half-way, and the action fails.
-
 #### `ws repo ls`
 
 ```text
-ws repo ls [repo…] [--fetch] [--check <id>]… [filter flags] [--sort f] [--filter expr] [--wide]
+ws repo ls [repo…] [--check <id>]… [filter flags] [--sort f] [--filter expr] [--wide]
 ```
 
-This lists the selected repos with their status and hygiene findings, one row per repo. By
-default it reads only local state and touches no repo. With `--fetch`, it first runs
-`git fetch --all --prune` in every target repo, then reads status, then applies the filter
-flags. A failed fetch prints `ws: fetch failed: <path>: <git error>` on stderr. The repo
-still appears in the list, with its counts from the last successful fetch. A fetch has no
-plan and no prompt (decision) because it changes only remote-tracking refs. Hygiene checks
-run last, so `fetch-staleness` reflects the fetch. `--dry-run` skips the fetch. With no
+This lists the selected repos with their status and hygiene findings, one row per repo. It
+reads only local state and touches no repo: the ahead and behind counts are as of the last
+fetch (decision: fetching is `ws repo git fetch`, so `ls` never needs the network). With no
 targets, it lists every discovered repo.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--fetch` | off | Fetch each target repo before reading its status |
 | `--check <id>` | all | Run only this hygiene check (repeatable). An unknown id is an error that lists the valid ones. |
 | filter flags | — | See "Selecting repos" |
 | `--sort`, `--filter`, `--wide` | — | The shared list flags, over the row fields |
@@ -1122,17 +1104,15 @@ REPO                                     STATE        ↑  ↓  ISSUES  BRANCH
 
 If nothing matches, it prints `No repositories found.` In `--json` the command is `repo.ls`,
 and `data` holds the records:
-`{"statuses": [row…], "findings": [{"repo", "check", "severity", "detail"}…], "fetch_warnings": ["<path>: <error>"…]}`.
-`findings` includes `info` findings and is `[]` when there are none. `fetch_warnings` is
-present only after `--fetch` when a fetch failed.
+`{"statuses": [row…], "findings": [{"repo", "check", "severity", "detail"}…]}`.
+`findings` includes `info` findings and is `[]` when there are none.
 
 Exit: `0`, including when repos are dirty or have findings. `1` on a bad flag, an unknown
-check, an unknown target, or no `git` in PATH. `3` when `--fetch` could not fetch some repo
-(the list still prints) (decision).
+check, an unknown target, or no `git` in PATH.
 
-TUI: the Repos screen is this list. It opens without fetching, `f` fetches, and `ctrl+r`
-reads status again without fetching. The status line sums the fleet:
-`4 repos · 1 dirty · 1 ahead · 1 behind · 1 issue`, plus `N fetch failed` after a fetch.
+TUI: the Repos screen is this list. `ctrl+r` reads status again, and so does the end of
+every command run from the screen. The status line sums the fleet:
+`4 repos · 1 dirty · 1 ahead · 1 behind · 1 issue`.
 
 #### `ws repo show`
 
@@ -1165,123 +1145,8 @@ With no findings, the section reads `Hygiene  none`. In `--json` the command is
 Exit: `0`. `1` when `<repo>` is missing, more than one is given, or it is not a discovered
 repo.
 
-TUI: `enter` on a row opens this view as the detail level. `esc` goes back. The TUI adds one
-line, `Last fetch  failed: <error>`, when the last fetch of this repo during the session
-failed (decision: the TUI shows only this repo's failure, not the whole fleet's). `d` shows
-every field of the row, and `y` shows the row as JSON.
-
-#### `ws repo fetch`
-
-```text
-ws repo fetch [repo…] [filter flags]
-```
-
-This runs `git fetch --all --prune` in each selected repo. It updates only remote-tracking
-refs. Branches and the working tree stay as they are. There is no plan and no prompt
-(decision: a documented exemption, like `ls --fetch`). `--dry-run` prints
-`Would fetch <path>` for each repo and fetches nothing. With no targets, it fetches every
-discovered repo.
-
-Output: one line per repo, `✔ <path> fetched` or `✘ <path> failed: <git error>`. In
-`--json` the command is `repo.fetch`, and `data` is `[{"path", "success", "error"}…]`.
-
-Exit: `0` when every fetch succeeds, `3` when some fail, `1` when all fail (decision).
-
-TUI: `f` fetches the marked repos, else every repo the filter shows, then reads status
-again. The status line shows `Fetching N repos…` while it runs. Failures are counted in the
-status line and shown in each repo's detail.
-
-#### `ws repo pull`
-
-```text
-ws repo pull [repo…] [--rebase | --merge] [filter flags]
-```
-
-This brings each selected repo up to date with its upstream. ws fetches first, then plans
-one action per repo that is behind. A repo that is only behind is fast-forwarded
-(`git pull --ff-only`). A diverged repo is pulled with the strategy you choose for it (see
-"Diverged repos"). Repos that cannot be pulled are left out, and ws prints
-`Skipped: <path> (<reason>)` for each: `error: <git error>`, `detached HEAD`,
-`no upstream (ws repo configure sets one)`, `fetch failed: <git error>`, or
-`diverged: choose --rebase or --merge`. Uncommitted changes stay as they are. If git
-refuses because they would be overwritten, the action fails with git's message. With no
-targets, it covers every discovered repo.
-
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--rebase` | — | rebase diverged repos, without asking |
-| `--merge` | — | merge diverged repos, without asking |
-| filter flags | — | See "Selecting repos" |
-
-Plan: `Pull <path> (3 behind, fast-forward)` or `Pull <path> (diverged, rebase)`, one per
-repo, pre-checked. `--dry-run` asks and prints the plan, planned from the last fetch (it
-fetches nothing). In `--json` the command is `repo.pull`, and `data` is `{"actions": […], "skipped": [{"path", "reason"}…]}`.
-
-Exit: `0`, `1` (every action failed, or a bad flag or target), `3` (some failed).
-
-TUI: `p` fetches the marked repos (else every repo the filter shows), asks rebase or merge
-for each diverged one in a chooser, then opens the checklist `Pull N repos`.
-
-#### `ws repo push`
-
-```text
-ws repo push [repo…] [filter flags]
-```
-
-This pushes each selected repo's commits to its upstream. It does nothing else: it
-does not commit, fetch or pull. ws plans one action per repo that is ahead of its upstream,
-`Push <path> (2 ahead)`. Repos that cannot be pushed are skipped with a reason:
-`behind or diverged: pull first (or ws repo save)`, `no upstream (ws repo configure sets
-one)`, `detached HEAD`, `nothing to push`. Uncommitted changes are not pushed, and the
-command says so per repo (`3 uncommitted changes stay local`). With no targets, it covers
-every discovered repo. ws never force-pushes.
-
-Plan: one action per repo, pre-checked. In `--json` the command is `repo.push`, and `data` is
-`{"actions": […], "skipped": [{"path", "reason"}…]}`.
-
-Exit: `0`, `1`, `3`.
-
-TUI: `:push` acts on the marked repos, else every repo the filter shows. The checklist
-lists the repos that are ahead.
-
-#### `ws repo save`
-
-```text
-ws repo save [repo…] [-m <message>] [--rebase | --merge] [filter flags]
-```
-
-This is for repos you edit in one place, such as `data/bruno`: one command saves
-your work and takes it to the remote. For each selected repo, in order:
-
-1. **Commit.** If the repo has changes, ws stages everything (`git add -A`, untracked files
-   included) and commits with a timestamped message,
-   `ws save 2026-10-22 14:05 (laptop)` (the local time and the host name), or with `-m`.
-2. **Pull.** ws fetches. If the upstream has moved, a fast-forward or the strategy you chose
-   brings the repo up to date (see "Diverged repos").
-3. **Push.** If the repo is now ahead, ws pushes.
-
-A repo with nothing to commit, pull or push gets no action. Repos are skipped, with a
-reason, on a detached HEAD, without an upstream (`ws repo configure sets one`), on a
-failed fetch, or when diverged without a choice. The commit stays when a later step fails,
-so no work is lost, and the message names the step that failed:
-`pull failed: <git error>` or `push failed: <git error>`.
-
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `-m <message>` | `ws save <date time> (<host>)` | the commit message |
-| `--rebase`, `--merge` | ask | the strategy for diverged repos |
-| filter flags | — | See "Selecting repos" |
-
-Plan: one action per repo, pre-checked, naming every step:
-`Save /home/user/Workspace/data/bruno: commit 3 changes, pull (fast-forward), push`.
-`--dry-run` asks and prints the plan, planned from the last fetch. In `--json` the command
-is `repo.save`, and
-`data` is `{"actions": […], "skipped": [{"path", "reason"}…]}`.
-
-Exit: `0`, `1`, `3`.
-
-TUI: `s` fetches the marked repos (else every repo the filter shows), asks rebase or merge
-for each diverged one, then opens the checklist `Save N repos`.
+TUI: `enter` on a row opens this view as the detail level. `esc` goes back. In it, `!` and
+`c` act on this one repo. `d` shows every field of the row, and `y` shows the row as JSON.
 
 #### `ws repo configure`
 
@@ -1311,43 +1176,89 @@ Exit: `0`, `1`, `3`.
 TUI: `c` hands the terminal to `ws repo configure` for the marked repos, else the cursor
 repo (§6.8), and the screen refreshes afterwards.
 
-#### `ws repo run`
+#### `ws repo git`
 
 ```text
-ws repo run [repo…] [filter flags] -- <cmd> [arg…]
+ws repo git [repo…] [-y] [filter flags] -- <git args…>
+ws repo git [-y] [filter flags] <git args…>
 ```
 
-This runs a command in each selected repo, with the repo root as its working directory.
-Everything after `--` is the command, and the arguments before it are repo targets. Without
-`--`, every positional argument is the command and there are no targets (decision). The CLI runs the command directly, not through a shell. Use
-`sh -c '…'` for pipes. Stdin is not connected. ws captures stdout and stderr together. The
-plan has one action per repo, `Run in <path>`. The CLI prompts for each one, and the TUI
-pre-checks all of them. A non-zero exit fails that action. With no targets, the command runs
-in every discovered repo. Without a command, ws prints `usage: ws repo run [repo…] -- <cmd…>`
-and exits 1.
+This runs `git <git args…>` in each selected repo, with the repo root as its working
+directory. ws adds nothing to the command: `ws repo git pull --rebase` is `git pull
+--rebase`, in every repo. With no targets, it runs in every discovered repo.
+
+**Arguments.** With `--`, the words before it are repo targets and ws flags, in any order,
+and everything after it goes to git as typed (a second `--`, as in `log -- <path>`, stays
+git's). Without `--`, ws's flags come first, and the first other word starts the git
+command, so git keeps its own flags (`ws repo git log --oneline -3`) and there are no
+targets (decision: the flag-first form is the short one for the whole fleet). A path is a
+target only before `--`. Without git args, ws prints
+`usage: ws repo git [repo…] -- <git args…>` and exits 1.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
+| `-y`, `--yes` | off | run in every repo without asking |
 | filter flags | — | See "Selecting repos" |
+
+**One repo on a terminal.** When the targets and filters leave one repo, and stdin and
+stdout are a terminal (not `--json`, `--quiet` or `--dry-run`), git runs on the terminal
+as if you had typed it in the repo: its own output, pager, editor and prompts work, so
+`commit`, `rebase -i` and `add -p` behave as usual. There is no plan and no prompt; the
+line you typed is the confirmation. Exit: `0` when git exits 0, else `1`.
+
+**Several repos, or no terminal.** The plan has one action per repo, `Run in <path>`,
+confirmed as usual (`y/n/a/q`; `a` takes the rest, `-y` asks nothing). Each repo runs in
+turn with stdin not connected and stdout and stderr captured together. git gets
+`GIT_TERMINAL_PROMPT=0`, so it never asks for credentials, and `GIT_EDITOR=true`, so an
+editor it would open accepts what is there: a merge or rebase goes on with its default
+message, and `commit` without `-m` aborts on the empty message instead of waiting
+(decision). A non-zero exit fails that action.
 
 Output: after each action line, the command's output, indented (decision).
 
 ```text
-$ ws repo run --dirty -- git status --short
+$ ws repo git --dirty -y status --short
   ✔ Run in /home/user/Workspace/notes/second-brain
       M index.md
 ```
 
-`--dry-run` prints the actions and runs nothing. In `--json` the command is `repo.run`, and
+`--dry-run` prints the actions and runs nothing. In `--json` the command is `repo.git`, and
 `data` is
 `{"command": [arg…], "actions": [{"id", "status", "error"}…], "results": [{"path", "exit_code", "output"}…]}`.
 
-Exit: `0`, `1`, or `3`, as for `pull`.
+Exit: `0`, `1` (every action failed, or a bad flag or target), or `3` (some failed).
 
-TUI: `r` asks for a command line and runs it with `sh -c`. The prompt applies to the marked
-repos, else to every repo the filter shows. A checklist follows, where repos can be
-unticked. When it finishes, the output view shows `✔` or `✘ (exit N)` and the output for
-each repo that ran, failures included. `esc` goes back to the list.
+TUI: `!` opens the command prompt pre-filled with `git `, for the marked repos, else every
+repo the filter shows; in a repo's detail, for that repo. `:git <args…>` runs without the
+prompt. The prompt:
+
+- `↑` and `↓` step through the lines run from the screen before, the most recent first.
+- Its suggestions start with the lines run before that begin with what is typed, the
+  most run first, so `tab` completes the command you use most. Then come git subcommands
+  after `git `, and after the subcommand the branches, tags and remotes of the repos it is
+  for.
+- The history is machine-local: `$XDG_STATE_HOME/ws-tool/repo-history.json`, at most 200
+  lines, the least recently run dropped first.
+
+The line runs with `sh -c` in each repo root. One repo gets the terminal (§6.8), and the
+screen waits for `enter` before it redraws. Several repos go through the checklist, where
+repos can be unticked; then the output view shows `✔` or `✘ (exit N)` and the output for
+each repo that ran. `esc` goes back to the list, which is read again.
+
+#### `ws repo run`
+
+```text
+ws repo run [repo…] [-y] [filter flags] -- <cmd> [arg…]
+ws repo run [-y] [filter flags] <cmd> [arg…]
+```
+
+This is `ws repo git` for any command: the same arguments, rules and output, without the
+`git` in front. The CLI runs the command directly, not through a shell. Use `sh -c '…'` for
+pipes. Without a command, ws prints `usage: ws repo run [repo…] -- <cmd…>` and exits 1. In
+`--json` the command is `repo.run`.
+
+TUI: erase the `git ` in the `!` prompt, or type `:run <cmd…>` (bare `:run` opens the
+prompt empty).
 
 #### `ws repo root add`
 
@@ -1367,9 +1278,9 @@ Output: the prompt line. `--dry-run` prints the action. In `--json` the command 
 
 Exit: `0`. `1` on a missing, non-directory, outside or duplicate path, or a failed write.
 
-TUI: `a` asks for a directory, with directory completion and a hint listing the current
-roots. A one-action checklist follows. Afterwards the list is read again over the new
-roots.
+TUI: `:root add <dir>` opens the one-action checklist. Bare `:root add` asks for a directory,
+with directory completion and a hint listing the current roots. Afterwards the list is
+read again over the new roots.
 
 #### `ws repo root ls`
 
@@ -3346,7 +3257,7 @@ Each job is installed on its own. `mega-sync` suits MEGA; with another sync clie
 install `pass-backup` alone, plus `sync-push` for a mirror client such as WorkDrive (§2.6).
 
 **Retired names.** `secret-scan`, `ignore-scan`, `repo-sync` (nothing should commit your
-work unattended; use `ws repo save`) and `session-prune` (use `ws session rm --older-than`) are retired. `cron add` rejects them (`cron job
+work unattended; run `ws repo git` yourself) and `session-prune` (use `ws session rm --older-than`) are retired. `cron add` rejects them (`cron job
 "repo-sync" was removed`), `cron rm` still removes their blocks, and `cron run` skips
 them silently and exits 0, so a crontab line written earlier keeps working (see below).
 
@@ -4330,7 +4241,7 @@ describing, JSON and marks work identically everywhere.
 | none | no rows | `a`, wizards, prompts that are not about a row |
 | cursor | the cursor row | `enter`, `e`, prompts about one row |
 | selected | the marked rows, else the cursor row | `ctrl+d`, `t`, `i`, `m`, `a` (allow), `r` (restore) |
-| shown | the marked rows, else every row the filter shows | fleet actions: fetch, pull, save, run, link |
+| shown | the marked rows, else every row the filter shows | fleet actions: `!` (git), link |
 
 A key with no rows to act on does nothing. Every action that changes something opens the
 checklist (§6.7) first. Nothing applies directly from a key.
@@ -4348,9 +4259,9 @@ Each key is shown with its label, never as a bare letter.
 ### 6.5 Screen keys
 
 Screen keys are lowercase and mnemonic: usually the first letter of the verb the footer
-shows (`f` fetch, `i` ignore, `b` back up, `m` mute). A letter keeps one meaning on a screen,
-but may mean different verbs on different screens (`r` runs on Repos and Cron, records on
-Sessions, and restores on Trash), as in k9s. Global keys never change meaning. The `:`
+shows (`i` ignore, `b` back up, `m` mute, `l` link). A letter keeps one meaning on a screen,
+but may mean different verbs on different screens (`r` runs on Cron, records on Sessions,
+and restores on Trash), as in k9s. Global keys never change meaning. The `:`
 commands are listed with each screen. They are the CLI's words after the noun.
 
 **Dashboard.** The workspace's home: a greeting, **Needs attention** (errors, then
@@ -4373,15 +4284,15 @@ pre-fills `:symlink add ~/.password-store --dir`.
 
 | Key | Does | Rows |
 | --- | --- | --- |
-| `enter` | `repo show`: status, upstream, hygiene findings, last fetch failure | cursor |
-| `f` | fetch | shown |
-| `p` | pull: fetch, ask rebase or merge for each diverged repo, then the checklist | shown |
-| `s` | save: commit everything (timestamped), pull (asking where diverged), push | shown |
-| `r` | run a command: prompt, checklist, then an output view | shown |
+| `!` | the command prompt, pre-filled with `git ` (`repo git`; erase `git ` for `repo run`): history on `↑` `↓`, the most-run line first in its suggestions. One repo gets the terminal; more go through the checklist, then the output view | shown |
 | `c` | configure: hand the terminal to `ws repo configure` (identity, upstream, …) | selected |
-| `a` | add a discovery root (prompt with directory completion) | none |
+| `enter` | `repo show`: status, upstream, hygiene findings. In it, `!` and `c` act on that repo | cursor |
 
-`:` commands: `push`, `root ls`, `root rm <dir>`, `ls --fetch`.
+There is no key per git verb (decision, by the user): `git pull`, `git push`, `git fetch`
+are a line in the prompt, and the history puts the ones you run most first.
+
+`:` commands: `git <args…>`, `run <cmd…>` (bare, either opens the prompt), `configure`,
+`root add [<dir>]`, `root ls`, `root rm [<dir>]`.
 
 **Symlinks**
 
@@ -4521,12 +4432,11 @@ the dialog, so typing `q` or `2` into a prompt works.
 | Dialog | Keys |
 | --- | --- |
 | Prompt | type; `tab` completes; `enter` submits; `esc` cancels |
-| Chooser | `↑` `↓`, or an option's letter (`r` rebase, `m` merge, `s` skip); `enter` chooses; `esc` cancels the whole command, so nothing runs |
+| Chooser | `↑` `↓`, or an option's letter where it has one; `enter` chooses; `esc` cancels the whole command, so nothing runs |
 | Checklist | `↑` `↓`; `space` toggles an action; `ctrl+a` toggles all; `enter` applies; `esc` cancels. While running, keys wait. When done, `enter` or `esc` closes. |
 
-A choice ws must not make for you, such as rebase or merge for a diverged repo, is asked in a
-chooser before the checklist (`[r]ebase`, `[m]erge`, `[s]kip`), one repo at a time. It is
-never guessed and never a second key.
+A choice ws must not make for you, such as the tool a skill is installed into, is asked in
+a chooser before the checklist. It is never guessed and never a second key.
 
 The checklist is the action plan (§4.7): one line per action, pre-checked as the CLI
 would do them, except destructive plans (`unlink --all`, `trash empty`), which start
@@ -4541,6 +4451,9 @@ runs them, and resumes and refreshes the screen when they exit.
 - **Interactive programs:** `session record` (the recorded shell), and terminal editors for
   `e` and the `edit` commands, `config edit` included (your editor, §4.10, default `vim`).
   GUI editors (for example `code`) are launched without suspending.
+- **A command line in one repo:** the Repos `!` prompt (or `:git`, `:run`) for one repo runs
+  on the terminal, so git's pager, editor and prompts work. The terminal waits for `enter`
+  before the TUI redraws.
 - **CLI wizards:** `init` (the setup screen), `repo configure`,
   `pass init`, `pass backup enable`, `credential enable`, `credential disable`.
 - **sudo:** symlink actions on sudo entries run in the terminal, so sudo can ask for a
@@ -4683,7 +4596,7 @@ too rigid, not a reason to force the screen into it.
   `ws <noun> ls` prints exactly that screen's rows. A TUI action is the CLI command with the
   rows as its targets, so the two cannot disagree about what a verb does.
 - **A closed verb glossary** (§3.3). Each verb means one thing everywhere. Domain words win
-  where the domain has them (git's `fetch` and `pull`, the trash's `restore` and `empty`,
+  where the domain has them (`git` for git command lines, the trash's `restore` and `empty`,
   `link` and `unlink` for symlinks, `allow` for false positives, `mute` for warnings, `apply`
   for writing declared state into the live system). Where two copies can conflict, the verb
   names the direction: `symlink add` keeps the live file, `symlink link` keeps the workspace
@@ -4735,9 +4648,9 @@ for run, record and restore).
   they existed only to turn exit code 2 into a notification, or to commit work unattended.
 - Commands that fill gaps: `trash restore`, `repo root rm`, `ignore rm`,
   `scratch add`, `config edit`, `session show|grep`, `secret show`.
-- `repo push` pushes only, and `repo save` commits with a timestamped message, pulls and
-  pushes. ws never chooses rebase or merge for a diverged repo: it asks, or skips the repo
-  when it can't ask. `repo configure` asks for what a repo's setup is missing.
+- `repo git` runs a git command line as typed in each repo, and ws has no git verbs of its
+  own (the earlier `repo fetch|pull|push|save` were removed). `repo configure` asks for what
+  a repo's setup is missing.
 - `ignore lint` reports sync warnings, and `ignore ls` lists what doesn't sync. `mute` only
   hides warnings and never changes what syncs.
 - The editor is one setting (§4.10), and `ws.json` always holds every key (§2.3).
@@ -4972,7 +4885,7 @@ make build VERSION=v0.2.0
 add or rename one:
 
 1. **Use a glossary verb with exactly its meaning** (§3.3), or a domain word its users
-   already know (git's `fetch`, the trash's `restore`). If neither fits, extend the glossary
+   already know (`git`, the trash's `restore`). If neither fits, extend the glossary
    in this document in the same change, and say why in the commit.
 2. **No umbrella verbs:** never `scan`, `fix`, `reset`, `setup`, `manage` or `do`. Name what
    changes.
@@ -5030,7 +4943,7 @@ yes to this and no to the next?
 | Command type | Granularity |
 | --- | --- |
 | Per-file operations (`init`, `symlink add`, `symlink unlink`) | one action per file |
-| Fleet operations (`repo fetch\|pull\|push\|save\|run`) | one action per repo |
+| Fleet operations (`repo git\|run`) | one action per repo |
 | Cleanup operations (`session rm --older-than`, `trash prune`) | one action per item removed |
 | Single-mutation commands (`repo root add`) | one action in total |
 
@@ -5101,7 +5014,7 @@ The rules are §4.5. The contributor checklist:
 
 Every command that acts on rows accepts positional targets (§3.1 rule 5), so you can act on
 one repo after `ws repo ls` shows which needs attention. A path target is matched as an
-absolute path: `ws repo save data/bruno` works only from the workspace root, and a path pasted
+absolute path: `ws repo git data/bruno -- status` works only from the workspace root, and a path pasted
 from `ws repo ls` always works. Targets and `--path` are complementary: `--path` is a prefix
 filter and a target is an exact match, and both may be used together. Tab completion offers
 the rows' absolute paths (repos, symlink host paths) or names (scratch, sessions, cron
@@ -5194,8 +5107,8 @@ for the same verb share one `Do`.
 - **Write actions.** Every mutation goes through a `plan.Plan` shown in the `confirm`
   checklist, one action per independently meaningful mutation (§9.6). Pre-check what the CLI
   would do by default (`WithChecked`), and start destructive plans (`symlink unlink --all`,
-  `trash empty`) unchecked. A choice ws must not make for the user (rebase or merge for a
-  diverged repo) is asked in a `choose` dialog before the checklist, never guessed and never a
+  `trash empty`) unchecked. A choice ws must not make for the user (the tool a skill goes
+  into) is asked in a `choose` dialog before the checklist, never guessed and never a
   second key. After `DoneMsg`, notify with `confirm.Summary` and reload.
 - **Dialogs.** A screen keeps one `modal.Model`. Open a dialog with a typed `step` constant. In
   `Update`, first `if st, ok := m.modal.Match(msg)` to handle results, then forward to the modal

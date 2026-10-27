@@ -59,7 +59,7 @@ func TestDiscoverAndScan(t *testing.T) {
 	}
 }
 
-func TestFetchAllNoRemotePartial(t *testing.T) {
+func TestFetchOneUnreachableRemote(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
@@ -72,15 +72,11 @@ func TestFetchAllNoRemotePartial(t *testing.T) {
 	runGitCmd(t, repoPath, "init")
 	runGitCmd(t, repoPath, "remote", "add", "origin", "https://127.0.0.1:9/non-existent/repo.git")
 
-	repos := []Repository{{Path: "repo"}}
-	results := FetchAll(ws, repos)
-	if len(results) != 1 {
-		t.Fatalf("expected one fetch result, got %d", len(results))
-	}
-	if results[0].Success {
+	result := FetchOne(ws, Repository{Path: "repo"})
+	if result.Success {
 		t.Fatal("expected fetch to fail with unreachable remote")
 	}
-	if strings.TrimSpace(results[0].Error) == "" {
+	if strings.TrimSpace(result.Error) == "" {
 		t.Fatal("expected fetch error message")
 	}
 }

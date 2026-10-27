@@ -78,7 +78,7 @@ func TestAliasRewrites(t *testing.T) {
 		in   []string
 		want []string
 	}{
-		{"repo scan fetches", []string{"repo", "scan"}, []string{"repo", "ls", "--fetch"}},
+		{"repo scan", []string{"repo", "scan"}, []string{"repo", "ls"}},
 		{"repo scan --no-fetch", []string{"repo", "scan", "--no-fetch", "--dirty"}, []string{"repo", "ls", "--dirty"}},
 		{"repo doctor", []string{"repo", "doctor"}, []string{"repo", "ls"}},
 		{"repo add-root", []string{"repo", "add-root", "/x"}, []string{"repo", "root", "add", "/x"}},

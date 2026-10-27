@@ -27,4 +27,4 @@ ws  Dashboard   Repos   Symlinks   Scratch   Sessions   Ignore   Secrets   Cron 
 
 
 
-:▏push   root ls · root rm · ls --fetch · dashboard · repo · repos · symlink · symlinks · scratch ·
+:▏git   run · configure · root add · root ls · root rm · dashboard · repo · repos · symlink · symlin

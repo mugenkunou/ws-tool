@@ -27,4 +27,4 @@ warn  identity user.email not set
 
 
 
-↑/k scroll up • ↓/j scroll down • esc back • ctrl+r refresh • : command • ? help • q quit
+! git • c config • ↑/k scroll up • ↓/j scroll down … • ctrl+r refresh • : command • ? help • q quit

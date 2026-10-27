@@ -51,10 +51,13 @@ func WS(p workspace.Paths, args ...string) *exec.Cmd {
 }
 
 // Pause wraps c so the terminal waits for enter after it exits, letting the
-// user read its output before the TUI redraws.
+// user read its output before the TUI redraws. c's directory and environment
+// carry over.
 func Pause(c *exec.Cmd) *exec.Cmd {
 	script := `"$@"; status=$?; printf '\n[ws] exit %s — press enter to return to the TUI ' "$status"; read _; exit $status`
-	return exec.Command("sh", append([]string{"-c", script, "sh", c.Path}, c.Args[1:]...)...)
+	p := exec.Command("sh", append([]string{"-c", script, "sh", c.Path}, c.Args[1:]...)...)
+	p.Dir, p.Env = c.Dir, c.Env
+	return p
 }
 
 // Editor opens path with the editor named by editorCmd (ws.json "editor"; it

@@ -53,9 +53,15 @@ var aliasLive = map[string]bool{
 
 // aliases is every row of spec §3.5.
 var aliases = []alias{
-	{Old: []string{"repo", "scan"}, New: []string{"repo", "ls"}, Hint: "repo ls --fetch", Rewrite: repoScanRewrite},
+	{Old: []string{"repo", "scan"}, New: []string{"repo", "ls"}, Rewrite: repoScanRewrite},
 	{Old: []string{"repo", "doctor"}, New: []string{"repo", "ls"}},
-	{Old: []string{"repo", "sync"}, New: []string{"repo", "save"}},
+	// The fleet verbs became plain git, which behaves differently enough
+	// (no fetch first, no rebase-or-merge question) that an alias would mislead.
+	{Old: []string{"repo", "fetch"}, Removed: `ws: "repo fetch" is gone: use ws repo git fetch`},
+	{Old: []string{"repo", "pull"}, Removed: `ws: "repo pull" is gone: use ws repo git pull`},
+	{Old: []string{"repo", "push"}, Removed: `ws: "repo push" is gone: use ws repo git push`},
+	{Old: []string{"repo", "save"}, Removed: `ws: "repo save" is gone: use ws repo git, e.g. ws repo git commit -am <msg>, then ws repo git push`},
+	{Old: []string{"repo", "sync"}, Removed: `ws: "repo sync" is gone: use ws repo git, e.g. ws repo git pull, then ws repo git push`},
 	{Old: []string{"repo", "add-root"}, New: []string{"repo", "root", "add"}},
 	{Old: []string{"repo", "ls-roots"}, New: []string{"repo", "root", "ls"}},
 
@@ -193,13 +199,9 @@ func dropFlag(args []string, name string) []string {
 	return slices.DeleteFunc(slices.Clone(args), func(a string) bool { return a == name })
 }
 
-// repoScanRewrite: `repo scan` fetched by default, `--no-fetch` skipped it.
+// repoScanRewrite: `repo scan [--no-fetch]` is `repo ls`, which never fetches.
 func repoScanRewrite(rest []string, _ *globalFlags) ([]string, bool) {
-	words := []string{"repo", "ls"}
-	if slices.Contains(rest, "--no-fetch") {
-		return append(words, dropFlag(rest, "--no-fetch")...), true
-	}
-	return append(append(words, "--fetch"), rest...), true
+	return append([]string{"repo", "ls"}, dropFlag(rest, "--no-fetch")...), true
 }
 
 // expandForAlias resolves a path argument the way every command does: `~`

@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -258,7 +257,7 @@ func TestRepoLsNoRepos(t *testing.T) {
 	}
 }
 
-func TestRepoLsDoesNotFetchByDefault(t *testing.T) {
+func TestRepoLsNeverFetches(t *testing.T) {
 	p := newPair(t)
 	p.remoteCommit(t, "n.txt", "n\n")
 	if hasFetchHead(p.a) {
@@ -269,7 +268,7 @@ func TestRepoLsDoesNotFetchByDefault(t *testing.T) {
 		t.Fatalf("%d %s", r.code, r.err)
 	}
 	if hasFetchHead(p.a) {
-		t.Fatal("ls without --fetch must not touch the repo")
+		t.Fatal("ls must not touch the repo")
 	}
 	var data struct {
 		Statuses []map[string]any `json:"statuses"`
@@ -279,72 +278,6 @@ func TestRepoLsDoesNotFetchByDefault(t *testing.T) {
 		t.Fatal("not fetched yet: behind should still be 0")
 	}
 
-	r = wsExec(t, "", "--workspace", p.ws, "--json", "repo", "ls", "--fetch")
-	if r.code != 0 {
-		t.Fatalf("%d %s", r.code, r.err)
-	}
-	decode(t, r, &data)
-	if data.Statuses[0]["behind"].(float64) != 1 {
-		t.Fatalf("--fetch should find the remote commit: %v", data.Statuses[0])
-	}
-	if !hasFetchHead(p.a) {
-		t.Fatal("--fetch must fetch")
-	}
-}
-
-func TestRepoLsFetchFailureExits3AndStillLists(t *testing.T) {
-	ws := repoWorkspace(t)
-	good := mkRepo(t, filepath.Join(ws, "good"))
-	mkRemote(t, good)
-	bad := mkRepo(t, filepath.Join(ws, "bad"))
-	runGitLocal(t, bad, "remote", "add", "origin", filepath.Join(t.TempDir(), "missing.git"))
-
-	r := wsExec(t, "", "--workspace", ws, "--no-color", "repo", "ls", "--fetch")
-	if r.code != 3 {
-		t.Fatalf("exit %d, want 3\nstdout: %s\nstderr: %s", r.code, r.out, r.err)
-	}
-	if !strings.Contains(r.err, "ws: fetch failed: "+bad+": ") {
-		t.Fatalf("stderr: %q", r.err)
-	}
-	if !strings.Contains(r.out, bad) || !strings.Contains(r.out, good) {
-		t.Fatalf("both repos are listed:\n%s", r.out)
-	}
-
-	r = wsExec(t, "", "--workspace", ws, "--json", "repo", "ls", "--fetch")
-	if r.code != 3 {
-		t.Fatalf("json exit %d", r.code)
-	}
-	var data struct {
-		Warnings []string `json:"fetch_warnings"`
-	}
-	decode(t, r, &data)
-	if len(data.Warnings) != 1 || !strings.HasPrefix(data.Warnings[0], bad+": ") {
-		t.Fatalf("fetch_warnings: %v", data.Warnings)
-	}
-
-	// --dry-run skips the fetch, and so the failure.
-	if err := os.Remove(filepath.Join(good, ".git", "FETCH_HEAD")); err != nil {
-		t.Fatal(err)
-	}
-	r = wsExec(t, "", "--workspace", ws, "--dry-run", "repo", "ls", "--fetch")
-	if r.code != 0 || r.err != "" {
-		t.Fatalf("dry-run: %d %q", r.code, r.err)
-	}
-	if hasFetchHead(good) {
-		t.Fatal("--dry-run must not fetch")
-	}
-}
-
-func TestRepoLsUnknownTargetFailsBeforeFetch(t *testing.T) {
-	p := newPair(t)
-	nowhere := filepath.Join(p.ws, "nowhere")
-	r := wsExec(t, "", "--workspace", p.ws, "repo", "ls", "--fetch", p.a, nowhere)
-	if r.code != 1 || strings.TrimSpace(r.err) != "ws: no repo at "+nowhere {
-		t.Fatalf("%d %q", r.code, r.err)
-	}
-	if hasFetchHead(p.a) {
-		t.Fatal("a bad target must stop everything before any fetch")
-	}
 }
 
 func TestRepoTargetRules(t *testing.T) {
@@ -566,19 +499,13 @@ func TestRepoOldNamesAreAliases(t *testing.T) {
 	p := newPair(t)
 	p.remoteCommit(t, "n.txt", "n\n")
 
-	// scan fetches; its hint names the new command.
+	// scan is ls, which never fetches.
 	r := wsExec(t, "", "--workspace", p.ws, "repo", "scan")
-	if r.code != 0 || !strings.Contains(r.err, `ws: "repo scan" is now "repo ls --fetch"`) {
+	if r.code != 0 || !strings.Contains(r.err, `ws: "repo scan" is now "repo ls"`) || !strings.Contains(r.out, p.a) {
 		t.Fatalf("scan: %d %q", r.code, r.err)
 	}
-	if !hasFetchHead(p.a) || !strings.Contains(r.out, p.a) {
-		t.Fatalf("repo scan must fetch and list:\n%s", r.out)
-	}
-
-	other := newPair(t)
-	r = wsExec(t, "", "--workspace", other.ws, "repo", "scan", "--no-fetch")
-	if r.code != 0 || hasFetchHead(other.a) {
-		t.Fatalf("scan --no-fetch must not fetch: %d", r.code)
+	if r = wsExec(t, "", "--workspace", p.ws, "repo", "scan", "--no-fetch"); r.code != 0 || hasFetchHead(p.a) {
+		t.Fatalf("scan --no-fetch: %d %q", r.code, r.err)
 	}
 
 	r = wsExec(t, "", "--workspace", p.ws, "repo", "doctor")
@@ -598,17 +525,6 @@ func TestRepoOldNamesAreAliases(t *testing.T) {
 	r = wsExec(t, "", "--workspace", p.ws, "--dry-run", "repo", "add-root", sub)
 	if r.code != 0 || !strings.Contains(r.err, `"repo add-root" is now "repo root add"`) || !strings.Contains(r.out, "Add repo root "+sub) {
 		t.Fatalf("add-root: %d %q %q", r.code, r.err, r.out)
-	}
-
-	// sync is save: it commits, pulls and pushes.
-	q := newPair(t)
-	commit(t, q.a, "l.txt", "l\n", "local")
-	r = wsExec(t, "", "--workspace", q.ws, "--quiet", "repo", "sync")
-	if r.code != 0 {
-		t.Fatalf("sync: %d %q %q", r.code, r.out, r.err)
-	}
-	if got := gitOutLocal(t, q.remote, "log", "--format=%s", "-1"); got != "local" {
-		t.Fatalf("sync should push: remote head %q", got)
 	}
 }
 
@@ -672,536 +588,161 @@ func TestRepoShowCleanRepoHasNoHygiene(t *testing.T) {
 	}
 }
 
-// ── fetch ──────────────────────────────────────────────────────────
+// ── git ────────────────────────────────────────────────────────────
 
-func TestRepoFetch(t *testing.T) {
-	p := newPair(t)
-	p.remoteCommit(t, "n.txt", "n\n")
-	r := wsExec(t, "", "--workspace", p.ws, "--no-color", "repo", "fetch")
-	if r.code != 0 || strings.TrimSpace(r.out) != "[ok] "+p.a+" fetched" {
-		t.Fatalf("%d %q %q", r.code, r.out, r.err)
-	}
-	if got := gitOutLocal(t, p.a, "rev-list", "--count", "HEAD..origin/main"); got != "1" {
-		t.Fatalf("remote-tracking ref not updated: %s", got)
-	}
-	// The branch and working tree stay.
-	if _, err := os.Stat(filepath.Join(p.a, "n.txt")); err == nil {
-		t.Fatal("fetch must not touch the working tree")
-	}
-
-	r = wsExec(t, "", "--workspace", p.ws, "--json", "repo", "fetch", p.a)
-	var data []struct {
-		Path    string `json:"path"`
-		Success bool   `json:"success"`
-	}
-	decode(t, r, &data)
-	if jsonCommand(t, r) != "repo.fetch" || len(data) != 1 || !data[0].Success || data[0].Path != p.a {
-		t.Fatalf("%s", r.out)
-	}
-}
-
-func TestRepoFetchDryRunDoesNothing(t *testing.T) {
-	p := newPair(t)
-	r := wsExec(t, "", "--workspace", p.ws, "--dry-run", "repo", "fetch")
-	if r.code != 0 || strings.TrimSpace(r.out) != "Would fetch "+p.a {
-		t.Fatalf("%d %q", r.code, r.out)
-	}
-	if hasFetchHead(p.a) {
-		t.Fatal("--dry-run must not fetch")
-	}
-}
-
-func TestRepoFetchExitCodes(t *testing.T) {
+func TestRepoGitRunsInEachRepo(t *testing.T) {
 	ws := repoWorkspace(t)
-	good := mkRepo(t, filepath.Join(ws, "good"))
-	mkRemote(t, good)
-	bad := mkRepo(t, filepath.Join(ws, "bad"))
-	runGitLocal(t, bad, "remote", "add", "origin", filepath.Join(t.TempDir(), "missing.git"))
-
-	r := wsExec(t, "", "--workspace", ws, "--no-color", "repo", "fetch")
-	if r.code != 3 || !strings.Contains(r.out, "[err] "+bad+" failed: ") || !strings.Contains(r.out, "[ok] "+good+" fetched") {
-		t.Fatalf("some fail: %d\n%s", r.code, r.out)
-	}
-	if r = wsExec(t, "", "--workspace", ws, "repo", "fetch", bad); r.code != 1 {
-		t.Fatalf("all fail: %d", r.code)
-	}
-	if r = wsExec(t, "", "--workspace", ws, "repo", "fetch", good); r.code != 0 {
-		t.Fatalf("all succeed: %d", r.code)
-	}
-	r = wsExec(t, "", "--workspace", ws, "--json", "repo", "fetch")
-	if r.code != 3 {
-		t.Fatalf("json exit %d", r.code)
-	}
-}
-
-func TestRepoFetchFilterReadsLastFetchState(t *testing.T) {
-	p := newPair(t)
-	other := mkRepo(t, filepath.Join(p.ws, "z"))
-	mkRemote(t, other)
-	if err := os.WriteFile(filepath.Join(p.a, "f.txt"), []byte("dirty\n"), 0o644); err != nil {
+	a := mkRepo(t, filepath.Join(ws, "a"))
+	b := mkRepo(t, filepath.Join(ws, "b"))
+	if err := os.WriteFile(filepath.Join(a, "new.txt"), []byte("n\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	r := wsExec(t, "", "--workspace", p.ws, "repo", "fetch", "--dirty")
-	if r.code != 0 || !strings.Contains(r.out, p.a) || strings.Contains(r.out, other) {
-		t.Fatalf("%d\n%s", r.code, r.out)
-	}
-	if hasFetchHead(other) {
-		t.Fatal("a repo the filter removes is not fetched")
-	}
-}
-
-// ── pull ───────────────────────────────────────────────────────────
-
-func TestRepoPullFastForward(t *testing.T) {
-	p := newPair(t)
-	p.remoteCommit(t, "n.txt", "n\n")
-
-	r := wsExec(t, "", "--workspace", p.ws, "--no-color", "repo", "pull")
-	// prompted: the default answer (Enter, EOF) is yes
+	// The usual plan prompt: a takes every repo.
+	r := wsExec(t, "a\n", "--workspace", ws, "--no-color", "repo", "git", "status", "--short")
 	if r.code != 0 {
 		t.Fatalf("%d %q %q", r.code, r.out, r.err)
 	}
-	if !strings.Contains(r.out, "Pull "+p.a+" (1 behind, fast-forward)") {
-		t.Fatalf("plan line:\n%s", r.out)
-	}
-	if _, err := os.Stat(filepath.Join(p.a, "n.txt")); err != nil {
-		t.Fatal("pull should bring n.txt")
-	}
-}
-
-func TestRepoPullUpToDate(t *testing.T) {
-	p := newPair(t)
-	r := wsExec(t, "", "--workspace", p.ws, "repo", "pull")
-	if r.code != 0 || !strings.Contains(r.out, "All repositories are up to date.") {
-		t.Fatalf("%d %q", r.code, r.out)
-	}
-}
-
-func TestRepoPullPromptsPerRepoAndDeclines(t *testing.T) {
-	p := newPair(t)
-	p.remoteCommit(t, "n.txt", "n\n")
-	r := wsExec(t, "n\n", "--workspace", p.ws, "repo", "pull")
-	if r.code != 0 {
-		t.Fatalf("%d", r.code)
-	}
-	if _, err := os.Stat(filepath.Join(p.a, "n.txt")); err == nil {
-		t.Fatal("declined: nothing may change")
-	}
-}
-
-func TestRepoPullSkipsWithReasons(t *testing.T) {
-	ws := repoWorkspace(t)
-	noUp := mkRepo(t, filepath.Join(ws, "noup"))
-	det := mkRepo(t, filepath.Join(ws, "det"))
-	mkRemote(t, det)
-	runGitLocal(t, det, "checkout", "--detach")
-	bad := mkRepo(t, filepath.Join(ws, "bad"))
-	mkRemote(t, bad)
-	runGitLocal(t, bad, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "missing.git"))
-
-	r := wsExec(t, "", "--workspace", ws, "--no-color", "repo", "pull")
-	if r.code != 0 {
-		t.Fatalf("skips are not failures: %d", r.code)
-	}
-	for _, want := range []string{
-		"Skipped: " + noUp + " (no upstream (ws repo configure sets one))",
-		"Skipped: " + det + " (detached HEAD)",
-		"Skipped: " + bad + " (fetch failed: ",
-	} {
-		if !strings.Contains(r.out, want) {
-			t.Errorf("missing %q in:\n%s", want, r.out)
-		}
-	}
-
-	r = wsExec(t, "", "--workspace", ws, "--json", "repo", "pull")
-	var data struct {
-		Actions []any `json:"actions"`
-		Skipped []struct{ Path, Reason string }
-	}
-	decode(t, r, &data)
-	if jsonCommand(t, r) != "repo.pull" || len(data.Actions) != 0 || len(data.Skipped) != 3 {
-		t.Fatalf("%s", r.out)
-	}
-}
-
-func divergePair(t *testing.T) repoPair {
-	t.Helper()
-	p := newPair(t)
-	p.remoteCommit(t, "remote.txt", "r\n")
-	commit(t, p.a, "local.txt", "l\n", "local")
-	return p
-}
-
-func TestRepoPullDivergedWithoutTerminalIsSkipped(t *testing.T) {
-	p := divergePair(t)
-	for _, args := range [][]string{{"repo", "pull"}, {"--quiet", "repo", "pull"}, {"--json", "repo", "pull"}} {
-		r := wsExec(t, "r\n", append([]string{"--workspace", p.ws}, args...)...)
-		if r.code != 0 {
-			t.Fatalf("%v: %d %q", args, r.code, r.err)
-		}
-		if strings.Contains(strings.Join(args, " "), "--quiet") {
-			continue // quiet prints nothing
-		}
-		if !strings.Contains(r.out, "diverged: choose --rebase or --merge") {
-			t.Errorf("%v: reason missing:\n%s", args, r.out)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(p.a, "remote.txt")); err == nil {
-		t.Fatal("a diverged repo is never pulled without a choice")
-	}
-}
-
-func TestRepoPullRebaseAndMergeFlags(t *testing.T) {
-	for _, flag := range []string{"--rebase", "--merge"} {
-		t.Run(flag, func(t *testing.T) {
-			p := divergePair(t)
-			r := wsExec(t, "", "--workspace", p.ws, "--no-color", "--quiet", "repo", "pull", flag)
-			if r.code != 0 {
-				t.Fatalf("%d %q", r.code, r.err)
-			}
-			if _, err := os.Stat(filepath.Join(p.a, "remote.txt")); err != nil {
-				t.Fatal("pulled")
-			}
-			merges := gitOutLocal(t, p.a, "rev-list", "--merges", "--count", "HEAD")
-			if (flag == "--merge") != (merges == "1") {
-				t.Fatalf("%s: merge commits %s", flag, merges)
-			}
-		})
-	}
-	p := divergePair(t)
-	if r := wsExec(t, "", "--workspace", p.ws, "repo", "pull", "--rebase", "--merge"); r.code != 1 {
-		t.Fatalf("both flags: %d", r.code)
-	}
-}
-
-func TestRepoPullAsksRebaseMergeSkip(t *testing.T) {
-	forceTerminal(t)
-	for _, c := range []struct {
-		answer string
-		pulled bool
-		merges string
-		plan   string
-	}{
-		{"r\ny\n", true, "0", "(diverged, rebase)"},
-		{"m\ny\n", true, "1", "(diverged, merge)"},
-		{"s\n", false, "", "diverged: skipped"},
-	} {
-		p := divergePair(t)
-		r := wsExec(t, c.answer, "--workspace", p.ws, "--no-color", "repo", "pull")
-		if r.code != 0 {
-			t.Fatalf("%q: %d %q", c.answer, r.code, r.err)
-		}
-		if !strings.Contains(r.out, p.a+" has diverged (1 local, 1 remote commit).") ||
-			!strings.Contains(r.out, "Pull with [r]ebase, [m]erge, or [s]kip this repo?") ||
-			!strings.Contains(r.out, c.plan) {
-			t.Errorf("%q: output:\n%s", c.answer, r.out)
-		}
-		_, err := os.Stat(filepath.Join(p.a, "remote.txt"))
-		if (err == nil) != c.pulled {
-			t.Errorf("%q: pulled=%v", c.answer, err == nil)
-		}
-		if c.pulled && gitOutLocal(t, p.a, "rev-list", "--merges", "--count", "HEAD") != c.merges {
-			t.Errorf("%q: wrong strategy used", c.answer)
-		}
-	}
-}
-
-func TestRepoPullDryRunPlansFromLastFetch(t *testing.T) {
-	p := newPair(t)
-	p.remoteCommit(t, "n.txt", "n\n")
-
-	// Not fetched yet: a dry run fetches nothing, so there is nothing to pull.
-	r := wsExec(t, "", "--workspace", p.ws, "--dry-run", "repo", "pull")
-	if r.code != 0 || hasFetchHead(p.a) {
-		t.Fatalf("%d fetched=%v", r.code, hasFetchHead(p.a))
-	}
-	if !strings.Contains(r.out, "Planned from the last fetch") {
-		t.Fatalf("a dry run says how old its data is:\n%s", r.out)
-	}
-	if strings.Contains(r.out, "[dry-run] Pull") {
-		t.Fatalf("stale state has nothing to pull:\n%s", r.out)
-	}
-
-	// Once fetched, the dry run plans the pull and still changes nothing.
-	runGitLocal(t, p.a, "fetch")
-	r = wsExec(t, "", "--workspace", p.ws, "--no-color", "--dry-run", "repo", "pull")
-	if !strings.Contains(r.out, "[dry-run] Pull "+p.a+" (1 behind, fast-forward)") {
-		t.Fatalf("%s", r.out)
-	}
-	if _, err := os.Stat(filepath.Join(p.a, "n.txt")); err == nil {
-		t.Fatal("dry run must not pull")
-	}
-}
-
-func TestRepoPullJSONExitFollowsActions(t *testing.T) {
-	p := newPair(t)
-	p.remoteCommit(t, "n.txt", "n\n")
-	// A dirty file the pull would overwrite: git refuses, the action fails.
-	if err := os.WriteFile(filepath.Join(p.a, "n.txt"), []byte("mine\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	r := wsExec(t, "", "--workspace", p.ws, "--json", "repo", "pull")
-	if r.code != 1 {
-		t.Fatalf("every action failed: exit %d\n%s", r.code, r.out)
-	}
-	var data struct {
-		Actions []struct{ ID, Status, Error string }
-	}
-	decode(t, r, &data)
-	if len(data.Actions) != 1 || data.Actions[0].Status != "failed" || data.Actions[0].Error == "" {
-		t.Fatalf("%+v", data)
-	}
-}
-
-func TestRepoPullFailedRebaseIsAborted(t *testing.T) {
-	p := newPair(t)
-	p.remoteCommit(t, "base.txt", "remote edit\n")
-	commit(t, p.a, "base.txt", "local edit\n", "local edit")
-	r := wsExec(t, "", "--workspace", p.ws, "--quiet", "repo", "pull", "--rebase")
-	if r.code != 1 {
-		t.Fatalf("a conflicting rebase fails its action: %d", r.code)
-	}
-	if _, err := os.Stat(filepath.Join(p.a, ".git", "rebase-merge")); err == nil {
-		t.Fatal("no repo is left mid-rebase")
-	}
-}
-
-// ── push ───────────────────────────────────────────────────────────
-
-func TestRepoPush(t *testing.T) {
-	p := newPair(t)
-	commit(t, p.a, "l.txt", "l\n", "local")
-	commit(t, p.a, "m.txt", "m\n", "local 2")
-	if err := os.WriteFile(filepath.Join(p.a, "f.txt"), []byte("dirty\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	r := wsExec(t, "y\n", "--workspace", p.ws, "--no-color", "repo", "push")
-	if r.code != 0 {
-		t.Fatalf("%d %q %q", r.code, r.out, r.err)
-	}
-	if !strings.Contains(r.out, "Push "+p.a+" (2 ahead; 1 uncommitted change stays local)") {
-		t.Fatalf("plan line:\n%s", r.out)
-	}
-	if got := gitOutLocal(t, p.remote, "rev-list", "--count", "main"); got != "3" {
-		t.Fatalf("remote has %s commits", got)
-	}
-	// It pushes only: the dirty file is still dirty, not committed.
-	if got := gitOutLocal(t, p.a, "status", "--porcelain"); got == "" {
-		t.Fatal("push must not commit")
-	}
-}
-
-func TestRepoPushSkipsWithReasons(t *testing.T) {
-	ws := repoWorkspace(t)
-	noUp := mkRepo(t, filepath.Join(ws, "1-noup"))
-	det := mkRepo(t, filepath.Join(ws, "2-det"))
-	mkRemote(t, det)
-	runGitLocal(t, det, "checkout", "--detach")
-	same := mkRepo(t, filepath.Join(ws, "3-same"))
-	remote := mkRemote(t, same)
-	behind := mkRepo(t, filepath.Join(ws, "4-behind"))
-	remote2 := mkRemote(t, behind)
-	o := cloneOf(t, remote2)
-	commit(t, o, "x.txt", "x\n", "x")
-	runGitLocal(t, o, "push")
-	runGitLocal(t, behind, "fetch")
-	_ = remote
-
-	r := wsExec(t, "", "--workspace", ws, "--no-color", "repo", "push")
-	if r.code != 0 {
-		t.Fatalf("%d", r.code)
-	}
-	for _, want := range []string{
-		"Skipped: " + noUp + " (no upstream (ws repo configure sets one))",
-		"Skipped: " + det + " (detached HEAD)",
-		"Skipped: " + same + " (nothing to push)",
-		"Skipped: " + behind + " (behind or diverged: pull first (or ws repo save))",
-	} {
+	for _, want := range []string{"Run in " + a, "      ?? new.txt", "Run in " + b} {
 		if !strings.Contains(r.out, want) {
 			t.Errorf("missing %q in:\n%s", want, r.out)
 		}
 	}
 }
 
-func TestRepoPushJSONAndFailure(t *testing.T) {
-	p := newPair(t)
-	commit(t, p.a, "l.txt", "l\n", "local")
-	if err := os.Rename(p.remote, p.remote+".gone"); err != nil {
-		t.Fatal(err)
+func TestRepoGitKeepsGitsOwnFlags(t *testing.T) {
+	ws := repoWorkspace(t)
+	mkRepo(t, filepath.Join(ws, "a"))
+	// Without `--`, ws's flags come first and git's stay git's.
+	r := wsExec(t, "", "--workspace", ws, "repo", "git", "--json", "log", "--format=%s", "-1")
+	var data struct {
+		Command []string `json:"command"`
+		Results []struct {
+			Output string `json:"output"`
+		}
 	}
-	r := wsExec(t, "", "--workspace", p.ws, "--json", "repo", "push")
-	if r.code != 1 || jsonCommand(t, r) != "repo.push" {
-		t.Fatalf("a failed push exits 1: %d\n%s", r.code, r.out)
+	decode(t, r, &data)
+	if r.code != 0 || jsonCommand(t, r) != "repo.git" || strings.Join(data.Command, " ") != "git log --format=%s -1" {
+		t.Fatalf("%d %s", r.code, r.out)
 	}
-	if !strings.Contains(r.out, `"skipped": []`) {
-		t.Fatalf("skipped is a list:\n%s", r.out)
-	}
-}
-
-func TestRepoPushNeverFetchesOrForces(t *testing.T) {
-	p := newPair(t)
-	p.remoteCommit(t, "n.txt", "n\n") // remote moved, but we never fetched
-	commit(t, p.a, "l.txt", "l\n", "local")
-	r := wsExec(t, "", "--workspace", p.ws, "--quiet", "repo", "push")
-	if hasFetchHead(p.a) {
-		t.Fatal("push does not fetch")
-	}
-	// Stale counts say ahead, so it tries a plain push, which git rejects:
-	// the action fails, nothing is forced.
-	if r.code != 1 {
-		t.Fatalf("rejected push: exit %d", r.code)
-	}
-	if got := gitOutLocal(t, p.remote, "log", "--format=%s", "-1", "main"); got != "remote n.txt" {
-		t.Fatalf("remote must keep its commit: %q", got)
+	if len(data.Results) != 1 || data.Results[0].Output != "init" {
+		t.Fatalf("%+v", data.Results)
 	}
 }
 
-// ── save ───────────────────────────────────────────────────────────
-
-var saveMessage = regexp.MustCompile(`^ws save \d{4}-\d{2}-\d{2} \d{2}:\d{2} \(.+\)$`)
-
-func TestRepoSaveCommitsAndPushes(t *testing.T) {
-	p := newPair(t)
-	if err := os.WriteFile(filepath.Join(p.a, "new.txt"), []byte("n\n"), 0o644); err != nil {
+func TestRepoGitTargetsAndFilters(t *testing.T) {
+	ws := repoWorkspace(t)
+	a := mkRepo(t, filepath.Join(ws, "a"))
+	b := mkRepo(t, filepath.Join(ws, "b"))
+	if err := os.WriteFile(filepath.Join(b, "f.txt"), []byte("changed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(p.a, "f.txt"), []byte("changed\n"), 0o644); err != nil {
-		t.Fatal(err)
+	type results struct {
+		Results []struct {
+			Path string `json:"path"`
+		}
 	}
-	r := wsExec(t, "y\n", "--workspace", p.ws, "--no-color", "repo", "save")
-	if r.code != 0 {
-		t.Fatalf("%d %q %q", r.code, r.out, r.err)
+	paths := func(r wsResult) string {
+		var data results
+		decode(t, r, &data)
+		var out []string
+		for _, x := range data.Results {
+			out = append(out, x.Path)
+		}
+		return strings.Join(out, ",")
 	}
-	if !strings.Contains(r.out, "Save "+p.a+": commit 2 changes, push") {
-		t.Fatalf("plan line:\n%s", r.out)
+	if r := wsExec(t, "", "--workspace", ws, "--json", "repo", "git", a, "--", "status"); paths(r) != a {
+		t.Fatalf("a target before --: %s", r.out)
 	}
-	if msg := gitOutLocal(t, p.remote, "log", "--format=%s", "-1", "main"); !saveMessage.MatchString(msg) {
-		t.Fatalf("default message %q", msg)
+	if r := wsExec(t, "", "--workspace", ws, "--json", "repo", "git", "--dirty", "status"); paths(r) != b {
+		t.Fatalf("--dirty: %s", r.out)
 	}
-	if gitOutLocal(t, p.a, "status", "--porcelain") != "" {
-		t.Fatal("untracked files are committed too")
-	}
-}
-
-func TestRepoSaveMessageFlag(t *testing.T) {
-	p := newPair(t)
-	if err := os.WriteFile(filepath.Join(p.a, "new.txt"), []byte("n\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	r := wsExec(t, "", "--workspace", p.ws, "--quiet", "repo", "save", "-m", "my words")
-	if r.code != 0 {
+	if r := wsExec(t, "", "--workspace", ws, "repo", "git", filepath.Join(ws, "nope"), "--", "status"); r.code != 1 || !strings.Contains(r.err, "ws: no repo at") {
 		t.Fatalf("%d %q", r.code, r.err)
 	}
-	if msg := gitOutLocal(t, p.remote, "log", "--format=%s", "-1", "main"); msg != "my words" {
-		t.Fatalf("message %q", msg)
+}
+
+func TestRepoGitUsage(t *testing.T) {
+	ws := repoWorkspace(t)
+	mkRepo(t, filepath.Join(ws, "a"))
+	for _, args := range [][]string{{"repo", "git"}, {"repo", "git", "--"}, {"repo", "git", "--dirty"}} {
+		r := wsExec(t, "", append([]string{"--workspace", ws}, args...)...)
+		if r.code != 1 || strings.TrimSpace(r.err) != "usage: ws repo git [repo…] -- <git args…>" {
+			t.Errorf("%v: %d %q", args, r.code, r.err)
+		}
 	}
 }
 
-func TestRepoSaveNothingToDo(t *testing.T) {
-	p := newPair(t)
-	r := wsExec(t, "", "--workspace", p.ws, "repo", "save")
-	if r.code != 0 || !strings.Contains(r.out, "Nothing to save.") {
+func TestRepoGitOneRepoOnATerminalGetsIt(t *testing.T) {
+	forceTerminal(t)
+	ws := repoWorkspace(t)
+	a := mkRepo(t, filepath.Join(ws, "a"))
+	mkRepo(t, filepath.Join(ws, "b"))
+	if err := os.WriteFile(filepath.Join(a, "new.txt"), []byte("n\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := wsExec(t, "", "--workspace", ws, "--no-color", "repo", "git", a, "--", "status", "--short")
+	if r.code != 0 || r.out != "?? new.txt\n" {
+		t.Fatalf("no plan, no prompt, git's own output: %d %q %q", r.code, r.out, r.err)
+	}
+	r = wsExec(t, "", "--workspace", ws, "repo", "git", a, "--", "rev-parse", "--verify", "nope")
+	if r.code != 1 || !strings.Contains(r.out+r.err, "fatal") {
+		t.Fatalf("git's failure is the exit: %d %q %q", r.code, r.out, r.err)
+	}
+	// --dry-run plans even for one repo.
+	r = wsExec(t, "", "--workspace", ws, "--no-color", "--dry-run", "repo", "git", a, "--", "status")
+	if r.code != 0 || !strings.Contains(r.out, "[dry-run] Run in "+a) {
 		t.Fatalf("%d %q", r.code, r.out)
 	}
 }
 
-func TestRepoSavePullsFastForward(t *testing.T) {
+func TestRepoGitPullAndPushAcrossRepos(t *testing.T) {
 	p := newPair(t)
 	p.remoteCommit(t, "n.txt", "n\n")
-	r := wsExec(t, "", "--workspace", p.ws, "--no-color", "repo", "save")
-	if r.code != 0 || !strings.Contains(r.out, "Save "+p.a+": pull (fast-forward)") {
-		t.Fatalf("%d\n%s\n%s", r.code, r.out, r.err)
-	}
-	if _, err := os.Stat(filepath.Join(p.a, "n.txt")); err != nil {
-		t.Fatal("saved repo is up to date")
-	}
-}
-
-func TestRepoSaveDirtyAndBehindAsksForAStrategy(t *testing.T) {
-	// Committing makes the repo diverged: no auto-merge.
-	p := newPair(t)
-	p.remoteCommit(t, "n.txt", "n\n")
-	if err := os.WriteFile(filepath.Join(p.a, "mine.txt"), []byte("m\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	r := wsExec(t, "", "--workspace", p.ws, "--quiet", "repo", "save")
+	r := wsExec(t, "", "--workspace", p.ws, "--no-color", "repo", "git", "-y", "pull", "--ff-only")
 	if r.code != 0 {
-		t.Fatalf("%d", r.code)
+		t.Fatalf("%d %q %q", r.code, r.out, r.err)
 	}
-	if gitOutLocal(t, p.a, "status", "--porcelain") == "" {
-		t.Fatal("skipped repos stay as they were: nothing may be committed")
+	if gitOutLocal(t, p.a, "log", "--format=%s", "-1") != "remote n.txt" {
+		t.Fatal("-y runs without asking, and the pull lands")
 	}
-	r = wsExec(t, "", "--workspace", p.ws, "--json", "repo", "save")
-	if !strings.Contains(r.out, "diverged: choose --rebase or --merge") {
-		t.Fatalf("%s", r.out)
+	commit(t, p.a, "l.txt", "l\n", "local")
+	if r := wsExec(t, "", "--workspace", p.ws, "--quiet", "repo", "git", "--ahead", "push"); r.code != 0 {
+		t.Fatalf("%d %q", r.code, r.err)
 	}
-
-	r = wsExec(t, "", "--workspace", p.ws, "--quiet", "repo", "save", "--rebase")
-	if r.code != 0 {
-		t.Fatalf("--rebase: %d %q", r.code, r.err)
-	}
-	if got := gitOutLocal(t, p.remote, "ls-tree", "--name-only", "main"); !strings.Contains(got, "mine.txt") || !strings.Contains(got, "n.txt") {
-		t.Fatalf("remote tree:\n%s", got)
+	if got := gitOutLocal(t, p.remote, "log", "--format=%s", "-1"); got != "local" {
+		t.Fatalf("remote head %q", got)
 	}
 }
 
-func TestRepoSaveAsksWhenDiverged(t *testing.T) {
-	forceTerminal(t)
-	p := divergePair(t)
-	r := wsExec(t, "m\ny\n", "--workspace", p.ws, "--no-color", "repo", "save")
-	if r.code != 0 || !strings.Contains(r.out, "pull (merge), push") {
-		t.Fatalf("%d\n%s\n%s", r.code, r.out, r.err)
-	}
-	if got := gitOutLocal(t, p.remote, "rev-list", "--merges", "--count", "main"); got != "1" {
-		t.Fatalf("merge strategy chosen: %s merges", got)
-	}
-}
-
-func TestRepoSaveSkipsAndFailures(t *testing.T) {
+func TestRepoGitCommitWithoutMessageFailsAtOnce(t *testing.T) {
 	ws := repoWorkspace(t)
-	noUp := mkRepo(t, filepath.Join(ws, "noup"))
-	det := mkRepo(t, filepath.Join(ws, "det"))
-	mkRemote(t, det)
-	runGitLocal(t, det, "checkout", "--detach")
-	r := wsExec(t, "", "--workspace", ws, "--no-color", "repo", "save")
-	if r.code != 0 ||
-		!strings.Contains(r.out, "Skipped: "+noUp+" (no upstream (ws repo configure sets one))") ||
-		!strings.Contains(r.out, "Skipped: "+det+" (detached HEAD)") {
-		t.Fatalf("%d\n%s", r.code, r.out)
-	}
-
-	// A remote that cannot be fetched: the repo is skipped and nothing is committed.
-	p := newPair(t)
-	if err := os.WriteFile(filepath.Join(p.a, "new.txt"), []byte("n\n"), 0o644); err != nil {
+	a := mkRepo(t, filepath.Join(ws, "a"))
+	mkRepo(t, filepath.Join(ws, "b"))
+	if err := os.WriteFile(filepath.Join(a, "f.txt"), []byte("changed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Rename(p.remote, p.remote+".gone"); err != nil {
-		t.Fatal(err)
-	}
-	r = wsExec(t, "", "--workspace", p.ws, "--no-color", "repo", "save")
-	if !strings.Contains(r.out, "Skipped: "+p.a+" (fetch failed: ") {
-		t.Fatalf("a failed fetch skips the repo:\n%s", r.out)
-	}
-	if gitOutLocal(t, p.a, "status", "--porcelain") == "" {
-		t.Fatal("nothing committed after a failed fetch")
+	// Across repos there is no terminal, so the editor git opens accepts the
+	// empty message and the commit aborts instead of waiting.
+	r := wsExec(t, "", "--workspace", ws, "--no-color", "repo", "git", "-y", "--dirty", "commit", "-a")
+	if r.code != 1 || !strings.Contains(r.out, "Run in "+a+": exit 1") || !strings.Contains(r.out, "empty commit message") {
+		t.Fatalf("%d %q %q", r.code, r.out, r.err)
 	}
 }
 
-func TestRepoSaveDryRun(t *testing.T) {
-	p := newPair(t)
-	if err := os.WriteFile(filepath.Join(p.a, "new.txt"), []byte("n\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	r := wsExec(t, "", "--workspace", p.ws, "--no-color", "--dry-run", "repo", "save")
-	if r.code != 0 || !strings.Contains(r.out, "[dry-run] Save "+p.a+": commit 1 change, push") {
-		t.Fatalf("%d\n%s", r.code, r.out)
-	}
-	if hasFetchHead(p.a) || gitOutLocal(t, p.a, "status", "--porcelain") == "" {
-		t.Fatal("a dry run fetches and commits nothing")
-	}
-	r = wsExec(t, "", "--workspace", p.ws, "--json", "--dry-run", "repo", "save")
-	if !strings.Contains(r.out, `"dry_run": true`) || jsonCommand(t, r) != "repo.save" {
-		t.Fatalf("%s", r.out)
+func TestRepoOldVerbsPointToGit(t *testing.T) {
+	ws := repoWorkspace(t)
+	mkRepo(t, filepath.Join(ws, "a"))
+	for verb, want := range map[string]string{
+		"fetch": `ws: "repo fetch" is gone: use ws repo git fetch`,
+		"pull":  `ws: "repo pull" is gone: use ws repo git pull`,
+		"push":  `ws: "repo push" is gone: use ws repo git push`,
+		"save":  `ws: "repo save" is gone`,
+		"sync":  `ws: "repo sync" is gone`,
+	} {
+		r := wsExec(t, "", "--workspace", ws, "repo", verb)
+		if r.code != 1 || !strings.HasPrefix(r.err, want) {
+			t.Errorf("%s: %d %q", verb, r.code, r.err)
+		}
 	}
 }
 
@@ -1826,10 +1367,7 @@ func TestRepoJSONCommandNames(t *testing.T) {
 	}{
 		{[]string{"repo", "ls"}, "repo.ls"},
 		{[]string{"repo", "show", p.a}, "repo.show"},
-		{[]string{"repo", "fetch"}, "repo.fetch"},
-		{[]string{"repo", "pull"}, "repo.pull"},
-		{[]string{"repo", "push"}, "repo.push"},
-		{[]string{"repo", "save"}, "repo.save"},
+		{[]string{"repo", "git", "--", "status"}, "repo.git"},
 		{[]string{"repo", "run", "--", "true"}, "repo.run"},
 		{[]string{"repo", "root", "ls"}, "repo.root.ls"},
 	} {

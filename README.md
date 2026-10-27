@@ -38,7 +38,7 @@ That's it. `~/.gitconfig` (and the rest you ticked) now lives in `~/Workspace/sy
 | 🔐 **Secrets** | `ws secret ls` | catches `password=hunter2`, moves it to `pass` |
 | 🪪 **Git tokens** | `ws credential enable` | git reads credentials from `pass` |
 | 📼 **Sessions** | `ws session record` | "what was that rsync flag?" → `ws session grep rsync` |
-| 📦 **Repos** | `ws repo ls`, `ws repo save` | the whole fleet at a glance; commit + pull + push in one go |
+| 📦 **Repos** | `ws repo ls`, `ws repo git pull` | the whole fleet at a glance, hygiene warnings, any git command across every repo |
 | 🧪 **Scratch** | `ws scratch new proxy-bug` | a named throwaway dir, opened in your editor |
 | 🗑️ **Trash** | `ws trash enable` | `rm` becomes undoable, everywhere |
 | 🧩 **Skills** | `ws skill install` | agent skills kept in `agent/skills/`, linked into Claude Code, Codex, Cursor and more |

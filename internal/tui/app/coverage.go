@@ -83,15 +83,12 @@ var CLICoverage = func() []Coverage {
 
 		{"repo ls", nav.ScreenRepos, none, "", ""},
 		{"repo show", nav.ScreenRepos, rp.Open, "", ""},
-		{"repo fetch", nav.ScreenRepos, rp.Fetch, "", ""}, // :ls --fetch is the same function
-		{"repo pull", nav.ScreenRepos, rp.Pull, "", ""},
-		{"repo push", nav.ScreenRepos, none, ":push in the command bar (the shown or marked repos, through the checklist)", ""},
-		{"repo save", nav.ScreenRepos, rp.Save, "", ""},
-		{"repo configure", nav.ScreenRepos, rp.Configure, "", ""},
-		{"repo run", nav.ScreenRepos, rp.Run, "", ""},
-		{"repo root add", nav.ScreenRepos, rp.AddRoot, "", ""},
-		{"repo root ls", nav.ScreenRepos, none, ":root ls in the command bar (read-only view)", ""},
-		{"repo root rm", nav.ScreenRepos, none, ":root rm [<dir>] in the command bar (through the checklist)", ""},
+		{"repo git", nav.ScreenRepos, rp.Git, "", "git"},
+		{"repo run", nav.ScreenRepos, rp.Git, "", "run"}, // ! with `git ` erased
+		{"repo configure", nav.ScreenRepos, rp.Configure, "", "configure"},
+		{"repo root add", nav.ScreenRepos, none, "", "root add"},
+		{"repo root ls", nav.ScreenRepos, none, "", "root ls"}, // a read-only view
+		{"repo root rm", nav.ScreenRepos, none, "", "root rm"}, // through the checklist
 
 		{"scratch ls", nav.ScreenScratch, none, "", ""},
 		{"scratch new", nav.ScreenScratch, sc.New, "", ""},
