@@ -328,3 +328,54 @@ func TestScanMutedPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestStaleMutedListsOnlyMissingPaths(t *testing.T) {
+	ws := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ws, "kept"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "file.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(ws, "gone"), filepath.Join(ws, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	got := StaleMuted(ws, []string{
+		"kept",                        // exists
+		"gone",                        // deleted
+		"gone/",                       // same entry, written differently
+		"file.txt/inside",             // a parent is a file: the path cannot exist
+		filepath.Join(ws, "abs-gone"), // hand-written absolute entry
+		"dangling",                    // a link that points nowhere still exists
+		"../outside",                  // not in the workspace: not ours to judge
+		"",                            // blank
+	})
+	want := []string{"gone", "file.txt/inside", "abs-gone"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("StaleMuted = %v, want %v", got, want)
+	}
+}
+
+// TestStaleMutedLeavesEverythingWhenTheWorkspaceIsGone: an unmounted drive must
+// not make every entry look deleted.
+func TestStaleMutedLeavesEverythingWhenTheWorkspaceIsGone(t *testing.T) {
+	ws := filepath.Join(t.TempDir(), "not-mounted")
+	if got := StaleMuted(ws, []string{"a", "b/c"}); len(got) != 0 {
+		t.Fatalf("StaleMuted = %v, want none", got)
+	}
+}
+
+func TestStaleViolationsAreMutedInfoRows(t *testing.T) {
+	ws := t.TempDir()
+	rows := StaleViolations(ws, []string{"gone"})
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	r := rows[0]
+	if r.Type != StaleType || r.Severity != "INFO" || !r.Muted || r.Path != "gone" || r.Message == "" {
+		t.Fatalf("row = %+v", r)
+	}
+	if len(StaleViolations(ws, nil)) != 0 {
+		t.Fatal("no entries, no rows")
+	}
+}

@@ -8,9 +8,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/symlink"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/symlinks"
 )
 
@@ -167,5 +169,28 @@ func TestDashboardIgnoresTheWalkedLoad(t *testing.T) {
 	m = next.(Model)
 	if got := m.areas[nav.ScreenSymlinks].lines; len(got) == 0 || got[0] != "1 symlink managed" {
 		t.Fatalf("area after the walked load = %v", got)
+	}
+}
+
+// TestIgnoreAreaCountsStaleMutesApartFromIncludedPaths: a muted path that no
+// longer exists is an info line, and is not counted as an included-path warning.
+func TestIgnoreAreaCountsStaleMutesApartFromIncludedPaths(t *testing.T) {
+	stale := wsignore.StaleViolations(t.TempDir(), []string{"a", "b"})
+	a := ignoreArea(ignore.LoadedMsg{Stale: stale})
+	var text string
+	for _, l := range a.lines {
+		text += ansi.Strip(l) + "\n"
+	}
+	if !strings.Contains(text, "2 stale mutes") || strings.Contains(text, "included paths") {
+		t.Errorf("lines:\n%s", text)
+	}
+	if len(a.issues) != 1 || a.issues[0].sev != sevInfo || a.issues[0].text != "2 muted paths no longer exist" {
+		t.Errorf("issues: %+v", a.issues)
+	}
+	if one := ignoreArea(ignore.LoadedMsg{Stale: stale[:1]}); one.issues[0].text != "1 muted path no longer exists" {
+		t.Errorf("singular: %q", one.issues[0].text)
+	}
+	if none := ignoreArea(ignore.LoadedMsg{}); len(none.issues) != 0 {
+		t.Errorf("nothing stale, nothing to say: %+v", none.issues)
 	}
 }

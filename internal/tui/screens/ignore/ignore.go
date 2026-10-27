@@ -44,7 +44,10 @@ import (
 type LoadedMsg struct {
 	Violations []wsignore.Violation
 	Ignored    []wsignore.IgnoredPath
-	Err        error
+	// Stale are the muted entries whose path no longer exists, as Muted rows.
+	// They are not in Violations: they are not warnings.
+	Stale []wsignore.Violation
+	Err   error
 }
 
 // Actionable counts violations outside included paths.
@@ -83,6 +86,7 @@ type Model struct {
 	ignored  reslist.Model[wsignore.IgnoredPath] // Ignored
 	modal    modal.Model
 	all      []wsignore.Violation
+	stale    []wsignore.Violation
 	allPaths []wsignore.IgnoredPath
 	view     keys.IgnoreView
 	under    []string // absolute paths `:lint <path>` narrowed the views to
@@ -164,15 +168,19 @@ func Load(e env.Env) tea.Cmd {
 		if err != nil {
 			return LoadedMsg{Err: err}
 		}
+		muted := mutedList(e)
 		vs, err := wsignore.Scan(wsignore.ScanOptions{
 			WorkspacePath: e.Paths.Workspace,
 			WarnSizeMB:    e.Config.Ignore.WarnSizeMB,
 			CritSizeMB:    e.Config.Ignore.CritSizeMB,
 			MaxDepth:      e.Config.Ignore.MaxDepth,
 			Engine:        eng,
-			Muted:         mutedList(e),
+			Muted:         muted,
 		})
-		return LoadedMsg{Violations: vs, Ignored: wsignore.ListIgnored(eng, e.Paths.Workspace, nil), Err: err}
+		return LoadedMsg{
+			Violations: vs, Ignored: wsignore.ListIgnored(eng, e.Paths.Workspace, nil),
+			Stale: wsignore.StaleViolations(e.Paths.Workspace, muted), Err: err,
+		}
 	}
 }
 
@@ -248,7 +256,7 @@ func (m Model) within(abs string) bool {
 // paths that do not sync in Ignored; `:lint <path>` keeps what is under it.
 func (m Model) split() Model {
 	var live, muted []wsignore.Violation
-	for _, v := range m.all {
+	for _, v := range append(slices.Clone(m.all), m.stale...) {
 		if !m.within(m.abs(v.Path)) {
 			continue
 		}
@@ -294,7 +302,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 			m.warn = m.warn.SetError(msg.Err)
 			return m, nil
 		}
-		m.all, m.allPaths = msg.Violations, msg.Ignored
+		m.all, m.allPaths, m.stale = msg.Violations, msg.Ignored, msg.Stale
 		return m.split(), nil
 	case checkMsg:
 		return m, nav.Notify(msg.level, msg.text)

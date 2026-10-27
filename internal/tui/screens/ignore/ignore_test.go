@@ -158,6 +158,27 @@ func TestMutedKeys(t *testing.T) {
 	f.expect(t, []string{"Ignore " + f.abs("Projects/a.dat") + " (ws.json ignore_rules.exclude)"})
 }
 
+// TestMutedViewListsStaleEntries: a muted path that no longer exists is a Muted
+// row, and u unmutes it like any other.
+func TestMutedViewListsStaleEntries(t *testing.T) {
+	f := newFixture(t)
+	if _, err := wsconfig.AddIgnoreMuted(f.cfg, "old"); err != nil {
+		t.Fatal(err)
+	}
+	f.c, _ = f.c.Update(LoadedMsg{
+		Violations: []wsignore.Violation{{Type: "bloat", Severity: "WARNING", Path: "Projects/a.dat"}},
+		Stale:      wsignore.StaleViolations(f.root, []string{"old"}),
+	})
+	f.expect(t, []string{"Warnings 1 · Muted 1 · Ignored 0"})
+	f.press("v")
+	f.expect(t, []string{"stale-mute", "old"})
+	f.press("u")
+	f.expect(t, []string{"Unmute " + f.abs("old")})
+	if got := (LoadedMsg{Violations: []wsignore.Violation{{Muted: true}, {}}, Stale: wsignore.StaleViolations(f.root, []string{"old"})}).Actionable(); got != 1 {
+		t.Errorf("stale rows are not warnings: Actionable = %d", got)
+	}
+}
+
 func TestIgnoredStopIgnoringIsRm(t *testing.T) {
 	f := newFixture(t)
 	f.press("v", "v", "ctrl+d")

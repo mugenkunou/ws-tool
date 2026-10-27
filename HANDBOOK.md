@@ -689,7 +689,7 @@ ws ignore lint [path…]                    RO  check synced files and warn abou
 ws ignore add <path…>                     RW  stop syncing a path
 ws ignore rm <path…>                      RW  sync a path again
 ws ignore mute <path…>                    RW  hide a path's warnings (it keeps syncing)
-ws ignore unmute <path…>                  RW  show them again
+ws ignore unmute <path…> | --stale         RW  show them again; --stale: drop muted paths that no longer exist
 ws ignore check <path>                    RO  will this path sync, and which rule decides?
 ws ignore tree [dir] [-L n]               RO  browse the tree with sync status
 ws ignore edit                            RW  edit the rules in your editor
@@ -2396,7 +2396,7 @@ The Ignore screen has three views: Warnings (`lint`, where it opens), Muted and 
 | `ws ignore add <path…>` | RW | stop syncing paths | `i` |
 | `ws ignore rm <path…>` | RW | sync paths again | `:rm` |
 | `ws ignore mute <path…>` | RW | hide a path's warnings; it keeps syncing | `m` |
-| `ws ignore unmute <path…>` | RW | show its warnings again | `u` (muted view) |
+| `ws ignore unmute <path…> \| --stale` | RW | show its warnings again; `--stale`: drop muted paths that no longer exist | `u` (muted view) |
 | `ws ignore check <path>` | RO | will this path sync, and which rule decides | `:check` |
 | `ws ignore tree [dir] [-L n]` | RO | the tree with sync status | `:tree` |
 | `ws ignore edit` | RW | edit the rules in `$EDITOR` | `e` |
@@ -2457,6 +2457,8 @@ is the sync client leaving out?"
 With `--muted`, it lists the muted warnings instead: everything you muted with
 `ignore mute`, plus the warnings under included directories. `ignore ls` thus shows both
 kinds of decision you made: what doesn't sync, and what you chose not to hear about.
+A muted path that no longer exists is listed too, as a row of type `stale-mute` (INFO,
+muted, message `muted path no longer exists`); `--filter type=stale-mute` shows only those.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
@@ -2465,6 +2467,9 @@ kinds of decision you made: what doesn't sync, and what you chose not to hear ab
 
 Ignored-path fields: `path`, `size_bytes`, `rule`, `rule_source` (`builtin` or `user`).
 Warning fields (with `--muted`): see `ignore lint`.
+
+Without `--muted`, when `ignore.muted` names paths that no longer exist, it prints one line
+on stderr: `2 muted paths no longer exist: ws ignore unmute --stale` (`--quiet` hides it).
 
 ```text
 $ ws ignore ls --filter rule=csv
@@ -2492,6 +2497,8 @@ Checks the files that sync and warns about the ones that aren't hygienic: too bi
 or build output (the types in **Warnings**). Muted warnings are left out. When there are
 some, it prints their count on stderr: `47 muted warnings (2.3 GB): ws ignore ls --muted`.
 With paths, it checks only under them. It changes nothing and exits 0, warnings or not.
+When `ignore.muted` names paths that no longer exist, it also prints
+`1 muted path no longer exists: ws ignore unmute --stale` on stderr (`--quiet` hides it).
 
 Fields: `severity`, `type`, `size_bytes` (Size; shown as `7 lvl` on depth rows), `path`,
 `depth`, `group`, `message`, `muted`. Default columns: severity, type, size, path.
@@ -2608,10 +2615,19 @@ its warnings are muted anyway. To hear about one again, remove its rule with `ws
 
 ```text
 ws ignore unmute <path…> [--dry-run]
+ws ignore unmute --stale [--dry-run]
 ```
 
 Removes paths from `ignore.muted`, and their warnings return to `ignore lint`. Syncing is not
 touched.
+
+`--stale` takes no paths. It removes every `ignore.muted` entry whose path no longer exists
+(deleted, moved, or under a file that replaced its folder), in any written form. Scans
+(`ignore lint`, `ignore ls`) never remove entries, since a path can be gone for a while (a
+branch switch, `make clean`) and should be muted again when it returns; they only hint.
+An entry is stale only when the path is reported as not existing. Any other error (permissions,
+an unreadable or unmounted workspace) leaves it alone. Nothing stale: `No stale muted paths:
+nothing to do`.
 
 - **Muted by a parent entry:** ws names the parent and changes nothing. Unmute the parent.
 - **Under an included directory** (one of yours): its warnings stay muted, because that
@@ -2619,14 +2635,17 @@ touched.
   `ws ignore edit`. (decision)
 - **Not muted:** nothing to do.
 
-Plan: one action per path, pre-checked: `Unmute /home/user/Workspace/experiments/ml`.
+Plan: one action per path, pre-checked: `Unmute /home/user/Workspace/experiments/ml`. With
+`--stale`: `Unmute /home/user/Workspace/experiments/old (no longer exists)`.
 
 JSON: `ignore.unmute`, `data.actions`.
 
 Exit: 0, 1, 3.
 
 TUI: `u` in the Muted view unmutes the entry that mutes each selected row. Rows muted by an
-included directory are skipped, and the notice says so.
+included directory are skipped, and the notice says so. Stale entries are rows of the Muted
+view (type `stale-mute`), so `u` on them is `ignore unmute --stale` for the rows you pick. The
+Dashboard's Ignore card counts them (`2 stale mutes`).
 
 #### `ws ignore check`
 

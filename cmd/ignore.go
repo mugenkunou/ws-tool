@@ -94,6 +94,17 @@ func (e ignoreEnv) warnStale(globals globalFlags, stderr io.Writer) {
 	fmt.Fprintf(stderr, "warning: %s differs from what ws.json generates; ws ignore add, rm or edit rewrites it\n", e.megaignore)
 }
 
+// hintStaleMuted prints one line on stderr when ignore.muted names paths that no
+// longer exist. It only reports: `ws ignore unmute --stale` removes them.
+func (e ignoreEnv) hintStaleMuted(globals globalFlags, stderr io.Writer) {
+	if globals.quiet {
+		return
+	}
+	if n := len(ignore.StaleMuted(e.workspace, e.cfg.Ignore.Muted)); n > 0 {
+		fmt.Fprintf(stderr, "%s no longer exist: ws ignore unmute --stale\n", plural(n, "muted path"))
+	}
+}
+
 // regenerate rewrites .megaignore from the rules now in ws.json.
 func (e ignoreEnv) regenerate() error {
 	rules, err := wsconfig.LoadIgnoreRules(e.configPath)
@@ -185,6 +196,7 @@ func (e ignoreEnv) ls(args []string, globals globalFlags, stdout, stderr io.Writ
 				rows = append(rows, v)
 			}
 		}
+		rows = append(rows, ignore.StaleViolations(e.workspace, e.cfg.Ignore.Muted)...)
 		return renderList(globals, "ignore.ls", ignore.Schema(resource.CLIView(), e.workspace), rows, lf, "No muted warnings.", stdout, stderr)
 	}
 
@@ -207,7 +219,11 @@ func (e ignoreEnv) ls(args []string, globals globalFlags, stdout, stderr io.Writ
 		}
 		rows = kept
 	}
-	return renderList(globals, "ignore.ls", ignore.IgnoredSchema(resource.CLIView(), e.workspace), rows, lf, "Nothing is ignored.", stdout, stderr)
+	code := renderList(globals, "ignore.ls", ignore.IgnoredSchema(resource.CLIView(), e.workspace), rows, lf, "Nothing is ignored.", stdout, stderr)
+	if code == 0 {
+		e.hintStaleMuted(globals, stderr)
+	}
+	return code
 }
 
 // scan runs the hygiene scan with the workspace's thresholds and muted paths.
@@ -277,6 +293,9 @@ func (e ignoreEnv) lint(args []string, globals globalFlags, stdout, stderr io.Wr
 	code = renderList(globals, "ignore.lint", ignore.Schema(resource.CLIView(), e.workspace), live, lf, "No warnings.", stdout, stderr)
 	if code == 0 && mutedCount > 0 && !globals.quiet {
 		fmt.Fprintf(stderr, "%s (%s): ws ignore ls --muted\n", plural(mutedCount, "muted warning"), style.HumanBytes(mutedBytes))
+	}
+	if code == 0 {
+		e.hintStaleMuted(globals, stderr)
 	}
 	return code
 }
@@ -524,12 +543,20 @@ func (e ignoreEnv) unmute(args []string, globals globalFlags, stdin io.Reader, s
 	fs := flag.NewFlagSet("ignore-unmute", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	registerGlobalFlags(fs, &globals)
+	stale := fs.Bool("stale", false, "")
 	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
+	if *stale {
+		if len(fs.Args()) > 0 {
+			fmt.Fprintln(stderr, "ws ignore unmute --stale takes no paths")
+			return 1
+		}
+		return e.unmuteStale(globals, stdin, stdout, stderr)
+	}
 	if len(fs.Args()) == 0 {
-		fmt.Fprintln(stderr, "usage: ws ignore unmute <path…>")
+		fmt.Fprintln(stderr, "usage: ws ignore unmute <path…> | --stale")
 		return 1
 	}
 
@@ -577,6 +604,29 @@ func (e ignoreEnv) unmute(args []string, globals globalFlags, stdin io.Reader, s
 			Description: "Unmute " + it.abs,
 			Execute: func() error {
 				_, err := wsconfig.RemoveIgnoreMuted(e.configPath, e.workspace, it.rel)
+				return err
+			},
+		})
+	}
+	return e.finish("ignore.unmute", p, globals, stdin, stdout, stderr)
+}
+
+// unmuteStale is `ignore unmute --stale`: it removes the ignore.muted entries
+// whose path no longer exists, one checklist action each.
+func (e ignoreEnv) unmuteStale(globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	entries := ignore.StaleMuted(e.workspace, e.cfg.Ignore.Muted)
+	if len(entries) == 0 {
+		fmt.Fprintln(quietOut(globals, stdout), "No stale muted paths: nothing to do")
+	}
+	p := Plan{Command: "ignore.unmute"}
+	for _, rel := range entries {
+		rel := rel
+		abs := style.AbsPath(e.workspace, rel)
+		p.Actions = append(p.Actions, Action{
+			ID:          "ignore-unmute-" + abs,
+			Description: "Unmute " + abs + " (no longer exists)",
+			Execute: func() error {
+				_, err := wsconfig.RemoveIgnoreMuted(e.configPath, e.workspace, rel)
 				return err
 			},
 		})

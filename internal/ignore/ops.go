@@ -1,10 +1,13 @@
 package ignore
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 // NormalizeRel turns a workspace-relative path into the form rules and the
@@ -208,4 +211,48 @@ func MuteStateOf(engine *Engine, muted []string, rel string, isDir bool) MuteSta
 		}
 	}
 	return MuteState{}
+}
+
+// StaleType is the Type of a Muted row that is not a warning: an ignore.muted
+// entry whose path no longer exists.
+const StaleType = "stale-mute"
+
+// StaleMuted returns the ignore.muted entries (normalized, each once, in
+// ws.json order) whose path no longer exists. Only "no such file" counts as
+// missing: any other error (permissions, an I/O fault) leaves the entry alone,
+// and so does a workspace that is itself unreadable, such as an unmounted drive.
+func StaleMuted(workspacePath string, entries []string) []string {
+	if _, err := os.Lstat(workspacePath); err != nil {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, rel := range NormalizeMuted(workspacePath, entries) {
+		if seen[rel] {
+			continue
+		}
+		seen[rel] = true
+		_, err := os.Lstat(filepath.Join(workspacePath, filepath.FromSlash(rel)))
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+			out = append(out, rel)
+		}
+	}
+	return out
+}
+
+// StaleViolations is StaleMuted as rows for the Muted view (`ignore ls --muted`).
+// They are muted INFO rows of type StaleType; `ignore unmute` removes them.
+func StaleViolations(workspacePath string, entries []string) []Violation {
+	var out []Violation
+	for _, rel := range StaleMuted(workspacePath, entries) {
+		out = append(out, Violation{
+			Group:    "Ignore",
+			Type:     StaleType,
+			Severity: "INFO",
+			Path:     rel,
+			Message:  "muted path no longer exists",
+			Muted:    true,
+		})
+	}
+	return out
 }

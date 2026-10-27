@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1129,3 +1130,132 @@ func (e igEnv) includeDir(t *testing.T, dir string) {
 }
 
 func ruleEntry(p string) ignore.RuleEntry { return ignore.RuleEntry{Pattern: p} }
+
+// ── stale muted entries ────────────────────────────────────────────
+
+// staleEnv has two muted paths, one of which is then deleted.
+func staleEnv(t *testing.T) igEnv {
+	t.Helper()
+	e := newIgEnv(t)
+	e.write(t, "old/a.txt", "x")
+	e.write(t, "live/a.txt", "x")
+	e.do(t, "ignore", "mute", e.abs("old"), e.abs("live"))
+	if err := os.RemoveAll(e.abs("old")); err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+
+func TestIgnoreLsMutedListsStaleEntries(t *testing.T) {
+	e := staleEnv(t)
+	code, out, _ := e.run("", "ignore", "ls", "--muted")
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	igHas(t, "muted view", out, e.abs("old"), "stale-mute")
+	if strings.Contains(out, e.abs("live")) {
+		t.Errorf("an entry whose path exists is not stale:\n%s", out)
+	}
+	_, out, _ = e.run("", "ignore", "ls", "--muted", "--filter", "type=stale-mute")
+	igHas(t, "filtered", out, e.abs("old"))
+	code, env := e.jsonOf(t, "ignore", "ls", "--muted")
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if !strings.Contains(fmt.Sprint(env), "stale-mute") {
+		t.Fatalf("json lacks the stale row: %v", env)
+	}
+}
+
+func TestIgnoreLintAndLsHintAtStaleEntries(t *testing.T) {
+	e := staleEnv(t)
+	for _, args := range [][]string{{"ignore", "lint"}, {"ignore", "ls"}} {
+		_, out, errOut := e.run("", args...)
+		igHas(t, strings.Join(args, " ")+" stderr", errOut, "1 muted path no longer exist: ws ignore unmute --stale")
+		if strings.Contains(out, "stale") {
+			t.Errorf("%v: the hint belongs on stderr:\n%s", args, out)
+		}
+		_, _, errOut = e.run("", append([]string{"--quiet"}, args...)...)
+		if strings.Contains(errOut, "no longer exist") {
+			t.Errorf("%v --quiet still hints:\n%s", args, errOut)
+		}
+	}
+	// The Muted view lists them, so it does not also hint.
+	if _, _, errOut := e.run("", "ignore", "ls", "--muted"); strings.Contains(errOut, "no longer exist") {
+		t.Errorf("ls --muted hints:\n%s", errOut)
+	}
+	// Nothing stale, no hint.
+	clean := newIgEnv(t)
+	if _, _, errOut := clean.run("", "ignore", "lint"); strings.Contains(errOut, "no longer exist") {
+		t.Errorf("hint with nothing stale:\n%s", errOut)
+	}
+}
+
+func TestIgnoreScansNeverWriteTheConfig(t *testing.T) {
+	e := staleEnv(t)
+	before := e.readFile(t, "ws.json")
+	for _, args := range [][]string{{"ignore", "lint"}, {"ignore", "ls"}, {"ignore", "ls", "--muted"}} {
+		e.run("a\n", args...)
+	}
+	if e.readFile(t, "ws.json") != before {
+		t.Fatal("a read command changed ws.json")
+	}
+}
+
+func TestIgnoreUnmuteStaleRemovesOnlyMissingPaths(t *testing.T) {
+	e := staleEnv(t)
+	out := e.do(t, "ignore", "unmute", "--stale")
+	igHas(t, "plan", out, "Unmute "+e.abs("old")+" (no longer exist")
+	if got := e.muted(t); len(got) != 1 || got[0] != "live" {
+		t.Fatalf("ignore.muted = %v, want [live]", got)
+	}
+	out = e.do(t, "ignore", "unmute", "--stale")
+	igHas(t, "second run", out, "No stale muted paths: nothing to do")
+	if got := e.muted(t); len(got) != 1 {
+		t.Fatalf("ignore.muted = %v", got)
+	}
+}
+
+func TestIgnoreUnmuteStaleHandWrittenAbsoluteEntry(t *testing.T) {
+	e := newIgEnv(t)
+	e.setCfg(t, func(c *wsconfig.WsConfig) { c.Ignore.Muted = []string{e.abs("gone"), "also/gone"} })
+	e.do(t, "ignore", "unmute", "--stale")
+	if got := e.muted(t); len(got) != 0 {
+		t.Fatalf("ignore.muted = %v", got)
+	}
+}
+
+func TestIgnoreUnmuteStaleDryRunChangesNothing(t *testing.T) {
+	e := staleEnv(t)
+	before := e.readFile(t, "ws.json")
+	code, out, _ := e.run("a\n", "--dry-run", "ignore", "unmute", "--stale")
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	igHas(t, "dry run", out, e.abs("old"))
+	if e.readFile(t, "ws.json") != before {
+		t.Fatal("--dry-run changed ws.json")
+	}
+}
+
+func TestIgnoreUnmuteStaleTakesNoPaths(t *testing.T) {
+	e := staleEnv(t)
+	before := e.readFile(t, "ws.json")
+	code, _, errOut := e.run("a\n", "ignore", "unmute", "--stale", e.abs("live"))
+	if code != 1 {
+		t.Fatalf("exit %d", code)
+	}
+	igHas(t, "stderr", errOut, "takes no paths")
+	if e.readFile(t, "ws.json") != before {
+		t.Fatal("a refused command changed ws.json")
+	}
+}
+
+func TestIgnoreUnmuteWithNothingStillNeedsAPathOrStale(t *testing.T) {
+	e := newIgEnv(t)
+	code, _, errOut := e.run("a\n", "ignore", "unmute")
+	if code != 1 {
+		t.Fatalf("exit %d", code)
+	}
+	igHas(t, "usage", errOut, "usage: ws ignore unmute <path…> | --stale")
+}

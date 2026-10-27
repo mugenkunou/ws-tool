@@ -402,6 +402,14 @@ func ignoreArea(msg ignore.LoadedMsg) area {
 	if included > 0 {
 		a.lines = append(a.lines, theme.Muted.Render(fmt.Sprintf("%d in included paths", included)))
 	}
+	if n := len(msg.Stale); n > 0 {
+		a.lines = append(a.lines, theme.Muted.Render(format.Plural(n, "stale mute")))
+		text := format.Plural(n, "muted path") + " no longer exist"
+		if n == 1 {
+			text += "s"
+		}
+		a.issues = append(a.issues, issue{sev: sevInfo, screen: nav.ScreenIgnore, text: text})
+	}
 	return a
 }
 
