@@ -46,25 +46,11 @@ type GlobalMap struct {
 	Refresh   key.Binding // refresh the active screen
 	NextTab   key.Binding
 	PrevTab   key.Binding
-	Screens   []key.Binding // Screens[i] jumps to screen i
-	Navigate  key.Binding   // help-only summary of Screens
-	Switch    key.Binding   // help-only summary of PrevTab/NextTab/Screens
-}
-
-// ScreenDigit is the jump key for the i-th screen: 1-9, then 0 for the tenth.
-func ScreenDigit(i int) string {
-	if i == 9 {
-		return "0"
-	}
-	return string(rune('1' + i))
+	Switch    key.Binding // help-only summary of PrevTab/NextTab
 }
 
 // Global returns the app-level bindings for n screens (at most 10).
 func Global(n int) GlobalMap {
-	screens := make([]key.Binding, 0, n)
-	for i := range min(n, 10) {
-		screens = append(screens, key.NewBinding(key.WithKeys(ScreenDigit(i))))
-	}
 	return GlobalMap{
 		Quit:      key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 		ForceQuit: key.NewBinding(key.WithKeys("ctrl+c")),
@@ -73,8 +59,6 @@ func Global(n int) GlobalMap {
 		Refresh:   key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "refresh")),
 		NextTab:   key.NewBinding(key.WithKeys("tab", "]"), key.WithHelp("tab", "next screen")),
 		PrevTab:   key.NewBinding(key.WithKeys("shift+tab", "["), key.WithHelp("shift+tab", "prev screen")),
-		Screens:   screens,
-		Navigate:  key.NewBinding(key.WithKeys("1"), key.WithHelp("1-"+ScreenDigit(min(n, 10)-1), "jump to screen")),
 		Switch:    key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "screens")),
 	}
 }
@@ -86,7 +70,7 @@ func (k GlobalMap) ShortHelp() []key.Binding {
 
 // FullHelp implements help.KeyMap.
 func (k GlobalMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.NextTab, k.PrevTab, k.Navigate, k.Refresh}, {k.Command, k.Help, k.Quit}}
+	return [][]key.Binding{{k.NextTab, k.PrevTab, k.Refresh}, {k.Command, k.Help, k.Quit}}
 }
 
 // Table returns the movement bindings shared by every list screen. They are

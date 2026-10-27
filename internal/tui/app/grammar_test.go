@@ -145,7 +145,7 @@ func TestMarkingMovesNoRow(t *testing.T) {
 		return strings.Split(strings.TrimRight(ansi.Strip(view(m)), "\n"), "\n")
 	}
 	for _, s := range listScreens {
-		base := send(loaded(t, 100, 30), press(keys.ScreenDigit(int(s))))
+		base := send(loaded(t, 100, 30), press(screenKey(int(s))))
 		before := lines(base)
 		for _, k := range [][]string{{"space"}, {"/"}, {"ctrl+a"}, {"space", "down", "space"}} {
 			after := lines(send(base, pressAll(k)...))
@@ -197,7 +197,7 @@ func TestFooterFits(t *testing.T) {
 	m := loaded(t, 100, 30)
 	cases := map[string]Model{}
 	for _, s := range listScreens {
-		cases[s.Title()] = send(m, press(keys.ScreenDigit(int(s))))
+		cases[s.Title()] = send(m, press(screenKey(int(s))))
 	}
 	cases["Dashboard"] = m
 	ig := send(m, press("6"))

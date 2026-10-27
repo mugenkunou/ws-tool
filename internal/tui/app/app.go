@@ -23,6 +23,7 @@ package app
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -331,12 +332,21 @@ func (m Model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if cur != nil && cur.CapturesKeys() {
 		return m.updateCurrent(msg, hadNotice)
 	}
+	if m.fullHelp { // the help popup: esc or ? closes it, q quits, the rest is ignored
+		switch {
+		case key.Matches(msg, m.keys.Quit):
+			return m, tea.Quit
+		case msg.String() == "esc", key.Matches(msg, m.keys.Help):
+			m.fullHelp = false
+		}
+		return m, nil
+	}
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
 	case key.Matches(msg, m.keys.Help):
-		m.fullHelp = !m.fullHelp
-		return m.resize() // footer height changed
+		m.fullHelp = true
+		return m, nil
 	}
 	if m.screens != nil {
 		switch {
@@ -350,12 +360,6 @@ func (m Model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.PrevTab):
 			m.active = m.active.Prev()
 			return m.afterNotice(hadNotice)
-		}
-		for i, b := range m.keys.Screens {
-			if key.Matches(msg, b) && i < len(m.screens) {
-				m.active = nav.Screen(i)
-				return m.afterNotice(hadNotice)
-			}
 		}
 	}
 	return m.updateCurrent(msg, hadNotice)
@@ -492,22 +496,21 @@ func (m Model) render() string {
 	}
 	parts = append(parts, m.footer())
 	// The footer can outgrow small terminals (full help), so clip the frame.
-	return frame.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
+	out := frame.Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
+	if m.fullHelp && m.current() != nil {
+		out = overlay(out, m.helpPopup(), m.width, m.height)
+	}
+	return out
 }
 
-// superscripts are the jump-key hints shown after each tab label.
-var superscripts = map[string]string{
-	"1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹", "0": "⁰",
-}
-
-// tabs renders the tab bar: "🏠 Dashboard¹  📦 Repos²  …", the jump key as a
-// faint superscript. Detail is dropped until it fits the width:
-// icon+title → title → icon → digit only.
+// tabs renders the tab bar: "🏠 Dashboard  📦 Repos  …", the active tab as a
+// reversed block like a selected row. Detail is dropped until it fits the
+// width: icon+title → title → icon → number.
 func (m Model) tabs() string {
 	brand := theme.Title.Render("ws")
 	if m.screens == nil {
 		if m.setup != nil {
-			return lipgloss.NewStyle().MaxWidth(m.width).Render(brand + "  " + theme.TabActive.Render(theme.Icon(theme.IconSprout)+"Setup"))
+			return lipgloss.NewStyle().MaxWidth(m.width).Render(brand + "  " + theme.TabActive.Render(" "+theme.Icon(theme.IconSprout)+"Setup "))
 		}
 		return brand
 	}
@@ -516,7 +519,6 @@ func (m Model) tabs() string {
 	for _, md := range []mode{{true, true}, {false, true}, {true, false}, {false, false}} {
 		parts := []string{brand}
 		for i, s := range nav.Screens() {
-			digit := keys.ScreenDigit(i)
 			var l string
 			switch {
 			case md.icon && md.title && theme.EmojiOn():
@@ -526,19 +528,15 @@ func (m Model) tabs() string {
 			case md.icon && theme.EmojiOn():
 				l = strings.TrimSpace(theme.Icon(s.Icon()))
 			default:
-				l = digit
-			}
-			hint := ""
-			if l != digit {
-				hint = theme.TabHint.Render(superscripts[digit])
+				l = strconv.Itoa(i + 1)
 			}
 			if s == m.active {
-				parts = append(parts, theme.TabActive.Render(l)+hint)
+				parts = append(parts, theme.TabActive.Render(" "+l+" "))
 			} else {
-				parts = append(parts, theme.TabIdle.Render(l)+hint)
+				parts = append(parts, theme.TabIdle.Render(" "+l+" "))
 			}
 		}
-		bar = strings.Join(parts, "  ")
+		bar = strings.Join(parts, " ")
 		if lipgloss.Width(bar) <= m.width {
 			break
 		}
@@ -573,16 +571,13 @@ func (m Model) footer() string {
 		return m.withToast(clip.Render(m.help.ShortHelpView([]key.Binding{m.keys.Quit})))
 	}
 	h := m.help
-	h.ShowAll = m.fullHelp
 	var km help.KeyMap = combinedKeys{cur.KeyMap(), m.keys}
 	if m.setup != nil {
 		km = combinedKeys{cur.KeyMap(), setupGlobals{m.keys}} // no screens to switch between
 	}
 	if cur.CapturesKeys() {
 		km = cur.KeyMap() // global keys are inactive while a modal is open
-	} else if m.fullHelp {
-		return m.withToast(m.fullHelpView())
-	} else if !m.fullHelp {
+	} else {
 		return m.withToast(clip.Render(shortFooter(h, cur.KeyMap(), km.(combinedKeys).global, m.width)))
 	}
 	return m.withToast(clip.Render(h.View(km)))

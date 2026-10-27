@@ -20,7 +20,6 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/symlink"
 	wstrash "github.com/mugenkunou/ws-tool/internal/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
-	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/cron"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
@@ -135,10 +134,37 @@ func fixtures() []tea.Msg {
 // send feeds msgs through Update, discarding commands (no IO in tests).
 func send(m Model, msgs ...tea.Msg) Model {
 	for _, msg := range msgs {
+		msg = digitJump(m, msg)
 		next, _ := m.Update(msg)
 		m = next.(Model)
 	}
 	return m
+}
+
+// digitJump turns a digit press into a jump to that screen (1 is the dashboard,
+// 0 the tenth) when no modal, bar or filter has the keyboard. The app has no
+// digit keys; this keeps tests short.
+func digitJump(m Model, msg tea.Msg) tea.Msg {
+	k, ok := msg.(tea.KeyPressMsg)
+	if !ok || len(k.Text) != 1 || k.Text[0] < '0' || k.Text[0] > '9' || m.bar != nil || m.fullHelp {
+		return msg
+	}
+	if cur := m.current(); cur == nil || cur.CapturesKeys() {
+		return msg
+	}
+	i := int(k.Text[0] - '1')
+	if k.Text[0] == '0' {
+		i = 9
+	}
+	return nav.GotoMsg{Screen: nav.Screen(i)}
+}
+
+// screenKey is the key that digitJump turns into a jump to screen i.
+func screenKey(i int) string {
+	if i == 9 {
+		return "0"
+	}
+	return string(rune('1' + i))
 }
 
 // sendRun feeds msg and returns the resulting command too.
@@ -358,10 +384,50 @@ func TestScreenSwitching(t *testing.T) {
 		m = send(m, press(k))
 		m = send(m, press("1"))
 	}
-	for i, s := range nav.Screens() {
-		if m = send(m, press(keys.ScreenDigit(i))); m.active != s {
-			t.Fatalf("key %s: active = %v, want %v", keys.ScreenDigit(i), m.active.Title(), s.Title())
+	for _, d := range []string{"1", "2", "0"} {
+		if got := m.updateKey2(tea.KeyPressMsg{Code: rune(d[0]), Text: d}); got.active != m.active {
+			t.Fatalf("digit %s must not switch screens", d)
 		}
+	}
+}
+
+// TestHelpPopup: ? opens the help as a centered popup, and esc closes it.
+func TestHelpPopup(t *testing.T) {
+	m := loaded(t, 100, 30)
+	open := send(m, press("?"))
+	if !open.fullHelp {
+		t.Fatal("? opens the help")
+	}
+	lines := strings.Split(tuitest.Plain(view(open)), "\n")
+	top := -1
+	for i, l := range lines {
+		if strings.Contains(l, "╭") {
+			top = i
+			break
+		}
+	}
+	if top < 3 || top > len(lines)/2 {
+		t.Errorf("popup should float in the middle, top border at line %d of %d", top, len(lines))
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "esc or ? to close") {
+		t.Error("popup lacks its close hint")
+	}
+	if send(open, press("esc")).fullHelp {
+		t.Error("esc closes the help")
+	}
+	if send(open, press("?")).fullHelp {
+		t.Error("? closes the help")
+	}
+	if got := send(open, press("tab")); !got.fullHelp || got.active != open.active {
+		t.Error("other keys are ignored while the help is open")
+	}
+}
+
+// TestTabsHaveNoNumbers: the tab bar shows names only.
+func TestTabsHaveNoNumbers(t *testing.T) {
+	bar := tuitest.Plain(loaded(t, 100, 30).tabs())
+	if strings.ContainsAny(bar, "¹²³⁴⁵⁶⁷⁸⁹⁰0123456789") {
+		t.Errorf("tab bar has numbers: %q", bar)
 	}
 }
 
@@ -373,7 +439,7 @@ func TestGlobalKeysLeavePageKeysAlone(t *testing.T) {
 		"enter": true, "esc": true, "space": true,
 	}
 	g := newApp(t, nil).keys
-	all := append([]key.Binding{g.Quit, g.ForceQuit, g.Help, g.NextTab, g.PrevTab}, g.Screens...)
+	all := append([]key.Binding{g.Quit, g.ForceQuit, g.Help, g.NextTab, g.PrevTab}, nil...)
 	for _, b := range all {
 		for _, k := range b.Keys() {
 			if reserved[k] {
@@ -763,4 +829,9 @@ func TestCancelChangesNothing(t *testing.T) {
 	if m.current().CapturesKeys() {
 		t.Fatal("checklist still open after esc")
 	}
+}
+
+func (m Model) updateKey2(msg tea.KeyPressMsg) Model {
+	next, _ := m.updateKey(msg)
+	return next.(Model)
 }

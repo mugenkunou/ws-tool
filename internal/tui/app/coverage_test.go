@@ -125,7 +125,7 @@ func TestEveryListKeyDeclaresItsRows(t *testing.T) {
 // keys when there is room, and the global keys always survive truncation.
 func TestFooterShowsMarkKeys(t *testing.T) {
 	for s := range listScreenKeys() {
-		key := keys.ScreenDigit(int(s))
+		key := screenKey(int(s))
 		wide := send(loaded(t, 220, 30), press(key))
 		if foot := footerLine(view(wide)); !strings.Contains(foot, "space mark • ctrl+space mark range") {
 			t.Errorf("screen %v footer at 220 cols lacks the mark keys:\n%s", s, foot)

@@ -276,7 +276,7 @@ func TestFullHelpHasFourTitledColumns(t *testing.T) {
 			t.Errorf("full help lacks column %q:\n%s", title, v)
 		}
 	}
-	for _, k := range []string{"ctrl+a", "mark all/none", "ctrl+r", "command", "describe", "json"} {
+	for _, k := range []string{"ctrl+a", "mark all", "ctrl+r", "command", "describe", "json"} {
 		if !strings.Contains(v, k) {
 			t.Errorf("full help lacks %q:\n%s", k, v)
 		}

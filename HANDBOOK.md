@@ -4265,7 +4265,7 @@ a add • ctrl+d unlink • l link • space mark … • tab screens • : comm
 
 Tab order: Dashboard, Repos, Symlinks, Scratch, Sessions, Ignore, Secrets, Cron, Trash, Skills.
 Every screen except the Dashboard is the list of its noun's rows, the same rows as
-`ws <noun> ls`. The tab bar shows each screen's jump digit as a superscript.
+`ws <noun> ls`. `tab` and `shift+tab` switch screens; the active tab is a reversed block.
 
 ### 6.3 Global keys
 
@@ -4277,9 +4277,9 @@ These mean the same on every screen. No screen binds them to anything else.
 | `esc` | one level up: close a dialog, then clear the filter, then clear the marks, then leave a detail view, then go to the Dashboard. Does nothing at the Dashboard. |
 | `:` | the command bar (§6.6) |
 | `/` | filter the list (same expressions as `--filter`) |
-| `?` | full help, grouped: this screen, lists, general, `:` commands |
+| `?` | full help in a centered popup, grouped: this screen, lists, general, `:` commands; `esc` or `?` closes it |
 | `q`, `ctrl+c` | quit (`ctrl+c` always works, even inside a dialog) |
-| `tab` / `shift+tab`, `]` / `[`, `1`–`9` | next / previous screen; jump to a screen |
+| `tab` / `shift+tab`, `]` / `[` | next / previous screen |
 | `ctrl+r` | refresh this screen |
 | `d` | describe: every field of the cursor row |
 | `y` | the cursor row as JSON, exactly what `ws <noun> ls --json` prints for it |
