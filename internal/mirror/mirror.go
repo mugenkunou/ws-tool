@@ -268,7 +268,13 @@ func (p *Prepared) GuardTripped() bool {
 
 func (p *Prepared) rsync(dryRun bool) ([]byte, error) {
 	o := p.Options
-	args := []string{"-rt", "--delete", "--delete-excluded", "--from0",
+	// --update: skip a file whose copy in the mirror is newer than the workspace
+	// file. Virtual-drive clients (Zoho TrueSync) ignore the mtime rsync -t sets
+	// and stamp the copy with the upload time, so the times never match again
+	// and plain -rt would re-send every file on every push. An upload time is
+	// always later than the source's mtime, and an edit made after it is newer
+	// again, so a real change is still copied.
+	args := []string{"-rt", "--update", "--delete", "--delete-excluded", "--from0",
 		"--filter=P /" + StampName,
 		"--filter=merge " + p.filterPath,
 		"--temp-dir=" + filepath.Join(o.syncDir(), "tmp"),

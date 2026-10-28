@@ -49,7 +49,6 @@ var Builtins = map[string]*BuiltinJob{
 	"mega-sync":   megaSyncJob,
 	"pass-backup": passBackupJob,
 	"sync-push":   syncPushJob,
-	"zoho-sync":   zohoSyncJob,
 }
 
 // Aliases maps an old job name to the job that replaced it. Old crontab lines
@@ -60,7 +59,9 @@ var Aliases = map[string]string{}
 // removes their blocks, and `cron run` logs a skip and exits 0, so old crontab
 // lines do not fail. Nothing commits your work unattended, so repo-sync is gone, and
 // session-prune went with the sessions size cap (`ws session rm --older-than` is manual).
-var Retired = []string{"secret-scan", "ignore-scan", "repo-sync", "session-prune"}
+// zoho-sync restarted the old Zoho WorkDrive Sync client for a sync window; its
+// replacement, TrueSync, runs all the time from login autostart.
+var Retired = []string{"secret-scan", "ignore-scan", "repo-sync", "session-prune", "zoho-sync"}
 
 // AllNames returns every job name, sorted. It holds neither aliases nor retired
 // names: those are hidden.

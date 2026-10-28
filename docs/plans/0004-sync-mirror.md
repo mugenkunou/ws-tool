@@ -111,6 +111,7 @@ rsync -rt --delete --delete-excluded --prune-empty-dirs \
 | Generated filter, ends with `- *` | Exactly the files `ws ignore check` says sync. `--files-from` was rejected: it does not delete stale files from the mirror. |
 | Escape `* ? [ \` in paths | rsync treats them as wildcards in filter rules. |
 | `-rt`, no `-l`, no `-p` | Links skipped (D5); modes not carried (D4); times kept so unchanged files are skipped. |
+| `--update` (added for Zoho TrueSync) | TrueSync's virtual drive stamps copies with upload time, so `-t` alone re-sends every file each push. A mirror copy newer than the source is skipped. |
 | `--delete --delete-excluded` | Files deleted or newly ignored in the workspace leave the mirror. |
 | `--temp-dir` outside the mirror | The client must never see rsync's half-written temp files. |
 | `P /.ws-sync-stamp` | Protects the stamp from `--delete-excluded`. |

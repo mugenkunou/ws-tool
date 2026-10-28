@@ -794,8 +794,8 @@ shell integration hooks. Old names that existing rc files and crontab lines cont
 silent aliases: `ws completions bash|zsh|fish` (the `eval` line that
 `completions install` wrote runs on every shell start) and the old cron job names.
 
-Built-in cron jobs: `secret-scan`, `ignore-scan`, `repo-sync` and `session-prune` are retired: nothing
-commits your work or deletes your sessions unattended. `ws cron run` of one exits 0 silently and does nothing, so a
+Built-in cron jobs: `secret-scan`, `ignore-scan`, `repo-sync`, `session-prune` and `zoho-sync` are retired: nothing
+commits your work or deletes your sessions unattended, and Zoho's TrueSync client needs no restart window. `ws cron run` of one exits 0 silently and does nothing, so a
 crontab line written earlier keeps working; `ws cron rm` removes such a line, and
 `ws cron add` is an error that says the job was removed.
 
@@ -3374,13 +3374,12 @@ binary and `<W>` the absolute workspace path.
 | `mega-sync` | `*/30 * * * *` | 30m | MEGA only: restarts `megasync` for a 5-minute sync window, using `DISPLAY` |
 | `pass-backup` | `*/30 * * * *` | 30m | `<ws> --workspace <W> pass backup push --quiet` |
 | `sync-push` | `*/30 * * * *` | 30m | `<ws> --workspace <W> sync push --quiet` (§5 `ws sync`) |
-| `zoho-sync` | `*/30 * * * *` | 30m | Zoho WorkDrive only: restarts `zohoworkdrive -sstart` (tray, no window) for a 5-minute sync window, using `DISPLAY`; the launcher itself waits 30s, so about 4 minutes remain to sync |
 
 Each job is installed on its own. `mega-sync` suits MEGA; with another sync client,
 install `pass-backup` alone, plus `sync-push` for a mirror client such as WorkDrive (§2.6).
 
 **Retired names.** `secret-scan`, `ignore-scan`, `repo-sync` (nothing should commit your
-work unattended; run `ws repo git` yourself) and `session-prune` (use `ws session rm --older-than`) are retired. `cron add` rejects them (`cron job
+work unattended; run `ws repo git` yourself), `session-prune` (use `ws session rm --older-than`) and `zoho-sync` (Zoho's TrueSync client runs from login autostart; the old Sync client it restarted is discontinued) are retired. `cron add` rejects them (`cron job
 "repo-sync" was removed`), `cron rm` still removes their blocks, and `cron run` skips
 them silently and exits 0, so a crontab line written earlier keeps working (see below).
 
@@ -3488,7 +3487,7 @@ are untouched.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--display <d>` | `$DISPLAY`, else `:1` | X display written into the `mega-sync` and `zoho-sync` lines; ignored for other jobs |
+| `--display <d>` | `$DISPLAY`, else `:1` | X display written into the `mega-sync` line; ignored for other jobs |
 | `--dry-run` | false | print the plan; change nothing |
 
 ```text
@@ -3553,7 +3552,7 @@ crontab lines do not fail (decision).
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--if-due` | false | run only when the job is due (used by ws's crontab lines) |
-| `--display <d>` | `$DISPLAY`, else `:1` | X display for `mega-sync` and `zoho-sync` |
+| `--display <d>` | `$DISPLAY`, else `:1` | X display for `mega-sync` |
 | `--dry-run` | false | print the job's command; run and record nothing |
 
 `--json`: command `cron.run`; data `job`, `exit_code` (the job's own code), `skipped` (bool).
@@ -3963,12 +3962,16 @@ Runs the checks, reads the stamp, writes the filter, and does an rsync dry run t
 changes and deletions (the delete guard). Then it copies:
 
 ```bash
-rsync -rt --delete --delete-excluded --from0 \
+rsync -rt --update --delete --delete-excluded --from0 \
       --filter="P /.ws-sync-stamp" --filter="merge <state>/sync/filter" \
       --temp-dir=<state>/sync/tmp  <workspace>/  <target>/
 ```
 
-`-rt`: no links, no modes, times kept so unchanged files are skipped. `--delete-excluded`:
+`-rt`: no links, no modes, times kept so unchanged files are skipped. `--update`: a file whose
+mirror copy is newer than the workspace file is skipped too. Virtual-drive clients (Zoho
+TrueSync) stamp each upload with the upload time instead of the time rsync sets, so without
+`--update` every file would look changed on every push. A file you replace with an older one
+(`cp -p` of an old version) is not pushed until it is touched. `--delete-excluded`:
 files deleted or newly ignored in the workspace leave the mirror. The temp dir is outside
 the mirror, so the client never sees half-written files. Empty directories are mirrored.
 Finally it writes the stamp and `last-push.json`, and reports the changed, deleted, file
