@@ -38,9 +38,9 @@ var Layout = []LayoutDir{
 // TopDirs are the workspace's top-level layout folders: notes, scripts, agent, …
 func TopDirs() []string {
 	var out []string
-	for _, d := range layoutDirs {
-		if !strings.Contains(d, "/") {
-			out = append(out, d)
+	for _, d := range Layout {
+		if !strings.Contains(d.Path, "/") {
+			out = append(out, d.Path)
 		}
 	}
 	return out
