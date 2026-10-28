@@ -20,7 +20,7 @@ CLI for scripts, full-screen TUI (`ws tui`) for humans.
 go install github.com/mugenkunou/ws-tool@latest      # Go ≥ 1.26
 sudo mv "$(go env GOPATH)/bin/ws-tool" /usr/local/bin/ws
 
-ws init                    # 🏗️  layout + ws.json + sync rules
+ws init                    # 🏗️  layout + ws.json + sync rules; offers the built-in skills
 ws symlink add             # 🔗 a checklist of the configs ws found; Enter takes the ticked ones
 ws tui                     # 🖥️  look around
 ```
@@ -41,7 +41,7 @@ That's it. `~/.gitconfig` (and the rest you ticked) now lives in `~/Workspace/sy
 | 📦 **Repos** | `ws repo ls`, `ws repo git pull` | the whole fleet at a glance, hygiene warnings, any git command across every repo |
 | 🧪 **Scratch** | `ws scratch new proxy-bug` | a named throwaway dir, opened in your editor |
 | 🗑️ **Trash** | `ws trash enable` | `rm` becomes undoable, everywhere |
-| 🧩 **Skills** | `ws skill install` | agent skills kept in `agent/skills/`, linked into Claude Code, Codex, Cursor and more |
+| 🧩 **Skills** | `ws skill install` | built-in skills that update with ws, plus yours in `agent/skills/`, linked into Claude Code, Codex, Cursor and more; `ws skill check` catches drift |
 | ⏰ **Cron** | `ws cron add sync-push` | managed jobs with logs and missed-run catch-up |
 
 Everything is `ws <noun> <verb>`. `ls` lists, `add` adopts, `rm` deletes, `prune` cleans.

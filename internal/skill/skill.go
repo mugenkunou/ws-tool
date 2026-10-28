@@ -1,7 +1,9 @@
-// Package skill links the skills kept in <workspace>/agent/skills/ into the skill
-// folders of the coding tools installed on this machine. A skill is a folder (or
-// a symlink to one) that holds a SKILL.md. Installing one makes a symlink to it
-// inside one tool's skills folder; ws never copies and never overwrites.
+// Package skill links skills into the skill folders of the coding tools
+// installed on this machine. A skill is a folder (or a symlink to one) that
+// holds a SKILL.md. Skills sit on two shelves: the built-ins ship inside the
+// binary and are extracted to a managed folder (builtin.go); yours are kept in
+// <workspace>/agent/skills/. Installing one makes a symlink to it inside one
+// tool's skills folder; ws never overwrites.
 package skill
 
 import (
@@ -85,13 +87,22 @@ func (t Tool) Detected(home string) bool {
 	return err == nil
 }
 
-// Skill is one entry of agent/skills/.
+// Skill is one skill on either shelf.
 type Skill struct {
 	Name string
-	// Path is <workspace>/agent/skills/<Name>: the entry itself, not where it points.
+	// Path is what a tool link points at: <workspace>/agent/skills/<Name> (the
+	// entry itself, not where it points), or a built-in's managed copy.
 	Path string
 	// Broken is a symlink whose target is gone. It is listed but cannot be installed.
 	Broken bool
+	Shelf  Shelf
+	// Dev is the checkout folder a built-in links to in dev mode.
+	Dev string
+	// Ejected is the ws version a skill of yours was ejected from.
+	Ejected string
+	// Shadowed is a skill of yours with a built-in's name and no .ws-ejected
+	// file. It is listed with a warning; the built-in wins.
+	Shadowed bool
 }
 
 // Root is the folder that holds the workspace's skills.
@@ -119,7 +130,7 @@ func List(workspace string) ([]Skill, error) {
 		info, err := os.Stat(p) // follows a symlink
 		if err != nil {
 			if e.Type()&os.ModeSymlink != 0 {
-				out = append(out, Skill{Name: e.Name(), Path: p, Broken: true})
+				out = append(out, Skill{Name: e.Name(), Path: p, Broken: true, Shelf: Yours})
 			}
 			continue
 		}
@@ -129,7 +140,14 @@ func List(workspace string) ([]Skill, error) {
 		if _, err := os.Stat(filepath.Join(p, "SKILL.md")); err != nil {
 			continue
 		}
-		out = append(out, Skill{Name: e.Name(), Path: p})
+		s := Skill{Name: e.Name(), Path: p, Shelf: Yours}
+		if v, err := os.ReadFile(filepath.Join(p, EjectedFile)); err == nil {
+			s.Ejected = strings.TrimSpace(string(v))
+			if s.Ejected == "" {
+				s.Ejected = "unknown"
+			}
+		}
+		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
@@ -142,6 +160,11 @@ func Installed(home string, t Tool, name string) bool {
 	return err == nil
 }
 
+// Linked reports whether the tool's link for the skill points at s.Path.
+func Linked(home string, t Tool, s Skill) bool {
+	return s.Path != "" && linkTarget(filepath.Join(t.DirPath(home), s.Name)) == filepath.Clean(s.Path)
+}
+
 // Cell is one tool's answer for one skill.
 type Cell struct {
 	Tool      string `json:"tool"`
@@ -151,8 +174,14 @@ type Cell struct {
 // Row is one skill across every tool.
 type Row struct {
 	Skill  string `json:"skill"`
+	Shelf  Shelf  `json:"shelf"`
 	Broken bool   `json:"broken,omitempty"`
-	Tools  []Cell `json:"tools"`
+	// Version is a built-in's: the ws version, or "dev".
+	Version  string `json:"version,omitempty"`
+	Dev      string `json:"dev,omitempty"`
+	Ejected  string `json:"ejected_from,omitempty"`
+	Shadowed bool   `json:"shadowed,omitempty"`
+	Tools    []Cell `json:"tools"`
 }
 
 // ToolState is one tool's column header.
@@ -162,10 +191,15 @@ type ToolState struct {
 	Unverified bool   `json:"unverified,omitempty"`
 }
 
-// Result is what Scan found.
+// Result is what Scan found. Rows hold the built-ins first, then yours.
 type Result struct {
-	Tools []ToolState `json:"tools"`
-	Rows  []Row       `json:"skills"`
+	// Version is the ws version the built-ins come from.
+	Version string `json:"version"`
+	// Managed is where the built-ins are extracted; Root is agent/skills/.
+	Managed string      `json:"managed"`
+	Root    string      `json:"root"`
+	Tools   []ToolState `json:"tools"`
+	Rows    []Row       `json:"skills"`
 }
 
 // Scan reads the filesystem and changes nothing. tools is the columns to show
@@ -174,16 +208,16 @@ func Scan(home, workspace string, tools []Tool) (Result, error) {
 	if tools == nil {
 		tools = Tools
 	}
-	skills, err := List(workspace)
+	skills, err := All(home, workspace)
 	if err != nil {
 		return Result{}, err
 	}
-	res := Result{Tools: []ToolState{}, Rows: []Row{}}
+	res := Result{Version: Version, Managed: ManagedRoot(home), Root: Root(workspace), Tools: []ToolState{}, Rows: []Row{}}
 	for _, t := range tools {
 		res.Tools = append(res.Tools, ToolState{Name: t.Name, Detected: t.Detected(home), Unverified: t.Unverified})
 	}
 	for _, s := range skills {
-		row := Row{Skill: s.Name, Broken: s.Broken}
+		row := Row{Skill: s.Name, Shelf: s.Shelf, Broken: s.Broken, Version: s.VersionOf(), Dev: s.Dev, Ejected: s.Ejected, Shadowed: s.Shadowed}
 		for _, t := range tools {
 			row.Tools = append(row.Tools, Cell{Tool: t.Name, Installed: Installed(home, t, s.Name)})
 		}
@@ -198,6 +232,13 @@ func Install(home, workspace string, t Tool, s Skill) error {
 	if s.Broken {
 		return fmt.Errorf("%s: its target is gone", s.Name)
 	}
+	if s.Shadowed {
+		return fmt.Errorf("%s: same name as a built-in; the built-in wins", s.Name)
+	}
+	target := s.Path
+	if target == "" {
+		target = filepath.Join(Root(workspace), s.Name)
+	}
 	dir := t.DirPath(home)
 	link := filepath.Join(dir, s.Name)
 	if _, err := os.Lstat(link); err == nil {
@@ -206,31 +247,37 @@ func Install(home, workspace string, t Tool, s Skill) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return os.Symlink(filepath.Join(Root(workspace), s.Name), link)
+	return os.Symlink(target, link)
 }
 
 // Ours reports whether the skill's place in the tool's folder is a symlink that
-// points into agent/skills/. The link's own target is read, one hop: the chain
-// behind a skill that is itself a symlink does not matter.
+// ws made: one that points into agent/skills/, into the managed folder of the
+// built-ins, or at the checkout a built-in links to in dev mode. The link's own
+// target is read, one hop: the chain behind a skill that is itself a symlink
+// does not matter.
 func Ours(home, workspace string, t Tool, name string) bool {
-	link := filepath.Join(t.DirPath(home), name)
-	target, err := os.Readlink(link)
-	if err != nil {
+	target := linkTarget(filepath.Join(t.DirPath(home), name))
+	if target == "" {
 		return false
 	}
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(filepath.Dir(link), target)
+	if within(Root(workspace), target) || within(ManagedRoot(home), target) {
+		return true
 	}
-	rel, err := filepath.Rel(Root(workspace), filepath.Clean(target))
+	dev, ok := DevTarget(home, name)
+	return ok && filepath.Clean(dev) == target
+}
+
+func within(root, p string) bool {
+	rel, err := filepath.Rel(root, p)
 	return err == nil && rel != "." && !strings.HasPrefix(rel, "..")
 }
 
-// Uninstall removes the link. It removes only a symlink into agent/skills/; a
-// real folder or a link elsewhere is left alone. The workspace skill stays.
+// Uninstall removes the link. It removes only a link ws made (see Ours); a
+// real folder or a link elsewhere is left alone. The skill itself stays.
 func Uninstall(home, workspace string, t Tool, name string) error {
 	link := filepath.Join(t.DirPath(home), name)
 	if !Ours(home, workspace, t, name) {
-		return fmt.Errorf("%s is not a link into agent/skills/", link)
+		return fmt.Errorf("%s is not a link ws made", link)
 	}
 	return os.Remove(link)
 }

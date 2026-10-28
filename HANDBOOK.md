@@ -406,6 +406,7 @@ machine (§5 `ws sync`).
 | Scratch directories | `scratch.root_dir` (default `~/Scratch`), outside the workspace | no |
 | Machine-local state | `$XDG_STATE_HOME/ws-tool/` (default `~/.local/state/ws-tool/`): cron run state and logs, trash integration state, the running recording's marker (`session-active.json`), `ws sync` state (`sync/`) | no |
 | Trash | `$XDG_DATA_HOME/Trash` (default `~/.local/share/Trash`), shared with the desktop file manager | no |
+| Built-in skills | `$XDG_DATA_HOME/ws/skills/<name>/` (default `~/.local/share/ws/skills`), extracted from the binary, read-only | no |
 | Pass store | `$PASSWORD_STORE_DIR` → `~/.password-store` | via its own git remote |
 
 No other config file exists. The workspace root is never stored in a file: it comes from
@@ -424,7 +425,7 @@ the flag, the environment, or the default.
 ├── scripts/
 │   └── lib/
 ├── agent/
-│   └── skills/          # one folder per skill, with a SKILL.md; `ws skill install` links them
+│   └── skills/          # your skills: one folder each, with a SKILL.md; `ws skill install` links them
 ├── configs/
 ├── symlinks/
 │   ├── home/            # originals of paths under $HOME, at the same relative path
@@ -589,7 +590,7 @@ such as `rclone bisync`.
 | --- | --- | --- |
 | `repo` | git repositories found under `repo.roots` | Repos |
 | `symlink` | host files and folders whose originals live in the workspace, symlinked back | Symlinks |
-| `skill` | agent skills in `agent/skills/`, linked into the coding tools on this machine | Skills |
+| `skill` | agent skills, built into ws or yours in `agent/skills/`, linked into the coding tools on this machine | Skills |
 | `scratch` | throwaway directories under `scratch.root_dir` | Scratch |
 | `session` | recorded terminal sessions | Sessions |
 | `ignore` | what the sync client syncs: ignore rules, muted directories, sync warnings | Ignore |
@@ -610,7 +611,7 @@ prints help.
 | Verb | Means | Used by |
 | --- | --- | --- |
 | `ls` | list the noun's rows | every noun |
-| `show` | one row in full | repo, secret, session, config |
+| `show` | one row in full | repo, secret, session, config, skill |
 | `add` | put an existing thing under ws management | symlink, scratch, ignore, cron, repo root |
 | `new` | create a fresh thing | scratch |
 | `rm` | delete something ws owns, soft-deleting files | scratch, session, trash, cron, ignore, repo root |
@@ -630,12 +631,13 @@ prints help.
 | `link`, `unlink` | point a host path at its workspace copy (the workspace copy wins; also repairs); put the real content back and stop managing it | symlink (`add` is its other direction: the live file wins) |
 | `tag` | label a row | scratch |
 | `record`, `stop` | record a shell session; stop the recording | session |
-| `check`, `tree` | will this path sync?; browse the tree with sync status | ignore |
+| `check`, `tree` | will this path sync? (skill: what drifted from this ws); browse the tree with sync status | ignore, skill (`check`) |
 | `allow`, `store` | mark a finding as a false positive; copy its value into pass | secret |
 | `init`, `audit` | create; inspect entries for problems | pass (and `ws init`) |
 | `restore`, `empty` | put a trashed item back (sync: copy the mirror into the workspace); delete everything in the trash | trash, sync (`restore`) |
 | `log` | recent output of a job | cron |
 | `scan`, `install`, `uninstall` | which skills each tool has; link a skill into one tool; remove that link | skill |
+| `eject` | copy a built-in into the workspace; from then on it is yours | skill |
 
 `completion bash|zsh|fish` names a shell, not a verb. It is the one exception to the
 glossary.
@@ -662,9 +664,13 @@ ws symlink add <folder> [--dir|--files]   RW  a folder as one entry, or one entr
 ws symlink link [<host-path>…]            RW  make or repair links from the workspace copies
 ws symlink unlink <host-path…> | --all    RW  put the real content back, stop managing it
 
-ws skill scan [--tool <name>]             RO  which skills are installed in which tools
+ws skill scan [--tool <name>]             RO  both shelves, built-in and yours, against every tool
+ws skill show <skill> [--path]            RO  one skill: shelf, version, folder, tools
 ws skill install [<skill>…] [--tool <t>]  RW  link skills into one tool; no names: a picklist
+ws skill install --dev[=<dir>] [<skill>…] RW  point built-ins at a checkout, so edits are live
 ws skill uninstall [<skill>…] [--tool <t>] RW  remove skill links from one tool; no names: a picklist
+ws skill eject <skill>                    RW  copy a built-in into agent/skills/ to make it yours
+ws skill check                            RO  skills and scripts that drifted from this ws
 
 ws scratch ls                             RO  scratch directories
 ws scratch new [name]                     RW  create one and open it
@@ -1700,9 +1706,21 @@ workspace path as a second argument`. `symlink edit`, `symlink backup`, `symlink
 
 Skills are the folders of instructions that coding tools such as Claude Code or Codex load
 on demand. A skill is a folder, or a symlink to one, that holds a `SKILL.md` with `name` and
-`description` frontmatter. You keep your skills in one place, `<workspace>/agent/skills/<name>/`,
-and `ws skill install` links them into the skills folder of the tool that should have them.
-A skill that is a symlink works too: `agent/skills/<name>` may point anywhere.
+`description` frontmatter. ws keeps skills on two shelves and links them into the skills
+folder of each tool that should have them:
+
+- **Built-in.** Skills that ship inside the ws binary (today `workspace-write` and
+  `workspace-run`). ws extracts them, read-only (files `0444`), to
+  `$XDG_DATA_HOME/ws/skills/<name>/` (default `~/.local/share/ws/skills`), and tool links point
+  at that copy. Every `ws skill` command and `ws init` refresh it when the binary's version or
+  content differs from what is there, so a new ws updates every tool with no reinstall. Only
+  ws writes them; to change one, `eject` it.
+- **Yours.** Your own skills, in `<workspace>/agent/skills/<name>/`. A skill that is a symlink
+  works too: `agent/skills/<name>` may point anywhere.
+
+A skill of yours with a built-in's name is listed with a warning, and the built-in wins:
+`install` links the built-in. An ejected copy (it holds a `.ws-ejected` file) replaces the
+built-in instead.
 
 ws knows the tools from a **built-in table**. It is in the binary only and cannot be edited.
 Each row is the tool's config folder (a tool counts as **detected** when it exists, because a
@@ -1728,9 +1746,12 @@ ws does not track that. `scan` reports each tool's folder and nothing else, and 
 
 | Command | RO/RW | Does | TUI |
 | --- | --- | --- | --- |
-| `ws skill scan [--tool <name>]` | RO | a grid of every skill against every known tool | screen |
-| `ws skill install [<skill>…] [--tool <name>]` | RW | link skills into one tool | `i`, `:install` |
+| `ws skill scan [--tool <name>]` | RO | a grid of both shelves against every known tool | screen |
+| `ws skill show <skill> [--path]` | RO | one skill: shelf, version, folder, tools | the screen's row |
+| `ws skill install [<skill>…] [--tool <name>] [--dev[=<dir>]]` | RW | link skills into one tool | `i`, `:install` |
 | `ws skill uninstall [<skill>…] [--tool <name>]` | RW | remove the links ws made in one tool | `u`, `:uninstall` |
+| `ws skill eject <skill>` | RW | copy a built-in into `agent/skills/`; it is yours from then on | — |
+| `ws skill check` | RO | skills and scripts that drifted from this ws | — |
 
 #### `ws skill scan`
 
@@ -1738,8 +1759,10 @@ ws does not track that. `scan` reports each tool's folder and nothing else, and 
 ws skill scan [--tool <name>]
 ```
 
-Read-only. It reads the filesystem and runs no tool. For each skill and each known tool it
-checks one path: `<skills folder>/<skill name>`. If anything is there (a symlink, even a broken
+It runs no tool and changes nothing but the managed copy of the built-ins (the refresh every
+`ws skill` command does). It shows two sections: **Built-in**, with the ws version (or `dev`)
+of each, and **Yours**, where an ejected copy says `ejected from <version>` and a name clash
+shows a warning instead of cells. For each skill and each known tool it checks one path: `<skills folder>/<skill name>`. If anything is there (a symlink, even a broken
 one, or a real folder), the cell is `✔`. Otherwise it is `·` (`-` with `--no-color`). Nothing
 else is reported: no duplicate check, no judgment. A cell is `·` both when the skill is not
 installed and when the tool is not installed. The header and the footer tell the tools apart: a
@@ -1749,9 +1772,13 @@ detected tool is bold, a tool that is not detected is dim and listed under `○ 
 
 ```text
 $ ws skill scan
-SKILL         amp  claude  cline  codex  copilot  cursor  gemini  ...
-review-pr     ·    ✔       ·      ·      ·        ·       ·
-sql-style     ·    ·       ·      ·      ·        ·       ·
+Built-in (ws v0.16)       amp  claude  cline  codex  copilot  cursor  gemini  ...
+  workspace-run    dev    ·    ✔       ·      ·      ·        ·       ·
+  workspace-write  v0.16  ·    ✔       ·      ·      ✔        ·       ·
+Yours (~/Workspace/agent/skills)
+  review-pr               ·    ✔       ·      ·      ·        ·       ·
+  sql-style               ·    ·       ·      ·      ·        ·       ·
+  workspace-write  ▲ same name as a built-in; the built-in wins
 
 ● detected: claude cursor
 ○ not detected: amp cline codex* copilot gemini ...
@@ -1759,27 +1786,64 @@ sql-style     ·    ·       ·      ·      ·        ·       ·
 * path not confirmed by the tool's own docs
 ```
 
-`--tool` shows one column. `--json`: `skill.scan`, with `data.tools[]` (`name`, `detected`,
-`unverified`) and `data.skills[]` (`skill`, `broken`, `tools[]` of `tool` and `installed`).
+`--tool` shows one column. `--json`: `skill.scan`, with `data.version`, `data.managed` (the
+built-ins' folder), `data.root` (`agent/skills/`), `data.tools[]` (`name`, `detected`,
+`unverified`) and `data.skills[]` (`skill`, `shelf` (`built-in` or `yours`), `broken`,
+`version`, `dev`, `ejected_from`, `shadowed`, `tools[]` of `tool` and `installed`).
 
 Exit: 0, or 1 on a usage error or an unknown tool.
+
+#### `ws skill show`
+
+```text
+ws skill show <skill> [--path]
+```
+
+One skill: its shelf, its version (the ws version for a built-in, `dev` with the checkout it
+links to, or where an ejected copy came from), its folder and the tools that have it. On a
+name clash it shows the built-in and names the shadowed folder. `--path` prints only the
+folder, for both shelves, so a skill can reach its sibling files:
+`$(ws skill show workspace-write --path)/write-rules.md`. A built-in's folder is the managed
+copy, also in dev mode.
+
+```text
+$ ws skill show workspace-write
+workspace-write
+  shelf              built-in
+  version            v0.16
+  path               ~/.local/share/ws/skills/workspace-write
+  tools              claude copilot
+```
+
+`--json`: `skill.show`, with `data.name`, `shelf`, `version`, `dev`, `ejected_from`, `path`,
+`tools[]` and `shadowed`. Exit: 0, or 1 on an unknown skill.
 
 #### `ws skill install`
 
 ```text
 ws skill install [<skill>…] [--tool <name>]
+ws skill install --dev[=<dir>] [<skill>…] [--tool <name>]
 ```
 
-Links each skill into **one** tool's skills folder: a symlink
-`<skills folder>/<name>` to `<workspace>/agent/skills/<name>`, created with the folder if it is
-missing. To install into two tools, run it twice. Without `--tool`, ws lists the known tools
-(detected ones first) and asks for one. Without skill names, it lists the skills not yet in
-that tool and asks which; `all` or `1,3` is accepted. Both prompts need a terminal; with
+Links each skill into **one** tool's skills folder: a symlink `<skills folder>/<name>` to
+`<workspace>/agent/skills/<name>`, or for a built-in to its managed copy, created with the
+folder if it is missing. To install into two tools, run it twice. Without `--tool`, ws lists the known tools
+(detected ones first) and asks for one. Without skill names, it lists the skills of both
+shelves not yet in that tool, each labeled `built-in` or `yours`, and asks which; `all` or
+`1,3` is accepted. Both prompts need a terminal; with
 `--json` or `--quiet` a missing `--tool` or name is a usage error.
 
 ws never replaces anything. If the path already exists (a real folder, another link), that
 action fails and the rest still run. A skill whose target is gone cannot be installed. A tool
-that is not detected can still be chosen; the plan line says it will create the folder.
+that is not detected can still be chosen; the plan line says it will create the folder. A
+skill whose link is already in place is reported and skipped.
+
+`--dev` is for working on the built-ins. It makes the managed `<name>` a symlink to
+`<dir>/skills/<name>`, so edits in the checkout are live in every tool linked to it, and
+refreshes leave it alone. `<dir>` defaults to the checkout ws was built from (`make build`
+stamps it); `--dev=<dir>` names another. Without names it takes every built-in; with `--tool`
+it also links them into that tool. A plain `install` of a built-in in dev mode switches it
+back to the copy in the binary.
 
 ```text
 $ ws skill install review-pr --tool claude
@@ -1795,13 +1859,63 @@ Link review-pr → ~/.claude/skills/review-pr [y/n/a/q] y
 ws skill uninstall [<skill>…] [--tool <name>]
 ```
 
-Removes links from one tool. It removes only a symlink whose own target is inside
-`agent/skills/` (one hop is read: where `agent/skills/<name>` itself points does not matter).
+Removes links from one tool. It removes only a symlink ws made: one whose own target is inside
+`agent/skills/` or the built-ins' managed folder, or is a built-in's dev checkout (one hop is
+read: where `agent/skills/<name>` itself points does not matter).
 A real folder, or a link that points elsewhere, is left alone and the action fails. The skill
 in the workspace is never touched. Without `--tool`, ws lists the tools that hold at least one
 of its links; without names, it lists those links.
 
 `--json`: `skill.uninstall`, with `data.actions`. Exit: 0, 1 or 3.
+
+#### `ws skill eject`
+
+```text
+ws skill eject <skill>
+```
+
+Copies a built-in into `agent/skills/<name>`, writable, with a `.ws-ejected` file that holds
+the ws version, and repoints the tool links to the managed copy at the workspace copy. From
+then on the skill is yours: ws stops updating it, and `scan` lists it under Yours as `ejected
+from <version>`. It fails when `agent/skills/<name>` already exists.
+
+```text
+$ ws skill eject workspace-write
+Copy built-in workspace-write → ~/Workspace/agent/skills/workspace-write (yours from now on; ws stops updating it); repoint claude, copilot at it [y/n/a/q] y
+  ✔ Copy built-in workspace-write → ~/Workspace/agent/skills/workspace-write (…)
+```
+
+`--json`: `skill.eject`, with `data.actions`. Exit: 0, 1 or 3.
+
+#### `ws skill check`
+
+```text
+ws skill check
+```
+
+Read-only. A drift check over both shelves and `<workspace>/scripts`:
+
+| Check | Level |
+| --- | --- |
+| every `ws <noun> <verb>` in a code span or block of a skill's `.md` files is a real command | error |
+| every backticked workspace path in a skill of yours (first part a layout folder, no `<`, `*` or `$`) exists | error |
+| each top-level script in `scripts/` starts with a header comment (after the shebang) | error |
+| no top-level script mentions `/tmp` (use `$WS_TMP`) | error |
+| a skill of yours whose frontmatter `metadata: ws-layout: "<n>"` differs from `ws.json`'s `schema` | warning |
+| a fallback in `scripts/lib/common.sh` (`WS_TMP=${TMPDIR:-$HOME/tmp}`, …) that disagrees with `ws env` | warning |
+| a skill of yours with a built-in's name | warning |
+
+```text
+$ ws skill check
+✖ ~/.local/share/ws/skills/workspace-write/SKILL.md:5  `ws skill frobnicate` is not a ws command
+✖ scripts/bad.sh:2  mentions /tmp; use $WS_TMP
+▲ scripts/lib/common.sh:2  WS_CACHE falls back to /home/user/.cache/wsx; ws env says /home/user/.cache/ws
+
+2 errors, 1 warning
+```
+
+`--json`: `skill.check`, with `data.findings[]` (`level`, `shelf`, `skill`, `file`, `line`,
+`message`), `data.errors` and `data.warnings`. Exit: 1 when there is an error, else 0.
 
 ### `ws scratch`
 
@@ -3941,6 +4055,12 @@ them in with their defaults and keeps every value already set. An existing `.meg
 left alone. This covers a workspace that arrived through sync with its `ws.json` but without some directories. Machine setup is separate:
 `ws symlink link`, `ws trash enable`, `ws cron apply`, `ws completion enable`.
 
+Init also refreshes the managed copy of the built-in skills (§`ws skill`). At the end of an
+interactive run (stdin is a terminal, no `--json` or `--quiet`) it offers to link the
+built-ins into the detected tools: `Install the built-in skills (workspace-run,
+workspace-write) into claude, copilot? [y/N]`, default no. Otherwise it prints a one-line hint
+(`ws skill install`). It says nothing when every built-in is already in every detected tool.
+
 Plan: up to three actions, all pre-checked. They are: create the missing directories (one action
 that lists them), write `ws.json` (or `Fill in 7 missing keys in /home/user/Workspace/ws.json;
 values you set are kept`), and write `.megaignore`. When nothing is missing, it prints
@@ -4392,8 +4512,9 @@ global letter takes the screen's own verb, and the footer says "a allow".
 `:` commands: `empty`, `enable`, `disable`, `status`.
 
 **Skills.** The header shows the skills folder, how many skills it holds, and which tools are
-detected (`●`) and how many are not (`○`). A row is a skill: its name, the tools that have
-something at its place, and its path. This list is `ws skill scan`. A skill whose link target is
+detected (`●`) and how many are not (`○`). A row is a skill of either shelf: its name, its
+shelf (`built-in` or `yours`, with `dev`, `ejected from <version>` or a name clash in
+parentheses), the tools that have something at its place, and its path. This list is `ws skill scan`. A skill whose link target is
 gone is listed and cannot be installed.
 
 | Key | Does | Rows |

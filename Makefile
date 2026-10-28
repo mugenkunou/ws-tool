@@ -30,7 +30,8 @@ TMPDIR   ?= $(HOME)/tmp
 GOCACHE  ?= $(HOME)/tmp/gocache
 GOTMPDIR ?= $(HOME)/tmp/gotmp
 GOMODCACHE ?= $(shell go env GOMODCACHE)
-LDFLAGS  := -s -w -X github.com/mugenkunou/ws-tool/cmd.appVersion=$(VERSION)
+LDFLAGS  := -s -w -X github.com/mugenkunou/ws-tool/cmd.appVersion=$(VERSION) \
+            -X github.com/mugenkunou/ws-tool/cmd.sourceDir=$(CURDIR)
 
 # ── install paths ─────────────────────────────────────────────────────────────
 # Default to ~/.local/bin (no sudo needed, on PATH for modern Linux/macOS).

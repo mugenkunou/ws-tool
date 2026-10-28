@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
@@ -23,6 +24,17 @@ var layoutDirs = []string{
 	"symlinks",
 	"data",
 	"archive",
+}
+
+// TopDirs are the workspace's top-level layout folders: notes, scripts, agent, …
+func TopDirs() []string {
+	var out []string
+	for _, d := range layoutDirs {
+		if !strings.Contains(d, "/") {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // InitPlan is what `ws init` finds and what it would change. Everything is an

@@ -112,9 +112,10 @@ func fixtures() []tea.Msg {
 				Interval: 30 * time.Minute, LastRun: wscron.RunRecord{Job: "repo-sync", Time: fixedClock().Add(-40 * time.Minute), ExitCode: 2}},
 		}},
 		skills.LoadedMsg{Home: "/home/tester", Entries: []skills.Entry{
-			{Name: "review-pr", Path: ws + "/agent/skills/review-pr", Tools: []string{"claude", "cursor"}},
-			{Name: "sql-style", Path: ws + "/agent/skills/sql-style", Tools: []string{}},
-			{Name: "old-link", Path: ws + "/agent/skills/old-link", Broken: true, Tools: []string{}},
+			{Name: "workspace-write", Path: "/home/tester/.local/share/ws/skills/workspace-write", Shelf: "built-in", Note: "dev", Tools: []string{"claude"}},
+			{Name: "review-pr", Path: ws + "/agent/skills/review-pr", Shelf: "yours", Tools: []string{"claude", "cursor"}},
+			{Name: "sql-style", Path: ws + "/agent/skills/sql-style", Shelf: "yours", Tools: []string{}},
+			{Name: "old-link", Path: ws + "/agent/skills/old-link", Shelf: "yours", Broken: true, Tools: []string{}},
 		}},
 		trash.LoadedMsg{
 			Status: wstrash.Status{

@@ -1,13 +1,13 @@
 ws  Dashboard   Repos   Symlinks   Scratch   Sessions   Ignore   Secrets   Cron   Trash   Skills
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-🧩 agent/skills  3 skills
+🧩 agent/skills  4 skills
 ● no tool detected  ○ 13 not detected
 
- Skill                          Installed in                              Path
- review-pr                      claude, cursor                            agent/skills/review-pr
- sql-style                                                                agent/skills/sql-style
- old-link                                                                 agent/skills/old-link
-
+ Skill                      Shelf           Installed in                      Path
+ workspace-write            built-in (dev)  claude                            ~/.local/share/ws/sk…
+ review-pr                  yours           claude, cursor                    agent/skills/review-…
+ sql-style                  yours                                             agent/skills/sql-sty…
+ old-link                   yours                                             agent/skills/old-link
 
 
 
