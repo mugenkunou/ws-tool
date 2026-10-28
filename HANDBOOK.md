@@ -380,14 +380,14 @@ laptop to cloud. The cloud copy is a backup: you never edit it. The only reverse
 is a deliberate restore onto a new or empty machine (§2.5), not continuous two-way sync.
 
 Two-way sync needs conflict detection that the clients and backends can't give reliably.
-rclone's Zoho WorkDrive backend has no modtimes or hashes, and the office WorkDrive client
-maps the whole account, not one folder. When conflict detection fails, a silent overwrite
+rclone's Zoho WorkDrive backend has no modtimes or hashes, and the WorkDrive client
+(TrueSync) maps the whole account, not one folder. When conflict detection fails, a silent overwrite
 loses work. One-way keeps the copy predictable and lets ws own exactly what goes out: its
 ignore rules decide (Factor VIII), and symlinks never sync (`ws ignore lint` warns about
 them).
 
 `ws sync push` mirrors `~/Workspace` into a folder the sync client watches (for example
-`~/Zoho WorkDrive/My Folders/Workspace`), and `ws sync restore` is the reverse, for a fresh
+`~/ZohoWorkDrive/My Folders/Workspace`), and `ws sync restore` is the reverse, for a fresh
 machine (§5 `ws sync`).
 
 ---
@@ -554,7 +554,7 @@ workspace reach the other machines. What ws does for you depends on the client:
 
 | | MEGA | Zoho WorkDrive, other clients |
 | --- | --- | --- |
-| Exclusion rules | ws generates `<workspace>/.megaignore` (§5 `ws ignore`), which MEGA reads | WorkDrive does not read `.megaignore`, and its app can only sync its own folder. `ws sync push` copies the workspace one way into `sync.mirror.target` inside that folder, applying ws's rules while it copies (§5 `ws sync`). Other clients: configure exclusions in the client, or use `ws sync` the same way |
+| Exclusion rules | ws generates `<workspace>/.megaignore` (§5 `ws ignore`), which MEGA reads | WorkDrive does not read `.megaignore`, and its app (TrueSync) mounts the whole account as one drive, with no folder of yours to sync. `ws sync push` copies the workspace one way into `sync.mirror.target` inside that folder, applying ws's rules while it copies (§5 `ws sync`). Other clients: configure exclusions in the client, or use `ws sync` the same way |
 | `ws ignore ls`, `check`, `tree`, `lint` | evaluate the rules ws holds in `ws.json` | the same: they report what ws's rules would exclude, whichever client runs |
 | `mega-sync` cron job | restarts MEGAsync for a 5-minute window every 30 minutes (§5 `ws cron`) | not needed when the client syncs by itself. Install `pass-backup` alone |
 | `sync-push` cron job | not needed | runs `ws sync push` every 30 minutes, for a mirror client such as WorkDrive |
@@ -3901,7 +3901,7 @@ passes 1 GB.
 
 ### `ws sync`
 
-A one-way mirror for sync clients that can only sync their own folder (Zoho WorkDrive Sync,
+A one-way mirror for sync clients that can only sync their own folder (Zoho WorkDrive TrueSync,
 OneDrive, a USB stick). `ws sync push` copies the workspace into `sync.mirror.target`, a
 folder the client watches, and the client uploads it (Factor XII). The mirror is ws's: you
 never edit it. MEGA does not need this noun (§2.6).
@@ -3919,7 +3919,7 @@ Settings, under `sync` in `ws.json` (§2.3):
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `mirror.target` | none | the mirror folder, for example `~/Zoho WorkDrive/My Folders/Workspace` |
+| `mirror.target` | none | the mirror folder, for example `~/ZohoWorkDrive/My Folders/Workspace` |
 | `exclude` | `[]` | extra paths kept out of the mirror only; the pattern syntax of `ignore_rules.exclude` |
 | `max_delete_pct` | `20` | the delete guard's threshold, in percent of the mirror's files |
 

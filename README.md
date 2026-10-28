@@ -78,21 +78,21 @@ ws doesn't sync anything itself. It prepares one folder so a folder-sync tool ca
 ```text
 MEGA       ~/Workspace ──(MEGAsync reads .megaignore)──────────────────────────────►  ☁️ MEGA:/Workspace
 
-WorkDrive  ~/Workspace ──ws sync push──► ~/Zoho WorkDrive/My Folders/Workspace ──Zoho app──►  ☁️ WorkDrive
-           (the truth)   rsync, ws's      (the mirror: ws owns it, you never     (uploads
-                         ignore rules      touch it)                              by itself)
+WorkDrive  ~/Workspace ──ws sync push──► ~/ZohoWorkDrive/My Folders/Workspace ──TrueSync──►  ☁️ WorkDrive
+           (the truth)   rsync, ws's      (the mirror, on TrueSync's drive:   (uploads
+                         ignore rules      ws owns it, you never touch it)      by itself)
 ```
 
 - **MEGA** can pair any local folder with any remote one, so it syncs `~/Workspace` directly and honours the generated `.megaignore`.
-- **WorkDrive** can't. Its app has one fixed-name root (`~/Zoho WorkDrive`) that mirrors your *whole* account, and it ignores files by extension only. So ws copies the workspace into a mirror folder inside that root, using its own ignore rules, and lets the app upload the mirror.
+- **WorkDrive** can't. Zoho's TrueSync app mounts your *whole* account as a virtual drive at one fixed place (`~/ZohoWorkDrive`) and asks you for no folder, and it doesn't read ws's ignore rules. So ws copies the workspace into a mirror folder on that drive, using its own ignore rules, and lets the app upload the mirror.
 
 | | 🔴 MEGA | 🟠 Zoho WorkDrive |
 | --- | --- | --- |
-| Client | MEGAsync (GUI) or MEGAcmd | Zoho's WorkDrive Sync app |
+| Client | MEGAsync (GUI) or MEGAcmd | Zoho WorkDrive TrueSync (the old Desktop Sync app is discontinued) |
 | What it syncs | `~/Workspace` itself | the mirror folder that `ws sync push` fills |
 | Honours ws's ignore rules | ✅ reads `.megaignore` | ✅ ws filters while copying |
 | Scheduled by `ws cron` | ✅ `mega-sync` | ✅ `sync-push` |
-| Symlinks | ❌ skipped (`-s:*`) | ❌ dropped by the app, skipped by ws |
+| Symlinks | ❌ skipped (`-s:*`) | ❌ skipped by ws |
 | Direction | two-way by nature: one-way is *your* discipline | one-way by construction |
 
 ### 🔴 MEGA
@@ -105,13 +105,13 @@ WorkDrive  ~/Workspace ──ws sync push──► ~/Zoho WorkDrive/My Folders/W
 
 ### 🟠 Zoho WorkDrive
 
-1. Install Zoho's WorkDrive Sync app and sign in. Leave its folder at `~/Zoho WorkDrive`.
+1. Install Zoho WorkDrive TrueSync and sign in. It mounts your account at `~/ZohoWorkDrive` (a virtual drive; it doesn't ask where). Let it start at login.
 2. Tell ws where the mirror lives. There's no default, so ws refuses to push until you set it:
 
    ```jsonc
    // ws.json
    "sync": {
-     "mirror":  { "target": "~/Zoho WorkDrive/My Folders/Workspace" },
+     "mirror":  { "target": "~/ZohoWorkDrive/My Folders/Workspace" },
      "exclude": [],          // optional: extra paths to keep out of the mirror only
      "max_delete_pct": 20    // optional: ask before a push deletes more than this % of the mirror
    }
@@ -125,8 +125,10 @@ WorkDrive  ~/Workspace ──ws sync push──► ~/Zoho WorkDrive/My Folders/W
    ws sync status     # last push, changes and deletions waiting
    ```
 
-4. Schedule it: `ws cron add sync-push` (every 30 minutes).
-5. In the WorkDrive app, tick **"Don't show delete confirmation dialog"**, or every push that deletes something pops a dialog.
+4. Schedule it: `ws cron add sync-push` (every 30 minutes). TrueSync runs all the time, so there is no restart job like MEGA's.
+5. Run `ws sync push` twice. The second must copy nothing; if it re-copies files, see the TrueSync gotcha below.
+
+Coming from the old Desktop Sync app? Change `sync.mirror.target` from `~/Zoho WorkDrive/…` to `~/ZohoWorkDrive/…`, and remove a leftover `zoho-sync` cron block with `ws cron rm zoho-sync` (the job is retired).
 
 <details>
 <summary>🩹 Without the app: rclone, one way</summary>
@@ -149,7 +151,8 @@ rclone's `zoho` backend talks to WorkDrive directly, no app needed. Use **`rclon
 
 - 🔗 **Symlinks never sync**, on either client. `ws ignore lint` warns about any symlink in a synced path: make it a real file or folder, or `ws ignore add` it.
 - 🧾 **WorkDrive's own exclusions work by file extension only** (`mp3, png`): no folders, no globs. That's why ws filters before the copy.
-- 🗑️ **The WorkDrive app asks before every local delete** unless you turn the dialog off (step 5).
+- 🕓 **TrueSync's drive doesn't keep file times.** It stamps each copy with its upload time, so rsync's "same size and time" check never matches. ws push uses `rsync --update`, which skips a file whose mirror copy is newer. The catch: swapping in an *older* version of a file (`cp -p`) won't push until you `touch` it.
+- 🗑️ **The old Desktop Sync app asked before every local delete.** Not checked for TrueSync: if a dialog appears when a push deletes something, turn it off in the app.
 - 👀 **An office WorkDrive is readable by its admins**, and the mirror includes `symlinks/` (`.ssh`, `.kube`, `.docker`, …). MEGA is end-to-end encrypted; WorkDrive is not. Know what you're shipping.
 - 🔐 **Executable bits don't come back** from a WorkDrive restore (`ws sync restore` reminds you). `chmod +x` your scripts by hand.
 - 🔄 **`ws cron add mega-sync` kills and restarts MEGAsync** every 30 minutes. Expect the tray icon to blink.
@@ -180,9 +183,9 @@ Zoho only documents local → cloud deletes. Test yours once: delete a test file
 
 **💻💻 …a second laptop pushes to the same mirror?** The stamp names the push it came from, so the other machine's push sees a foreign stamp: it asks you, and cron refuses. One truth, one pusher.
 
-**😴 …the WorkDrive app isn't running, or got logged out?** ws fills the mirror happily and nothing reaches the cloud. ws can't see that; glance at the app's tray icon now and then.
+**😴 …the WorkDrive app isn't running, or got logged out?** If TrueSync isn't running, its drive isn't mounted: the mirror's parent folder is gone and push refuses (see below). If it runs but is logged out, ws can't tell: it fills the mirror and nothing reaches the cloud. Glance at the app's tray icon now and then.
 
-**📦 …the mirror's parent folder moved (app reinstalled, account relinked)?** Push refuses instead of creating a stray folder. Point `sync.mirror.target` at the new place.
+**📦 …the mirror's parent folder is missing (TrueSync stopped, app reinstalled, account relinked)?** Push refuses instead of creating a stray folder. Start the app, or point `sync.mirror.target` at the new place.
 
 **🙈 …I ignore something that already went up?** The next push deletes it from the mirror (`--delete-excluded`), and the app removes it from the cloud. With MEGA, the newly ignored file just stops syncing; delete the cloud copy yourself.
 
@@ -198,7 +201,7 @@ Zoho only documents local → cloud deletes. Test yours once: delete a test file
 # 1. install your sync client, sign in, let it download
 #    (MEGA: ~/Workspace arrives directly; WorkDrive: the mirror arrives)
 # 2. install ws
-ws sync restore ~/Zoho\ WorkDrive/My\ Folders/Workspace   # WorkDrive only: mirror → ~/Workspace
+ws sync restore ~/ZohoWorkDrive/My\ Folders/Workspace   # WorkDrive only: mirror → ~/Workspace
 ws init               # adds anything missing, keeps your values
 ws symlink link       # every symlink, back where it was
 ws trash enable       # undoable rm
