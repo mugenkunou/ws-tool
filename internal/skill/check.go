@@ -100,8 +100,12 @@ func checkSkill(in CheckInput, s Skill) []Finding {
 			}
 			if s.Shelf == Yours && c.inline {
 				if p, ok := workspacePath(c.text, in.Anchors); ok {
-					if _, err := os.Stat(filepath.Join(in.Workspace, p)); err != nil {
-						add(LevelError, file, c.line, "`%s` does not exist in the workspace", p)
+					// A skill may ship its own scripts/ or references/, so a path inside
+					// the skill's folder counts too.
+					_, errWs := os.Stat(filepath.Join(in.Workspace, p))
+					_, errSkill := os.Stat(filepath.Join(s.Path, p))
+					if errWs != nil && errSkill != nil {
+						add(LevelError, file, c.line, "`%s` exists neither in the workspace nor in the skill's folder", p)
 					}
 				}
 			}

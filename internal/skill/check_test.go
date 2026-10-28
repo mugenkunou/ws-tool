@@ -64,11 +64,12 @@ func TestCheckFindsDrift(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(Root(ws), "mine", "SKILL.md"), strings.Join([]string{
 		"---", "name: mine", "metadata:", `  ws-layout: "2"`, "---",
-		"Notes go in `notes/kept.md`, never `notes/gone.md` or `notes/<topic>.md`.",
+		"Notes go in `notes/kept.md`, never `notes/gone.md` or `notes/<topic>.md`. Run `scripts/own.py`.",
 		"```sh", "ws repo root add ~/src", "ws repo rot", "```",
 		"The ws tool stops here; `ws.json` is not a path to check.", "",
 	}, "\n"))
 	writeFile(t, filepath.Join(ws, "notes", "kept.md"), "x")
+	writeFile(t, filepath.Join(Root(ws), "mine", "scripts", "own.py"), "x") // in the skill's own folder
 	writeFile(t, filepath.Join(ws, "scripts", "good.sh"), "#!/bin/sh\n# Prints hello.\necho \"$HOME/tmp\" ~/tmp\n")
 	writeFile(t, filepath.Join(ws, "scripts", "bad.sh"), "#!/bin/sh\ncd /tmp && ls\n")
 	writeFile(t, filepath.Join(ws, "scripts", "README.md"), "not a script, /tmp is fine here")
@@ -86,7 +87,7 @@ func TestCheckFindsDrift(t *testing.T) {
 	for _, want := range []string{
 		"error: `ws skill frobnicate` is not a ws command",
 		"error: `ws repo rot` is not a ws command",
-		"error: `notes/gone.md` does not exist",
+		"error: `notes/gone.md` exists neither",
 		`warning: ws-layout is "2"; ws.json's schema is 1`,
 		"error: no header comment",
 		"error: mentions /tmp",
@@ -96,7 +97,7 @@ func TestCheckFindsDrift(t *testing.T) {
 			t.Errorf("no %q in:\n%s", want, strings.Join(msgs, "\n"))
 		}
 	}
-	for _, not := range []string{"skill show", "repo root add", "kept.md", "<topic>", "WS_TMP falls", "WS_ROOT", "good.sh"} {
+	for _, not := range []string{"skill show", "repo root add", "kept.md", "own.py", "<topic>", "WS_TMP falls", "WS_ROOT", "good.sh"} {
 		if hasMessage(msgs, not) {
 			t.Errorf("%q reported:\n%s", not, strings.Join(msgs, "\n"))
 		}
