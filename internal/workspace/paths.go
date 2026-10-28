@@ -69,3 +69,53 @@ func ConfigExists(configPath string) bool {
 	info, err := os.Stat(configPath)
 	return err == nil && !info.IsDir()
 }
+
+// Home is a place outside the workspace that scripts use, as `ws layout`
+// lists it and `ws env` exports it.
+type Home struct {
+	Name    string `json:"name"`
+	Var     string `json:"var"`
+	Path    string `json:"path"`
+	Purpose string `json:"purpose"`
+}
+
+// EnvVar is one line of `ws env`.
+type EnvVar struct {
+	Name, Value string
+}
+
+// ScriptHomes resolves the homes outside the workspace the way the fallback
+// in scripts/lib/common.sh does, so a script gets the same paths with or
+// without ws:
+//
+//	WS_TMP=${TMPDIR:-$HOME/tmp}
+//	WS_CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/ws
+//	WS_RUN=${XDG_RUNTIME_DIR:-$HOME/.local/state}
+//	WS_SCRATCH=<ws.json scratch.root_dir, resolved>   (common.sh: $HOME/Scratch)
+//
+// getenv is os.Getenv outside tests; an empty value counts as unset, as with
+// the shell's :-.
+func ScriptHomes(getenv func(string) string, scratchRoot string) []Home {
+	or := func(name, def string) string {
+		if v := getenv(name); v != "" {
+			return v
+		}
+		return def
+	}
+	home := getenv("HOME")
+	return []Home{
+		{"temp", "WS_TMP", or("TMPDIR", home+"/tmp"), "scripts make their private temp dir (WS_TMPD) here"},
+		{"cache", "WS_CACHE", or("XDG_CACHE_HOME", home+"/.cache") + "/ws", "regenerable caches, one <system>-<instance>/ each"},
+		{"session", "WS_RUN", or("XDG_RUNTIME_DIR", home+"/.local/state"), "short-lived runtime and session files"},
+		{"scratch", "WS_SCRATCH", scratchRoot, "throwaway work and captures (ws scratch)"},
+	}
+}
+
+// ScriptEnv is what `ws env` prints: WS_ROOT, then every home's variable.
+func ScriptEnv(workspacePath string, homes []Home) []EnvVar {
+	out := []EnvVar{{"WS_ROOT", workspacePath}}
+	for _, h := range homes {
+		out = append(out, EnvVar{h.Var, h.Path})
+	}
+	return out
+}

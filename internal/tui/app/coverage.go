@@ -37,6 +37,8 @@ var CLICoverage = func() []Coverage {
 	return []Coverage{
 		{"init", nav.ScreenDashboard, none, "the TUI shows its setup screen (i) until the workspace is initialized", ""},
 		{"version", nav.ScreenDashboard, none, "prints the build version", ""},
+		{"layout", nav.ScreenDashboard, none, "a reference for agents and scripts; CLI-only", ""},
+		{"env", nav.ScreenDashboard, none, "shell lines for scripts to eval; CLI-only", ""},
 		{"help", nav.ScreenDashboard, none, "the TUI has ? help", ""},
 		{"tui", nav.ScreenDashboard, none, "starts this TUI", ""},
 

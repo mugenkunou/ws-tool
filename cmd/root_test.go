@@ -149,7 +149,7 @@ func TestConfigDefaultsFlag(t *testing.T) {
 
 // allDispatchedCommands must be kept in sync with the switch in Execute.
 var allDispatchedCommands = []string{
-	"help", "version", "init", "config",
+	"help", "version", "init", "layout", "env", "config",
 	"symlink", "ignore", "secret", "pass", "session", "scratch", "repo",
 	"trash", "sync", "cron", "credential", "git-credential-helper",
 	"completion", "tui",

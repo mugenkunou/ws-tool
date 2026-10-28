@@ -438,6 +438,12 @@ existing `ws.json` (keeping its values), and leaves every other existing file al
 pass store is not part of the layout: it syncs through its own git remote (see
 `ws pass`, "A second copy in the workspace").
 
+`ws layout` prints this list with each folder's purpose, and the homes outside the workspace
+(temp, cache, session, scratch) as this machine resolves them. The purposes live in one Go
+table that `ws init` creates from, so skills and scripts ask ws instead of copying the list.
+`ws env` prints the homes as `export` lines that `scripts/lib/common.sh` evals (§5 Workspace
+commands).
+
 `symlinks/**` is the one built-in included directory (§5 `ws ignore`): the mirrored tree
 keeps host names such as `.gitconfig`, `.ssh/` and `.config/`, and the built-in `-:.*`
 exclude would drop all of them.
@@ -602,7 +608,7 @@ such as `rclone bisync`.
 | `config` | `ws.json` | `:config …` |
 | `completion` | shell completion | — |
 
-Workspace commands without a noun: `ws init`, `ws tui`, `ws version`, `ws help`. Bare `ws`
+Workspace commands without a noun: `ws init`, `ws layout`, `ws env`, `ws tui`, `ws version`, `ws help`. Bare `ws`
 prints help.
 
 ### 3.3 Verb glossary
@@ -737,6 +743,8 @@ ws completion enable [--shell s]          RW  load completion from your shell rc
 ws completion disable [--shell s]         RW  remove it
 
 ws init                                   RW  create the workspace layout
+ws layout                                 RO  workspace folders and the homes outside it, with their purpose
+ws env                                    RO  export lines for WS_ROOT, WS_TMP, WS_CACHE, WS_RUN, WS_SCRATCH
 ws tui                                    RO  the full-screen interface
 ws version                                RO  version, schema and platform
 ws help [noun [verb…]]                    RO  help
@@ -953,6 +961,7 @@ keep completion and help in step (§9.7).
 | `VISUAL`, `EDITOR` | your editor, when `ws.json` `editor` is empty (§4.10) |
 | `PASSWORD_STORE_DIR` | pass store location |
 | `XDG_STATE_HOME`, `XDG_DATA_HOME` | machine-local state and trash locations |
+| `TMPDIR`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR` | `ws env` and `ws layout`: the temp, cache and session homes |
 | `WS_NO_MOUSE` | TUI: leave the mouse to the terminal |
 | `WS_NO_EMOJI` | TUI: no emoji |
 | `WS_CRONTAB_FILE` | tests: a file that stands in for the user's crontab |
@@ -3899,6 +3908,8 @@ command bar covers `config` (`:config show`, `:config edit`), and the setup scre
 | Command | RO/RW | Does | TUI |
 | --- | --- | --- | --- |
 | `ws init` | RW | create the workspace layout, `ws.json` and `.megaignore` | setup screen `enter` |
+| `ws layout` | RO | print the workspace folders and the homes outside it, with their purpose | — |
+| `ws env` | RO | print the paths scripts use, as shell `export` lines | — |
 | `ws config show [--defaults]` | RO | print the resolved `ws.json`, or the built-in defaults | `:config show` |
 | `ws config edit` | RW | open `ws.json` in `$EDITOR`, validate, save | `:config edit` |
 | `ws completion bash\|zsh\|fish` | RO | print the completion script | — |
@@ -3958,6 +3969,72 @@ Exit: 0, 1, 3.
 
 TUI: until the workspace is initialized, the TUI shows the setup screen. `enter` hands the terminal to
 `ws init` with the TUI's `--workspace`.
+
+#### `ws layout`
+
+```text
+ws layout [--json]
+```
+
+Prints every folder of the layout (§2.2) with a one-line purpose, then the homes outside the
+workspace with the variable `ws env` exports for each. It is the one place these facts live:
+skills and scripts ask `ws layout` rather than copy them. A folder that does not exist yet is
+marked `(missing; ws init creates it)`. It needs no initialized workspace; without `ws.json`,
+scratch is the default `~/Scratch`.
+
+```text
+$ ws layout
+Workspace /home/user/Workspace
+  /home/user/Workspace/notes         the user's own notes; agents read them and write elsewhere
+  /home/user/Workspace/experiments   code projects (git repos too) and hand-written or multi-step scripts
+  …
+  /home/user/Workspace/archive       put away for good, at the same relative path
+
+Homes outside the workspace (ws env exports them)
+  /home/user/tmp                     WS_TMP      temp: scripts make their private temp dir (WS_TMPD) here
+  /home/user/.cache/ws               WS_CACHE    cache: regenerable caches, one <system>-<instance>/ each
+  /run/user/1000                     WS_RUN      session: short-lived runtime and session files
+  /home/user/Scratch                 WS_SCRATCH  scratch: throwaway work and captures (ws scratch)
+```
+
+`--json`: command `layout`; data `workspace`, `folders` (`path`, `rel`, `purpose`, `exists`) and
+`homes` (`name`, `var`, `path`, `purpose`).
+
+Exit: 0. 1 when `ws.json` is invalid.
+
+#### `ws env`
+
+```text
+ws env [--json]
+```
+
+Prints one `export NAME='value'` line per path scripts use, quoted for any POSIX shell, so
+`eval "$(ws env)"` sets them. `scripts/lib/common.sh` does exactly that when `ws` is on `PATH`,
+and computes the same values itself where it is not (a remote host):
+
+| Variable | Value |
+| --- | --- |
+| `WS_ROOT` | the workspace (`--workspace` → `$WS_WORKSPACE` → `~/Workspace`) |
+| `WS_TMP` | `${TMPDIR:-$HOME/tmp}`; common.sh makes the script's private `WS_TMPD` in it |
+| `WS_CACHE` | `${XDG_CACHE_HOME:-$HOME/.cache}/ws` |
+| `WS_RUN` | `${XDG_RUNTIME_DIR:-$HOME/.local/state}` |
+| `WS_SCRATCH` | `ws.json` `scratch.root_dir`, resolved (default `~/Scratch`) |
+
+An empty variable counts as unset, as with the shell's `:-`. The lines go to stdout even with
+`--quiet`. It needs no initialized workspace.
+
+```text
+$ ws env
+export WS_ROOT='/home/user/Workspace'
+export WS_TMP='/home/user/tmp'
+export WS_CACHE='/home/user/.cache/ws'
+export WS_RUN='/run/user/1000'
+export WS_SCRATCH='/home/user/Scratch'
+```
+
+`--json`: command `env`; data is an object of the same names and values.
+
+Exit: 0. 1 when `ws.json` is invalid; common.sh then falls back to its own values.
 
 #### `ws config show`
 

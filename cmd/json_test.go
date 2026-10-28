@@ -62,7 +62,7 @@ func TestJSONExitHelper(t *testing.T) {
 
 // jsonMigrated lists the nouns whose JSON command names follow the grammar.
 // Each noun is added in the commit that moves it (plan 0002 phase B).
-var jsonMigrated = []string{"version", "symlink", "session", "scratch", "trash", "cron", "ignore", "repo", "secret", "pass", "credential"}
+var jsonMigrated = []string{"version", "layout", "env", "symlink", "session", "scratch", "trash", "cron", "ignore", "repo", "secret", "pass", "credential"}
 
 // TestJSONCommandNames: every read-only command that needs no target, run with
 // --json, reports <noun>.<verb> as its command (spec §4.4).

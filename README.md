@@ -61,6 +61,8 @@ Stuck? `ws help`, or `ws <noun> --help`.
 └── notes/ experiments/ artifacts/ references/ archive/ scripts/ agent/ configs/ data/
 ```
 
+`ws layout` prints every folder with what belongs in it, and `ws env` prints the paths scripts use (`eval "$(ws env)"`).
+
 Machine-local bits (cron state, trash hooks) stay **outside**, in `~/.local/state/ws-tool/`. Recorded sessions live in `~/Sessions` (`session.root_dir`), and scratch directories in `~/Scratch`. None of them sync.
 
 ---

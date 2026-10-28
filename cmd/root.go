@@ -51,6 +51,10 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runVersion(commandArgs, globals, stdout, stderr)
 	case "init":
 		return runInit(commandArgs, globals, stdin, stdout, stderr)
+	case "layout":
+		return runLayout(commandArgs, globals, stdout, stderr)
+	case "env":
+		return runEnv(commandArgs, globals, stdout, stderr)
 	case "config":
 		return runConfig(commandArgs, globals, stdin, stdout, stderr)
 	case "symlink":

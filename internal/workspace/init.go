@@ -9,20 +9,29 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
-// layoutDirs are the workspace directories created by `ws init` (spec §2.2).
-var layoutDirs = []string{
-	"notes",
-	"experiments",
-	"artifacts",
-	"references",
-	"scripts",
-	"scripts/lib",
-	"agent",
-	"agent/skills",
-	"configs",
-	"symlinks",
-	"data",
-	"archive",
+// LayoutDir is one folder of the workspace layout: its path relative to the
+// workspace, with forward slashes, and what belongs in it.
+type LayoutDir struct {
+	Path    string `json:"path"`
+	Purpose string `json:"purpose"`
+}
+
+// Layout is the workspace layout (spec §2.2). `ws init` creates these folders
+// and `ws layout` prints them with their purpose; skills and scripts ask ws
+// rather than copy the list.
+var Layout = []LayoutDir{
+	{"notes", "the user's own notes; agents read them and write elsewhere"},
+	{"experiments", "code projects (git repos too) and hand-written or multi-step scripts"},
+	{"artifacts", "raw blobs: PDFs, slides, images, datasets, tarballs"},
+	{"references", "structured docs for agents: API specs, converted docs, WISDOM.md"},
+	{"scripts", "small composable blocks, one action each"},
+	{"scripts/lib", "code the scripts share; common.sh sets the WS_* paths"},
+	{"agent", "what coding agents use"},
+	{"agent/skills", "one folder per skill, with a SKILL.md; ws skill install links them"},
+	{"configs", "settings the user edits, one <system>-<instance>/ each"},
+	{"symlinks", "originals of files that belong at system paths (ws symlink add)"},
+	{"data", "program output only, where losing it loses work"},
+	{"archive", "put away for good, at the same relative path"},
 }
 
 // InitPlan is what `ws init` finds and what it would change. Everything is an
@@ -60,8 +69,8 @@ func PlanInit(workspacePath string) (InitPlan, error) {
 		Existing:    []string{},
 		MissingKeys: []string{},
 	}
-	for _, d := range layoutDirs {
-		abs := filepath.Join(workspacePath, filepath.FromSlash(d))
+	for _, d := range Layout {
+		abs := filepath.Join(workspacePath, filepath.FromSlash(d.Path))
 		if info, err := os.Stat(abs); err == nil && info.IsDir() {
 			p.Existing = append(p.Existing, abs)
 		} else {

@@ -241,6 +241,9 @@ var commands = []command{
 		Flags: []flagDoc{{Name: "--shell", Arg: "<s>", Desc: "bash, zsh or fish (default: from $SHELL)"}}},
 
 	{Path: []string{"init"}, Summary: "create the workspace layout and ws.json"},
+	{Path: []string{"layout"}, Summary: "workspace folders and the homes outside it, with their purpose", RO: true},
+	{Path: []string{"env"}, Summary: "export lines for WS_ROOT, WS_TMP, WS_CACHE, WS_RUN, WS_SCRATCH", RO: true,
+		Examples: []string{`eval "$(ws env)"`}},
 	{Path: []string{"tui"}, Summary: "the full-screen interface", RO: true},
 	{Path: []string{"version"}, Summary: "version, schema and platform", RO: true,
 		Flags: []flagDoc{{Name: "--short", Desc: "print only the version"}}},
@@ -266,6 +269,8 @@ var nounSummaries = []struct{ Name, Summary string }{
 // workspaceSummaries are the commands without a noun, as `ws help` lists them.
 var workspaceSummaries = []struct{ Name, Summary string }{
 	{"init", "Create the workspace layout and ws.json"},
+	{"layout", "Workspace folders and homes, with their purpose"},
+	{"env", "Paths for scripts, as shell export lines"},
 	{"config", "Show or edit ws.json"},
 	{"completion", "Shell completion"},
 	{"tui", "Interactive terminal UI"},

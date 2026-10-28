@@ -40,7 +40,7 @@ func TestPlanInitOnAnEmptyDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Empty() || len(p.MissingDirs) != len(layoutDirs) || !p.ConfigMissing || !p.MegaignoreMissing || len(p.Existing) != 0 {
+	if p.Empty() || len(p.MissingDirs) != len(Layout) || !p.ConfigMissing || !p.MegaignoreMissing || len(p.Existing) != 0 {
 		t.Fatalf("%+v", p)
 	}
 	if _, err := os.Stat(root); err == nil {
@@ -133,5 +133,28 @@ func TestConfigExists(t *testing.T) {
 	}
 	if !ConfigExists(path) {
 		t.Fatal("config should exist")
+	}
+}
+
+// TestScriptHomesMatchCommonSh: the fallbacks are those of
+// scripts/lib/common.sh, and an empty variable counts as unset (the shell's :-).
+func TestScriptHomesMatchCommonSh(t *testing.T) {
+	env := map[string]string{"HOME": "/h", "TMPDIR": "", "XDG_RUNTIME_DIR": "/run/user/1"}
+	homes := ScriptHomes(func(k string) string { return env[k] }, "/h/Scratch")
+	got := map[string]string{}
+	for _, v := range ScriptEnv("/h/Workspace", homes) {
+		got[v.Name] = v.Value
+	}
+	want := map[string]string{
+		"WS_ROOT": "/h/Workspace", "WS_TMP": "/h/tmp", "WS_CACHE": "/h/.cache/ws",
+		"WS_RUN": "/run/user/1", "WS_SCRATCH": "/h/Scratch",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("got %v", got)
 	}
 }
