@@ -4946,6 +4946,9 @@ make build VERSION=v0.2.0
 5. `git push origin master --follow-tags`: pushes the commits and the tag together. The
    pre-push hook runs gitleaks first.
 6. Check GitHub → Releases for the artifacts.
+7. If a change since the last tag touches a built-in skill (`skills/`) or anything skills rely on (a
+   folder, a path, a command or a flag), edit the GitHub release notes and add a **Skills** line
+   saying which skill line changed. The generated notes do not say it.
 
 | Command | Purpose |
 | --- | --- |
