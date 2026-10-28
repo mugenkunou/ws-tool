@@ -7,6 +7,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"testing/fstest"
+
+	"github.com/mugenkunou/ws-tool/internal/skill"
 )
 
 func TestMain(m *testing.M) {
@@ -57,6 +60,10 @@ func TestMain(m *testing.M) {
 	if wd, err := os.Getwd(); err == nil {
 		_ = os.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(wd))
 	}
+
+	// The built-in skills embedded in the binary change as they are written;
+	// tests start with none and add a fake shelf (withBuiltins) when they need one.
+	skill.BuiltinFS = fstest.MapFS{}
 
 	os.Exit(m.Run())
 }

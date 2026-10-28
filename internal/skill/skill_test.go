@@ -4,12 +4,20 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 )
 
 // env is a fake machine: a home and a workspace with agent/skills/.
 func env(t *testing.T) (home, ws string) {
 	t.Helper()
 	home, ws = t.TempDir(), t.TempDir()
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+	if _, faked := BuiltinFS.(fstest.MapFS); !faked {
+		// Only the skills a test writes, not the ones embedded in the binary.
+		old := BuiltinFS
+		BuiltinFS = fstest.MapFS{}
+		t.Cleanup(func() { BuiltinFS = old })
+	}
 	if err := os.MkdirAll(Root(ws), 0o755); err != nil {
 		t.Fatal(err)
 	}

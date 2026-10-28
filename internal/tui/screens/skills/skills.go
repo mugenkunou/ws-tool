@@ -1,5 +1,5 @@
-// Package skills is the agent-skills screen: every skill in agent/skills/ and
-// the tools it is installed in, with install and uninstall on keys and as `:`
+// Package skills is the agent-skills screen: every skill on both shelves, the
+// built-ins and yours in agent/skills/, and the tools it is installed in, with install and uninstall on keys and as `:`
 // commands (spec §6.5). It is the TUI side of `ws skill`.
 package skills
 
@@ -68,19 +68,27 @@ func New(e env.Env) Model {
 		keys: keys.Skills(),
 		list: reslist.New(skill.Schema(e.View()), []reslist.Col[Entry]{
 			{Key: "skill", Min: 16, Weight: 1},
+			{Key: "shelf", Min: 14, Style: func(e Entry, t string) string {
+				if e.Shadowed {
+					return theme.Warn.Render(t)
+				}
+				return theme.Muted.Render(t)
+			}},
 			{Key: "installed_in", Min: 14, Weight: 2},
 			{Key: "path", Min: 12, Weight: 1, Style: func(_ Entry, t string) string { return theme.Muted.Render(t) }},
 		}, theme.Icon(theme.IconSparkles)+"No skills. Put a folder with a SKILL.md in agent/skills/.").Declare(reslist.Decls(actions)),
 	}
 }
 
-// Load reads the skills and where each one is installed.
+// Load reads the skills and where each one is installed. Like every `ws skill`
+// command, it first refreshes the managed copy of the built-ins.
 func Load(e env.Env) tea.Cmd {
 	return func() tea.Msg {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return LoadedMsg{Err: err}
 		}
+		_ = skill.Refresh(home) // a failure shows as a broken built-in row
 		entries, err := skill.Entries(home, e.Paths.Workspace)
 		return LoadedMsg{Home: home, Entries: entries, Err: err}
 	}
@@ -284,6 +292,9 @@ func (m Model) confirmInstall(t skill.Tool, rows []Entry) (nav.Component, tea.Cm
 		case r.Broken:
 			skipped = append(skipped, r.Name+": its target is gone")
 			continue
+		case r.Shadowed:
+			skipped = append(skipped, r.Name+": the built-in of that name wins")
+			continue
 		case skill.Installed(m.home, t, r.Name):
 			skipped = append(skipped, r.Name+": already there")
 			continue
@@ -295,7 +306,9 @@ func (m Model) confirmInstall(t skill.Tool, rows []Entry) (nav.Component, tea.Cm
 		pl.Actions = append(pl.Actions, plan.Action{
 			ID:          "skill-install-" + t.Name + "-" + r.Name,
 			Description: desc,
-			Execute:     func() error { return skill.Install(m.home, ws, t, skill.Skill{Name: r.Name, Path: r.Path}) },
+			Execute: func() error {
+				return skill.Install(m.home, ws, t, skill.Skill{Name: r.Name, Path: r.Path, Shelf: r.Shelf})
+			},
 		})
 	}
 	if len(pl.Actions) == 0 {
@@ -317,12 +330,12 @@ func (m Model) confirmUninstall(t skill.Tool, rows []Entry) (nav.Component, tea.
 	for _, r := range rows {
 		r := r
 		if !skill.Ours(m.home, ws, t, r.Name) {
-			skipped = append(skipped, r.Name+": not a link into agent/skills/")
+			skipped = append(skipped, r.Name+": not a link ws made")
 			continue
 		}
 		pl.Actions = append(pl.Actions, plan.Action{
 			ID:          "skill-uninstall-" + t.Name + "-" + r.Name,
-			Description: fmt.Sprintf("Unlink %s/%s (the skill in the workspace stays)", t.Dir, r.Name),
+			Description: fmt.Sprintf("Unlink %s/%s (the skill itself stays)", t.Dir, r.Name),
 			Execute:     func() error { return skill.Uninstall(m.home, ws, t, r.Name) },
 		})
 	}

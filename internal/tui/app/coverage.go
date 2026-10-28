@@ -65,6 +65,9 @@ var CLICoverage = func() []Coverage {
 		{"skill scan", nav.ScreenSkills, none, "", ""}, // the list itself: every skill and the tools that have it
 		{"skill install", nav.ScreenSkills, sk.Install, "", "install"},
 		{"skill uninstall", nav.ScreenSkills, sk.Uninstall, "", "uninstall"},
+		{"skill show", nav.ScreenSkills, none, "the list's shelf, note, tools and path columns; --path is for scripts", ""},
+		{"skill eject", nav.ScreenSkills, none, "CLI only: a one-off that hands a built-in over to you", ""},
+		{"skill check", nav.ScreenSkills, none, "CLI only: a report for a terminal or CI", ""},
 
 		{"ignore ls", nav.ScreenIgnore, ig.NextView, "", ""},       // the Muted and Ignored views
 		{"ignore lint", nav.ScreenIgnore, none, "", "lint"},        // the Warnings view; :lint <path>
