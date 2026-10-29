@@ -48,6 +48,8 @@ func Note(s Skill) string {
 		return "dev"
 	case s.Ejected != "":
 		return "ejected from " + s.Ejected
+	case s.Provider != "":
+		return "from " + s.Provider
 	}
 	return ""
 }

@@ -42,9 +42,6 @@ func TestLoadResolvesDirs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !filepath.IsAbs(e.LogDir) || e.LogDir == filepath.Join(o.Workspace, "data", "sessions") {
-		t.Errorf("log dir %q is not an absolute session.root_dir", e.LogDir)
-	}
 	if !filepath.IsAbs(e.ScratchDir) {
 		t.Errorf("scratch dir %q is not absolute", e.ScratchDir)
 	}

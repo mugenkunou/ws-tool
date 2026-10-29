@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/mugenkunou/ws-tool/internal/agenttmux"
 	"github.com/mugenkunou/ws-tool/internal/cron"
 	"github.com/mugenkunou/ws-tool/internal/repo"
 	"github.com/mugenkunou/ws-tool/internal/symlink"
@@ -58,9 +59,6 @@ var resolvers = map[string]resolver{
 	"scratch tag":  scratchFirst,
 	"scratch rm":   scratchNames,
 
-	"session show": sessionTags,
-	"session rm":   sessionTags,
-
 	"ignore lint":   fileTargets,
 	"ignore add":    fileTargets,
 	"ignore rm":     fileTargets,
@@ -91,9 +89,7 @@ var resolvers = map[string]resolver{
 type completionCtx struct {
 	workspace  string
 	scratchDir string
-	logDir     string
 	symlinks   []string // symlink host paths
-	logTags    []string // session tag directory names
 	scratchIDs []string // scratch directory names
 	repoPaths  []string // discovered repo paths (absolute)
 	repoRoots  []string // discovery roots (absolute)
@@ -155,6 +151,13 @@ func flagValueDirective(flag string) (bool, int) {
 
 // resolveCompletions is the pure-logic core, factored out for testability.
 func resolveCompletions(args []string, globals globalFlags) ([]string, int) {
+	// `ws session …` completes exactly as `agent-tmux …` does. Its candidates
+	// are `value` or `value<TAB>description` lines; ws's protocol takes the
+	// values, as agent-tmux filtered them. No agent-tmux, no candidates.
+	if rest, ok := sessionArgs(args); ok && len(rest) > 0 {
+		return agenttmux.Complete(rest), compDirectiveNoFileComp
+	}
+
 	// Detect when completing a flag value: prev word is a string flag.
 	if len(args) >= 2 {
 		prev := args[len(args)-2]
@@ -263,10 +266,6 @@ func scratchFirst(args []string, toComplete string, ctx completionCtx) ([]string
 	return nil, compDirectiveNoFileComp
 }
 
-func sessionTags(args []string, toComplete string, ctx completionCtx) ([]string, int) {
-	return filterPrefix(notGiven(ctx.logTags, args), toComplete), compDirectiveNoFileComp
-}
-
 func trashTargets(args []string, toComplete string, ctx completionCtx) ([]string, int) {
 	return filterPrefix(notGiven(ctx.trashItems, args), toComplete), compDirectiveNoFileComp
 }
@@ -285,6 +284,9 @@ func cronJobNames() []string { return cron.AllNames() }
 // commandFlags returns the flag names a command documents. Completion reads
 // the same table as help, so a flag is offered exactly when help lists it.
 func commandFlags(c command) []string {
+	if c.Program != "" {
+		return nil // its program completes its flags
+	}
 	var out []string
 	for _, f := range c.Flags {
 		out = append(out, f.Name)
@@ -354,14 +356,6 @@ func loadCompletionCtx(globals globalFlags) completionCtx {
 			ctx.trashItems = append(ctx.trashItems, it.Name)
 		}
 	}
-
-	// Session tags: directory names under session.root_dir.
-	if cfgErr == nil {
-		if dir, err := wsconfig.ResolvePath(resolved, cfg.Session.RootDir); err == nil {
-			ctx.logDir = dir
-		}
-	}
-	ctx.logTags = listDirNames(ctx.logDir)
 
 	// Scratch directory names.
 	ctx.scratchIDs = listDirNames(ctx.scratchDir)

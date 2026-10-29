@@ -100,6 +100,8 @@ type Skill struct {
 	Dev string
 	// Ejected is the ws version a skill of yours was ejected from.
 	Ejected string
+	// Provider is the binary a skill of yours was copied from (`ws skill sync`).
+	Provider string
 	// Shadowed is a skill of yours with a built-in's name and no .ws-ejected
 	// file. It is listed with a warning; the built-in wins.
 	Shadowed bool
@@ -146,6 +148,9 @@ func List(workspace string) ([]Skill, error) {
 			if s.Ejected == "" {
 				s.Ejected = "unknown"
 			}
+		}
+		if v, err := os.ReadFile(filepath.Join(p, ProviderFile)); err == nil {
+			s.Provider = strings.TrimSpace(string(v))
 		}
 		out = append(out, s)
 	}

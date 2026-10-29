@@ -19,8 +19,8 @@ ws  Dashboard   Repos   Symlinks   Scratch   Sessions   Ignore   Secrets   Cron 
 ╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
 ╭──────────────────────────────╮ ╭──────────────────────────────╮ ╭──────────────────────────────╮
 │ 📼 Sessions                ✔ │ │ 🧹 Ignore                  ! │ │ 🔐 Secrets                 ✘ │
-│ 2 sessions                   │ │ 2 violations                 │ │ 1 finding                    │
-│ ● recording deploy-fix       │ │ 1 in included paths          │ │ pass: 42 entries             │
+│ 1 live · 1 ended             │ │ 2 violations                 │ │ 1 finding                    │
+│ ● recording                  │ │ 1 in included paths          │ │ pass: 42 entries             │
 ╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
 ╭──────────────────────────────╮ ╭──────────────────────────────╮
 │ ⏰ Cron                    ✘ │ │ 🚮 Trash                   ! │

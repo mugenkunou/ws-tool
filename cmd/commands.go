@@ -10,7 +10,6 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/resource"
 	"github.com/mugenkunou/ws-tool/internal/scratch"
 	"github.com/mugenkunou/ws-tool/internal/secret"
-	"github.com/mugenkunou/ws-tool/internal/session"
 	"github.com/mugenkunou/ws-tool/internal/symlink"
 	"github.com/mugenkunou/ws-tool/internal/trash"
 )
@@ -37,6 +36,9 @@ type command struct {
 	// Fields lists the field names --filter, --sort and --wide accept. It is
 	// set for ls and lint, from the domain's resource schema.
 	Fields func() []string
+	// Program, when set, is the program the command execs with every word
+	// after its path: it has no flags, help or completion of its own.
+	Program string
 }
 
 // name is the command as typed, without "ws": "repo root add".
@@ -130,8 +132,9 @@ var commands = []command{
 		Flags: []flagDoc{
 			{Name: "--tool", Arg: "<name>", Desc: "the tool to install into (default: ask)"},
 			{Name: "--dev", Desc: "link built-ins to the checkout ws was built from (--dev=<dir>: another), so edits are live"},
+			{Name: "--providers", Desc: "copy the skills that tool binaries ship (agent-tmux) into agent/skills/; with --tool, link them too"},
 		},
-		Examples: []string{"ws skill install", "ws skill install review-pr --tool claude", "ws skill install --dev workspace-write"}},
+		Examples: []string{"ws skill install", "ws skill install review-pr --tool claude", "ws skill install --dev workspace-write", "ws skill install --providers --tool claude"}},
 	{Path: []string{"skill", "uninstall"}, Args: "[<skill>…]", Summary: "remove skill links from one tool; no names: a picklist",
 		Flags:    []flagDoc{{Name: "--tool", Arg: "<name>", Desc: "the tool to uninstall from (default: ask)"}},
 		Examples: []string{"ws skill uninstall", "ws skill uninstall review-pr --tool claude"}},
@@ -149,17 +152,9 @@ var commands = []command{
 		Flags: []flagDoc{{Name: "--rm", Arg: "<tag>", Desc: "remove this tag (repeatable)"}}},
 	{Path: []string{"scratch", "rm"}, Args: "<name…>", Summary: "soft-delete"},
 
-	{Path: []string{"session", "ls"}, Summary: "recorded sessions", RO: true,
-		Fields: fieldsOf(func() resource.Schema[session.Session] { return session.Schema(resource.CLIView()) })},
-	{Path: []string{"session", "record"}, Args: "[tag]", Summary: "record a shell session",
-		Flags: []flagDoc{{Name: "--no-prompt", Desc: "do not add the prompt indicator"}}},
-	{Path: []string{"session", "stop"}, Summary: "stop the running recording"},
-	{Path: []string{"session", "show"}, Args: "<tag>", Summary: "print a transcript", RO: true,
-		Flags: []flagDoc{{Name: "--commands", Desc: "print only the commands"}}},
-	{Path: []string{"session", "grep"}, Args: "<text>", Summary: "search transcripts", RO: true,
-		Flags: []flagDoc{{Name: "--max", Arg: "<n>", Desc: "stop after n matches (0: no limit)"}}},
-	{Path: []string{"session", "rm"}, Args: "<tag…>", Summary: "delete sessions, or those older than an age",
-		Flags: []flagDoc{olderThan}},
+	{Path: []string{"session"}, Args: "<agent-tmux args…>", Program: "agent-tmux",
+		Summary:  "terminal sessions and their recordings: agent-tmux, run with the same arguments",
+		Examples: []string{"ws session ls", "ws session create web", "ws session grep rsync", "ws session --help        agent-tmux's own help"}},
 
 	{Path: []string{"ignore", "ls"}, Summary: "every path that doesn't sync, and its rule; --muted: muted warnings", RO: true,
 		Flags: []flagDoc{{Name: "--muted", Desc: "the muted warnings instead of the ignored paths"}},
@@ -264,7 +259,7 @@ var nounSummaries = []struct{ Name, Summary string }{
 	{"symlink", "Files and folders kept in the workspace and linked back"},
 	{"skill", "Agent skills, built-in and yours, linked into your coding tools"},
 	{"scratch", "Scratch directories"},
-	{"session", "Recorded terminal sessions"},
+	{"session", "Terminal sessions and recordings (agent-tmux)"},
 	{"ignore", "MEGA sync rules and warnings"},
 	{"secret", "Secret findings in the workspace"},
 	{"pass", "The pass password store"},

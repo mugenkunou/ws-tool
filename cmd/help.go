@@ -271,7 +271,13 @@ func writeCommandHelp(stdout io.Writer, c command, noColor bool) {
 		fmt.Fprintln(stdout)
 		fmt.Fprintln(stdout, wrapHelp("Fields (for --filter, --sort and --wide): "+strings.Join(c.Fields(), ", "), "  "))
 	}
-	if !c.RO {
+	switch {
+	case c.Program != "":
+		fmt.Fprintln(stdout)
+		fmt.Fprintln(stdout, wrapHelp(fmt.Sprintf("Every word after `ws %s` goes to %s, flags too, so `ws %s --help` is %s's own help.",
+			c.name(), c.Program, c.name(), c.Program), "  "))
+		return
+	case !c.RO:
 		fmt.Fprintln(stdout)
 		fmt.Fprintln(stdout, wrapHelp("Also: --dry-run prints the plan and changes nothing; --quiet and --json accept every action.", "  "))
 	}

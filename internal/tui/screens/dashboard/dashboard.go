@@ -101,6 +101,7 @@ type Model struct {
 	moved   bool // the user has moved the cursor; stop auto-placing it
 	frame   int
 	hour    int
+	nudge   string // a newer agent-tmux release, e.g. "v0.2.0"
 	width   int
 	height  int
 }
@@ -137,7 +138,9 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	case scratch.LoadedMsg:
 		m = m.set(nav.ScreenScratch, msg.Err, scratchArea(msg))
 	case sessions.LoadedMsg:
-		m = m.set(nav.ScreenSessions, msg.Err, logsArea(msg))
+		m = m.set(nav.ScreenSessions, msg.Err, sessionsArea(msg))
+	case sessions.NudgeMsg:
+		m.nudge = msg.Nudge.Latest
 	case ignore.LoadedMsg:
 		m = m.set(nav.ScreenIgnore, msg.Err, ignoreArea(msg))
 	case secrets.LoadedMsg:
@@ -270,6 +273,10 @@ func (m Model) issues() []*issue {
 			out = append(out, &a.issues[i])
 		}
 	}
+	if m.nudge != "" {
+		// The Sessions screen shows the install lines.
+		out = append(out, &issue{sev: sevInfo, screen: nav.ScreenSessions, text: "agent-tmux " + m.nudge + " is available"})
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].advice != out[j].advice {
 			return !out[i].advice // advice is listed last
@@ -390,15 +397,29 @@ func scratchArea(msg scratch.LoadedMsg) area {
 	return a
 }
 
-func logsArea(msg sessions.LoadedMsg) area {
-	a := area{lines: []string{format.Plural(len(msg.Sessions), "session")}}
+func sessionsArea(msg sessions.LoadedMsg) area {
+	if msg.Missing {
+		return area{lines: []string{theme.Muted.Render("agent-tmux not installed")}}
+	}
+	live := msg.Live()
+	a := area{lines: []string{fmt.Sprintf("%d live · %d ended", live, len(msg.Sessions)-live)}}
+	stopped := 0
 	for _, s := range msg.Sessions {
-		if s.Active {
-			a.lines = append(a.lines, theme.Error.Render("● recording "+s.Tag))
-			return a
+		if s.Recorder == "stopped" {
+			stopped++
 		}
 	}
-	a.lines = append(a.lines, theme.Muted.Render("not recording"))
+	switch {
+	case stopped > 0:
+		a.lines = append(a.lines, theme.Warn.Render(format.Plural(stopped, "recorder")+" stopped"))
+		a.issues = append(a.issues, issue{sev: sevWarn, screen: nav.ScreenSessions,
+			text:   format.Plural(stopped, "live session") + " no longer recorded (recorder stopped)",
+			filter: "recorder=stopped"})
+	case live > 0:
+		a.lines = append(a.lines, theme.Error.Render("● recording"))
+	default:
+		a.lines = append(a.lines, theme.Muted.Render("nothing live"))
+	}
 	return a
 }
 

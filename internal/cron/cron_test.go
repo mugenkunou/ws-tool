@@ -105,7 +105,7 @@ func TestAliasesAndRetired(t *testing.T) {
 	if got := Names("mega-sync"); !slices.Equal(got, []string{"mega-sync"}) {
 		t.Errorf("Names = %v", got)
 	}
-	for _, r := range []string{"secret-scan", "ignore-scan", "repo-sync", "session-prune", "zoho-sync"} {
+	for _, r := range []string{"secret-scan", "ignore-scan", "repo-sync", "zoho-sync"} {
 		if !IsRetired(r) {
 			t.Errorf("%s must be retired", r)
 		}
@@ -231,7 +231,7 @@ func TestLastRunNewestWins(t *testing.T) {
 		`{"job":"mega-sync","ts":"2026-10-20T10:00:00Z","exit":1}`,
 		`{"job":"mega-sync","ts":"2026-10-22T10:00:00Z","exit":3}`,
 		`{"job":"mega-sync","ts":"2026-10-21T10:00:00Z","exit":0}`,
-		`{"job":"session-prune","ts":"2026-10-22T11:00:00Z","exit":0}`)
+		`{"job":"sync-push","ts":"2026-10-22T11:00:00Z","exit":0}`)
 	statePath, _ := StateFilePath()
 	r, err := LastRun(statePath, "mega-sync")
 	if err != nil || r.ExitCode != 3 || !r.Time.Equal(time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)) {
@@ -248,7 +248,7 @@ func TestReadLogFilters(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	logText := "t1 [pass-backup] Starting\nt2 [mega-sync] Starting\nt3 [mega-sync] Done (exit 0)\nt4 [session-prune] Starting\n"
+	logText := "t1 [pass-backup] Starting\nt2 [mega-sync] Starting\nt3 [mega-sync] Done (exit 0)\nt4 [sync-push] Starting\n"
 	if err := os.WriteFile(filepath.Join(dir, "cron.log"), []byte(logText), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -261,10 +261,10 @@ func TestReadLogFilters(t *testing.T) {
 	if all, _ := ReadLog(logPath, nil, 0); len(all) != 4 {
 		t.Fatalf("no job means all: %v", all)
 	}
-	if two, _ := ReadLog(logPath, []string{"pass-backup", "session-prune"}, 0); len(two) != 2 {
+	if two, _ := ReadLog(logPath, []string{"pass-backup", "sync-push"}, 0); len(two) != 2 {
 		t.Fatalf("several jobs: %v", two)
 	}
-	if last, _ := ReadLog(logPath, nil, 2); !slices.Equal(last, []string{"t3 [mega-sync] Done (exit 0)", "t4 [session-prune] Starting"}) {
+	if last, _ := ReadLog(logPath, nil, 2); !slices.Equal(last, []string{"t3 [mega-sync] Done (exit 0)", "t4 [sync-push] Starting"}) {
 		t.Fatalf("the last n lines: %v", last)
 	}
 	if none, err := ReadLog(filepath.Join(dir, "absent.log"), nil, 0); err != nil || none != nil {
@@ -416,7 +416,7 @@ func TestAddActionsWriteBothFilesTogether(t *testing.T) {
 // TestAddOfARetiredJobIsRefused: retired jobs are
 // gone, and `cron add` says so instead of installing anything (plan 0003).
 func TestAddOfARetiredJobIsRefused(t *testing.T) {
-	for _, name := range []string{"repo-sync", "ignore-scan", "secret-scan", "session-prune"} {
+	for _, name := range []string{"repo-sync", "ignore-scan", "secret-scan"} {
 		if _, _, err := Resolve(name); err == nil || !strings.Contains(err.Error(), "was removed") {
 			t.Errorf("Resolve(%s) = %v, want a was-removed error", name, err)
 		}
@@ -650,7 +650,7 @@ func TestIfDueSkipsAndPlainRunAlwaysRuns(t *testing.T) {
 // nothing (plan 0003 step 1).
 func TestRunOfRetiredJobsIsASilentNoOp(t *testing.T) {
 	newMachine(t)
-	for _, name := range []string{"ignore-scan", "repo-sync", "secret-scan", "session-prune"} {
+	for _, name := range []string{"ignore-scan", "repo-sync", "secret-scan"} {
 		res, err := RunJob(name, RunOptions{WorkspacePath: "/W"})
 		if err != nil || !res.Skipped || res.ExitCode != 0 {
 			t.Fatalf("%s: %+v %v", name, res, err)

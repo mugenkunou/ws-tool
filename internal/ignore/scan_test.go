@@ -19,7 +19,7 @@ func TestEngineEvaluateLastMatchWins(t *testing.T) {
 		t.Fatalf("load engine failed: %v", err)
 	}
 
-	res := engine.Evaluate("ws/sessions/session/stdout.log", false)
+	res := engine.Evaluate("ws/logs/build/stdout.log", false)
 	if !res.Included {
 		t.Fatalf("expected ws include rule to be included, got excluded by %s", res.Rule)
 	}
@@ -44,12 +44,12 @@ func TestEvaluateByIncludeFlag(t *testing.T) {
 	}
 
 	// ws/ path excluded by -g:*.log but re-included by +g:ws/** — include rule
-	res := engine.Evaluate("ws/sessions/session.log", false)
+	res := engine.Evaluate("ws/logs/build.log", false)
 	if !res.Included {
 		t.Fatal("expected ws include rule path to be included")
 	}
 	if !res.ByInclude {
-		t.Fatal("expected ByInclude=true for ws/sessions/session.log")
+		t.Fatal("expected ByInclude=true for ws/logs/build.log")
 	}
 
 	// Normal file not excluded then re-included — not an include rule
@@ -197,12 +197,12 @@ func TestScanByIncludeDowngradesToInfo(t *testing.T) {
 	}
 
 	// Big file inside include rule — should be INFO
-	includeDir := filepath.Join(ws, "ws", "sessions")
+	includeDir := filepath.Join(ws, "ws", "logs")
 	if err := os.MkdirAll(includeDir, 0o755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
 	}
 	big := make([]byte, 2*1024*1024)
-	if err := os.WriteFile(filepath.Join(includeDir, "session.bin"), big, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(includeDir, "build.bin"), big, 0o644); err != nil {
 		t.Fatalf("write big failed: %v", err)
 	}
 
@@ -233,7 +233,7 @@ func TestScanByIncludeDowngradesToInfo(t *testing.T) {
 	}
 
 	if includeViolation == nil {
-		t.Fatal("expected an include rule bloat violation for ws/sessions/session.bin")
+		t.Fatal("expected an include rule bloat violation for ws/logs/build.bin")
 	}
 	if includeViolation.Severity != "INFO" {
 		t.Fatalf("include rule violation should be INFO, got %s", includeViolation.Severity)

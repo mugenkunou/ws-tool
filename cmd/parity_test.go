@@ -14,8 +14,8 @@ import (
 // name shells, not verbs, and are exempt.
 var glossaryVerbs = []string{
 	"ls", "show", "add", "new", "rm", "edit", "open", "enable", "disable", "status",
-	"mute", "unmute", "prune", "grep", "run", "git", "push", "lint", "configure",
-	"apply", "link", "unlink", "tag", "record", "stop", "check",
+	"mute", "unmute", "prune", "run", "git", "push", "lint", "configure",
+	"apply", "link", "unlink", "tag", "check",
 	"tree", "allow", "store", "init", "audit", "restore", "empty", "log",
 	"scan", "install", "uninstall", "eject",
 }
@@ -60,6 +60,14 @@ func TestHelpEveryCommand(t *testing.T) {
 	testSetXDG(t)
 	for _, c := range commands {
 		var out, errOut bytes.Buffer
+		if c.Program != "" {
+			// `ws session --help` is the program's own help (TestSessionPassesEverythingThrough);
+			// `ws help session` is the table row.
+			if code := Execute(append([]string{"help"}, c.Path...), strings.NewReader(""), &out, &errOut); code != 0 || !strings.Contains(out.String(), c.usage()) {
+				t.Errorf("ws help %s: exit %d, no usage %q:\n%s", c.name(), code, c.usage(), out.String())
+			}
+			continue
+		}
 		args := append(slices.Clone(c.Path), "--help")
 		if code := Execute(args, strings.NewReader(""), &out, &errOut); code != 0 {
 			t.Errorf("ws %s --help: exit %d, stderr %q", c.name(), code, errOut.String())

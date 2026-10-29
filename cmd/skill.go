@@ -383,16 +383,24 @@ func shelfLabels(skills []skill.Skill) []string {
 }
 
 func runSkillInstall(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer, home, workspacePath string) int {
-	const usage = "ws skill install [<skill>…] [--tool <name>] [--dev[=<dir>]]"
+	const usage = "ws skill install [<skill>…] [--tool <name>] [--dev[=<dir>] | --providers]"
 	fs := flag.NewFlagSet("skill-install", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	toolName := fs.String("tool", "", "")
 	var dev devFlag
 	fs.Var(&dev, "dev", "")
+	providers := fs.Bool("providers", false, "")
 	registerGlobalFlags(fs, &globals)
 	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
+	}
+	if *providers {
+		if dev.set || fs.NArg() > 0 {
+			fmt.Fprintf(stderr, "usage: %s\n", usage)
+			return 1
+		}
+		return runSkillProviders(*toolName, globals, stdin, stdout, stderr, home, workspacePath)
 	}
 	if dev.set {
 		return runSkillDev(fs.Args(), dev.dir, *toolName, globals, stdin, stdout, stderr, home, workspacePath)
@@ -760,6 +768,66 @@ func runSkillEject(args []string, globals globalFlags, stdin io.Reader, stdout, 
 	return res.ExitCode()
 }
 
+// runSkillProviders is `install --providers`: it copies the skill of each
+// provider binary on PATH into agent/skills/<name>/, new or changed ones only.
+// With --tool it also links each into that tool. A provider that fails is
+// reported; the rest still run.
+func runSkillProviders(toolName string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer, home, workspacePath string) int {
+	tool, linkToo, err := toolFlag(toolName)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	p := Plan{Command: "skill.install"}
+	failed := 0
+	for _, st := range skill.InspectProviders(workspacePath, skill.Providers) {
+		st := st
+		switch st.State {
+		case skill.ProviderFailed, skill.ProviderConflict:
+			failed++
+			fmt.Fprintf(stderr, "%s %s: %v\n", style.IconWarning(globals.noColor), st.Bin, st.Err)
+			continue
+		case skill.ProviderGone:
+			fmt.Fprintf(stderr, "%s %s is not on PATH; its copy %s is left as it is\n", style.IconWarning(globals.noColor), st.Bin, st.Name)
+			continue
+		case skill.ProviderNew, skill.ProviderStale:
+			verb := "Copy"
+			if st.State == skill.ProviderStale {
+				verb = "Update"
+			}
+			dest := tildePath(home, st.Dir(workspacePath))
+			p.Actions = append(p.Actions, Action{
+				ID:          "skill-sync-" + st.Name,
+				Description: fmt.Sprintf("%s the skill of %s → %s", verb, st.Bin, dest),
+				Execute:     func() error { return skill.WriteProvider(workspacePath, st) },
+			})
+		}
+		if !linkToo {
+			continue
+		}
+		s := skill.Skill{Name: st.Name, Path: st.Dir(workspacePath), Shelf: skill.Yours}
+		if !skill.Linked(home, tool, s) {
+			p.Actions = append(p.Actions, Action{
+				ID:          "skill-install-" + tool.Name + "-" + st.Name,
+				Description: fmt.Sprintf("Link %s → %s/%s", st.Name, tool.Dir, st.Name),
+				Execute:     func() error { return skill.Install(home, workspacePath, tool, s) },
+			})
+		}
+	}
+	if len(p.Actions) == 0 && failed == 0 && !globals.json {
+		fmt.Fprintln(textOut(globals, stdout), "Provider skills are up to date.")
+	}
+	res := RunPlan(p, stdin, stdout, globals)
+	code := res.ExitCode()
+	if code == 0 && failed > 0 {
+		code = 1
+	}
+	if globals.json {
+		writeJSONDryRun(stdout, stderr, "skill.install", globals.dryRun, map[string]any{"actions": res.Actions})
+	}
+	return code
+}
+
 func runSkillCheck(args []string, globals globalFlags, stdout, stderr io.Writer, home, workspacePath, configPath string) int {
 	fs := flag.NewFlagSet("skill-check", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -783,6 +851,8 @@ func runSkillCheck(args []string, globals globalFlags, stdout, stderr io.Writer,
 		Anchors: workspace.TopDirs(),
 		Schema:  cfg.Schema,
 		Env:     wsEnvValues(home, workspacePath, cfg),
+
+		Providers: skill.Providers,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())

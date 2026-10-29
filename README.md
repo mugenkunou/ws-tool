@@ -37,11 +37,11 @@ That's it. `~/.gitconfig` (and the rest you ticked) now lives in `~/Workspace/sy
 | 🧹 **Sync hygiene** | `ws ignore lint` | find the 200 MB log dump *before* it syncs |
 | 🔐 **Secrets** | `ws secret ls` | catches `password=hunter2`, moves it to `pass` |
 | 🪪 **Git tokens** | `ws credential enable` | git reads credentials from `pass` |
-| 📼 **Sessions** | `ws session record` | "what was that rsync flag?" → `ws session grep rsync` |
+| 📼 **Sessions** | `ws session create web` | recorded tmux sessions, run by [agent-tmux](https://github.com/mugenkunou/agent-tmux); "what was that rsync flag?" → `ws session grep rsync` |
 | 📦 **Repos** | `ws repo ls`, `ws repo git pull` | the whole fleet at a glance, hygiene warnings, any git command across every repo |
 | 🧪 **Scratch** | `ws scratch new proxy-bug` | a named throwaway dir, opened in your editor |
 | 🗑️ **Trash** | `ws trash enable` | `rm` becomes undoable, everywhere |
-| 🧩 **Skills** | `ws skill install` | built-in skills that update with ws, plus yours in `agent/skills/`, linked into Claude Code, Codex, Cursor and more; `ws skill check` catches drift |
+| 🧩 **Skills** | `ws skill install` | built-in skills that update with ws, plus yours in `agent/skills/` (and the skill `agent-tmux` ships, via `--providers`), linked into Claude Code, Codex, Cursor and more; `ws skill check` catches drift |
 | ⏰ **Cron** | `ws cron add sync-push` | managed jobs with logs and missed-run catch-up |
 
 Everything is `ws <noun> <verb>`. `ls` lists, `add` adopts, `rm` deletes, `prune` cleans.
@@ -63,7 +63,7 @@ Stuck? `ws help`, or `ws <noun> --help`.
 
 `ws layout` prints every folder with what belongs in it, and `ws env` prints the paths scripts use (`eval "$(ws env)"`).
 
-Machine-local bits (cron state, trash hooks) stay **outside**, in `~/.local/state/ws-tool/`. Recorded sessions live in `~/Sessions` (`session.root_dir`), and scratch directories in `~/Scratch`. None of them sync.
+Machine-local bits (cron state, trash hooks) stay **outside**, in `~/.local/state/ws-tool/`. Scratch directories live in `~/Scratch`. None of them sync.
 
 ---
 
@@ -235,7 +235,7 @@ Nothing changes until you confirm a checklist.
 - 🏠 **One source of truth.** Originals live in the workspace; the rest are symlinks.
 - 🤝 **Consent per action.** Every write shows its plan: `y` do it · `n` skip · `a` all · `q` stop. `--dry-run` previews, and there is no `--force`.
 - ♻️ **Soft delete first.** Whatever ws deletes goes to the trash and can come back.
-- 🔧 **Offload, don't reimplement.** `git`, `pass`, `crontab`, `script(1)` do the work; ws orchestrates.
+- 🔧 **Offload, don't reimplement.** `git`, `pass`, `crontab`, agent-tmux do the work; ws orchestrates.
 - ➡️ **Sync is one-way.** Your laptop's `~/Workspace` is the truth; the cloud copy is a mirror you never edit. The only way back is a deliberate restore onto a fresh machine.
 
 The long version is in the handbook.

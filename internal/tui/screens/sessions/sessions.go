@@ -1,28 +1,31 @@
-// Package sessions is the recorded-terminal-sessions screen (spec §6.5): list,
-// the transcript viewer, record, prune and delete, plus the `:stop` and
-// `:grep` commands.
+// Package sessions is the Sessions screen (spec §6.5), a client of agent-tmux,
+// which owns terminal sessions and their recordings. The list is `agent-tmux
+// ls --json`: live sessions and ended recordings together. Every key runs one
+// agent-tmux verb: open and create attach, show pages a recording, both with
+// the TUI suspended; grep lists its matches here; kill and rm go through a
+// checklist.
 //
-// Recording hands the terminal to `ws session record` (a script(1) PTY shell);
-// the TUI resumes when that shell exits.
+// Without agent-tmux on PATH the screen is greyed out and shows how to
+// install it. When a newer agent-tmux release exists, the screen says so above
+// the list (the version nudge, agenttmux.CheckNudge).
 //
-// Navigation levels: list → transcript. esc in the transcript returns to the
-// list; esc in the list first clears a `:grep`, then asks the app to go up.
+// Navigation levels: list → grep matches. esc in the matches returns to the
+// list; esc in the list asks the app to go up.
 package sessions
 
 import (
+	"context"
+	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/mugenkunou/ws-tool/internal/age"
+	"github.com/mugenkunou/ws-tool/internal/agenttmux"
 	"github.com/mugenkunou/ws-tool/internal/plan"
-	wssession "github.com/mugenkunou/ws-tool/internal/session"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
@@ -34,148 +37,150 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/prompt"
 	"github.com/mugenkunou/ws-tool/internal/tui/reslist"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
-	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
-// LoadedMsg carries the session list, newest first. Other components (the
-// dashboard) may observe it.
+// LoadedMsg carries agent-tmux's sessions. Missing means agent-tmux is not
+// installed. Other components (the dashboard) may observe it.
 type LoadedMsg struct {
-	Sessions []wssession.Session
+	Sessions []agenttmux.Session
+	Missing  bool
 	Err      error
 }
 
-// Active reports whether a recording is in progress.
-func (m LoadedMsg) Active() bool {
+// Live counts the live sessions.
+func (m LoadedMsg) Live() int {
+	n := 0
 	for _, s := range m.Sessions {
-		if s.Active {
-			return true
+		if s.Live() {
+			n++
 		}
 	}
-	return false
+	return n
 }
 
-type showMsg struct {
-	tag, mode, text string
-	err             error
-}
+// NudgeMsg says a newer agent-tmux release is out. The dashboard observes it
+// too.
+type NudgeMsg struct{ Nudge agenttmux.Nudge }
 
-// grepMsg carries what `session grep` found.
+// grepMsg carries what `agent-tmux grep --json` found.
 type grepMsg struct {
-	query   string
-	matches []wssession.Match
-	err     error
+	query string
+	res   agenttmux.GrepResult
+	err   error
 }
 
 type level int
 
 const (
 	levelList level = iota
-	levelViewer
-)
-
-const (
-	modeFull     = "full"
-	modeCommands = "commands-only"
+	levelMatches
 )
 
 type step int
 
 const (
-	stepRecordTag step = iota
-	stepStop
+	stepNew step = iota
+	stepGrep
+	stepKill
 	stepDelete
-	stepPruneAge
-	stepPrune
 )
 
+// handoverTag marks the agent-tmux runs that had the terminal.
 type handoverTag int
 
-const handoverRecording handoverTag = iota
-
-// grepHeaderLines is the line above the list while a grep narrows it.
-const grepHeaderLines = 1
+const (
+	handoverOpen handoverTag = iota
+	handoverShow
+	handoverNew
+)
 
 // Model is the sessions screen state.
 type Model struct {
-	env        env.Env
-	keys       keys.SessionsMap
-	viewerKeys keys.ViewerMap
-	list       reslist.Model[wssession.Session]
-	viewer     viewport.Model
-	level      level
-	modal      modal.Model
+	env       env.Env
+	keys      keys.SessionsMap
+	matchKeys keys.SessionMatchesMap
+	list      reslist.Model[agenttmux.Session]
+	matches   reslist.Model[agenttmux.Match]
+	level     level
+	modal     modal.Model
 
-	sessions []wssession.Session // every session; the list shows those the grep leaves
-	query    string              // the active `:grep` text; "" when none
-	pending  string              // the `:grep` text being searched for
-	hits     map[string]bool     // the tags with a match
-	viewTag  string
-	viewMode string
-	width    int
-	height   int
+	missing   bool     // agent-tmux is not installed
+	nudge     []string // the version nudge's lines, when there is a newer release
+	query     string   // the grep the matches are for
+	pending   string   // the grep being run
+	truncated bool
+	width     int
+	height    int
 }
 
 // New creates the screen.
 func New(e env.Env) Model {
 	k := keys.Sessions()
-	dk := keys.Detail()
-	vp := viewport.New()
-	vp.KeyMap = dk.Viewport
-	vp.SoftWrap = true
 	return Model{
-		env:        e,
-		keys:       k,
-		viewerKeys: keys.ViewerMap{Detail: dk, ToggleMode: k.ToggleMode},
-		viewer:     vp,
-		viewMode:   modeFull,
-		list: reslist.New(wssession.Schema(e.View()), []reslist.Col[wssession.Session]{
-			{Key: "tag", Min: 14, Weight: 3},
-			{Key: "started_at", Min: 16},
-			{Key: "duration_sec", Min: 8},
-			{Key: "commands", Min: 4},
-			{Key: "size_bytes", Min: 9},
-			{Key: "active", Min: 11, Style: func(s wssession.Session, t string) string {
-				if s.Active {
-					return theme.Error.Render("● " + t)
+		env:       e,
+		keys:      k,
+		matchKeys: keys.SessionMatches(),
+		list: reslist.New(agenttmux.Schema(e.View()), []reslist.Col[agenttmux.Session]{
+			{Key: "name", Min: 14, Weight: 3},
+			{Key: "state", Min: 6, Style: func(s agenttmux.Session, t string) string {
+				if s.Live() {
+					return theme.OK.Render(t)
 				}
 				return theme.Muted.Render(t)
 			}},
-		}, theme.Icon(theme.IconTape)+"No recorded sessions yet. Press "+k.Record.Help().Key+" to record one.").Declare(reslist.Decls(actions)),
+			{Key: "recorder", Min: 7, Style: func(s agenttmux.Session, t string) string {
+				switch s.Recorder {
+				case "running":
+					return theme.Error.Render(t)
+				case "stopped":
+					return theme.Warn.Render(t)
+				}
+				return theme.Muted.Render(t)
+			}},
+			{Key: "owner", Min: 8},
+			{Key: "clients", Min: 7},
+			{Key: "started_at", Min: 16},
+			{Key: "bytes", Min: 9},
+		}, theme.Icon(theme.IconTape)+"No sessions yet. Press "+k.New.Help().Key+" to start one.").Declare(reslist.Decls(actions)),
+		matches: reslist.New(agenttmux.MatchSchema(), []reslist.Col[agenttmux.Match]{
+			{Key: "id", Min: 20, Weight: 1},
+			{Key: "line", Min: 6},
+			{Key: "text", Min: 20, Weight: 4},
+		}, "No matches."),
 	}
 }
 
-// Load lists recorded sessions.
-func Load(e env.Env) tea.Cmd {
+// Load lists the sessions with `agent-tmux ls --json`.
+func Load() tea.Cmd {
 	return func() tea.Msg {
-		sessions, err := wssession.List(e.LogDir, stateDir())
+		sessions, err := agenttmux.Ls(context.Background())
+		if errors.Is(err, agenttmux.ErrMissing) {
+			return LoadedMsg{Missing: true}
+		}
 		return LoadedMsg{Sessions: sessions, Err: err}
 	}
 }
 
-// stateDir is the machine-local state directory, where the active recording's
-// marker lives.
-func stateDir() string {
-	dir, _ := wsconfig.StateDir()
-	return dir
-}
-
-func show(e env.Env, tag, mode string) tea.Cmd {
+// checkNudge asks for a newer agent-tmux release, in the background. It sends
+// nothing when there is none or the check fails.
+func checkNudge() tea.Cmd {
 	return func() tea.Msg {
-		// Recordings are raw PTY streams: Show strips escapes and carriage returns.
-		res, err := wssession.Show(e.LogDir, tag, mode == modeCommands)
-		return showMsg{tag: tag, mode: mode, text: res.Text, err: err}
+		if n, ok := agenttmux.CheckNudge(context.Background()); ok {
+			return NudgeMsg{Nudge: n}
+		}
+		return nil
 	}
 }
 
-func grep(e env.Env, query string) tea.Cmd {
+func grep(query string) tea.Cmd {
 	return func() tea.Msg {
-		found, err := wssession.Grep(e.LogDir, stateDir(), query, 0)
-		return grepMsg{query: query, matches: found, err: err}
+		res, err := agenttmux.Grep(context.Background(), query, 0)
+		return grepMsg{query: query, res: res, err: err}
 	}
 }
 
-// Init starts the first load.
-func (m Model) Init() tea.Cmd { return Load(m.env) }
+// Init starts the first load and the release check.
+func (m Model) Init() tea.Cmd { return tea.Batch(Load(), checkNudge()) }
 
 // Declared lists the screen's actions and their scopes.
 func (m Model) Declared() []reslist.Decl { return m.list.Declared() }
@@ -184,42 +189,37 @@ func (m Model) Declared() []reslist.Decl { return m.list.Declared() }
 func (m Model) Commands() []nav.CommandInfo { return reslist.CommandInfos(commands) }
 
 // CapturesKeys implements nav.Component.
-func (m Model) CapturesKeys() bool { return m.modal.Open() || m.list.Editing() }
+func (m Model) CapturesKeys() bool {
+	return m.modal.Open() || m.list.Editing() || (m.level == levelMatches && m.matches.Editing())
+}
 
 func (m Model) reload() (Model, tea.Cmd) {
 	m.list = m.list.SetLoading()
-	return m, Load(m.env)
+	return m, Load()
 }
 
-// layout sizes the list under the grep header, when there is one.
-func (m Model) layout() Model {
-	head := 0
-	if m.query != "" {
-		head = grepHeaderLines
-	}
-	m.list = m.list.SetSize(m.width, max(m.height-head, 0))
-	return m
-}
-
-// showRows puts the sessions the grep leaves in the list.
-func (m Model) showRows() Model {
-	rows := m.sessions
-	if m.query != "" {
-		rows = nil
-		for _, s := range m.sessions {
-			if m.hits[s.Tag] {
-				rows = append(rows, s)
-			}
+// headerLines is what stands above the list: the nudge, the grep's title.
+func (m Model) headerLines() []string {
+	var out []string
+	for i, l := range m.nudge {
+		if i == 0 {
+			out = append(out, theme.Warn.Render(theme.Icon(theme.IconBulb)+l))
+		} else {
+			out = append(out, theme.Muted.Render("  "+l))
 		}
 	}
-	m.list = m.list.SetItems(rows)
-	return m.layout()
+	if m.level == levelMatches {
+		out = append(out, m.grepHeader())
+	}
+	return out
 }
 
-// clearGrep restores the full list.
-func (m Model) clearGrep() Model {
-	m.query, m.hits = "", nil
-	return m.showRows()
+// layout sizes the lists under the header.
+func (m Model) layout() Model {
+	h := max(m.height-len(m.headerLines()), 0)
+	m.list = m.list.SetSize(m.width, h)
+	m.matches = m.matches.SetSize(m.width, h)
+	return m
 }
 
 // Update implements nav.Component.
@@ -232,11 +232,8 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	switch msg := msg.(type) {
 	case nav.ResizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m = m.layout()
-		m.viewer.SetWidth(msg.Width)
-		m.viewer.SetHeight(max(msg.Height-1, 0))
 		m.modal = m.modal.SetSize(msg.Width, msg.Height)
-		return m, nil
+		return m.layout(), nil
 	case nav.FilterMsg:
 		m.list = m.list.SetFilter(msg.Filter)
 		return m, nil
@@ -246,55 +243,43 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		if m.modal.Open() {
 			return m, nil
 		}
-		m.level = levelList
 		next, cmd, _ := reslist.RunCommand(m, m.list, commands, msg)
 		return next, cmd
 	case LoadedMsg:
+		m.missing = msg.Missing
 		if msg.Err != nil {
 			m.list = m.list.SetError(msg.Err)
 			return m, nil
 		}
-		m.sessions = msg.Sessions
-		return m.showRows(), nil
-	case showMsg:
-		if msg.tag != m.viewTag || msg.mode != m.viewMode {
-			return m, nil
-		}
-		switch {
-		case msg.err != nil:
-			m.viewer.SetContent(theme.Error.Render("Error: " + msg.err.Error()))
-		case strings.TrimSpace(msg.text) == "":
-			m.viewer.SetContent(theme.Muted.Render("(empty)"))
-		default:
-			m.viewer.SetContent(msg.text)
-			m.viewer.SetYOffset(firstMatch(msg.text, m.query))
-		}
+		m.list = m.list.SetItems(msg.Sessions)
 		return m, nil
+	case NudgeMsg:
+		m.nudge = msg.Nudge.Lines()
+		return m.layout(), nil
 	case grepMsg:
 		if msg.query != m.pending {
 			return m, nil // superseded by a newer grep
 		}
 		if msg.err != nil {
-			return m.clearGrep(), nav.Notify(nav.LevelWarn, msg.err.Error())
+			return m, nav.Notify(nav.LevelWarn, msg.err.Error())
 		}
-		m.hits = map[string]bool{}
-		for _, mt := range msg.matches {
-			m.hits[mt.Tag] = true
+		if len(msg.res.Matches) == 0 {
+			return m, nav.Notify(nav.LevelInfo, "No matches for "+msg.query)
 		}
-		if len(m.hits) == 0 {
-			return m.clearGrep(), nav.Notify(nav.LevelInfo, "No matches for "+msg.query)
-		}
-		m.query = msg.query
-		return m.showRows(), nil
+		m.level, m.query, m.truncated = levelMatches, msg.query, msg.res.Truncated
+		m.matches = m.matches.SetItems(msg.res.Matches)
+		return m.layout(), nil
 	case handover.DoneMsg:
-		if _, ok := msg.Tag.(handoverTag); !ok {
+		tag, ok := msg.Tag.(handoverTag)
+		if !ok {
 			return m, nil
 		}
 		m, cmd := m.reload()
 		if msg.Err != nil {
-			return m, tea.Batch(cmd, nav.Notify(nav.LevelWarn, "Recording ended: "+msg.Err.Error()))
+			verb := map[handoverTag]string{handoverOpen: "open", handoverShow: "show", handoverNew: "create"}[tag]
+			return m, tea.Batch(cmd, nav.Notify(nav.LevelWarn, "agent-tmux "+verb+": "+msg.Err.Error()))
 		}
-		return m, tea.Batch(cmd, nav.Notify(nav.LevelSuccess, "Recording saved"))
+		return m, cmd
 	}
 
 	if m.modal.Open() {
@@ -306,62 +291,29 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	if m.level == levelViewer {
-		return m.updateViewer(k)
+	if m.level == levelMatches {
+		return m.updateMatches(k)
 	}
 	return m.updateList(k)
 }
 
-// firstMatch is the line of text that has query in it (case-insensitive), or 0.
-func firstMatch(text, query string) int {
-	needle := strings.ToLower(strings.TrimSpace(query))
-	if needle == "" {
-		return 0
-	}
-	for i, line := range strings.Split(text, "\n") {
-		if strings.Contains(strings.ToLower(line), needle) {
-			return i
-		}
-	}
-	return 0
-}
-
-func (m Model) active() (wssession.Session, bool) {
-	for _, s := range m.sessions {
-		if s.Active {
-			return s, true
-		}
-	}
-	return wssession.Session{}, false
-}
-
-func (m Model) openViewer(tag string) (Model, tea.Cmd) {
-	m.level = levelViewer
-	m.viewTag = tag
-	m.viewer.SetContent(theme.Muted.Render("Loading…"))
-	m.viewer.GotoTop()
-	return m, show(m.env, tag, m.viewMode)
-}
-
 // actions is every sessions key and the rows it acts on (spec §6.5).
-var actions = func() []reslist.Action[Model, wssession.Session] {
+var actions = func() []reslist.Action[Model, agenttmux.Session] {
 	k := keys.Sessions()
-	return []reslist.Action[Model, wssession.Session]{
-		{Key: k.View, Scope: reslist.Cursor, Do: Model.show},
-		{Key: k.Record, Scope: reslist.Global, Do: Model.promptRecord},
-		// Prune takes all the sessions, like `ws session rm --older-than`: not the marks,
-		// not the filter.
-		{Key: k.Prune, Scope: reslist.Global, Do: Model.promptPrune},
+	return []reslist.Action[Model, agenttmux.Session]{
+		{Key: k.Open, Scope: reslist.Cursor, Do: Model.open},
+		{Key: k.Show, Scope: reslist.Cursor, Do: Model.show},
+		{Key: k.New, Scope: reslist.Global, Do: Model.promptNew},
+		{Key: k.Grep, Scope: reslist.Global, Do: Model.promptGrep},
+		{Key: k.Kill, Scope: reslist.Selected, Do: Model.kill},
 		{Key: k.Delete, Scope: reslist.Selected, Do: Model.delete},
 	}
 }()
 
-// commands is every `:` command: the CLI's words after `session`.
-var commands = []reslist.Command[Model, wssession.Session]{
-	{Name: "stop", Scope: reslist.Global,
-		Help: "stop the recording in progress", Do: Model.stop},
+// commands is every `:` command: agent-tmux's own words.
+var commands = []reslist.Command[Model, agenttmux.Session]{
 	{Name: "grep", Args: "<text>", Scope: reslist.Global,
-		Help: "narrow the list to sessions with a match; enter opens the first one, esc clears", Do: Model.grepCommand},
+		Help: "search every recording and list the matching lines; enter shows one", Do: Model.grepCommand},
 }
 
 func (m Model) updateList(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
@@ -372,11 +324,7 @@ func (m Model) updateList(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 	if next, cmd, ok := reslist.Run(m, m.list, actions, k); ok {
 		return next, cmd
 	}
-	switch {
-	case key.Matches(k, m.keys.Back):
-		if m.query != "" {
-			return m.clearGrep(), nil
-		}
+	if key.Matches(k, m.keys.Back) {
 		return m, nav.Up
 	}
 	var cmd tea.Cmd
@@ -384,176 +332,187 @@ func (m Model) updateList(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) updateViewer(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
+func (m Model) updateMatches(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
+	if l, cmd, ok := m.matches.HandleKey(k); ok {
+		m.matches = l
+		return m, cmd
+	}
 	switch {
-	case key.Matches(k, m.viewerKeys.Detail.Back):
-		m.level = levelList
+	case key.Matches(k, m.matchKeys.Show):
+		if mt, ok := m.matches.Current(); ok {
+			return m, m.run(handoverShow, "show", mt.ID)
+		}
 		return m, nil
-	case key.Matches(k, m.viewerKeys.ToggleMode):
-		if m.viewMode == modeFull {
-			m.viewMode = modeCommands
-		} else {
-			m.viewMode = modeFull
-		}
-		return m.openViewer(m.viewTag)
+	case key.Matches(k, m.matchKeys.Back):
+		m.level = levelList
+		return m.layout(), nil
 	}
 	var cmd tea.Cmd
-	m.viewer, cmd = m.viewer.Update(k)
+	m.matches, cmd = m.matches.Update(k)
 	return m, cmd
 }
 
-// ── show, record ───────────────────────────────────────────────────
+// handOver gives the terminal to c. Tests swap it to see what would run.
+var handOver = handover.Run
 
-// show is enter: the transcript of the cursor row. After a `:grep` it opens at
-// the first match.
-func (m Model) show(rows []wssession.Session) (Model, tea.Cmd) { return m.openViewer(rows[0].Tag) }
+// run suspends the TUI and gives the terminal to `agent-tmux <args…>`.
+func (m Model) run(tag handoverTag, args ...string) tea.Cmd {
+	c, err := agenttmux.Command(args...)
+	if err != nil {
+		return nav.Notify(nav.LevelWarn, err.Error())
+	}
+	return handOver(c, tag)
+}
 
-// promptRecord is r: ask for a tag, then hand the terminal to the recorded
-// shell.
-func (m Model) promptRecord(_ []wssession.Session) (Model, tea.Cmd) {
-	if s, ok := m.active(); ok {
-		return m, nav.Notify(nav.LevelWarn, "Already recording: "+s.Tag)
+// notInstalled is the notice of every key while agent-tmux is missing.
+func notInstalled() tea.Cmd {
+	return nav.Notify(nav.LevelWarn, agenttmux.ErrMissing.Error()+"; this screen shows how to install it")
+}
+
+// ── open, show, new ────────────────────────────────────────────────
+
+// open is enter: attach to a live session; an ended one has only its
+// recording, so it is shown.
+func (m Model) open(rows []agenttmux.Session) (Model, tea.Cmd) {
+	if m.missing {
+		return m, notInstalled()
+	}
+	s := rows[0]
+	if !s.Live() {
+		return m.show(rows)
+	}
+	return m, m.run(handoverOpen, "open", s.Name)
+}
+
+// show is v: page the cursor row's recording (agent-tmux pages it itself).
+func (m Model) show(rows []agenttmux.Session) (Model, tea.Cmd) {
+	if m.missing {
+		return m, notInstalled()
+	}
+	s := rows[0]
+	if s.ID == "" {
+		return m, nav.Notify(nav.LevelInfo, s.Name+" has no recording: an older agent-tmux started it")
+	}
+	return m, m.run(handoverShow, "show", s.Ref())
+}
+
+// promptNew is a: ask for a name, then `agent-tmux create <name>` attaches.
+func (m Model) promptNew(_ []agenttmux.Session) (Model, tea.Cmd) {
+	if m.missing {
+		return m, notInstalled()
 	}
 	var cmd tea.Cmd
-	m.modal, cmd = m.modal.Prompt(stepRecordTag, prompt.New("Record a shell session",
-		prompt.WithHint("Optional tag (blank for a timestamp). Type `exit` or Ctrl-D to end and return here."),
-		prompt.AllowEmpty()))
-	return m, cmd
-}
-
-// ── stop ───────────────────────────────────────────────────────────
-
-// stop is `:stop`, mirroring `ws session stop`: signal the recorder, wait up to
-// 3s, then finalize the session metadata.
-func (m Model) stop(_ []wssession.Session, _ []string) (Model, tea.Cmd) {
-	s, ok := m.active()
-	if !ok {
-		return m, nav.Notify(nav.LevelInfo, "No recording in progress")
-	}
-	logDir := m.env.LogDir
-	p := plan.Plan{Command: "session.stop", Actions: []plan.Action{{
-		ID:          "session-stop",
-		Description: "Stop recording session " + s.Tag,
-		Execute: func() error {
-			_, err := wssession.StopActive(wssession.StopOptions{LogDir: logDir, StateDir: stateDir()})
-			return err
-		},
-	}}}
-	m.modal = m.modal.Confirm(stepStop, confirm.New("Stop recording", p))
-	return m, nil
-}
-
-// ── grep ───────────────────────────────────────────────────────────
-
-// grepCommand is `:grep <text>`: search every session's commands and transcript
-// and narrow the list to the sessions with a match.
-func (m Model) grepCommand(_ []wssession.Session, args []string) (Model, tea.Cmd) {
-	text := strings.TrimSpace(strings.Join(args, " "))
-	if text == "" {
-		return m, nav.Notify(nav.LevelWarn, "usage: grep <text>")
-	}
-	m.pending = text // grepMsg checks it, so an older answer cannot replace this one
-	return m, grep(m.env, text)
-}
-
-// ── delete, prune ──────────────────────────────────────────────────
-
-// delete is ctrl+d: remove finished sessions (the recording one is never
-// offered), as `ws session rm`.
-func (m Model) delete(rows []wssession.Session) (Model, tea.Cmd) {
-	done := finished(rows)
-	if len(done) == 0 {
-		return m, nav.Notify(nav.LevelWarn, "Stop the recording before deleting it")
-	}
-	logDir := m.env.LogDir
-	p := plan.Plan{Command: "session.rm"}
-	for _, s := range done {
-		tag := s.Tag
-		p.Actions = append(p.Actions, plan.Action{
-			ID:          "session-rm-" + tag,
-			Description: fmt.Sprintf("Delete %s (%s)", filepath.Join(logDir, tag), style.HumanBytes(s.SizeBytes)),
-			Execute: func() error {
-				return wssession.Remove(wssession.RemoveOptions{LogDir: logDir, StateDir: stateDir(), Tag: tag})
-			},
-		})
-	}
-	m.modal = m.modal.Confirm(stepDelete, confirm.New("Delete "+format.Plural(len(done), "session"), p))
-	return m, nil
-}
-
-// finished drops the session being recorded.
-func finished(rows []wssession.Session) []wssession.Session {
-	var out []wssession.Session
-	for _, s := range rows {
-		if !s.Active {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-// promptPrune is p: an age, then a checklist of what goes (`ws session rm
-// --older-than`). It covers all the sessions.
-func (m Model) promptPrune(_ []wssession.Session) (Model, tea.Cmd) {
-	var cmd tea.Cmd
-	m.modal, cmd = m.modal.Prompt(stepPruneAge, prompt.New("Prune sessions older than (age)",
-		prompt.WithHint("An age such as 30d, 12h or 2w (a bare number is days)."),
+	m.modal, cmd = m.modal.Prompt(stepNew, prompt.New("New session",
+		prompt.WithHint("A name for it. agent-tmux creates it and attaches; detach to return here."),
 		prompt.WithValidate(func(v string) error {
-			_, err := age.Parse(v)
-			return err
+			if strings.TrimSpace(v) == "" || strings.ContainsAny(v, " \t") {
+				return errors.New("a name, without spaces")
+			}
+			return nil
 		})))
 	return m, cmd
 }
 
-// openPrune turns the typed age into the checklist: one action per session the
-// CLI would remove, all pre-checked.
-func (m Model) openPrune(raw string) (Model, tea.Cmd) {
-	raw = strings.TrimSpace(raw)
-	now := m.env.Now()
-	d, err := age.Parse(raw)
-	if err != nil {
-		return m, nav.Notify(nav.LevelWarn, err.Error())
+// ── grep ───────────────────────────────────────────────────────────
+
+// promptGrep is s: ask for the text, then list the matching lines.
+func (m Model) promptGrep(_ []agenttmux.Session) (Model, tea.Cmd) {
+	if m.missing {
+		return m, notInstalled()
 	}
-	chosen := wssession.SelectOlderThan(m.sessions, d, now)
-	if len(chosen) == 0 {
-		return m, nav.Notify(nav.LevelInfo, "Nothing to prune: no session older than "+raw+".")
+	var cmd tea.Cmd
+	m.modal, cmd = m.modal.Prompt(stepGrep, prompt.New("Grep every recording",
+		prompt.WithHint("Text to find, in any case. The matching lines are listed; enter shows one.")))
+	return m, cmd
+}
+
+// grepCommand is `:grep <text>`.
+func (m Model) grepCommand(_ []agenttmux.Session, args []string) (Model, tea.Cmd) {
+	return m.startGrep(strings.Join(args, " "))
+}
+
+func (m Model) startGrep(text string) (Model, tea.Cmd) {
+	if m.missing {
+		return m, notInstalled()
 	}
-	logDir := m.env.LogDir
-	p := plan.Plan{Command: "session.rm"}
-	for _, s := range chosen {
-		tag := s.Tag
-		days := int(now.Sub(s.StartedAt).Hours() / 24)
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "" {
+		return m, nav.Notify(nav.LevelWarn, "usage: grep <text>")
+	}
+	m.pending = text // grepMsg checks it, so an older answer cannot replace this one
+	return m, grep(text)
+}
+
+// ── kill, delete ───────────────────────────────────────────────────
+
+// kill is x: end the live sessions among rows (`agent-tmux kill`). Their
+// recordings stay.
+func (m Model) kill(rows []agenttmux.Session) (Model, tea.Cmd) {
+	if m.missing {
+		return m, notInstalled()
+	}
+	p := plan.Plan{Command: "session.kill"}
+	for _, s := range rows {
+		if !s.Live() {
+			continue
+		}
+		name := s.Name
+		desc := "Kill session " + name
+		if s.Clients > 0 {
+			desc += " (" + format.Plural(s.Clients, "client") + " attached)"
+		}
 		p.Actions = append(p.Actions, plan.Action{
-			ID:          "session-rm-" + tag,
-			Description: fmt.Sprintf("Delete %s (%s, %dd old)", filepath.Join(logDir, tag), style.HumanBytes(s.SizeBytes), days),
-			Execute: func() error {
-				return wssession.Remove(wssession.RemoveOptions{LogDir: logDir, StateDir: stateDir(), Tag: tag})
-			},
+			ID: "session-kill-" + name, Description: desc,
+			Execute: func() error { _, err := agenttmux.Output(context.Background(), "kill", name); return err },
 		})
 	}
-	m.modal = m.modal.Confirm(stepPrune, confirm.New("Prune sessions older than "+raw, p))
+	if len(p.Actions) == 0 {
+		return m, nav.Notify(nav.LevelInfo, "Nothing to kill: the session has ended")
+	}
+	m.modal = m.modal.Confirm(stepKill, confirm.New("Kill "+format.Plural(len(p.Actions), "session"), p).
+		WithNote("Their recordings stay."))
+	return m, nil
+}
+
+// delete is ctrl+d: move the ended recordings among rows to the trash
+// (`agent-tmux rm`). A live session is never offered: kill it first.
+func (m Model) delete(rows []agenttmux.Session) (Model, tea.Cmd) {
+	if m.missing {
+		return m, notInstalled()
+	}
+	p := plan.Plan{Command: "session.rm"}
+	for _, s := range rows {
+		if s.Live() || s.ID == "" {
+			continue
+		}
+		id := s.ID
+		p.Actions = append(p.Actions, plan.Action{
+			ID:          "session-rm-" + id,
+			Description: fmt.Sprintf("Move recording %s (%s) to the trash", id, style.HumanBytes(s.Bytes)),
+			Execute:     func() error { _, err := agenttmux.Output(context.Background(), "rm", id); return err },
+		})
+	}
+	if len(p.Actions) == 0 {
+		return m, nav.Notify(nav.LevelWarn, "Kill the session before deleting its recording")
+	}
+	m.modal = m.modal.Confirm(stepDelete, confirm.New("Delete "+format.Plural(len(p.Actions), "recording"), p))
 	return m, nil
 }
 
 func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 	switch st {
-	case stepRecordTag:
+	case stepNew:
 		r := msg.(prompt.ResultMsg)
 		if r.Cancelled {
 			return m, nil
 		}
-		args := []string{"session", "record"}
-		if r.Value != "" {
-			args = append(args, r.Value)
-		}
-		// --quiet: no banner, the user just asked for the recording here.
-		return m, handover.Run(handover.WS(m.env.Paths, append(args, "--quiet")...), handoverRecording)
-	case stepPruneAge:
+		return m, m.run(handoverNew, "create", strings.TrimSpace(r.Value))
+	case stepGrep:
 		r := msg.(prompt.ResultMsg)
 		if r.Cancelled {
 			return m, nil
 		}
-		return m.openPrune(r.Value)
+		return m.startGrep(r.Value)
 	}
 
 	done := msg.(confirm.DoneMsg)
@@ -569,32 +528,51 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 	return m, tea.Batch(nav.Notify(level, confirm.Summary(done.Result)), load)
 }
 
-// grepHeader names the active grep above the list.
+// grepHeader names the grep above its matches.
 func (m Model) grepHeader() string {
-	n := len(m.list.Items())
-	return lipgloss.NewStyle().MaxWidth(m.width).Render(
-		theme.Muted.Render("grep ") + theme.Bold.Render(m.query) +
-			theme.Muted.Render(fmt.Sprintf(" — %s with a match · %s clears · %s opens at the first match",
-				format.Plural(n, "session"), m.keys.Back.Help().Key, m.keys.View.Help().Key)))
+	n := format.Plural(len(m.matches.Items()), "match")
+	if m.truncated {
+		n = "the first " + n
+	}
+	return theme.Muted.Render("grep ") + theme.Bold.Render(m.query) +
+		theme.Muted.Render(fmt.Sprintf(" — %s · %s shows one · %s returns",
+			n, m.matchKeys.Show.Help().Key, m.matchKeys.Back.Help().Key))
+}
+
+// missingView is the greyed-out screen without agent-tmux.
+func (m Model) missingView() string {
+	lines := []string{
+		theme.Muted.Render(theme.Icon(theme.IconTape) + "Sessions are run by agent-tmux, which is not installed."),
+		"",
+	}
+	for _, l := range agenttmux.InstallLines {
+		lines = append(lines, theme.Muted.Render("  "+l))
+	}
+	lines = append(lines, "", theme.Muted.Render("Then refresh this screen."))
+	return lipgloss.NewStyle().MaxWidth(m.width).Render(strings.Join(lines, "\n"))
 }
 
 // View implements nav.Component.
 func (m Model) View() string {
-	clip := lipgloss.NewStyle().MaxWidth(m.width)
 	switch {
 	case m.modal.Open():
 		return m.modal.View()
-	case m.level == levelViewer:
-		mode := "full output"
-		if m.viewMode == modeCommands {
-			mode = "commands only"
-		}
-		head := clip.Render(theme.Bold.Render(m.viewTag) + theme.Muted.Render("  ("+mode+")"))
-		return lipgloss.JoinVertical(lipgloss.Left, head, m.viewer.View())
-	case m.query != "":
-		return lipgloss.JoinVertical(lipgloss.Left, m.grepHeader(), m.list.View())
+	case m.missing:
+		return m.missingView()
 	}
-	return m.list.View()
+	body := m.list.View()
+	if m.level == levelMatches {
+		body = m.matches.View()
+	}
+	head := m.headerLines()
+	if len(head) == 0 {
+		return body
+	}
+	clip := lipgloss.NewStyle().MaxWidth(m.width)
+	for i := range head {
+		head[i] = clip.Render(head[i])
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, append(head, body)...)
 }
 
 // KeyMap implements nav.Component.
@@ -602,8 +580,8 @@ func (m Model) KeyMap() help.KeyMap {
 	switch {
 	case m.modal.Open():
 		return m.modal.KeyMap()
-	case m.level == levelViewer:
-		return m.viewerKeys
+	case m.level == levelMatches:
+		return m.matches.Help(m.matchKeys)
 	}
 	return m.list.Help(m.keys)
 }

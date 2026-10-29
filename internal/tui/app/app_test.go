@@ -11,12 +11,12 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/mugenkunou/ws-tool/internal/agenttmux"
 	wscron "github.com/mugenkunou/ws-tool/internal/cron"
 	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/repo"
 	wsscratch "github.com/mugenkunou/ws-tool/internal/scratch"
 	"github.com/mugenkunou/ws-tool/internal/secret"
-	wssession "github.com/mugenkunou/ws-tool/internal/session"
 	"github.com/mugenkunou/ws-tool/internal/symlink"
 	wstrash "github.com/mugenkunou/ws-tool/internal/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
@@ -58,7 +58,6 @@ func testEnv(t *testing.T) env.Env {
 		},
 		Config:     cfg,
 		ScratchDir: "/home/tester/Scratch",
-		LogDir:     "/home/tester/Sessions",
 		Clock:      fixedClock,
 	}
 }
@@ -89,9 +88,11 @@ func fixtures() []tea.Msg {
 			},
 			Tags: []string{"dns", "network", "proxy"},
 		},
-		sessions.LoadedMsg{Sessions: []wssession.Session{
-			{Tag: "deploy-fix", StartedAt: time.Date(2026, 9, 30, 14, 5, 0, 0, time.UTC), Commands: 12, SizeBytes: 40960, Active: true},
-			{Tag: "rsync-backup", StartedAt: time.Date(2026, 9, 28, 9, 30, 0, 0, time.UTC), DurationSec: 1865, Commands: 7, SizeBytes: 8192},
+		sessions.LoadedMsg{Sessions: []agenttmux.Session{
+			{Name: "deploy-fix", ID: "deploy-fix-2026-09-30-1405", State: "live", Recorder: "running", Clients: 1, Command: "bash",
+				Path: ws + "/Projects/api", Host: "box", StartedAt: "2026-09-30T14:05:00Z", HistoryStartsAt: "2026-09-30T14:05:00Z", Bytes: 40960},
+			{Name: "rsync-backup", ID: "rsync-backup-2026-09-28-0930", State: "ended", Host: "box",
+				StartedAt: "2026-09-28T09:30:00Z", EndedAt: "2026-09-28T10:01:05Z", HistoryStartsAt: "2026-09-28T09:30:00Z", Bytes: 8192},
 		}},
 		ignore.LoadedMsg{Violations: []wsignore.Violation{
 			{Type: "bloat", Severity: "CRITICAL", Path: "Projects/web/dump.log", SizeBytes: 220 << 20},
@@ -274,7 +275,8 @@ func TestSnapshots(t *testing.T) {
 		{"scratch_tag_prompt", []string{"4", "t", "n"}},
 		{"sessions", []string{"5"}},
 		{"sessions_marked", []string{"5", "space", "down", "space"}},
-		{"sessions_prune_prompt", []string{"5", "p"}},
+		{"sessions_grep_prompt", []string{"5", "s"}},
+		{"sessions_kill_checklist", []string{"5", "x"}},
 		{"sessions_delete_checklist", []string{"5", "down", "ctrl+d"}},
 		{"ignore", []string{"6"}},
 		{"ignore_muted", []string{"6", "v"}},

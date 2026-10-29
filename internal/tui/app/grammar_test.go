@@ -12,13 +12,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/mugenkunou/ws-tool/internal/agenttmux"
 	wscron "github.com/mugenkunou/ws-tool/internal/cron"
 	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
 	wsrepo "github.com/mugenkunou/ws-tool/internal/repo"
 	"github.com/mugenkunou/ws-tool/internal/resource"
 	wsscratch "github.com/mugenkunou/ws-tool/internal/scratch"
 	wssecret "github.com/mugenkunou/ws-tool/internal/secret"
-	wssession "github.com/mugenkunou/ws-tool/internal/session"
 	symlink "github.com/mugenkunou/ws-tool/internal/symlink"
 	wstrash "github.com/mugenkunou/ws-tool/internal/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
@@ -277,7 +277,7 @@ func TestJSONPaneNeedsNoView(t *testing.T) {
 			}
 		case sessions.LoadedMsg:
 			for _, e := range msg.Sessions {
-				same("session", wssession.Schema(cli).Record(e), wssession.Schema(tui).Record(e))
+				same("session", agenttmux.Schema(cli).Record(e), agenttmux.Schema(tui).Record(e))
 			}
 		case ignore.LoadedMsg:
 			for _, e := range msg.Violations {

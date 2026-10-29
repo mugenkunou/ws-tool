@@ -1,6 +1,6 @@
 // Package trash implements ws's soft-delete subsystem. ws shares the user's XDG
 // trash directory ($XDG_DATA_HOME/Trash, default ~/.local/share/Trash) with the
-// desktop environment: items deleted via ws (scratch rm, session rm, ...), via a
+// desktop environment: items deleted via ws (scratch rm, ...), via a
 // shell `rm` configured by `ws trash enable`, VS Code and the file manager's
 // Delete all land in the same place, in the freedesktop layout (files/ and
 // info/*.trashinfo, https://specifications.freedesktop.org/trash-spec). One list
@@ -37,7 +37,7 @@ func infoDir(root string) string  { return filepath.Join(root, "info") }
 
 // SoftDelete moves path into the trash so it is recoverable and visible to the
 // desktop's file manager. This is the "soft-delete first" principle: ws-internal
-// delete paths (scratch rm, session rm, ...) call SoftDelete instead of
+// delete paths (scratch rm, ...) call SoftDelete instead of
 // os.RemoveAll, unconditionally. When the trash cannot be located, or the move
 // fails, it returns the error: it never deletes for good as a fallback, which a
 // failed lookup used to do silently.

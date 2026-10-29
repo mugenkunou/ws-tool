@@ -11,7 +11,7 @@ import (
 )
 
 // topLevelKeys is spec §2.3, in the file's order.
-var topLevelKeys = []string{"schema", "editor", "scratch", "repo", "secret", "pass", "ignore", "ignore_rules", "session", "trash", "sync", "symlinks"}
+var topLevelKeys = []string{"schema", "editor", "scratch", "repo", "secret", "pass", "ignore", "ignore_rules", "trash", "sync", "symlinks"}
 
 // keysOf reads the keys of a JSON object in file order.
 func keysOf(t *testing.T, raw []byte) []string {
@@ -62,7 +62,6 @@ func TestSaveWritesEveryKey(t *testing.T) {
 		"pass":         {"pass_entry"},
 		"ignore":       {"warn_size_mb", "crit_size_mb", "max_depth", "muted"},
 		"ignore_rules": {"schema", "exclude", "include", "suppress_defaults"},
-		"session":      {"root_dir", "max_session_mb"},
 		"trash":        {"warn_size_mb"},
 		"sync":         {"mirror", "exclude", "max_delete_pct"},
 	}
@@ -122,7 +121,7 @@ func TestRoundTripKeepsEveryValue(t *testing.T) {
 	cfg.Ignore.Muted = []string{"experiments/ml"}
 	cfg.Pass.PassEntry = "git/github.com"
 	cfg.Secret.SkipDirs = []string{"references/vendor"}
-	cfg.Session.MaxSessionMB = 250
+	cfg.Trash.WarnSizeMB = 250
 	cfg.Symlinks = []Link{{System: "/etc/hosts", Original: "symlinks/system/etc/hosts", Dir: false, Sudo: true}}
 	if err := Save(path, cfg); err != nil {
 		t.Fatal(err)
@@ -152,7 +151,7 @@ func TestMissingKeysTakeDefaultsAndNextWriteFillsThem(t *testing.T) {
 		t.Fatalf("values already set must be kept: %+v", cfg)
 	}
 	def := Default()
-	if cfg.Session != def.Session || cfg.Ignore.CritSizeMB != def.Ignore.CritSizeMB {
+	if cfg.Trash != def.Trash || cfg.Ignore.CritSizeMB != def.Ignore.CritSizeMB {
 		t.Fatalf("missing keys must take their defaults: %+v", cfg)
 	}
 	if !slices.Equal(cfg.Repo.Roots, []string{"."}) || !slices.Equal(cfg.Repo.ExcludeDirs, def.Repo.ExcludeDirs) {

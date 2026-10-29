@@ -1,8 +1,8 @@
 ws  Dashboard   Repos   Symlinks   Scratch   Sessions   Ignore   Secrets   Cron   Trash   Skills
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- Tag                                       Started           Duration  Cmds  Size       State
- deploy-fix                                2026-09-30 14:05  —         12    40.0 KB    ● recording
- rsync-backup                              2026-09-28 09:30  31m 05s   7     8.0 KB     done
+ Session                            State   Rec      Owner     Clients  Started           Size
+ deploy-fix                         live    ● rec              1        2026-09-30 14:05  40.0 KB
+ rsync-backup                       ended                               2026-09-28 09:30  8.0 KB
 
 
 
@@ -27,4 +27,4 @@ ws  Dashboard   Repos   Symlinks   Scratch   Sessions   Ignore   Secrets   Cron 
 
 
 
-enter show • r record • p prune • ctrl+d delete … • ctrl+r refresh • : command • ? help • q quit
+enter open • v show • a new • s grep • x kill … • ctrl+r refresh • : command • ? help • q quit

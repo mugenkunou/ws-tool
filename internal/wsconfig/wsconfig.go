@@ -4,7 +4,7 @@
 // ws.json lives at the workspace root (e.g. ~/Workspace/ws.json) and syncs
 // with the workspace. There is no separate machine-global config file; this
 // single file is the source of truth. Only runtime-only state that must stay
-// machine-local (cron.state, log-active.json, scratch .ws-meta.json) remains
+// machine-local (cron.state, scratch .ws-meta.json) remains
 // outside the workspace.
 //
 // Path resolution order:
@@ -46,7 +46,6 @@ type WsConfig struct {
 	Pass        Pass             `json:"pass"`
 	Ignore      Ignore           `json:"ignore"`
 	IgnoreRules ignore.UserRules `json:"ignore_rules"`
-	Session     Session          `json:"session"`
 	Trash       Trash            `json:"trash"`
 	Sync        Sync             `json:"sync"`
 	Symlinks    []Link           `json:"symlinks"`
@@ -82,12 +81,6 @@ type Ignore struct {
 	CritSizeMB int      `json:"crit_size_mb"`
 	MaxDepth   int      `json:"max_depth"`
 	Muted      []string `json:"muted"` // paths whose sync warnings are hidden (they keep syncing)
-}
-
-// Session holds session-recording settings.
-type Session struct {
-	RootDir      string `json:"root_dir"`       // where recordings live; machine-local, never synced
-	MaxSessionMB int    `json:"max_session_mb"` // a recording ends when it reaches this size
 }
 
 // Trash holds trash settings.
@@ -149,13 +142,9 @@ func Default() WsConfig {
 			Muted:      []string{},
 		},
 		IgnoreRules: ignore.DefaultUserRules(),
-		Session: Session{
-			RootDir:      "~/Sessions",
-			MaxSessionMB: 100,
-		},
-		Trash:    Trash{WarnSizeMB: 10240},
-		Sync:     Sync{Exclude: []ignore.RuleEntry{}, MaxDeletePct: DefaultMaxDeletePct},
-		Symlinks: []Link{},
+		Trash:       Trash{WarnSizeMB: 10240},
+		Sync:        Sync{Exclude: []ignore.RuleEntry{}, MaxDeletePct: DefaultMaxDeletePct},
+		Symlinks:    []Link{},
 	}
 }
 
@@ -526,7 +515,6 @@ func WithAbsPaths(cfg WsConfig, workspacePath string) WsConfig {
 
 	out := cfg
 	out.Scratch.RootDir = abs(cfg.Scratch.RootDir)
-	out.Session.RootDir = abs(cfg.Session.RootDir)
 	out.Repo.Roots = absAll(cfg.Repo.Roots)
 	out.Repo.ExcludeDirs = absAll(cfg.Repo.ExcludeDirs)
 	out.Secret.SkipDirs = absAll(cfg.Secret.SkipDirs)

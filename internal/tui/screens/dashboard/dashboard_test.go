@@ -8,11 +8,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/mugenkunou/ws-tool/internal/agenttmux"
 	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/symlink"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/sessions"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/symlinks"
 )
 
@@ -192,5 +194,36 @@ func TestIgnoreAreaCountsStaleMutesApartFromIncludedPaths(t *testing.T) {
 	}
 	if none := ignoreArea(ignore.LoadedMsg{}); len(none.issues) != 0 {
 		t.Errorf("nothing stale, nothing to say: %+v", none.issues)
+	}
+}
+
+// TestSessionsCard: agent-tmux's sessions, a stopped recorder as a problem
+// that opens the screen filtered to it, the version nudge as a row, and a
+// plain card when agent-tmux is missing.
+func TestSessionsCard(t *testing.T) {
+	m := model(map[nav.Screen]area{})
+	next, _ := m.Update(sessions.LoadedMsg{Sessions: []agenttmux.Session{
+		{Name: "web", State: "live", Recorder: "stopped"},
+		{Name: "api", State: "live", Recorder: "running"},
+		{Name: "old", ID: "old-1", State: "ended"},
+	}})
+	m = next.(Model)
+	a := m.areas[nav.ScreenSessions]
+	if got := ansi.Strip(strings.Join(a.lines, "|")); got != "2 live · 1 ended|1 recorder stopped" {
+		t.Errorf("card = %q", got)
+	}
+	if len(a.issues) != 1 || a.issues[0].filter != "recorder=stopped" {
+		t.Errorf("issues = %+v", a.issues)
+	}
+
+	next, _ = m.Update(sessions.NudgeMsg{Nudge: agenttmux.Nudge{Installed: "v0.1.0", Latest: "v0.2.0"}})
+	m = next.(Model)
+	if att := strings.Join(m.Attention(), "|"); !strings.Contains(att, "agent-tmux v0.2.0 is available") {
+		t.Errorf("attention = %q", att)
+	}
+
+	next, _ = m.Update(sessions.LoadedMsg{Missing: true})
+	if got := ansi.Strip(strings.Join(next.(Model).areas[nav.ScreenSessions].lines, "|")); got != "agent-tmux not installed" {
+		t.Errorf("card without agent-tmux = %q", got)
 	}
 }

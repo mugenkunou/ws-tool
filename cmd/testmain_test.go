@@ -9,6 +9,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/mugenkunou/ws-tool/internal/agenttmux/agenttmuxtest"
 	"github.com/mugenkunou/ws-tool/internal/skill"
 )
 
@@ -61,11 +62,16 @@ func TestMain(m *testing.M) {
 		_ = os.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(wd))
 	}
 
+	// The agent-tmux installed here must never run: tests fake one on PATH.
+	unhide := agenttmuxtest.Hide()
+
 	// The built-in skills embedded in the binary change as they are written;
 	// tests start with none and add a fake shelf (withBuiltins) when they need one.
 	skill.BuiltinFS = fstest.MapFS{}
 
-	os.Exit(m.Run())
+	code := m.Run()
+	unhide()
+	os.Exit(code)
 }
 
 // testSetXDG sets XDG_CONFIG_HOME to a test-scoped temp dir for isolation.

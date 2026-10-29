@@ -57,11 +57,10 @@ var Aliases = map[string]string{}
 
 // Retired are jobs that no longer exist. `cron add` rejects them, `cron rm` still
 // removes their blocks, and `cron run` logs a skip and exits 0, so old crontab
-// lines do not fail. Nothing commits your work unattended, so repo-sync is gone, and
-// session-prune went with the sessions size cap (`ws session rm --older-than` is manual).
+// lines do not fail. Nothing commits your work unattended, so repo-sync is gone.
 // zoho-sync restarted the old Zoho WorkDrive Sync client for a sync window; its
 // replacement, TrueSync, runs all the time from login autostart.
-var Retired = []string{"secret-scan", "ignore-scan", "repo-sync", "session-prune", "zoho-sync"}
+var Retired = []string{"secret-scan", "ignore-scan", "repo-sync", "zoho-sync"}
 
 // AllNames returns every job name, sorted. It holds neither aliases nor retired
 // names: those are hidden.

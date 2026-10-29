@@ -26,6 +26,17 @@ type globalFlags struct {
 }
 
 func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	// `ws session …` belongs to agent-tmux whole: its flags and --help too,
+	// and so does completing it.
+	if rest, ok := sessionArgs(args); ok {
+		return runSessionPassthrough(rest, stderr)
+	}
+	if len(args) > 0 && args[0] == "__complete" {
+		if _, ok := sessionArgs(args[1:]); ok {
+			return runComplete(args[1:], globalFlags{}, stdout, stderr)
+		}
+	}
+
 	globals, rest, err := parseGlobalFlags(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
@@ -65,8 +76,6 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runIgnore(commandArgs, globals, stdin, stdout, stderr)
 	case "secret":
 		return runSecret(commandArgs, globals, stdin, stdout, stderr)
-	case "session":
-		return runSession(commandArgs, globals, stdin, stdout, stderr)
 	case "scratch":
 		return runScratch(commandArgs, globals, stdin, stdout, stderr)
 	case "repo":
@@ -446,4 +455,23 @@ func readLine(r io.Reader) (string, error) {
 			return "", err
 		}
 	}
+}
+
+// isTerminalWriter reports whether w is a terminal-backed *os.File.
+func isTerminalWriter(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	return ok && isTerminalFile(f)
+}
+
+func isTerminalFile(f *os.File) bool {
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// plural is "1 file", "2 files".
+func plural(n int, word string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, word)
+	}
+	return fmt.Sprintf("%d %ss", n, word)
 }

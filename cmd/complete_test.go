@@ -96,12 +96,6 @@ func TestCompleteSubcommands(t *testing.T) {
 			directive: compDirectiveNoFileComp,
 		},
 		{
-			args:      []string{"session", ""},
-			wantSome:  []string{"record", "stop", "ls", "show", "grep", "rm"},
-			wantNone:  []string{"start"},
-			directive: compDirectiveNoFileComp,
-		},
-		{
 			args:      []string{"symlink", ""},
 			wantSome:  []string{"add", "link", "unlink", "ls"},
 			wantNone:  []string{"rm", "scan", "fix", "sync", "reset", "git", "migrate", "edit", "backup"},
@@ -180,10 +174,6 @@ func TestCompleteCommandFlags(t *testing.T) {
 		{
 			args:     []string{"scratch", "new", "--"},
 			wantSome: []string{"--no-open", "--editor", "--dry-run"},
-		},
-		{
-			args:     []string{"session", "record", "--"},
-			wantSome: []string{"--no-prompt", "--dry-run"},
 		},
 		{
 			args:     []string{"ignore", "ls", "--"},
@@ -279,17 +269,6 @@ func TestCompleteScratchTagOnlyName(t *testing.T) {
 	}
 }
 
-func TestCompleteSessionTags(t *testing.T) {
-	ctx := completionCtx{logTags: []string{"work", "personal", "project-x"}}
-	comps, dir := sessionTags(nil, "", ctx)
-	if dir != compDirectiveNoFileComp || len(comps) != 3 {
-		t.Fatalf("expected 3 tags and NoFileComp, got %v %d", comps, dir)
-	}
-	if comps, _ := sessionTags(nil, "p", ctx); len(comps) != 2 {
-		t.Fatalf("expected personal and project-x, got %v", comps)
-	}
-}
-
 func TestCompleteSymlinkTargets(t *testing.T) {
 	ctx := completionCtx{symlinks: []string{"/home/user/.vimrc", "/home/user/.bashrc"}}
 	comps, dir := symlinkTargets(nil, "", ctx)
@@ -304,7 +283,7 @@ func TestCompleteTrashAndCronTargets(t *testing.T) {
 		t.Fatalf("trash items: %v", comps)
 	}
 	comps, _ := cronTargets(nil, "", ctx)
-	for _, retired := range []string{"secret-scan", "ignore-scan", "repo-sync", "session-prune"} {
+	for _, retired := range []string{"secret-scan", "ignore-scan", "repo-sync"} {
 		if contains(comps, retired) {
 			t.Errorf("cron completion offers the old name %q", retired)
 		}

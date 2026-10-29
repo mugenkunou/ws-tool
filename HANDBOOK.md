@@ -3,7 +3,7 @@
 `ws` manages one directory, `~/Workspace`, which a sync client (MEGA, Zoho WorkDrive, or any
 folder-sync tool) keeps in the cloud, and everything a developer machine needs to be rebuilt
 from it: symlinked configs, git repos, secrets and the pass store, sync rules, scratch directories,
-recorded terminal sessions, cron jobs, and the trash. It ships as one static binary with two
+cron jobs, and the trash, plus a front end for the terminal sessions agent-tmux records. It ships as one static binary with two
 front ends over the same `internal/` packages: the CLI (`ws <noun> <verb>`) and a full-screen
 TUI (`ws tui`).
 
@@ -104,7 +104,7 @@ Section numbers are stable: code comments cite them as `spec §x.y`.
   syncs with the workspace. Sync the folder to a new machine and ws knows your symlinks,
   rules, allowlist and tags. Machine-local state (cron run state, trash integration state)
   lives in the XDG state directory and is never synced.
-- **Offload, don't reimplement.** `git`, `script(1)`, `pass`, `crontab` and the coreutils do
+- **Offload, don't reimplement.** `git`, `pass`, `crontab`, agent-tmux and the coreutils do
   the work. ws orchestrates them, keeps state, and reports.
 - **One grammar.** Every command is `ws <noun> <verb>`, and every verb means one thing
   (Part 3). The TUI uses the same nouns as screens and the same verbs as keys and `:`
@@ -127,7 +127,7 @@ fast. Each factor below names the ws feature that carries it.
 | --- | --- | --- | --- |
 | I | Single source of truth | One directory, everything that matters | the workspace, `ws init` |
 | II | Friction kills memory | Capture fast; search finds it later | flat layout, `ws scratch` |
-| III | Searchability is survival | If you can't grep it, it doesn't exist | `ws session grep`, descriptive names |
+| III | Searchability is survival | If you can't grep it, it doesn't exist | `ws session grep` (agent-tmux), descriptive names |
 | IV | Originals in, symlinks out | Real files in sync, pointers at system paths | `ws symlink` |
 | V | Flat hierarchy first | Separate only when truly needed | the `ws init` layout |
 | VI | Git and sync are complementary | Sync moves files, git moves history | `ws repo`, `ws pass backup` |
@@ -177,7 +177,7 @@ Three layers of search work together: **textual** (`grep -rn rsync` across scrip
 **contextual** (GPU setup lives in `experiments/`, certificates in `artifacts/`), and
 **semantic** ("the script that checks whether nodes are reachable" is
 `check-node-status.sh`). Name things descriptively and put them where you would look
-first. ws adds `ws session grep` for recorded terminal sessions.
+first. `ws session grep` (agent-tmux) searches recorded terminal sessions.
 
 *Eyes open:* grep reads text only. PDFs, screenshots and binary datasets are invisible to
 it, so descriptive directory and file names are their only index.
@@ -402,9 +402,8 @@ machine (§5 `ws sync`).
 | State file | `<workspace>/ws.json` | yes |
 | Sync rules | `<workspace>/.megaignore`, generated from `ws.json` `ignore_rules` (MEGA's format, §2.6) | yes |
 | Symlink originals | `<workspace>/symlinks/home/<path under $HOME>` and `<workspace>/symlinks/system/<absolute path>`, or the workspace path you gave as the second argument of `ws symlink add` | yes |
-| Recorded sessions | `session.root_dir` (default `~/Sessions`), one `<tag>/` directory per session, outside the workspace | no |
 | Scratch directories | `scratch.root_dir` (default `~/Scratch`), outside the workspace | no |
-| Machine-local state | `$XDG_STATE_HOME/ws-tool/` (default `~/.local/state/ws-tool/`): cron run state and logs, trash integration state, the running recording's marker (`session-active.json`), `ws sync` state (`sync/`) | no |
+| Machine-local state | `$XDG_STATE_HOME/ws-tool/` (default `~/.local/state/ws-tool/`): cron run state and logs, trash integration state, `ws sync` state (`sync/`) | no |
 | Trash | `$XDG_DATA_HOME/Trash` (default `~/.local/share/Trash`), shared with the desktop file manager | no |
 | Built-in skills | `$XDG_DATA_HOME/ws/skills/<name>/` (default `~/.local/share/ws/skills`), extracted from the binary, read-only | no |
 | Pass store | `$PASSWORD_STORE_DIR` → `~/.password-store` | via its own git remote |
@@ -471,7 +470,6 @@ valid JSON. `ws config edit` checks before saving.
   "pass": { "pass_entry": "" },
   "ignore": { "warn_size_mb": 5, "crit_size_mb": 10, "max_depth": 6, "muted": [] },
   "ignore_rules": { "schema": 1, "exclude": [], "include": [], "suppress_defaults": [] },
-  "session": { "root_dir": "~/Sessions", "max_session_mb": 100 },
   "trash": { "warn_size_mb": 10240 },
   "sync": { "mirror": { "target": "" }, "exclude": [], "max_delete_pct": 20 },
   "symlinks": []
@@ -493,7 +491,6 @@ valid JSON. `ws config edit` checks before saving.
 | `ignore_rules.exclude` | paths ignored by sync (user rules, on top of the built-in template) | `ignore add\|rm` |
 | `ignore.muted` | paths whose sync warnings are hidden; they keep syncing | `ignore mute\|unmute` |
 | `ignore_rules.include` | included directories (`<dir>/**`) | `ignore edit` |
-| `session.root_dir`, `max_session_mb` | where recordings are stored (default `~/Sessions`); size at which one recording ends (default 100) | hand |
 | `trash.warn_size_mb` | trash size in MB above which `trash status` warns (default 10240, i.e. 10 GiB) | hand |
 | `sync.mirror.target` | the mirror folder `ws sync push` fills (a folder the sync client watches); no default, and `ws sync` refuses while it is empty | hand |
 | `sync.exclude` | extra paths kept out of the mirror only, same pattern syntax as `ignore_rules.exclude`; empty by default | hand |
@@ -598,7 +595,7 @@ such as `rclone bisync`.
 | `symlink` | host files and folders whose originals live in the workspace, symlinked back | Symlinks |
 | `skill` | agent skills, built into ws or yours in `agent/skills/`, linked into the coding tools on this machine | Skills |
 | `scratch` | throwaway directories under `scratch.root_dir` | Scratch |
-| `session` | recorded terminal sessions | Sessions |
+| `session` | terminal sessions and their recordings, owned by agent-tmux: `ws session …` is `agent-tmux …` | Sessions |
 | `ignore` | what the sync client syncs: ignore rules, muted directories, sync warnings | Ignore |
 | `secret` | secret findings in workspace files | Secrets |
 | `pass` | the pass(1) password store | Secrets (header, `:pass …`) |
@@ -617,17 +614,16 @@ prints help.
 | Verb | Means | Used by |
 | --- | --- | --- |
 | `ls` | list the noun's rows | every noun |
-| `show` | one row in full | repo, secret, session, config, skill |
+| `show` | one row in full | repo, secret, config, skill |
 | `add` | put an existing thing under ws management | symlink, scratch, ignore, cron, repo root |
 | `new` | create a fresh thing | scratch |
-| `rm` | delete something ws owns, soft-deleting files | scratch, session, trash, cron, ignore, repo root |
+| `rm` | delete something ws owns, soft-deleting files | scratch, trash, cron, ignore, repo root |
 | `edit` | open a file in your editor (§4.10) | ignore, config |
 | `open` | open a directory in your editor (§4.10) | scratch |
 | `enable` / `disable` | switch an integration on or off | trash, credential, completion, pass backup |
 | `status` | the health of an integration (not a list of rows) | trash, credential, pass, backup, sync |
 | `mute` / `unmute` | hide / show warnings for a path and everything under it; nothing else changes | ignore, secret |
 | `prune` | delete rows by age (`--older-than`) | trash |
-| `grep` | search inside contents | session |
 | `run` | execute now | repo (a command in each repo), cron (a job) |
 | `git` | run a git command line, as typed, in each repo | repo |
 | `push` | git push, nothing else; for `sync`, copy the workspace into the mirror | pass backup, sync |
@@ -636,7 +632,6 @@ prints help.
 | `apply` | write the declared state into the live system | cron |
 | `link`, `unlink` | point a host path at its workspace copy (the workspace copy wins; also repairs); put the real content back and stop managing it | symlink (`add` is its other direction: the live file wins) |
 | `tag` | label a row | scratch |
-| `record`, `stop` | record a shell session; stop the recording | session |
 | `check`, `tree` | will this path sync? (skill: what drifted from this ws); browse the tree with sync status | ignore, skill (`check`) |
 | `allow`, `store` | mark a finding as a false positive; copy its value into pass | secret |
 | `init`, `audit` | create; inspect entries for problems | pass (and `ws init`) |
@@ -646,7 +641,8 @@ prints help.
 | `eject` | copy a built-in into the workspace; from then on it is yours | skill |
 
 `completion bash|zsh|fish` names a shell, not a verb. It is the one exception to the
-glossary.
+glossary. `ws session` has no verbs of its own: the words after it are agent-tmux's
+(`ls`, `create`, `show`, `grep`, …), and agent-tmux's own grammar governs them.
 
 ### 3.4 Every command
 
@@ -674,6 +670,7 @@ ws skill scan [--tool <name>]             RO  both shelves, built-in and yours, 
 ws skill show <skill> [--path]            RO  one skill: shelf, version, folder, tools
 ws skill install [<skill>…] [--tool <t>]  RW  link skills into one tool; no names: a picklist
 ws skill install --dev[=<dir>] [<skill>…] RW  point built-ins at a checkout, so edits are live
+ws skill install --providers [--tool <t>] RW  copy the skills that tool binaries ship (agent-tmux) into agent/skills/
 ws skill uninstall [<skill>…] [--tool <t>] RW  remove skill links from one tool; no names: a picklist
 ws skill eject <skill>                    RW  copy a built-in into agent/skills/ to make it yours
 ws skill check                            RO  skills and scripts that drifted from this ws
@@ -685,12 +682,7 @@ ws scratch open <name>                    RO  open one in the editor
 ws scratch tag <name> [tag…] [--rm tag]   RW  label one (tags are for you to read)
 ws scratch rm <name…>                     RW  soft-delete
 
-ws session ls                             RO  recorded sessions
-ws session record [tag]                   RW  record a shell session
-ws session stop                           RW  stop the running recording
-ws session show <tag> [--commands]        RO  print a transcript
-ws session grep <text>                    RO  search transcripts
-ws session rm <tag…> | --older-than <age> RW  delete sessions, or those older than an age
+ws session <agent-tmux args…>             —   agent-tmux, run with the same arguments (exec)
 
 ws ignore ls [--muted]                    RO  every path that doesn't sync, and its rule; --muted: muted warnings
 ws ignore lint [path…]                    RO  check synced files and warn about the unhygienic ones
@@ -794,10 +786,16 @@ shell integration hooks. Old names that existing rc files and crontab lines cont
 silent aliases: `ws completions bash|zsh|fish` (the `eval` line that
 `completions install` wrote runs on every shell start) and the old cron job names.
 
-Built-in cron jobs: `secret-scan`, `ignore-scan`, `repo-sync`, `session-prune` and `zoho-sync` are retired: nothing
-commits your work or deletes your sessions unattended, and Zoho's TrueSync client needs no restart window. `ws cron run` of one exits 0 silently and does nothing, so a
+Built-in cron jobs: `secret-scan`, `ignore-scan`, `repo-sync` and `zoho-sync` are retired: nothing
+commits your work unattended, and Zoho's TrueSync client needs no restart window. `ws cron run` of one exits 0 silently and does nothing, so a
 crontab line written earlier keeps working; `ws cron rm` removes such a line, and
 `ws cron add` is an error that says the job was removed.
+
+`ws session record`, `stop`, `ls`, `show`, `grep` and `rm` are gone with ws's own recorder:
+`ws session` now runs agent-tmux, whose verbs differ.
+The `session` object in `ws.json` (`root_dir`, `max_session_mb`) is no longer read. Delete it
+by hand: `config edit` rejects it as an unknown key, and the next write drops it. Old
+recordings stay where they were; nothing moves or deletes them.
 
 Removed, no replacement: `ws reset`, `ws restore`, `ws capture`, `ws search`, `ws scratch grep`,
 `ws ignore generate`, `ws symlink migrate`, `ws symlink edit`, `ws symlink backup` and
@@ -880,8 +878,8 @@ data/bruno, ~/Workspace/data/bruno, ./x  ✗
 - Everything goes through one helper (`style.AbsPath`). Internal data may stay
   workspace-relative for rule matching, and is converted when rendered.
 - Not paths, printed verbatim: rule patterns (`node_modules/`, `dir/**`), config keys, git
-  refs and URLs, pass entry names, and names of ws-managed items (scratch names, session
-  tags, cron jobs). When a command acts on the file behind a name, it prints the file's
+  refs and URLs, pass entry names, and names of ws-managed items (scratch names, cron
+  jobs). When a command acts on the file behind a name, it prints the file's
   absolute path too.
 - `ws ignore tree` prints its absolute root once, as the header, and tree nodes below it.
 - The TUI may shorten paths to fit a column (`~/.bashrc`). The `d` describe pane and `y`
@@ -929,7 +927,7 @@ deterministic, and they are safe in pipes (`ws repo ls --json | jq`).
 **RW commands** use the action plan:
 
 - Before changing anything, the command builds a plan of discrete actions: **one per
-  independently meaningful mutation** (one per file, repo, session, job). The test: would
+  independently meaningful mutation** (one per file, repo, job). The test: would
   someone want to accept this one but skip the next? If so, they are separate actions.
 - Each action is confirmed on its own: `y` (default, Enter) do it, `n` skip it, `a` accept
   all the rest, `q` skip all the rest. EOF on stdin counts as `y`.
@@ -943,8 +941,6 @@ deterministic, and they are safe in pipes (`ws repo ls --json | jq`).
 
 Exemptions, which run without a plan:
 
-- `session record` (it hands the terminal to a recorded shell, and leaving the shell ends
-  it) and `session stop`;
 - `repo git` and `repo run` on one repo at a terminal, which hand the terminal to the
   command, so the line you typed is the confirmation;
 - `cron run`, which crontab lines call, so the command itself is the confirmation;
@@ -954,9 +950,11 @@ Exemptions, which run without a plan:
 ### 4.8 Completion
 
 Shell completion (`ws completion …`) offers exactly the commands, flags and dynamic
-targets this spec documents: repo paths, symlink host paths, scratch names, session
-tags, cron jobs, trash items, `file:line` findings. It never offers hidden aliases. Tests
-keep completion and help in step (§9.7).
+targets this spec documents: repo paths, symlink host paths, scratch names, cron jobs,
+trash items, `file:line` findings. It never offers hidden aliases. Tests keep completion
+and help in step (§9.7). `ws session <words>` is completed by `agent-tmux __complete
+<words>`: its candidates (`value` or `value<TAB>description` lines) become ws's, values
+only. Without agent-tmux there are none.
 
 ### 4.9 Environment variables
 
@@ -967,7 +965,8 @@ keep completion and help in step (§9.7).
 | `VISUAL`, `EDITOR` | your editor, when `ws.json` `editor` is empty (§4.10) |
 | `PASSWORD_STORE_DIR` | pass store location |
 | `XDG_STATE_HOME`, `XDG_DATA_HOME` | machine-local state and trash locations |
-| `TMPDIR`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR` | `ws env` and `ws layout`: the temp, cache and session homes |
+| `TMPDIR`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR` | `ws env` and `ws layout`: the temp, cache and session homes; `XDG_CACHE_HOME`: the agent-tmux release cache |
+| `WS_NO_VERSION_CHECK` | `1`: no agent-tmux version nudge (the TUI and `ws version` never ask GitHub) |
 | `WS_NO_MOUSE` | TUI: leave the mouse to the terminal |
 | `WS_NO_EMOJI` | TUI: no emoji |
 | `WS_CRONTAB_FILE` | tests: a file that stands in for the user's crontab |
@@ -1757,7 +1756,7 @@ ws does not track that. `scan` reports each tool's folder and nothing else, and 
 | --- | --- | --- | --- |
 | `ws skill scan [--tool <name>]` | RO | a grid of both shelves against every known tool | screen |
 | `ws skill show <skill> [--path]` | RO | one skill: shelf, version, folder, tools | the screen's row |
-| `ws skill install [<skill>…] [--tool <name>] [--dev[=<dir>]]` | RW | link skills into one tool | `i`, `:install` |
+| `ws skill install [<skill>…] [--tool <name>] [--dev[=<dir>] \| --providers]` | RW | link skills into one tool; `--providers` copies the skills tool binaries ship | `i`, `:install` |
 | `ws skill uninstall [<skill>…] [--tool <name>]` | RW | remove the links ws made in one tool | `u`, `:uninstall` |
 | `ws skill eject <skill>` | RW | copy a built-in into `agent/skills/`; it is yours from then on | — |
 | `ws skill check` | RO | skills and scripts that drifted from this ws | — |
@@ -1860,6 +1859,17 @@ Link review-pr → ~/.claude/skills/review-pr [y/n/a/q] y
   ✔ Link review-pr → ~/.claude/skills/review-pr
 ```
 
+`--providers` is for tool binaries that ship their own skill. ws keeps a short, explicit list of
+them (today `agent-tmux`); it never scans `PATH`. For each one found on `PATH`, ws runs
+`<bin> skill` (5 s timeout), reads `name` from the SKILL.md frontmatter and writes the output to
+`agent/skills/<name>/SKILL.md`, with a `.ws-provider` file that holds the binary's name. The copy
+is a skill of yours, so `scan` lists it under Yours (`from <bin>`) and `install` links it like any
+other; `--providers --tool <name>` copies and links in one step. It writes only new copies and
+copies that differ, and only folders that carry `.ws-provider`: a skill of yours with the same
+name is never touched and is reported. A provider that fails or times out is reported and the
+others still run (exit 1 at the end). Run it again after upgrading the binary; `ws skill check`
+tells you when to.
+
 `--json`: `skill.install`, with `data.actions`. Exit: 0, 1 or 3.
 
 #### `ws skill uninstall`
@@ -1913,6 +1923,9 @@ Read-only. A drift check over both shelves and `<workspace>/scripts`:
 | a skill of yours whose frontmatter `metadata: ws-layout: "<n>"` differs from `ws.json`'s `schema` | warning |
 | a fallback in `scripts/lib/common.sh` (`WS_TMP=${TMPDIR:-$HOME/tmp}`, …) that disagrees with `ws env` | warning |
 | a skill of yours with a built-in's name | warning |
+| a provider copy (`.ws-provider`) that differs from the installed binary's `<bin> skill` output; fix: `ws skill install --providers` | warning |
+| a provider copy whose binary is not on `PATH`; fix: install the binary, or remove the copy's folder | warning |
+| a provider whose `<bin> skill` fails, times out or prints no named skill, or whose skill name clashes with one of yours | warning |
 
 ```text
 $ ws skill check
@@ -2156,258 +2169,47 @@ TUI: `ctrl+d` on the selected rows, through the checklist.
 
 ### `ws session`
 
-A session is a recorded terminal session: a shell that ws starts under `script(1)`,
-recording everything the terminal shows (the **transcript**) and every command line you
-run in it (the **commands**). Each row is a directory under
-`<root_dir>/<tag>/`, where `session.root_dir` defaults to `~/Sessions`. It is outside the
-workspace, so recordings never sync. The directory holds
-`meta.json` (tag, start, end, duration), `stdout.log` (the transcript) and `stdin.log`
-(the commands, one per line). The Sessions screen shows the rows.
-
-Settings live under `session` in `ws.json`: `root_dir` (default `~/Sessions`) is the
-directory the recordings go in, and `max_session_mb` (default 100) is the size at which one
-recording ends. ws warns when a recording passes 80% of it. Nothing deletes old sessions on
-its own: `ws session rm --older-than <age>` does it when you run it.
-
-Only one recording runs at a time on a machine. ws records it in a machine-local marker,
-`$XDG_STATE_HOME/ws-tool/session-active.json`, with its tag, start time and recorder PID
-(decision: it is machine-local, so it never syncs to other machines). The `active` field is true only for the recording running on this machine.
-
-| Command | RO/RW | Does | TUI |
-| --- | --- | --- | --- |
-| `ws session ls` | RO | list recorded sessions | screen |
-| `ws session show <tag> [--commands]` | RO | print a transcript, or only its commands | `enter` (`c` toggles commands) |
-| `ws session record [tag]` | RW | start a recorded shell; leaving it ends the recording | `r` |
-| `ws session stop` | RW | end the recording running on this machine | `:stop` |
-| `ws session grep <text>` | RO | search transcripts and commands | `:grep` |
-| `ws session rm <tag…> \| --older-than <age>` | RW | soft-delete sessions to the trash, by tag or by age | `ctrl+d`, `p` |
-
-#### `ws session ls`
+Terminal sessions belong to [agent-tmux](https://github.com/mugenkunou/agent-tmux): it
+runs them in tmux, records each one from the start, and lists, shows, searches and deletes
+the recordings. ws has no session code of its own. `ws session <args…>` replaces itself
+with `agent-tmux <args…>` (exec), so the terminal and signals reach agent-tmux directly.
+Every word after `session` is agent-tmux's, flags included: `ws session --help` is
+agent-tmux's help, and `ws session ls --json` is its JSON. ws global flags typed before
+`session` are ignored. Recordings live where agent-tmux keeps them; ws never reads them.
 
 ```text
-ws session ls [--filter <expr>] [--sort <fields>] [--wide] [--json]
+ws session <agent-tmux args…>
 ```
-
-Lists every session directory that has a `meta.json`, newest first.
-
-| Field | Column | Meaning |
-| --- | --- | --- |
-| `tag` | Tag | session name (the directory name) |
-| `started_at` | Started | start time |
-| `ended_at` | Ended (`--wide`) | end time; empty while recording |
-| `duration_sec` | Duration | length; `—` while recording |
-| `commands` | Cmds | lines in `stdin.log` |
-| `size_bytes` | Size | `stdin.log` plus `stdout.log` |
-| `active` | State | `recording` (on this machine) or `done` |
 
 ```text
-$ ws session ls
-Tag            Started           Duration  Cmds  Size     State
-deploy-fix     2026-10-22 14:05  —         12    40.0 KB  recording
-rsync-backup   2026-10-20 09:30  31m 05s   7     8.0 KB   done
+ws session ls                    live sessions and recordings
+ws session create web            start one and attach
+ws session grep rsync            search every recording
+ws session show web              page the recording
 ```
 
-JSON: `session.ls`, one record per session with the fields above.
-
-Exit: 0, or 1 for an unknown field.
-
-TUI: the Sessions screen. The recording row's state is drawn as `● recording`.
-
-#### `ws session show`
+Without agent-tmux on PATH, `ws session` prints how to install it and exits 127:
 
 ```text
-ws session show <tag> [--commands]
+download: https://github.com/mugenkunou/agent-tmux/releases/latest
+or:       go install github.com/mugenkunou/agent-tmux/cmd/agent-tmux@latest
 ```
 
-Prints a session's transcript (`stdout.log`) with terminal escape sequences and carriage
-returns removed, so it reads as plain text in a pager or a file. With `--commands`, it
-prints the commands file (`stdin.log`) instead: one command line per line, in the order
-they ran. A session that is still recording shows what has been written so far. `<tag>`
-must be an exact tag.
+Completion of `ws session <words>` is `agent-tmux __complete <words>`, so it offers exactly
+what agent-tmux would (§4.8). Without agent-tmux it offers nothing.
 
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--commands` | off | print only the commands |
+**Version nudge.** `ws version` and the TUI (the Sessions screen, and a Dashboard row) say
+`agent-tmux <tag> is available`, with the two install lines, when GitHub's latest
+agent-tmux release (`api.github.com/repos/mugenkunou/agent-tmux/releases/latest`,
+`tag_name`) is newer than `agent-tmux version --json`. Versions compare as semver; a `dev`
+build, or anything else unparseable, never nudges. The answer is cached for 24 hours in
+`$XDG_CACHE_HOME/ws/agent-tmux-release.json` (default `~/.cache/ws/`): `{"checked_at",
+"etag", "tag_name"}`. After that the check sends `If-None-Match` with the cached ETag, and
+a `304` keeps the cached tag for another day. The TUI checks in the background; every
+check gives up after 3 seconds and fails silently. `WS_NO_VERSION_CHECK=1` turns it off.
+`ws session` never checks.
 
-```text
-$ ws session show rsync-backup --commands
-rsync -avz --delete ~/Workspace/ backup:/data/
-df -h /data
-```
-
-JSON: `session.show`, with `tag`, `path` (the file printed), `commands` (bool) and `text`.
-
-Exit: 0, or 1 if the tag does not exist.
-
-TUI: `enter` opens the transcript in a scrolling view. `c` toggles commands only, and `esc`
-returns to the list.
-
-#### `ws session record`
-
-```text
-ws session record [tag] [--no-prompt] [--quiet] [--dry-run]
-```
-
-Starts a recorded shell and blocks until it ends. Like `stop`, it runs without a plan
-(§4.7). `tag` names the session. The default is the local time, `YYYY-MM-DD-HHMM`. A tag
-must not contain `/` or start with `.`. If the tag already exists, ws appends `-2`,
-`-3`, … instead of overwriting it (decision). The tag is printed.
-
-ws refuses to start (exit 1, nothing created) when stdin or stdout is not a terminal,
-when `script(1)` from util-linux ≥ 2.35 is missing (the error names the package), or when
-a recording is already running on this machine. A marker whose PID is no longer running
-is stale. ws finalizes that session and starts the new one (decision).
-
-**The recorded shell.** ws creates the session directory and runs
-`script -q --flush -e -O <dir>/stdout.log -c <shell>`. The shell is `$SHELL` when it is
-bash or zsh. Any other shell gets bash. The shell first loads your normal rc file
-(`~/.bashrc`, or `~/.zshrc`), then two hooks that run before each prompt:
-
-- **Command capture.** The last history entry is appended to `stdin.log` when it is new.
-  Commands typed inside programs the shell runs (`ssh`, `python`, `psql`) appear only in
-  the transcript. ws does not log raw keyboard input, so passwords typed at prompts that
-  do not echo are never recorded (decision).
-- **Prompt indicator.** `● ws:rec ` (a red dot) is prepended to `PS1` (bash, through
-  `PROMPT_COMMAND`) or `PROMPT` (zsh, through `precmd`). Your own prompt is kept, and the
-  hook re-adds the indicator if your prompt code rewrites `PS1`. With colour off, the
-  indicator is `(*) ws:rec `. `--no-prompt` leaves the prompt alone and still captures
-  commands. Nothing is written to your rc files. The indicator ends with the shell.
-
-The shell's environment has `WS_LOG_RECORDING=1`, for prompt themes that want their own
-cue.
-
-**Ending.** The recording ends when the shell exits (`exit`, Ctrl-D), when
-`ws session stop` runs, or when `stdin.log` and `stdout.log` together reach
-`session.max_session_mb` (checked every 5 seconds; ws warns at 80% and sends the recorder SIGTERM at the limit, then prints `Recording ended at the 100 MB limit`). ws
-then writes the end time and duration into `meta.json`, removes the marker, and prints a
-summary.
-
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--no-prompt` | off | do not add the indicator |
-| `--quiet` | off | no banner and no summary (errors still print) |
-
-```text
-$ ws session record deploy-fix
-
-✔ Recording deploy-fix
-  Transcript  /home/user/Sessions/deploy-fix/stdout.log
-  Commands    /home/user/Sessions/deploy-fix/stdin.log
-  End         type exit or press Ctrl-D
-
-● ws:rec user@laptop:~/Workspace$ kubectl rollout status deploy/api
-…
-● ws:rec user@laptop:~/Workspace$ exit
-
-✔ Session ended
-  Tag         deploy-fix
-  Duration    14m 22s
-  Transcript  /home/user/Sessions/deploy-fix/stdout.log  (19.0 KB)
-  Commands    /home/user/Sessions/deploy-fix/stdin.log  (12 commands)
-```
-
-`--dry-run` prints the session directory it would create and starts nothing.
-
-JSON: `session.record` prints its envelope after the shell ends, in place of the summary.
-It has `tag`, `session_dir`, `stdin_path`, `stdout_path` and `duration_sec`.
-
-Exit: 0 once a recording has ended, whatever the shell's own exit status. 1 if it could
-not start.
-
-TUI: `r` asks for an optional tag (blank for the timestamp), then hands the terminal to
-`ws session record <tag> --quiet` (§6.8). The screen reloads when the shell exits. If a
-recording is already running, `r` shows a notice instead.
-
-#### `ws session stop`
-
-```text
-ws session stop [--dry-run]
-```
-
-Ends the recording running on this machine, from any terminal: ws sends the recorder
-SIGTERM, waits up to 3 seconds for it to exit, then finalizes `meta.json` and removes the
-marker. It runs without a plan and without a prompt (§4.7). Run inside the recorded shell,
-it ends that shell. With no recording running, it prints `No active recording session.`
-and exits 0.
-
-```text
-$ ws session stop
-✔ Session ended
-  Tag         deploy-fix
-  Duration    14m 22s
-  Transcript  /home/user/Sessions/deploy-fix/stdout.log  (19.0 KB)
-  Commands    /home/user/Sessions/deploy-fix/stdin.log  (12 commands)
-```
-
-JSON: `session.stop`, with `tag`, `duration_sec` and `stopped`.
-
-Exit: 0 (including when nothing was recording), or 1 if the metadata could not be
-written.
-
-TUI: `:stop` opens a one-action checklist (the TUI confirms every change, §6.4).
-
-#### `ws session grep`
-
-```text
-ws session grep <text> [--max <n>]
-```
-
-Searches the transcript and the commands of every session. `<text>` is a literal,
-case-insensitive substring, and several arguments are joined with single spaces. Escape
-sequences and carriage returns are removed before matching, as in `show`. Only
-`stdout.log` and `stdin.log` are searched (decision). Sessions are searched newest first,
-the commands file before the transcript.
-
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--max <n>` | 0 | stop after n matches (0: no limit) |
-
-```text
-$ ws session grep rsync
-/home/user/Sessions/rsync-backup/stdin.log:1: rsync -avz --delete ~/Workspace/ backup:/data/
-/home/user/Sessions/rsync-backup/stdout.log:3: rsync -avz --delete ~/Workspace/ backup:/data/
-```
-
-JSON: `session.grep`, a list of matches with `tag`, `path`, `line` and `text`.
-
-Exit: 0, whether or not anything matched (`No matches.`). 1 if `<text>` is missing.
-
-TUI: `:grep <text>` narrows the list to the sessions that have a match, and the status
-line shows `grep <text>`. `enter` opens a session's viewer at its first matching
-line (in commands-only mode when the match is in the commands file). `esc` clears the
-narrowing.
-
-#### `ws session rm`
-
-```text
-ws session rm <tag…> [--dry-run]
-ws session rm --older-than <age> [--dry-run]
-```
-
-Moves sessions to the XDG trash (§7.3), oldest first when chosen by age. The recording in
-progress is never deleted. Give tags or `--older-than`, not both (exit 1).
-
-- **`<tag…>`:** tags must match exactly. If a tag does not exist or names the recording in
-  progress, nothing is deleted (exit 1).
-- **`--older-than <age>`:** the finished sessions that started longer ago than `<age>`.
-  Ages are `30d`, `12h` or `2w`, and a bare integer means days (the shared age format).
-
-The plan has one action per session, pre-checked:
-`Delete /home/user/Sessions/rsync-backup (8.0 KB)`, and with `--older-than`
-`Delete /home/user/Sessions/2026-08-02-0930 (89.0 MB, 81d old)`. When no session is old
-enough, ws says `Nothing to delete: no session older than 30d.` and exits 0.
-
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--older-than <age>` | — | delete the sessions older than this, instead of naming tags |
-
-JSON: `session.rm`, with `actions`.
-
-Exit: 0, 1, or 3.
-
-TUI: `ctrl+d` deletes the selected rows. The recording row is left out of the checklist,
-with a notice. `p` asks for an age, then shows the checklist of the sessions older than it.
-It covers every session, whatever is marked or filtered.
+TUI: the Sessions screen (§6.5).
 
 ---
 
@@ -3379,7 +3181,7 @@ Each job is installed on its own. `mega-sync` suits MEGA; with another sync clie
 install `pass-backup` alone, plus `sync-push` for a mirror client such as WorkDrive (§2.6).
 
 **Retired names.** `secret-scan`, `ignore-scan`, `repo-sync` (nothing should commit your
-work unattended; run `ws repo git` yourself), `session-prune` (use `ws session rm --older-than`) and `zoho-sync` (Zoho's TrueSync client runs from login autostart; the old Sync client it restarted is discontinued) are retired. `cron add` rejects them (`cron job
+work unattended; run `ws repo git` yourself) and `zoho-sync` (Zoho's TrueSync client runs from login autostart; the old Sync client it restarted is discontinued) are retired. `cron add` rejects them (`cron job
 "repo-sync" was removed`), `cron rm` still removes their blocks, and `cron run` skips
 them silently and exits 0, so a crontab line written earlier keeps working (see below).
 
@@ -4328,7 +4130,7 @@ Nouns:
   repo        Git repositories under the repo roots
   symlink     Files and folders kept in the workspace and linked back
   scratch     Scratch directories
-  session     Recorded terminal sessions
+  session     Terminal sessions and recordings (agent-tmux)
   ignore      MEGA sync rules and warnings
   secret      Secret findings in the workspace
   pass        The pass password store
@@ -4460,7 +4262,7 @@ Each key is shown with its label, never as a bare letter.
 
 Screen keys are lowercase and mnemonic: usually the first letter of the verb the footer
 shows (`i` ignore, `b` back up, `m` mute, `l` link). A letter keeps one meaning on a screen,
-but may mean different verbs on different screens (`r` runs on Cron, records on Sessions,
+but may mean different verbs on different screens (`r` runs on Cron
 and restores on Trash), as in k9s. Global keys never change meaning. The `:`
 commands are listed with each screen. They are the CLI's words after the noun.
 
@@ -4522,15 +4324,28 @@ destructive verb, §6.3, not `u`, which is already `unmute` on Ignore.)
 
 **Sessions**
 
+A client of agent-tmux. The list is `agent-tmux ls --json`: live sessions and ended
+recordings together, with their state (`live`, `ended`) and recorder (`● rec` running,
+`stopped`, `none` for a session an older agent-tmux started, blank when ended). Every key
+runs one agent-tmux verb; `open`, `show` and `create` get the terminal, with the TUI
+suspended (§6.8). Without agent-tmux the screen is greyed out and shows the two install
+lines; refresh after installing it. When a newer agent-tmux is out, its line and the install
+lines stand above the list (the version nudge, §5 `ws session`).
+
 | Key | Does | Rows |
 | --- | --- | --- |
-| `enter` | show the transcript (`c` toggles commands only; `esc` returns) | cursor |
-| `r` | record: prompt for a tag, then hand the terminal to the recorded shell | none |
-| `p` | delete by age: prompt for an age, then a checklist | all rows |
-| `ctrl+d` | delete | selected |
+| `enter` | open: attach to a live session (`agent-tmux open`); an ended one is shown | cursor |
+| `v` | show: page the recording (`agent-tmux show`, which pages it in `less`) | cursor |
+| `a` | new: prompt for a name, then `agent-tmux create <name>`, which attaches | none |
+| `s` | grep: prompt for text, then list the matching lines (`agent-tmux grep --json`); `enter` shows one, `esc` returns | none |
+| `x` | kill the live sessions, through a checklist; their recordings stay | selected |
+| `ctrl+d` | delete: move ended recordings to the trash (`agent-tmux rm`), through a checklist; live ones are left out | selected |
 
-`:` commands: `stop`, `grep <text>` (narrows the list to sessions with a match; `enter` opens
-the viewer at the first match; `esc` clears it).
+`:` commands: `grep <text>` (the same as `s`).
+
+The Dashboard card counts live and ended sessions. A live session whose recorder stopped is
+a problem there (it opens the screen filtered to `recorder=stopped`), and the version nudge
+is a row of its own.
 
 **Ignore.** There are three views, and `v` cycles them: **Warnings** (`ignore lint`, where it
 opens), **Muted** (`ignore ls --muted`) and **Ignored** (`ignore ls`). The header names the
@@ -4649,7 +4464,7 @@ summary notice.
 Some commands need the terminal or are multi-step CLI wizards. The TUI suspends itself,
 runs them, and resumes and refreshes the screen when they exit.
 
-- **Interactive programs:** `session record` (the recorded shell), and terminal editors for
+- **Interactive programs:** agent-tmux's `open`, `create` and `show` (the Sessions screen), and terminal editors for
   `e` and the `edit` commands, `config edit` included (your editor, §4.10, default `vim`).
   GUI editors (for example `code`) are launched without suspending.
 - **A command line in one repo:** the Repos `!` prompt (or `:git`, `:run`) for one repo runs
@@ -4713,7 +4528,7 @@ icons are off with `--no-color`, `NO_COLOR`, `TERM=dumb`, or when stdout is not 
 
 ### 7.3 Deletion: one shared trash
 
-Everything ws deletes (`scratch rm`, `session rm`, the Ignore screen's `ctrl+d`) moves into
+Everything ws deletes (`scratch rm`, the Ignore screen's `ctrl+d`) moves into
 the XDG trash (`$XDG_DATA_HOME/Trash`): `files/` holds the item, and
 `info/<name>.trashinfo` records its original path and deletion time
 ([freedesktop trash spec](https://specifications.freedesktop.org/trash-spec)). The
@@ -4773,8 +4588,7 @@ written once per screen.
   the cursor survive reload, filter and sort.
 - **Plain Go structs and functions**, generic over the item type: no struct tags, reflection
   or config files. The description must not grow into its own mini-language.
-- **Non-list screens stay custom.** The Dashboard and the session viewer implement
-  `nav.Component` directly.
+- **Non-list screens stay custom.** The Dashboard implements `nav.Component` directly.
 - **Every marked-items action goes through the checklist**; nothing that acts on a selection
   applies immediately.
 - **Parity is enforced by tests, not review** (§9.10).
@@ -4804,7 +4618,7 @@ too rigid, not a reason to force the screen into it.
   copy.
 - **No umbrella verbs.** `scan`, `fix`, `reset` and `setup` do not exist. Each command names
   what it changes. Finding problems is not an error, so exit code `2` is retired.
-- **Nouns that mean one thing:** `session` for recorded terminal sessions, and `pass` and
+- **Nouns that mean one thing:** `session` for terminal sessions (now agent-tmux's: `ws session` execs it), and `pass` and
   `credential` split out of `secret`.
 - **Old names stay as hidden aliases** (§3.5). They print a one-line rename hint when a person
   types them, and stay silent when crontab, git or a shell hook calls them.
@@ -4848,7 +4662,7 @@ for run, record and restore).
 - `secret-scan`, `ignore-scan` and `repo-sync` are removed, because
   they existed only to turn exit code 2 into a notification, or to commit work unattended.
 - Commands that fill gaps: `trash restore`, `repo root rm`, `ignore rm`,
-  `scratch add`, `config edit`, `session show|grep`, `secret show`.
+  `scratch add`, `config edit`, `secret show`.
 - `repo git` runs a git command line as typed in each repo, and ws has no git verbs of its
   own (the earlier `repo fetch|pull|push|save` were removed). `repo configure` asks for what
   a repo's setup is missing.
@@ -4879,7 +4693,7 @@ and matching. It runs these programs:
 | Program | Package | Used by | Required |
 | --- | --- | --- | --- |
 | `git` | git | `repo …`, `pass backup …` | for those commands |
-| `script` | util-linux ≥ 2.35 | `session record` (the PTY recording) | for recording |
+| `agent-tmux` | [agent-tmux](https://github.com/mugenkunou/agent-tmux) | `ws session …` (exec), the Sessions screen, `ws session` completion | for sessions |
 | `pass`, `gpg` | pass, gnupg | `pass …`, `secret store`, `credential …`, backup tokens | for those commands |
 | `crontab` | cron | `cron …` | for cron |
 | `sh`, `bash` | — | `repo run`, cron job scripts, shell integrations | yes |
@@ -5021,6 +4835,7 @@ TMPDIR=$HOME/tmp GOCACHE=$HOME/.gocache GOTMPDIR=$HOME/gotmp go test -cover ./..
 | System crontab | `WS_CRONTAB_FILE` → temp file (per test) | live cron jobs |
 | Password store | `PASSWORD_STORE_DIR` → temp dir (per test) | real `~/.password-store` |
 | Editor binary | fake `code` shim in `PATH` (`TestMain`) | VS Code is never launched |
+| agent-tmux | `agenttmuxtest.Hide()` in `TestMain` takes it off `PATH` and sets `WS_NO_VERSION_CHECK=1`; a test that needs it calls `agenttmuxtest.Fake` (a script on `PATH` that prints canned output and logs its arguments) | the installed agent-tmux, its sessions and recordings, and GitHub |
 
 **Convention:** any test that runs `ws init`, `ws cron`, `ws secret` or any other RW command
 must call `testSetXDG(t)` first. No test needs network access or real credentials, and no
@@ -5148,7 +4963,7 @@ yes to this and no to the next?
 | --- | --- |
 | Per-file operations (`init`, `symlink add`, `symlink unlink`) | one action per file |
 | Fleet operations (`repo git\|run`) | one action per repo |
-| Cleanup operations (`session rm --older-than`, `trash prune`) | one action per item removed |
+| Cleanup operations (`trash prune`) | one action per item removed |
 | Single-mutation commands (`repo root add`) | one action in total |
 
 **Testing RW commands.** Tests pass `strings.NewReader("y\n")` as stdin. `promptChoice`
@@ -5202,7 +5017,7 @@ The rules are §4.5. The contributor checklist:
    matching needs them (ignore and secret violations, repo discovery). Convert at render or
    marshal time, never by changing what the matcher sees.
 2. **One line per item.** An absolute path is already `cd`-ready. Names (scratch names,
-   session tags, cron jobs) may still appear, and when a command acts on the file behind a
+   cron jobs) may still appear, and when a command acts on the file behind a
    name, print its absolute path too.
 3. **Input.** Absolute as is, `~` expanded, anything else relative to the current directory.
    There is no workspace-relative fallback for CLI input: delete a "try cwd, then try the
@@ -5221,7 +5036,7 @@ one repo after `ws repo ls` shows which needs attention. A path target is matche
 absolute path: `ws repo git data/bruno -- status` works only from the workspace root, and a path pasted
 from `ws repo ls` always works. Targets and `--path` are complementary: `--path` is a prefix
 filter and a target is an exact match, and both may be used together. Tab completion offers
-the rows' absolute paths (repos, symlink host paths) or names (scratch, sessions, cron
+the rows' absolute paths (repos, symlink host paths) or names (scratch, cron
 jobs, trash items). The TUI passes its rows the same way: a key acts on the marked rows, else
 on the cursor row or the filtered rows by its scope (§6.4), and the CLI command with those
 rows as targets does the same thing.

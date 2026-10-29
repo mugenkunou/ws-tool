@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"runtime"
 
+	"github.com/mugenkunou/ws-tool/internal/agenttmux"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
@@ -20,6 +22,10 @@ type versionData struct {
 	ConfigSchema int    `json:"config_schema"`
 	Platform     string `json:"platform"`
 	GoVersion    string `json:"go_version"`
+	// AgentTmux is the installed agent-tmux's version, "" when it is missing;
+	// AgentTmuxLatest is a newer release, "" when there is none.
+	AgentTmux       string `json:"agent_tmux"`
+	AgentTmuxLatest string `json:"agent_tmux_latest"`
 }
 
 var versionHelp = cmdHelp{
@@ -54,6 +60,14 @@ func runVersion(args []string, globals globalFlags, stdout, stderr io.Writer) in
 		Platform:     runtime.GOOS + "/" + runtime.GOARCH,
 		GoVersion:    runtime.Version(),
 	}
+	ctx := context.Background()
+	if v, err := agenttmux.Version(ctx); err == nil {
+		data.AgentTmux = v
+	}
+	nudge, newer := agenttmux.NudgeFor(ctx, data.AgentTmux)
+	if newer {
+		data.AgentTmuxLatest = nudge.Latest
+	}
 
 	if globals.json {
 		return writeJSON(stdout, stderr, "version", data)
@@ -66,5 +80,25 @@ func runVersion(args []string, globals globalFlags, stdout, stderr io.Writer) in
 	style.KV(out, "Platform", data.Platform, nc)
 	style.KV(out, "Go version", data.GoVersion, nc)
 
+	// ws session runs agent-tmux; say which, and whether a newer one is out.
+	switch {
+	case data.AgentTmux == "":
+		style.KV(out, "agent-tmux", style.Mutedf(nc, "not installed"), nc)
+		for _, l := range agenttmux.InstallLines {
+			fmt.Fprintln(out, "  "+l)
+		}
+	case newer:
+		style.KV(out, "agent-tmux", data.AgentTmux, nc)
+		fmt.Fprintln(out)
+		for i, l := range nudge.Lines() {
+			if i == 0 {
+				fmt.Fprintln(out, style.ResultWarning(nc, "%s", l))
+				continue
+			}
+			fmt.Fprintln(out, "  "+l)
+		}
+	default:
+		style.KV(out, "agent-tmux", data.AgentTmux, nc)
+	}
 	return 0
 }

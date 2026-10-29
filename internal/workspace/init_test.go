@@ -66,7 +66,7 @@ func TestPlanInitOnAnEmptyDirectory(t *testing.T) {
 func TestPlanInitFillsKeysAndKeepsValues(t *testing.T) {
 	root := t.TempDir()
 	cfg := filepath.Join(root, "ws.json")
-	if err := os.WriteFile(cfg, []byte(`{"schema": 1, "repo": {"roots": ["experiments"], "max_parallel": 3}, "session": {"max_session_mb": 9}}`), 0o644); err != nil {
+	if err := os.WriteFile(cfg, []byte(`{"schema": 1, "repo": {"roots": ["experiments"], "max_parallel": 3}, "trash": {"warn_size_mb": 9}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, ".megaignore"), []byte("mine\n"), 0o644); err != nil {
@@ -84,7 +84,7 @@ func TestPlanInitFillsKeysAndKeepsValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(got.Repo.Roots, []string{"experiments"}) || got.Repo.MaxParallel != 3 || got.Session.MaxSessionMB != 9 {
+	if !slices.Equal(got.Repo.Roots, []string{"experiments"}) || got.Repo.MaxParallel != 3 || got.Trash.WarnSizeMB != 9 {
 		t.Fatalf("values already set are kept: %+v", got)
 	}
 	content, _ := os.ReadFile(cfg)

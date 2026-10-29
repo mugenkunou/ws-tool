@@ -28,7 +28,7 @@ type Coverage struct {
 
 // CLICoverage is every CLI subcommand and its TUI counterpart.
 var CLICoverage = func() []Coverage {
-	rp, sc, lg := keys.Repos(), keys.Scratch(), keys.Sessions()
+	rp, sc := keys.Repos(), keys.Scratch()
 	df, ig, se, cr, tr := keys.Symlinks(), keys.Ignore(), keys.Secrets(), keys.Cron(), keys.Trash()
 	sk := keys.Skills()
 	none := key.Binding{}
@@ -79,12 +79,9 @@ var CLICoverage = func() []Coverage {
 		{"ignore tree", nav.ScreenIgnore, none, "", "tree"},        // :tree [dir], paged
 		{"ignore edit", nav.ScreenIgnore, ig.EditRules, "", ""},
 
-		{"session ls", nav.ScreenSessions, none, "", ""},
-		{"session record", nav.ScreenSessions, lg.Record, "", ""},
-		{"session stop", nav.ScreenSessions, none, "", "stop"},
-		{"session show", nav.ScreenSessions, lg.View, "", ""},
-		{"session grep", nav.ScreenSessions, none, "", "grep"},
-		{"session rm", nav.ScreenSessions, lg.Delete, "", ""},
+		// The screen is agent-tmux's: its list is `ls`, and its keys run open,
+		// show, create, grep, kill and rm.
+		{"session", nav.ScreenSessions, none, "", ""},
 
 		{"repo ls", nav.ScreenRepos, none, "", ""},
 		{"repo show", nav.ScreenRepos, rp.Open, "", ""},

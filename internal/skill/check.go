@@ -46,6 +46,9 @@ type CheckInput struct {
 	// fallbacks in scripts/lib/common.sh. Getenv expands those (default os.Getenv).
 	Env    map[string]string
 	Getenv func(string) string
+	// Providers are the binaries whose `skill` output the workspace copies are
+	// held against (see Providers). Nil checks none.
+	Providers []string
 }
 
 // Check reads both shelves and <workspace>/scripts and reports drift. It
@@ -66,6 +69,7 @@ func Check(in CheckInput) ([]Finding, error) {
 		}
 		out = append(out, checkSkill(in, s)...)
 	}
+	out = append(out, providerFindings(in.Workspace, InspectProviders(in.Workspace, in.Providers))...)
 	out = append(out, checkScripts(in)...)
 	out = append(out, checkCommonSh(in)...)
 	return out, nil

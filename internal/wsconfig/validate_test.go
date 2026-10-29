@@ -2,6 +2,8 @@ package wsconfig
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -38,7 +40,7 @@ func TestMissingKeys(t *testing.T) {
 	if m, err := MissingKeys(full); err != nil || len(m) != 0 {
 		t.Fatalf("a complete file lacks nothing: %v %v", m, err)
 	}
-	m, err := MissingKeys([]byte(`{"schema": 1, "repo": {"roots": ["."]}, "session": {}}`))
+	m, err := MissingKeys([]byte(`{"schema": 1, "repo": {"roots": ["."]}, "trash": {}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +49,7 @@ func TestMissingKeys(t *testing.T) {
 			t.Errorf("missing %q not reported: %v", want, m)
 		}
 	}
-	for _, not := range []string{"schema", "repo.roots", "session", "repo"} {
+	for _, not := range []string{"schema", "repo.roots", "trash", "repo"} {
 		if slices.Contains(m, not) {
 			t.Errorf("%q is present: %v", not, m)
 		}
@@ -66,5 +68,29 @@ func TestValidateRejectsOldLinksKey(t *testing.T) {
 	}
 	if _, err := Validate([]byte(`{"schema": 1, "frobnicate": 1}`)); err == nil {
 		t.Fatal("an unknown key is an error")
+	}
+}
+
+// TestOldSessionKeyIsUnknown: ws no longer records sessions (agent-tmux does),
+// so a ws.json that still has "session" loads, drops the key on the next
+// write, and fails `config edit`'s check until it is deleted by hand.
+func TestOldSessionKeyIsUnknown(t *testing.T) {
+	old := `{"schema": 1, "session": {"root_dir": "~/x", "max_session_mb": 100}}`
+	if _, err := Validate([]byte(old)); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("want an unknown-field error, got %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "ws.json")
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load ignores the old key: %v", err)
+	}
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(path); strings.Contains(string(data), `"session"`) {
+		t.Error("the next write drops the old key")
 	}
 }

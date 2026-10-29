@@ -258,58 +258,73 @@ func (k ScratchMap) FullHelp() [][]key.Binding {
 	}
 }
 
-// SessionsMap is the binding set for the recorded-sessions screen (spec §6.5).
+// SessionsMap is the binding set for the Sessions screen (spec §6.5), a
+// client of agent-tmux: every key runs one agent-tmux verb.
 type SessionsMap struct {
-	Table      table.KeyMap
-	View       key.Binding // enter: the transcript
-	Record     key.Binding // r
-	Prune      key.Binding // p
-	Delete     key.Binding // ctrl+d
-	ToggleMode key.Binding // in the transcript: full output / commands only
-	Back       key.Binding
+	Table  table.KeyMap
+	Open   key.Binding // enter: attach to a live session (`open`); page an ended one (`show`)
+	Show   key.Binding // v: page the recording (`show`)
+	New    key.Binding // a: create a session and attach (`create`)
+	Grep   key.Binding // s: search every recording (`grep`)
+	Kill   key.Binding // x: end live sessions (`kill`)
+	Delete key.Binding // ctrl+d: ended recordings to the trash (`rm`)
+	Back   key.Binding
 }
 
-// Sessions returns bindings for the recorded-sessions screen.
+// Sessions returns bindings for the Sessions screen.
 func Sessions() SessionsMap {
 	return SessionsMap{
-		Table:      Table(),
-		View:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "show")),
-		Record:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "record")),
-		Prune:      key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "prune")),
-		Delete:     Delete(),
-		ToggleMode: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "commands only")),
-		Back:       back(),
+		Table:  Table(),
+		Open:   key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open")),
+		Show:   key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "show")),
+		New:    key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "new")),
+		Grep:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "grep")),
+		Kill:   key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "kill")),
+		Delete: Delete(),
+		Back:   back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
 func (k SessionsMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.View, k.Record, k.Prune, k.Delete}
+	return []key.Binding{k.Open, k.Show, k.New, k.Grep, k.Kill, k.Delete}
 }
 
 // FullHelp implements help.KeyMap.
 func (k SessionsMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
-		{k.View, k.Record, k.Prune, k.Delete},
+		{k.Open, k.Show, k.New, k.Grep, k.Kill, k.Delete},
 		{k.Back},
 	}
 }
 
-// ViewerMap is the binding set for a scrollable text viewer with a mode toggle.
-type ViewerMap struct {
-	Detail     DetailMap
-	ToggleMode key.Binding
+// SessionMatchesMap is the Sessions screen's grep results: enter pages the
+// recording of the cursor match.
+type SessionMatchesMap struct {
+	Table table.KeyMap
+	Show  key.Binding
+	Back  key.Binding
+}
+
+// SessionMatches returns bindings for the grep results.
+func SessionMatches() SessionMatchesMap {
+	return SessionMatchesMap{
+		Table: Table(),
+		Show:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "show")),
+		Back:  back(),
+	}
 }
 
 // ShortHelp implements help.KeyMap.
-func (k ViewerMap) ShortHelp() []key.Binding {
-	return append(k.Detail.ShortHelp(), k.ToggleMode)
-}
+func (k SessionMatchesMap) ShortHelp() []key.Binding { return []key.Binding{k.Show, k.Back} }
 
 // FullHelp implements help.KeyMap.
-func (k ViewerMap) FullHelp() [][]key.Binding {
-	return append(k.Detail.FullHelp(), []key.Binding{k.ToggleMode})
+func (k SessionMatchesMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
+		{k.Show, k.Back},
+	}
 }
 
 // IgnoreView is one of the Ignore screen's three views (spec §6.5), cycled

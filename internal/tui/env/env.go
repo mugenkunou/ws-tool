@@ -26,7 +26,6 @@ type Env struct {
 	RepoRoots   []string // absolute
 	ExcludeDirs []string
 	ScratchDir  string // absolute
-	LogDir      string // absolute
 	// HistoryFile is where the Repos screen keeps the command lines it ran
 	// (machine-local state). Empty keeps the history in memory only.
 	HistoryFile string
@@ -68,9 +67,6 @@ func Load(o workspace.PathOverrides) (Env, error) {
 		if resolved, err := wsconfig.ResolvePath(p.Workspace, r); err == nil {
 			e.RepoRoots = append(e.RepoRoots, resolved)
 		}
-	}
-	if dir, err := wsconfig.ResolvePath(p.Workspace, cfg.Session.RootDir); err == nil {
-		e.LogDir = dir
 	}
 	if dir, err := wsconfig.ResolvePath(p.Workspace, cfg.Scratch.RootDir); err == nil {
 		e.ScratchDir = dir

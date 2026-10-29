@@ -25,5 +25,10 @@ func pluralize(noun string) string {
 	if l := len(noun); l >= 2 && noun[l-1] == 'y' && !strings.ContainsRune("aeiou", rune(noun[l-2])) {
 		return noun[:l-1] + "ies"
 	}
+	for _, end := range []string{"s", "x", "z", "ch", "sh"} {
+		if strings.HasSuffix(noun, end) {
+			return noun + "es" // match, matches
+		}
+	}
 	return noun + "s"
 }
