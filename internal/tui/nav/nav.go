@@ -59,7 +59,7 @@ var specs = [screenCount]Spec{
 	ScreenIgnore:    {Icon: "🧹", Title: "Ignore", Noun: "ignore"},
 	ScreenSync:      {Icon: "🔄", Title: "Sync", Noun: "sync"},
 	ScreenSecrets:   {Icon: "🔐", Title: "Secrets", Noun: "secret"},
-	ScreenPass:      {Icon: "🗝️", Title: "Pass", Noun: "pass"},
+	ScreenPass:      {Icon: "🔒", Title: "Pass", Noun: "pass"},
 	ScreenCredential: {Icon: "🔑", Title: "Credentials", Noun: "credential",
 		Hosts: []string{"git-credential-helper"}},
 	ScreenCron:   {Icon: "⏰", Title: "Cron", Noun: "cron"},

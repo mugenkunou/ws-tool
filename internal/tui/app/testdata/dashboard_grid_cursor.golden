@@ -1,4 +1,4 @@
-ws  🏠 Dashboard   📦   🔗   🧪   📼   🧹   🔄   🔐   🗝️   🔑   ⏰   🚮   🧩   🔧
+ws  🏠 Dashboard   📦   🔗   🧪   📼   🧹   🔄   🔐   🔒   🔑   ⏰   🚮   🧩   🔧
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 🌅 Good morning  ·  ~/Workspace
 
@@ -25,6 +25,6 @@ ws  🏠 Dashboard   📦   🔗   🧪   📼   🧹   🔄   🔐   🗝️   
 │ ● recording                  │ │ 1 in included paths          │ │ 3 to copy · 1 to delete      │
 ╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
 ╭──────────────────────────────╮ ╭──────────────────────────────╮ ╭──────────────────────────────╮
-│ 🔐 Secrets                 ! │ │ 🗝️ Pass                    ✔ │ │ 🔑 Credentials             ✔ │
+│ 🔐 Secrets                 ! │ │ 🔒 Pass                    ✔ │ │ 🔑 Credentials             ✔ │
 │ 1 finding                    │ │ 7 entries                    │ │ helper connected             │
 ←→↑↓ move • enter open • ctrl+r refresh • : command • ? help • q quit

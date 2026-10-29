@@ -1,4 +1,4 @@
-ws  🏠   📦   🔗 Symlinks   🧪   📼   🧹   🔄   🔐   🗝️   🔑   ⏰   🚮   🧩   🔧
+ws  🏠   📦   🔗 Symlinks   🧪   📼   🧹   🔄   🔐   🔒   🔑   ⏰   🚮   🧩   🔧
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  Host path ↑                                 Workspace copy                App     Status      Sudo
  /etc/hosts                                  symlinks/system/etc/hosts             ⚠ drifted   yes
