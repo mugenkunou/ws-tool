@@ -52,6 +52,17 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return code
 	}
 
+	if unknown, name := unknownCommand(rest); unknown {
+		fmt.Fprintf(stderr, "unknown command: %s\n", name)
+		if w := strings.Fields(name); len(w) == 2 && w[0] == "symlink" {
+			if hint, gone := removedVerbHints[w[1]]; gone {
+				fmt.Fprintln(stderr, hint)
+			}
+		}
+		fmt.Fprintf(stderr, "Run `ws help %s` for available commands.\n", strings.Fields(name)[0])
+		return 1
+	}
+
 	command := rest[0]
 	commandArgs := rest[1:]
 

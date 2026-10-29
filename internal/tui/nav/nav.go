@@ -4,6 +4,8 @@
 package nav
 
 import (
+	"slices"
+
 	"charm.land/bubbles/v2/help"
 	tea "charm.land/bubbletea/v2"
 )
@@ -11,6 +13,10 @@ import (
 // Screen identifies a top-level screen. Never use strings for this.
 type Screen int
 
+// Adding a screen: add its constant here and its row in specs, its
+// constructor in the app's registry (internal/tui/app/registry.go), and make
+// its LoadedMsg a Summary so the Dashboard has its card. Tests fail until
+// every step is done (HANDBOOK.md §9.8).
 const (
 	ScreenDashboard Screen = iota
 	ScreenRepos
@@ -18,13 +24,45 @@ const (
 	ScreenScratch
 	ScreenSessions
 	ScreenIgnore
+	ScreenSync
 	ScreenSecrets
 	ScreenCron
 	ScreenTrash
 	ScreenSkills
+	ScreenWorkspace
 
 	screenCount // sentinel; keep last
 )
+
+// Spec is what the app and the command bar know about a screen.
+type Spec struct {
+	Icon  string // emoji (see theme.Icon for rendering rules)
+	Title string // the tab's label
+	// Noun is the CLI noun the screen is named after: what `:` takes to
+	// switch to it (spec §6.6). The Dashboard and Workspace have none.
+	Noun string
+	// Hosts are CLI nouns with no screen of their own whose `:` commands this
+	// screen runs (`pass audit` on Secrets). The screen's Commands() name them
+	// with the noun (`pass audit`), and they work from any screen.
+	Hosts []string
+}
+
+// specs holds one row per screen; TestEveryScreenHasASpec fails on a gap.
+var specs = [screenCount]Spec{
+	ScreenDashboard: {Icon: "🏠", Title: "Dashboard"},
+	ScreenRepos:     {Icon: "📦", Title: "Repos", Noun: "repo"},
+	ScreenSymlinks:  {Icon: "🔗", Title: "Symlinks", Noun: "symlink"},
+	ScreenScratch:   {Icon: "🧪", Title: "Scratch", Noun: "scratch"},
+	ScreenSessions:  {Icon: "📼", Title: "Sessions", Noun: "session"},
+	ScreenIgnore:    {Icon: "🧹", Title: "Ignore", Noun: "ignore"},
+	ScreenSync:      {Icon: "🔄", Title: "Sync", Noun: "sync"},
+	ScreenSecrets:   {Icon: "🔐", Title: "Secrets", Noun: "secret", Hosts: []string{"pass", "credential", "git-credential-helper"}},
+	ScreenCron:      {Icon: "⏰", Title: "Cron", Noun: "cron"},
+	ScreenTrash:     {Icon: "🚮", Title: "Trash", Noun: "trash"},
+	ScreenSkills:    {Icon: "🧩", Title: "Skills", Noun: "skill"},
+	ScreenWorkspace: {Icon: "🔧", Title: "Workspace",
+		Hosts: []string{"config", "completion", "version", "layout", "env", "init", "tui", "help"}},
+}
 
 // Screens returns every screen in tab order.
 func Screens() []Screen {
@@ -35,60 +73,38 @@ func Screens() []Screen {
 	return out
 }
 
-// Icon is the screen's emoji (see theme.Icon for rendering rules).
-func (s Screen) Icon() string {
-	switch s {
-	case ScreenDashboard:
-		return "🏠"
-	case ScreenRepos:
-		return "📦"
-	case ScreenSymlinks:
-		return "🔗"
-	case ScreenScratch:
-		return "🧪"
-	case ScreenSessions:
-		return "📼"
-	case ScreenIgnore:
-		return "🧹"
-	case ScreenSecrets:
-		return "🔐"
-	case ScreenCron:
-		return "⏰"
-	case ScreenTrash:
-		return "🚮"
-	case ScreenSkills:
-		return "🧩"
-	default:
-		return ""
+// Spec returns the screen's row, or the zero Spec for an unknown screen.
+func (s Screen) Spec() Spec {
+	if s < 0 || s >= screenCount {
+		return Spec{}
 	}
+	return specs[s]
 }
+
+// Icon is the screen's emoji (see theme.Icon for rendering rules).
+func (s Screen) Icon() string { return s.Spec().Icon }
 
 // Title is the human label for the screen's tab.
 func (s Screen) Title() string {
-	switch s {
-	case ScreenDashboard:
-		return "Dashboard"
-	case ScreenRepos:
-		return "Repos"
-	case ScreenSymlinks:
-		return "Symlinks"
-	case ScreenScratch:
-		return "Scratch"
-	case ScreenSessions:
-		return "Sessions"
-	case ScreenIgnore:
-		return "Ignore"
-	case ScreenSecrets:
-		return "Secrets"
-	case ScreenCron:
-		return "Cron"
-	case ScreenTrash:
-		return "Trash"
-	case ScreenSkills:
-		return "Skills"
-	default:
-		return "?"
+	if t := s.Spec().Title; t != "" {
+		return t
 	}
+	return "?"
+}
+
+// Noun is the CLI noun a screen is named after (see Spec.Noun).
+func (s Screen) Noun() string { return s.Spec().Noun }
+
+// ForNoun is the screen that owns a CLI noun: the one named after it, or the
+// one that hosts it.
+func ForNoun(noun string) (Screen, bool) {
+	for _, s := range Screens() {
+		sp := s.Spec()
+		if sp.Noun == noun || slices.Contains(sp.Hosts, noun) {
+			return s, true
+		}
+	}
+	return 0, false
 }
 
 // Next returns the following screen, wrapping around.
@@ -166,33 +182,6 @@ func Up() tea.Msg { return UpMsg{} }
 // Goto returns a command that emits GotoMsg for s.
 func Goto(s Screen) tea.Cmd { return func() tea.Msg { return GotoMsg{Screen: s} } }
 
-// Noun is the CLI noun a screen is named after: what `:` takes to switch to it
-// (spec §6.6). The Dashboard has none.
-func (s Screen) Noun() string {
-	switch s {
-	case ScreenRepos:
-		return "repo"
-	case ScreenSymlinks:
-		return "symlink"
-	case ScreenScratch:
-		return "scratch"
-	case ScreenSessions:
-		return "session"
-	case ScreenIgnore:
-		return "ignore"
-	case ScreenSecrets:
-		return "secret"
-	case ScreenCron:
-		return "cron"
-	case ScreenTrash:
-		return "trash"
-	case ScreenSkills:
-		return "skill"
-	default:
-		return ""
-	}
-}
-
 // CommandMsg carries a `:` command to a screen: the CLI words after the noun
 // (`backup push` for `:backup push` on Symlinks) and the same line as typed.
 type CommandMsg struct {
@@ -225,3 +214,44 @@ type FilterMsg struct {
 // OpenCommandBarMsg asks the app to open the command bar with text typed in,
 // for the Dashboard's advice rows.
 type OpenCommandBarMsg struct{ Prefill string }
+
+// Severity is how urgent a Dashboard issue is.
+type Severity int
+
+const (
+	SevError Severity = iota
+	SevWarn
+	SevInfo
+)
+
+// Issue is one Dashboard "Needs attention" row.
+type Issue struct {
+	Sev    Severity
+	Text   string
+	Screen Screen
+	// Focus, when set, is sent with the switch so the screen selects the problem.
+	Focus tea.Msg
+	// Filter is a filter expression (`status!=ok`) the screen opens with, so
+	// its own keys act on exactly the affected rows.
+	Filter string
+	// Advice rows are not problems: they are listed last at info level, never
+	// count towards a card's status, and open the command bar with Prefill.
+	Advice  bool
+	Prefill string
+}
+
+// Card is a screen's Dashboard card: its body (the Dashboard shows the first
+// two lines) and its attention items.
+type Card struct {
+	Lines  []string
+	Issues []Issue
+	Err    error // the load failed: the card says so and lists one error
+}
+
+// Summary is implemented by every screen's LoadedMsg, so the Dashboard can
+// show a card for each screen without knowing any of them: it observes the
+// broadcast load results (see the app's message routing). ok is false for a
+// result that must not change the card (a second, partial load).
+type Summary interface {
+	Card() (s Screen, c Card, ok bool)
+}

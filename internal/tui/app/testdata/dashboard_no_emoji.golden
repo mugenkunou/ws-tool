@@ -1,8 +1,8 @@
-ws  Dashboard   Repos   Symlinks   Scratch   Sessions   Ignore   Secrets   Cron   Trash   Skills
+ws  Dashboard   2   3   4   5   6   7   8   9   10   11   12
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 Good morning  ·  ~/Workspace
 
-Needs attention (8)
+Needs attention (9)
 › ✘ 2 symlinks broken, missing or drifted                                                   Symlinks
   ✘ 1 possible secret in workspace files                                                     Secrets
   ✘ Cron job repo-sync failing (exit 2)                                                         Cron
@@ -10,6 +10,7 @@ Needs attention (8)
   ! 2 sync hygiene violations (bloat, depth, build artifacts)                                 Ignore
   ! Pass store has no git remote — secrets live only on this machine                         Secrets
   ! Soft-delete is off for 1 of 3 integrations                                                 Trash
+  ! 1 skill link to a folder that is gone                                                     Skills
   · 1 hygiene finding in 1 repo                                                                Repos
 
 Overview
@@ -19,12 +20,11 @@ Overview
 │ ↑ 1 ahead · ↓ 1 behind       │ │ 2 links need fixing          │ │ newest dns-debug.2026-09     │
 ╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
 ╭──────────────────────────────╮ ╭──────────────────────────────╮ ╭──────────────────────────────╮
-│ Sessions                   ✔ │ │ Ignore                     ! │ │ Secrets                    ✘ │
-│ 1 live · 1 ended             │ │ 2 violations                 │ │ 1 finding                    │
-│ ● recording                  │ │ 1 in included paths          │ │ pass: 42 entries             │
+│ Sessions                   ✔ │ │ Ignore                     ! │ │ Sync                       ✔ │
+│ 1 live · 1 ended             │ │ 2 violations                 │ │                              │
+│ ● recording                  │ │ 1 in included paths          │ │                              │
 ╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
-╭──────────────────────────────╮ ╭──────────────────────────────╮
-│ Cron                       ✘ │ │ Trash                      ! │
-│ 2 jobs installed             │ │ 3.0 MB · 12 files            │
-│ 1 failing                    │ │ soft-delete off (1 of 3)     │
+╭──────────────────────────────╮ ╭──────────────────────────────╮ ╭──────────────────────────────╮
+│ Secrets                    ✘ │ │ Cron                       ✘ │ │ Trash                      ! │
+│ 1 finding                    │ │ 2 jobs installed             │ │ 3.0 MB · 12 files            │
 ←→↑↓ move • enter open • ctrl+r refresh • : command • ? help • q quit

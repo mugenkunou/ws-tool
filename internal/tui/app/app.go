@@ -37,20 +37,10 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/cmdbar"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/format"
-	"github.com/mugenkunou/ws-tool/internal/tui/handover"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/cron"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/dashboard"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/repos"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/scratch"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/secrets"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/sessions"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/setup"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/skills"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/symlinks"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui/selection"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
@@ -132,16 +122,9 @@ func (m Model) withEnv(e env.Env, loadErr error) Model {
 	case loadErr != nil:
 	default:
 		m.screens = make([]nav.Component, len(nav.Screens()))
-		m.screens[nav.ScreenDashboard] = dashboard.New(e)
-		m.screens[nav.ScreenRepos] = repos.New(e)
-		m.screens[nav.ScreenSymlinks] = symlinks.New(e)
-		m.screens[nav.ScreenScratch] = scratch.New(e)
-		m.screens[nav.ScreenSessions] = sessions.New(e)
-		m.screens[nav.ScreenIgnore] = ignore.New(e)
-		m.screens[nav.ScreenSecrets] = secrets.New(e)
-		m.screens[nav.ScreenCron] = cron.New(e)
-		m.screens[nav.ScreenTrash] = trash.New(e)
-		m.screens[nav.ScreenSkills] = skills.New(e)
+		for _, s := range nav.Screens() {
+			m.screens[s] = registry[s].New(e)
+		}
 	}
 	return m
 }
@@ -274,14 +257,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.resize()
 		}
 		return m.runLine(msg.Line)
-
-	case handover.DoneMsg:
-		if _, ok := msg.Tag.(configDone); ok {
-			if msg.Err != nil {
-				return m.update(nav.NoticeMsg{Text: msg.Err.Error(), Level: nav.LevelError})
-			}
-			return m.broadcast(nav.RefreshMsg{})
-		}
 
 	case nav.GotoMsg:
 		if m.screens != nil {
@@ -550,7 +525,8 @@ func (m Model) render() string {
 
 // tabs renders the tab bar: "🏠 Dashboard  📦 Repos  …", the active tab as a
 // reversed block like a selected row. Detail is dropped until it fits the
-// width: icon+title → title → icon → number.
+// width: icon+title → title → icon, with the active tab's title → icon →
+// number.
 func (m Model) tabs() string {
 	brand := theme.Title.Render("ws")
 	if m.screens == nil {
@@ -559,16 +535,16 @@ func (m Model) tabs() string {
 		}
 		return brand
 	}
-	type mode struct{ icon, title bool }
+	type mode struct{ icon, title, activeTitle bool }
 	var bar string
-	for _, md := range []mode{{true, true}, {false, true}, {true, false}, {false, false}} {
+	for _, md := range []mode{{true, true, true}, {false, true, true}, {true, false, true}, {true, false, false}, {false, false, false}} {
 		parts := []string{brand}
 		for i, s := range nav.Screens() {
 			var l string
 			switch {
-			case md.icon && md.title && theme.EmojiOn():
+			case md.icon && (md.title || md.activeTitle && s == m.active) && theme.EmojiOn():
 				l = theme.Icon(s.Icon()) + s.Title()
-			case md.title:
+			case md.title || md.activeTitle && s == m.active:
 				l = s.Title()
 			case md.icon && theme.EmojiOn():
 				l = strings.TrimSpace(theme.Icon(s.Icon()))

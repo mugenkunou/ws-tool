@@ -2,7 +2,9 @@
 //
 // Layout, top to bottom: a greeting, the "Needs attention" list (problems,
 // most severe first, then advice), and an overview grid with one card per
-// area. ↑↓ move through the list; in the grid all four arrows move between
+// screen. Every screen's LoadedMsg is a nav.Summary: the screen derives its
+// own card, and the dashboard only lays them out, so a new screen gets its
+// card without a change here. ↑↓ move through the list; in the grid all four arrows move between
 // cards, and ↑ from the top row returns to the list. The dashboard has no
 // actions of its own: enter opens the screen that has the verb, filtered to the
 // affected rows (or with the problem selected). Advice rows are not
@@ -22,59 +24,23 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/mugenkunou/ws-tool/internal/style"
-	"github.com/mugenkunou/ws-tool/internal/symlink"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
-	"github.com/mugenkunou/ws-tool/internal/tui/format"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/cron"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/repos"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/scratch"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/secrets"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/sessions"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/symlinks"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 )
-
-type severity int
-
-const (
-	sevError severity = iota
-	sevWarn
-	sevInfo
-)
-
-// issue is one "Needs attention" row.
-type issue struct {
-	sev    severity
-	text   string
-	screen nav.Screen
-	focus  tea.Msg // optional: sent with the switch so the screen selects the problem
-	// filter is a filter expression (`status!=ok`) the screen opens with, so its
-	// own keys act on exactly the affected rows.
-	filter string
-	// advice rows are not problems: they are listed last at info level, never
-	// count towards a card's status, and open the command bar with prefill.
-	advice  bool
-	prefill string
-}
 
 // area is what the dashboard knows about one screen's subsystem.
 type area struct {
 	loaded bool
 	lines  []string // card body, at most cardBodyLines
-	issues []issue
+	issues []nav.Issue
 }
 
-// areas in grid order (row-major).
-var areas = []nav.Screen{
-	nav.ScreenRepos, nav.ScreenSymlinks, nav.ScreenScratch,
-	nav.ScreenSessions, nav.ScreenIgnore,
-	nav.ScreenSecrets, nav.ScreenCron, nav.ScreenTrash,
-}
+// areas are every screen but the dashboard, in tab order (the grid is
+// row-major).
+var areas = nav.Screens()[1:]
 
 const (
 	cardBodyLines = 2
@@ -128,32 +94,20 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		m.hour = m.env.Now().Hour()
 	case nav.RefreshMsg:
 		m.areas = map[nav.Screen]area{}
-	case repos.LoadedMsg:
-		m = m.set(nav.ScreenRepos, msg.Err, reposArea(msg))
-	case symlinks.LoadedMsg:
-		if msg.Walked {
-			return m, nil // the screen's second load adds the $HOME walk; the Dashboard needs no walk
-		}
-		m = m.set(nav.ScreenSymlinks, msg.Err, symlinksArea(msg))
-	case scratch.LoadedMsg:
-		m = m.set(nav.ScreenScratch, msg.Err, scratchArea(msg))
-	case sessions.LoadedMsg:
-		m = m.set(nav.ScreenSessions, msg.Err, sessionsArea(msg))
 	case sessions.NudgeMsg:
 		m.nudge = msg.Nudge.Latest
-	case ignore.LoadedMsg:
-		m = m.set(nav.ScreenIgnore, msg.Err, ignoreArea(msg))
-	case secrets.LoadedMsg:
-		m = m.set(nav.ScreenSecrets, msg.Err, secretsArea(msg))
-	case cron.LoadedMsg:
-		m = m.set(nav.ScreenCron, nil, cronArea(msg))
-	case trash.LoadedMsg:
-		m = m.set(nav.ScreenTrash, msg.Err, trashArea(msg))
 	case tea.KeyPressMsg:
 		return m.updateKey(msg)
+	case nav.Summary:
+		if s, c, ok := msg.Card(); ok {
+			m = m.set(s, c)
+		}
 	}
 	return m, nil
 }
+
+// Loaded reports whether screen s has delivered its card.
+func (m Model) Loaded(s nav.Screen) bool { return m.areas[s].loaded }
 
 // cols is the grid's column count for the current width.
 func (m Model) cols() int {
@@ -226,24 +180,25 @@ func (m Model) updateKey(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 // open is enter on an attention row: advice opens the command bar with the
 // suggested command; a problem opens its screen, filtered to the affected rows
 // or with the problem selected.
-func open(is *issue) tea.Cmd {
+func open(is *nav.Issue) tea.Cmd {
 	switch {
-	case is.advice:
-		return send(nav.OpenCommandBarMsg{Prefill: is.prefill})
-	case is.filter != "":
-		return tea.Batch(nav.Goto(is.screen), send(nav.FilterMsg{Screen: is.screen, Filter: is.filter}))
-	case is.focus != nil:
-		return tea.Batch(nav.Goto(is.screen), send(is.focus))
+	case is.Advice:
+		return send(nav.OpenCommandBarMsg{Prefill: is.Prefill})
+	case is.Filter != "":
+		return tea.Batch(nav.Goto(is.Screen), send(nav.FilterMsg{Screen: is.Screen, Filter: is.Filter}))
+	case is.Focus != nil:
+		return tea.Batch(nav.Goto(is.Screen), send(is.Focus))
 	}
-	return nav.Goto(is.screen)
+	return nav.Goto(is.Screen)
 }
 
 func send(msg tea.Msg) tea.Cmd { return func() tea.Msg { return msg } }
 
-func (m Model) set(s nav.Screen, err error, a area) Model {
-	if err != nil {
-		a = area{lines: []string{theme.Error.Render("couldn't load")}, issues: []issue{{
-			sev: sevError, screen: s, text: "Couldn't load " + s.Title() + ": " + firstLine(err.Error()),
+func (m Model) set(s nav.Screen, c nav.Card) Model {
+	a := area{lines: c.Lines, issues: c.Issues}
+	if c.Err != nil {
+		a = area{lines: []string{theme.Error.Render("couldn't load")}, issues: []nav.Issue{{
+			Sev: nav.SevError, Screen: s, Text: "Couldn't load " + s.Title() + ": " + firstLine(c.Err.Error()),
 		}}}
 	}
 	a.loaded = true
@@ -265,8 +220,8 @@ func (m Model) set(s nav.Screen, err error, a area) Model {
 }
 
 // issues returns every attention item, most severe first, then in area order.
-func (m Model) issues() []*issue {
-	var out []*issue
+func (m Model) issues() []*nav.Issue {
+	var out []*nav.Issue
 	for _, s := range areas {
 		a := m.areas[s]
 		for i := range a.issues {
@@ -275,13 +230,13 @@ func (m Model) issues() []*issue {
 	}
 	if m.nudge != "" {
 		// The Sessions screen shows the install lines.
-		out = append(out, &issue{sev: sevInfo, screen: nav.ScreenSessions, text: "agent-tmux " + m.nudge + " is available"})
+		out = append(out, &nav.Issue{Sev: nav.SevInfo, Screen: nav.ScreenSessions, Text: "agent-tmux " + m.nudge + " is available"})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].advice != out[j].advice {
-			return !out[i].advice // advice is listed last
+		if out[i].Advice != out[j].Advice {
+			return !out[i].Advice // advice is listed last
 		}
-		return out[i].sev < out[j].sev
+		return out[i].Sev < out[j].Sev
 	})
 	return out
 }
@@ -291,8 +246,8 @@ func (m Model) issues() []*issue {
 func (m Model) Attention() []string {
 	var out []string
 	for _, is := range m.issues() {
-		if !is.advice {
-			out = append(out, theme.Icon(is.screen.Icon())+is.text)
+		if !is.Advice {
+			out = append(out, theme.Icon(is.Screen.Icon())+is.Text)
 		}
 	}
 	return out
@@ -305,207 +260,6 @@ func (m Model) allLoaded() bool {
 		}
 	}
 	return true
-}
-
-// ── per-area derivation ─────────────────────────────────────────────────────
-
-func reposArea(msg repos.LoadedMsg) area {
-	s := msg.Summarize()
-	a := area{lines: []string{
-		format.Plural(s.Repos, "repo") + dirtyNote(s.Dirty),
-		fmt.Sprintf("↑ %d ahead · ↓ %d behind", s.Ahead, s.Behind),
-	}}
-	var failed, outOfSync, withFindings []string
-	for _, e := range msg.Entries {
-		st := e.Status
-		switch {
-		case st.Error != "":
-			failed = append(failed, st.Path)
-		case st.Dirty || st.Ahead > 0 || st.Behind > 0:
-			outOfSync = append(outOfSync, st.Path)
-		}
-		if e.Issues() > 0 {
-			withFindings = append(withFindings, st.Path)
-		}
-	}
-	if len(failed) > 0 {
-		a.issues = append(a.issues, issue{sev: sevError, screen: nav.ScreenRepos,
-			text:   format.Plural(len(failed), "repo") + " failed to scan",
-			filter: "state=error"})
-	}
-	if len(outOfSync) > 0 {
-		var parts []string
-		if s.Dirty > 0 {
-			parts = append(parts, fmt.Sprintf("%d dirty", s.Dirty))
-		}
-		if s.Behind > 0 {
-			parts = append(parts, fmt.Sprintf("%d behind", s.Behind))
-		}
-		if s.Ahead > 0 {
-			parts = append(parts, fmt.Sprintf("%d ahead", s.Ahead))
-		}
-		a.issues = append(a.issues, issue{sev: sevWarn, screen: nav.ScreenRepos,
-			text:  fmt.Sprintf("%s out of sync (%s)", format.Plural(len(outOfSync), "repo"), strings.Join(parts, ", ")),
-			focus: repos.SelectMsg{Path: outOfSync[0]}})
-	}
-	if s.Findings > 0 {
-		a.issues = append(a.issues, issue{sev: sevInfo, screen: nav.ScreenRepos,
-			text:  fmt.Sprintf("%s in %s", format.Plural(s.Findings, "hygiene finding"), format.Plural(len(withFindings), "repo")),
-			focus: repos.SelectMsg{Path: withFindings[0]}})
-	}
-	return a
-}
-
-func dirtyNote(n int) string {
-	if n == 0 {
-		return ""
-	}
-	return " · " + theme.Warn.Render(fmt.Sprintf("%d dirty", n))
-}
-
-func symlinksArea(msg symlinks.LoadedMsg) area {
-	a := area{lines: []string{format.Plural(msg.Registered(), "symlink") + " managed"}}
-	// Broken, missing and drifted entries are the problems; untracked links and
-	// orphans are in the screen's list but are not alarms.
-	var bad []string
-	for _, e := range msg.Entries {
-		switch e.Status {
-		case symlink.StatusBroken, symlink.StatusMissing, symlink.StatusDrifted:
-			bad = append(bad, e.System)
-		}
-	}
-	if n := len(bad); n > 0 {
-		a.lines = append(a.lines, theme.Error.Render(format.Plural(n, "link")+" need fixing"))
-		a.issues = append(a.issues, issue{sev: sevError, screen: nav.ScreenSymlinks,
-			text:  format.Plural(n, "symlink") + " broken, missing or drifted",
-			focus: symlinks.SelectMsg{System: bad[0]}})
-	} else if msg.Registered() > 0 {
-		a.lines = append(a.lines, theme.OK.Render("all links healthy"))
-	}
-	if msg.Found > 0 {
-		a.issues = append(a.issues, issue{sev: sevInfo, screen: nav.ScreenSymlinks,
-			text: format.Plural(msg.Found, "known config") + " found, not symlinked"})
-	}
-	return a
-}
-
-func scratchArea(msg scratch.LoadedMsg) area {
-	a := area{lines: []string{fmt.Sprintf("%s · %s", format.Plural(len(msg.Entries), "dir"), style.HumanBytes(msg.TotalBytes()))}}
-	if len(msg.Entries) > 0 {
-		a.lines = append(a.lines, theme.Muted.Render("newest ")+msg.Entries[0].Name)
-	}
-	return a
-}
-
-func sessionsArea(msg sessions.LoadedMsg) area {
-	if msg.Missing {
-		return area{lines: []string{theme.Muted.Render("agent-tmux not installed")}}
-	}
-	live := msg.Live()
-	a := area{lines: []string{fmt.Sprintf("%d live · %d ended", live, len(msg.Sessions)-live)}}
-	stopped := 0
-	for _, s := range msg.Sessions {
-		if s.Recorder == "stopped" {
-			stopped++
-		}
-	}
-	switch {
-	case stopped > 0:
-		a.lines = append(a.lines, theme.Warn.Render(format.Plural(stopped, "recorder")+" stopped"))
-		a.issues = append(a.issues, issue{sev: sevWarn, screen: nav.ScreenSessions,
-			text:   format.Plural(stopped, "live session") + " no longer recorded (recorder stopped)",
-			filter: "recorder=stopped"})
-	case live > 0:
-		a.lines = append(a.lines, theme.Error.Render("● recording"))
-	default:
-		a.lines = append(a.lines, theme.Muted.Render("nothing live"))
-	}
-	return a
-}
-
-func ignoreArea(msg ignore.LoadedMsg) area {
-	n := msg.Actionable()
-	included := len(msg.Violations) - n
-	a := area{lines: []string{theme.OK.Render("nothing bloating sync")}}
-	if n > 0 {
-		a.lines = []string{theme.Warn.Render(format.Plural(n, "violation"))}
-		a.issues = append(a.issues, issue{sev: sevWarn, screen: nav.ScreenIgnore,
-			text: format.Plural(n, "sync hygiene violation") + " (bloat, depth, build artifacts)"})
-	}
-	if included > 0 {
-		a.lines = append(a.lines, theme.Muted.Render(fmt.Sprintf("%d in included paths", included)))
-	}
-	if n := len(msg.Stale); n > 0 {
-		a.lines = append(a.lines, theme.Muted.Render(format.Plural(n, "stale mute")))
-		text := format.Plural(n, "muted path") + " no longer exist"
-		if n == 1 {
-			text += "s"
-		}
-		a.issues = append(a.issues, issue{sev: sevInfo, screen: nav.ScreenIgnore, text: text})
-	}
-	return a
-}
-
-func secretsArea(msg secrets.LoadedMsg) area {
-	h := msg.Health.Pass
-	a := area{lines: []string{theme.OK.Render("no secrets found")}}
-	if n := len(msg.Violations); n > 0 {
-		a.lines = []string{theme.Error.Render(format.Plural(n, "finding"))}
-		a.issues = append(a.issues, issue{sev: sevError, screen: nav.ScreenSecrets,
-			text: format.Plural(n, "possible secret") + " in workspace files"})
-	}
-	if h.Initialized {
-		a.lines = append(a.lines, "pass: "+format.Plural(h.EntryCount, "entry"))
-	} else {
-		a.lines = append(a.lines, theme.Muted.Render("pass not set up"))
-	}
-	if h.Initialized && h.GitBacked && !h.GitRemote {
-		a.issues = append(a.issues, issue{sev: sevWarn, screen: nav.ScreenSecrets,
-			text: "Pass store has no git remote — secrets live only on this machine"})
-	}
-	if h.Initialized && msg.Health.CopyCommand != "" {
-		a.issues = append(a.issues, issue{sev: sevInfo, screen: nav.ScreenSecrets, advice: true,
-			text:    "Your pass store syncs only through its own git remote. A copy in the workspace would sync with MEGA too.",
-			prefill: msg.Health.CopyCommand})
-	}
-	return a
-}
-
-func cronArea(msg cron.LoadedMsg) area {
-	a := area{lines: []string{format.Plural(msg.Installed(), "job") + " installed"}}
-	failing := msg.Failing()
-	for _, j := range failing {
-		a.issues = append(a.issues, issue{sev: sevError, screen: nav.ScreenCron,
-			text:  fmt.Sprintf("Cron job %s failing (exit %d)", j.Name, j.LastRun.ExitCode),
-			focus: cron.SelectJobMsg{Name: j.Name}})
-	}
-	switch {
-	case msg.CronErr != nil:
-		a.lines = append(a.lines, theme.Warn.Render("crontab not accessible"))
-		a.issues = append(a.issues, issue{sev: sevInfo, screen: nav.ScreenCron, text: "Crontab not accessible: " + firstLine(msg.CronErr.Error())})
-	case len(failing) > 0:
-		a.lines = append(a.lines, theme.Error.Render(fmt.Sprintf("%d failing", len(failing))))
-	case msg.Installed() > 0:
-		a.lines = append(a.lines, theme.OK.Render("all passing"))
-	}
-	return a
-}
-
-func trashArea(msg trash.LoadedMsg) area {
-	off := msg.Status.WarningCount()
-	a := area{lines: []string{fmt.Sprintf("%s · %s", style.HumanBytes(msg.Status.SizeBytes), format.Plural(msg.Status.Files, "file"))}}
-	if off == 0 {
-		a.lines = append(a.lines, theme.OK.Render("soft-delete on"))
-	} else {
-		a.lines = append(a.lines, theme.Warn.Render(fmt.Sprintf("soft-delete off (%d of 3)", off)))
-		a.issues = append(a.issues, issue{sev: sevWarn, screen: nav.ScreenTrash,
-			text: fmt.Sprintf("Soft-delete is off for %d of 3 integrations", off)})
-	}
-	if msg.Status.OverLimit {
-		a.issues = append(a.issues, issue{sev: sevWarn, screen: nav.ScreenTrash,
-			text: fmt.Sprintf("Trash holds %s (over %s)", style.HumanBytes(msg.Status.SizeBytes), style.HumanBytes(msg.Status.WarnSizeBytes))})
-	}
-	return a
 }
 
 // ── rendering ───────────────────────────────────────────────────────────────
@@ -587,9 +341,9 @@ func (m Model) card(i, width int) string {
 	switch {
 	case !a.loaded:
 		mark = theme.Muted.Render(theme.Spinner(m.frame))
-	case worst(a.issues) == sevError:
+	case worst(a.issues) == nav.SevError:
 		mark = theme.Error.Render("✘")
-	case worst(a.issues) == sevWarn:
+	case worst(a.issues) == nav.SevWarn:
 		mark = theme.Warn.Render("!")
 	}
 	title := theme.Icon(s.Icon()) + s.Title()
@@ -617,23 +371,23 @@ func (m Model) card(i, width int) string {
 	return st.Width(width).Render(strings.Join(content, "\n"))
 }
 
-func (m Model) issueLine(is *issue, selected bool) string {
+func (m Model) issueLine(is *nav.Issue, selected bool) string {
 	var mark string
-	switch is.sev {
-	case sevError:
+	switch is.Sev {
+	case nav.SevError:
 		mark = theme.Error.Render("✘")
-	case sevWarn:
+	case nav.SevWarn:
 		mark = theme.Warn.Render("!")
-	case sevInfo:
+	case nav.SevInfo:
 		mark = theme.Muted.Render("·")
-		if is.advice {
+		if is.Advice {
 			mark = theme.Muted.Render("ℹ")
 		}
 	}
-	where := theme.Muted.Render(theme.Icon(is.screen.Icon()) + is.screen.Title())
+	where := theme.Muted.Render(theme.Icon(is.Screen.Icon()) + is.Screen.Title())
 	hint := ""
 	lead := "  "
-	text := is.text
+	text := is.Text
 	if selected {
 		lead = theme.Title.Render("› ")
 		text = theme.Bold.Render(text)
@@ -658,11 +412,11 @@ func (m Model) columns(left, where, hint string) string {
 	return left + strings.Repeat(" ", pad) + right
 }
 
-func worst(is []issue) severity {
-	w := sevInfo + 1
+func worst(is []nav.Issue) nav.Severity {
+	w := nav.SevInfo + 1
 	for _, i := range is {
-		if !i.advice {
-			w = min(w, i.sev)
+		if !i.Advice {
+			w = min(w, i.Sev)
 		}
 	}
 	return w

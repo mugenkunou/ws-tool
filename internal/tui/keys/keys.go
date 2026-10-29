@@ -788,3 +788,27 @@ func Delete() key.Binding {
 func back() key.Binding {
 	return key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back"))
 }
+
+// SyncMap is the binding set for the Sync screen.
+type SyncMap struct{}
+
+// Sync returns the Sync screen bindings.
+func Sync() SyncMap { return SyncMap{} }
+
+// ShortHelp implements help.KeyMap.
+func (k SyncMap) ShortHelp() []key.Binding { return nil }
+
+// FullHelp implements help.KeyMap.
+func (k SyncMap) FullHelp() [][]key.Binding { return nil }
+
+// WorkspaceMap is the binding set for the Workspace screen.
+type WorkspaceMap struct{}
+
+// Workspace returns the Workspace screen bindings.
+func Workspace() WorkspaceMap { return WorkspaceMap{} }
+
+// ShortHelp implements help.KeyMap.
+func (k WorkspaceMap) ShortHelp() []key.Binding { return nil }
+
+// FullHelp implements help.KeyMap.
+func (k WorkspaceMap) FullHelp() [][]key.Binding { return nil }

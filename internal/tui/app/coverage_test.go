@@ -12,6 +12,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/reslist"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/dashboard"
 )
 
 func helpBindings(km help.KeyMap) []key.Binding {
@@ -82,12 +83,81 @@ func TestListScreensShareListKeys(t *testing.T) {
 	}
 }
 
-// listScreenKeys is each list screen's own key map.
+// listScreenKeys is each list screen's own key map, from the registry.
 func listScreenKeys() map[nav.Screen]help.KeyMap {
-	return map[nav.Screen]help.KeyMap{
-		nav.ScreenRepos: keys.Repos(), nav.ScreenSymlinks: keys.Symlinks(), nav.ScreenScratch: keys.Scratch(),
-		nav.ScreenSessions: keys.Sessions(), nav.ScreenIgnore: keys.Ignore(), nav.ScreenSecrets: keys.Secrets(),
-		nav.ScreenCron: keys.Cron(), nav.ScreenTrash: keys.Trash(),
+	out := map[nav.Screen]help.KeyMap{}
+	for s, e := range registry {
+		if e.Keys != nil {
+			out[s] = e.Keys()
+		}
+	}
+	return out
+}
+
+// TestRegistryCoversEveryScreen: every nav.Screen has a constructor and a
+// spec, and every list screen (one that declares its actions) names its key
+// map, so the shared-key tests below cannot skip it.
+func TestRegistryCoversEveryScreen(t *testing.T) {
+	if len(registry) != len(nav.Screens()) {
+		t.Errorf("registry has %d screens, nav has %d", len(registry), len(nav.Screens()))
+	}
+	m := loaded(t, 100, 30)
+	for _, s := range nav.Screens() {
+		e, ok := registry[s]
+		if !ok || e.New == nil {
+			t.Errorf("screen %d (%s) has no registry entry (internal/tui/app/registry.go)", s, s.Title())
+			continue
+		}
+		if sp := s.Spec(); sp.Title == "" || sp.Icon == "" {
+			t.Errorf("screen %d has no spec row (internal/tui/nav/nav.go specs)", s)
+		}
+		_, list := m.screens[s].(interface{ Declared() []reslist.Decl })
+		if list != (e.Keys != nil) {
+			t.Errorf("screen %v: a reslist screen names its Keys in the registry, and only it (reslist %v, Keys %v)", s, list, e.Keys != nil)
+		}
+	}
+}
+
+// TestDashboardHasACardForEveryScreen: every screen's load result is a
+// nav.Summary the Dashboard turns into a card. A screen without one leaves its
+// card spinning forever.
+func TestDashboardHasACardForEveryScreen(t *testing.T) {
+	m := loaded(t, 100, 30)
+	d := m.screens[nav.ScreenDashboard].(dashboard.Model)
+	for _, s := range nav.Screens()[1:] {
+		if !d.Loaded(s) {
+			t.Errorf("the Dashboard has no card for %s: make its LoadedMsg a nav.Summary and add one to fixtures() in app_test.go", s.Title())
+		}
+	}
+}
+
+// TestNoCoverageOnTheDashboard: the Dashboard has no actions, so a command
+// "covered" there has no TUI home. Give it a screen (a hosting one, see
+// nav.Spec.Hosts) instead.
+func TestNoCoverageOnTheDashboard(t *testing.T) {
+	for _, c := range CLICoverage {
+		if c.Screen == nav.ScreenDashboard {
+			t.Errorf("%s is parked on the Dashboard: cover it on the screen that hosts its noun", c.CLI)
+		}
+	}
+}
+
+// TestCoverageReasons: an entry with a key or a `:` command is reached by it;
+// one with neither says why, and a CLI-only one says so in a note.
+func TestCoverageReasons(t *testing.T) {
+	for _, c := range CLICoverage {
+		reached := len(c.Key.Keys()) > 0 || c.Cmd != ""
+		switch {
+		case reached && c.Why != Reached:
+			t.Errorf("%s has a key or command, so its reason must be Reached", c.CLI)
+		case !reached && c.Why == Reached:
+			t.Errorf("%s has no key and no command: give the reason (List, Plumbing, Shell, CLIOnly)", c.CLI)
+		case c.Why == CLIOnly && c.Note == "":
+			t.Errorf("%s is CLI-only: say why in Note", c.CLI)
+		}
+		if host, ok := nav.ForNoun(strings.Fields(c.CLI)[0]); ok && host != c.Screen {
+			t.Errorf("%s is covered on %s, but its noun belongs to %s", c.CLI, c.Screen.Title(), host.Title())
+		}
 	}
 }
 
@@ -125,12 +195,11 @@ func TestEveryListKeyDeclaresItsRows(t *testing.T) {
 // keys when there is room, and the global keys always survive truncation.
 func TestFooterShowsMarkKeys(t *testing.T) {
 	for s := range listScreenKeys() {
-		key := screenKey(int(s))
-		wide := send(loaded(t, 220, 30), press(key))
+		wide := send(loaded(t, 220, 30), jump(s))
 		if foot := footerLine(view(wide)); !strings.Contains(foot, "space mark • ctrl+space mark range") {
 			t.Errorf("screen %v footer at 220 cols lacks the mark keys:\n%s", s, foot)
 		}
-		narrow := send(loaded(t, 100, 30), press(key))
+		narrow := send(loaded(t, 100, 30), jump(s))
 		if foot := footerLine(view(narrow)); !strings.Contains(foot, "? help • q quit") {
 			t.Errorf("screen %v footer at 100 cols lost the global keys:\n%s", s, foot)
 		}

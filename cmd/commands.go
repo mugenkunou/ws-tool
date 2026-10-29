@@ -329,6 +329,59 @@ func commandsUnder(prefix []string) []command {
 	return out
 }
 
+// plumbingCommands are real commands that other programs call. They are not in
+// the table (help never lists them), but they run, and the TUI coverage names
+// them.
+var plumbingCommands = []string{
+	"git-credential-helper get",
+	"git-credential-helper store",
+	"git-credential-helper erase",
+}
+
+// unknownCommand reports whether words (the arguments after the global flags
+// and alias rewriting) name a command the table does not hold. Execute rejects
+// those before any dispatcher sees them, so a verb wired into a dispatcher's
+// switch but missing from the table does not run: help, completion and the TUI
+// coverage test would never learn of it. Plumbing nouns are left to their
+// handler. A bare noun (`ws repo`, `ws pass
+// backup`) is not unknown; its dispatcher prints its usage. The second result
+// is what to call the command in the error: the known words and the first
+// unknown one.
+func unknownCommand(words []string) (bool, string) {
+	lead := leadingWords(words)
+	if len(lead) == 0 || lead[0] == "__complete" {
+		return false, ""
+	}
+	if _, _, ok := matchCommand(lead); ok {
+		return false, ""
+	}
+	// A plumbing noun owns its words: git expects the credential helper to
+	// ignore operations it does not know, silently.
+	if plumbingUnder(lead[:1]) {
+		return false, ""
+	}
+	// The longest prefix the table knows.
+	known := 0
+	for n := 1; n <= len(lead); n++ {
+		if len(commandsUnder(lead[:n])) == 0 {
+			break
+		}
+		known = n
+	}
+	if known == len(lead) {
+		return false, "" // a noun or sub-noun with no verb yet
+	}
+	return true, strings.Join(lead[:known+1], " ")
+}
+
+// plumbingUnder reports whether a plumbing command starts with words.
+func plumbingUnder(words []string) bool {
+	return slices.ContainsFunc(plumbingCommands, func(p string) bool {
+		f := strings.Fields(p)
+		return len(f) >= len(words) && slices.Equal(f[:len(words)], words)
+	})
+}
+
 // commandNames is every "noun verb…" the table holds, as the coverage test and
 // the glossary test read it.
 func commandNames() []string {

@@ -29,7 +29,9 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/sessions"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/skills"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/symlinks"
+	syncscreen "github.com/mugenkunou/ws-tool/internal/tui/screens/sync"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/trash"
+	workspacescreen "github.com/mugenkunou/ws-tool/internal/tui/screens/workspace"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 	"github.com/mugenkunou/ws-tool/internal/tui/tuitest"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
@@ -118,6 +120,8 @@ func fixtures() []tea.Msg {
 			{Name: "sql-style", Path: ws + "/agent/skills/sql-style", Shelf: "yours", Tools: []string{}},
 			{Name: "old-link", Path: ws + "/agent/skills/old-link", Shelf: "yours", Broken: true, Tools: []string{}},
 		}},
+		syncscreen.LoadedMsg{},
+		workspacescreen.LoadedMsg{},
 		trash.LoadedMsg{
 			Status: wstrash.Status{
 				Root: "/home/tester/.Trash", Items: 2, Files: 12, SizeBytes: 3 << 20, WarnSizeBytes: 10 << 30,
@@ -143,9 +147,17 @@ func send(m Model, msgs ...tea.Msg) Model {
 	return m
 }
 
-// digitJump turns a digit press into a jump to that screen (1 is the dashboard,
-// 0 the tenth) when no modal, bar or filter has the keyboard. The app has no
-// digit keys; this keeps tests short.
+// digitScreens are the screens the test digits jump to, 1 to 9 then 0. They
+// are fixed, apart from the tab order, so a new tab does not renumber every
+// test; a screen not listed here is reached with jump.
+var digitScreens = []nav.Screen{
+	nav.ScreenDashboard, nav.ScreenRepos, nav.ScreenSymlinks, nav.ScreenScratch, nav.ScreenSessions,
+	nav.ScreenIgnore, nav.ScreenSecrets, nav.ScreenCron, nav.ScreenTrash, nav.ScreenSkills,
+}
+
+// digitJump turns a digit press into a jump to a screen of digitScreens when
+// no modal, bar or filter has the keyboard. The app has no digit keys; this
+// keeps tests short.
 func digitJump(m Model, msg tea.Msg) tea.Msg {
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok || len(k.Text) != 1 || k.Text[0] < '0' || k.Text[0] > '9' || m.bar != nil || m.fullHelp {
@@ -158,16 +170,11 @@ func digitJump(m Model, msg tea.Msg) tea.Msg {
 	if k.Text[0] == '0' {
 		i = 9
 	}
-	return nav.GotoMsg{Screen: nav.Screen(i)}
+	return nav.GotoMsg{Screen: digitScreens[i]}
 }
 
-// screenKey is the key that digitJump turns into a jump to screen i.
-func screenKey(i int) string {
-	if i == 9 {
-		return "0"
-	}
-	return string(rune('1' + i))
-}
+// jump switches to screen s.
+func jump(s nav.Screen) tea.Msg { return nav.GotoMsg{Screen: s} }
 
 // sendRun feeds msg and returns the resulting command too.
 func sendRun(m Model, msg tea.Msg) (Model, tea.Cmd) {
@@ -555,10 +562,14 @@ func TestDashboardOpensTheScreenAtTheProblem(t *testing.T) {
 // TestDashboardGrid: arrows move spatially between cards and never open a
 // screen; ↑ from the top row returns to the attention list; enter opens.
 func TestDashboardGrid(t *testing.T) {
-	m := loaded(t, 100, 30) // 3 columns: Repos Symlinks Scratch / Logs Ignore Secrets / Cron Trash
+	// 3 columns: Repos Symlinks Scratch / Sessions Ignore Sync / Secrets Cron Trash / Skills Workspace
+	m := loaded(t, 100, 30)
 	selected := func(m Model) string { return focusedCard(t, m) }
 	// Leave the attention list for the grid's first card.
-	for range 8 {
+	for range 30 {
+		if selected(m) != "" {
+			break
+		}
 		m = send(m, press("down"))
 	}
 	if got := selected(m); got != "Repos" {
@@ -566,8 +577,8 @@ func TestDashboardGrid(t *testing.T) {
 	}
 	steps := []struct{ key, want string }{
 		{"right", "Symlinks"}, {"right", "Scratch"}, {"right", "Scratch"}, // edge stops
-		{"down", "Secrets"}, {"left", "Ignore"}, {"down", "Trash"}, {"down", "Trash"},
-		{"up", "Ignore"}, {"up", "Symlinks"}, {"left", "Repos"}, {"l", "Symlinks"}, {"h", "Repos"},
+		{"down", "Sync"}, {"left", "Ignore"}, {"down", "Cron"}, {"down", "Workspace"}, {"down", "Workspace"},
+		{"up", "Cron"}, {"up", "Ignore"}, {"up", "Symlinks"}, {"left", "Repos"}, {"l", "Symlinks"}, {"h", "Repos"},
 	}
 	for _, st := range steps {
 		m = send(m, press(st.key))

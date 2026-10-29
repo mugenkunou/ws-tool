@@ -1,4 +1,4 @@
-ws  Dashboard   Repos   Symlinks   Scratch   Sessions   Ignore   Secrets   Cron   Trash   Skills
+ws  🏠   📦   🔗 Symlinks   🧪   📼   🧹   🔄   🔐   ⏰   🚮   🧩   🔧
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  Host path                                   Workspace copy                App     Status      Sudo
  ~/.gitconfig                                symlinks/home/.gitconfig              ✘ broken

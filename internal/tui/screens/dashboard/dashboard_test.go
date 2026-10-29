@@ -45,24 +45,30 @@ func collect(cmd tea.Cmd) []tea.Msg {
 	return out
 }
 
+// cardOf is the area a screen's load result gives the dashboard.
+func cardOf(msg nav.Summary) area {
+	_, c, _ := msg.Card()
+	return area{loaded: true, lines: c.Lines, issues: c.Issues}
+}
+
 func enter(m Model) (Model, []tea.Msg) {
 	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	return next.(Model), collect(cmd)
 }
 
-var passAdvice = issue{
-	sev: sevInfo, screen: nav.ScreenSecrets, advice: true,
-	text:    "Your pass store syncs only through its own git remote. A copy in the workspace would sync with MEGA too.",
-	prefill: "symlink add ~/.password-store --dir",
+var passAdvice = nav.Issue{
+	Sev: nav.SevInfo, Screen: nav.ScreenSecrets, Advice: true,
+	Text:    "Your pass store syncs only through its own git remote. A copy in the workspace would sync with MEGA too.",
+	Prefill: "symlink add ~/.password-store --dir",
 }
 
 func TestAdviceIsListedLastAndOpensTheCommandBar(t *testing.T) {
 	m := model(map[nav.Screen]area{
-		nav.ScreenSecrets: {loaded: true, issues: []issue{passAdvice, {sev: sevWarn, screen: nav.ScreenSecrets, text: "Pass store has no git remote"}}},
-		nav.ScreenRepos:   {loaded: true, issues: []issue{{sev: sevInfo, screen: nav.ScreenRepos, text: "1 hygiene finding in 1 repo"}}},
+		nav.ScreenSecrets: {loaded: true, issues: []nav.Issue{passAdvice, {Sev: nav.SevWarn, Screen: nav.ScreenSecrets, Text: "Pass store has no git remote"}}},
+		nav.ScreenRepos:   {loaded: true, issues: []nav.Issue{{Sev: nav.SevInfo, Screen: nav.ScreenRepos, Text: "1 hygiene finding in 1 repo"}}},
 	})
 	is := m.issues()
-	if len(is) != 3 || !is[2].advice || is[0].sev != sevWarn || is[1].advice {
+	if len(is) != 3 || !is[2].Advice || is[0].Sev != nav.SevWarn || is[1].Advice {
 		t.Fatalf("order: %+v", is)
 	}
 
@@ -73,18 +79,18 @@ func TestAdviceIsListedLastAndOpensTheCommandBar(t *testing.T) {
 	}
 	open, ok := msgs[0].(nav.OpenCommandBarMsg)
 	if !ok || open.Prefill != "symlink add ~/.password-store --dir" {
-		t.Fatalf("enter on advice: %#v", msgs[0])
+		t.Fatalf("enter on Advice: %#v", msgs[0])
 	}
 }
 
 func TestAdviceNeverCountsTowardsACardsStatus(t *testing.T) {
-	if got := worst([]issue{passAdvice}); got != sevInfo+1 {
+	if got := worst([]nav.Issue{passAdvice}); got != nav.SevInfo+1 {
 		t.Fatalf("advice alone leaves the card ✔: worst = %v", got)
 	}
-	if got := worst([]issue{passAdvice, {sev: sevWarn}}); got != sevWarn {
+	if got := worst([]nav.Issue{passAdvice, {Sev: nav.SevWarn}}); got != nav.SevWarn {
 		t.Fatalf("worst = %v", got)
 	}
-	v := ansi.Strip(model(map[nav.Screen]area{nav.ScreenSecrets: {loaded: true, issues: []issue{passAdvice}}}).View())
+	v := ansi.Strip(model(map[nav.Screen]area{nav.ScreenSecrets: {loaded: true, issues: []nav.Issue{passAdvice}}}).View())
 	if !strings.Contains(v, "ℹ") {
 		t.Errorf("advice has its own mark:\n%s", v)
 	}
@@ -92,8 +98,8 @@ func TestAdviceNeverCountsTowardsACardsStatus(t *testing.T) {
 
 func TestProblemRowsOpenTheirScreen(t *testing.T) {
 	m := model(map[nav.Screen]area{
-		nav.ScreenSymlinks: {loaded: true, issues: []issue{{sev: sevError, screen: nav.ScreenSymlinks, text: "2 symlinks broken", filter: "status=broken"}}},
-		nav.ScreenTrash:    {loaded: true, issues: []issue{{sev: sevWarn, screen: nav.ScreenTrash, text: "Soft-delete is off"}}},
+		nav.ScreenSymlinks: {loaded: true, issues: []nav.Issue{{Sev: nav.SevError, Screen: nav.ScreenSymlinks, Text: "2 symlinks broken", Filter: "status=broken"}}},
+		nav.ScreenTrash:    {loaded: true, issues: []nav.Issue{{Sev: nav.SevWarn, Screen: nav.ScreenTrash, Text: "Soft-delete is off"}}},
 	})
 	m.section, m.att = sectionAttention, 0
 	_, msgs := enter(m)
@@ -109,7 +115,7 @@ func TestProblemRowsOpenTheirScreen(t *testing.T) {
 	m.att = 1
 	_, msgs = enter(m)
 	if len(msgs) != 1 {
-		t.Fatalf("a row with no filter just opens its screen: %v", msgs)
+		t.Fatalf("a row with no filter just opens its Screen: %v", msgs)
 	}
 	if g, ok := msgs[0].(nav.GotoMsg); !ok || g.Screen != nav.ScreenTrash {
 		t.Fatalf("messages: %v", msgs)
@@ -117,7 +123,7 @@ func TestProblemRowsOpenTheirScreen(t *testing.T) {
 }
 
 func TestNoActionKeys(t *testing.T) {
-	m := model(map[nav.Screen]area{nav.ScreenTrash: {loaded: true, issues: []issue{{sev: sevWarn, screen: nav.ScreenTrash, text: "x"}}}})
+	m := model(map[nav.Screen]area{nav.ScreenTrash: {loaded: true, issues: []nav.Issue{{Sev: nav.SevWarn, Screen: nav.ScreenTrash, Text: "x"}}}})
 	m.section = sectionAttention
 	for _, k := range []string{"x", "r", "c", "O", "R"} {
 		if _, cmd := m.Update(tea.KeyPressMsg{Code: []rune(k)[0], Text: k}); len(collect(cmd)) != 0 {
@@ -133,7 +139,7 @@ func TestSymlinksAreaCountsEntriesAndNamesProblems(t *testing.T) {
 	row := func(sys string, st symlink.Status, registered bool) symlink.Entry {
 		return symlink.Entry{System: sys, Status: st, Registered: registered}
 	}
-	a := symlinksArea(symlinks.LoadedMsg{
+	a := cardOf(symlinks.LoadedMsg{
 		Entries: []symlink.Entry{
 			row("/h/.ok", symlink.StatusOK, true),
 			row("/h/.broken", symlink.StatusBroken, true),
@@ -150,13 +156,13 @@ func TestSymlinksAreaCountsEntriesAndNamesProblems(t *testing.T) {
 	if len(a.issues) != 2 {
 		t.Fatalf("issues = %+v", a.issues)
 	}
-	if is := a.issues[0]; is.sev != sevError || is.text != "3 symlinks broken, missing or drifted" {
+	if is := a.issues[0]; is.Sev != nav.SevError || is.Text != "3 symlinks broken, missing or drifted" {
 		t.Errorf("problem line = %+v", is)
 	}
-	if is := a.issues[1]; is.sev != sevInfo || is.text != "4 known configs found, not symlinked" || is.advice {
+	if is := a.issues[1]; is.Sev != nav.SevInfo || is.Text != "4 known configs found, not symlinked" || is.Advice {
 		t.Errorf("info line = %+v", is)
 	}
-	if a := symlinksArea(symlinks.LoadedMsg{Entries: []symlink.Entry{row("/h/.ok", symlink.StatusOK, true)}}); len(a.issues) != 0 {
+	if a := cardOf(symlinks.LoadedMsg{Entries: []symlink.Entry{row("/h/.ok", symlink.StatusOK, true)}}); len(a.issues) != 0 {
 		t.Errorf("a healthy list raises nothing: %+v", a.issues)
 	}
 }
@@ -178,7 +184,7 @@ func TestDashboardIgnoresTheWalkedLoad(t *testing.T) {
 // longer exists is an info line, and is not counted as an included-path warning.
 func TestIgnoreAreaCountsStaleMutesApartFromIncludedPaths(t *testing.T) {
 	stale := wsignore.StaleViolations(t.TempDir(), []string{"a", "b"})
-	a := ignoreArea(ignore.LoadedMsg{Stale: stale})
+	a := cardOf(ignore.LoadedMsg{Stale: stale})
 	var text string
 	for _, l := range a.lines {
 		text += ansi.Strip(l) + "\n"
@@ -186,13 +192,13 @@ func TestIgnoreAreaCountsStaleMutesApartFromIncludedPaths(t *testing.T) {
 	if !strings.Contains(text, "2 stale mutes") || strings.Contains(text, "included paths") {
 		t.Errorf("lines:\n%s", text)
 	}
-	if len(a.issues) != 1 || a.issues[0].sev != sevInfo || a.issues[0].text != "2 muted paths no longer exist" {
+	if len(a.issues) != 1 || a.issues[0].Sev != nav.SevInfo || a.issues[0].Text != "2 muted paths no longer exist" {
 		t.Errorf("issues: %+v", a.issues)
 	}
-	if one := ignoreArea(ignore.LoadedMsg{Stale: stale[:1]}); one.issues[0].text != "1 muted path no longer exists" {
-		t.Errorf("singular: %q", one.issues[0].text)
+	if one := cardOf(ignore.LoadedMsg{Stale: stale[:1]}); one.issues[0].Text != "1 muted path no longer exists" {
+		t.Errorf("singular: %q", one.issues[0].Text)
 	}
-	if none := ignoreArea(ignore.LoadedMsg{}); len(none.issues) != 0 {
+	if none := cardOf(ignore.LoadedMsg{}); len(none.issues) != 0 {
 		t.Errorf("nothing stale, nothing to say: %+v", none.issues)
 	}
 }
@@ -212,7 +218,7 @@ func TestSessionsCard(t *testing.T) {
 	if got := ansi.Strip(strings.Join(a.lines, "|")); got != "2 live · 1 ended|1 recorder stopped" {
 		t.Errorf("card = %q", got)
 	}
-	if len(a.issues) != 1 || a.issues[0].filter != "recorder=stopped" {
+	if len(a.issues) != 1 || a.issues[0].Filter != "recorder=stopped" {
 		t.Errorf("issues = %+v", a.issues)
 	}
 

@@ -8,13 +8,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/mugenkunou/ws-tool/internal/tui/cmdbar"
-	"github.com/mugenkunou/ws-tool/internal/tui/handover"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 )
-
-// configDone tags the handover of `config edit` and `config show`, so the app
-// refreshes the screens when they return.
-type configDone struct{}
 
 // commander is the screen's `:` commands, if it has any.
 func commander(c nav.Component) []nav.CommandInfo {
@@ -46,12 +41,15 @@ func screenNames(s nav.Screen) []string {
 	return names
 }
 
-// hostedNouns are CLI nouns that have no screen: the screen that hosts them.
-var hostedNouns = map[string]nav.Screen{"pass": nav.ScreenSecrets, "credential": nav.ScreenSecrets}
+// hostOf is the screen that hosts noun (nav.Spec.Hosts), if one does.
+func hostOf(noun string) (nav.Screen, bool) {
+	s, ok := nav.ForNoun(noun)
+	return s, ok && s.Noun() != noun
+}
 
 // candidates are what the command bar completes (spec §6.6): the active
 // screen's commands, the screens, `<noun> <command>` for every screen, and the
-// workspace commands.
+// hosted commands (`pass audit`, `config edit`) of every screen.
 func (m Model) candidates() []string {
 	var out []string
 	if cur := m.current(); cur != nil {
@@ -67,13 +65,16 @@ func (m Model) candidates() []string {
 			continue
 		}
 		for _, c := range commander(m.screens[s]) {
-			out = append(out, s.Noun()+" "+c.Name)
-			if noun, _, _ := strings.Cut(c.Name, " "); hostedNouns[noun] == s {
+			if s.Noun() != "" {
+				out = append(out, s.Noun()+" "+c.Name)
+			}
+			noun, _, _ := strings.Cut(c.Name, " ")
+			if host, ok := hostOf(noun); ok && host == s {
 				out = append(out, c.Name) // `pass audit` works from any screen
 			}
 		}
 	}
-	return append(out, "config show", "config edit", "help", "q", "quit")
+	return append(out, "help", "q", "quit")
 }
 
 // openBar opens the command bar with prefill typed in.
@@ -128,10 +129,10 @@ func (m Model) unknown(line string) (Model, tea.Cmd) {
 //
 //	q, quit                          quit
 //	help                             full help
-//	config show, config edit         the workspace config
 //	<screen>                         switch (a unique prefix of the noun or title works)
 //	<command> [args]                 the active screen's command
 //	<noun> <command> [args]          switch to the noun's screen, then run it there
+//	<hosted noun> <command> [args]   the same, on the screen that hosts the noun
 func (m Model) runLine(line string) (Model, tea.Cmd) {
 	w := strings.Fields(line)
 	if len(w) == 0 {
@@ -143,10 +144,6 @@ func (m Model) runLine(line string) (Model, tea.Cmd) {
 	case "help":
 		m.fullHelp = true
 		return m.resize()
-	case "config show":
-		return m, handover.Run(handover.Paged(handover.WS(m.env.Paths, "config", "show")), configDone{})
-	case "config edit":
-		return m, handover.Run(handover.WS(m.env.Paths, "config", "edit"), configDone{})
 	}
 	if m.screens == nil {
 		return m.unknown(line)
@@ -159,9 +156,9 @@ func (m Model) runLine(line string) (Model, tea.Cmd) {
 		return m, tea.Batch(resizeCmd, cmd)
 	}
 
-	// `pass` and `credential` have no screen of their own: Secrets hosts them,
-	// and its commands are named `pass audit`, `credential status`.
-	if s, ok := hostedNouns[w[0]]; ok && matchesCommand(commander(m.screens[s]), w) {
+	// Nouns with no screen of their own are hosted (nav.Spec.Hosts): Secrets
+	// runs `pass audit`, Workspace runs `config edit`.
+	if s, ok := hostOf(w[0]); ok && matchesCommand(commander(m.screens[s]), w) {
 		m.active = s
 		m, resizeCmd := m.resize()
 		m, cmd := m.updateCurrent(nav.CommandMsg{Words: w, Line: line}, false)

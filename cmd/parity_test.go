@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mugenkunou/ws-tool/internal/tui/app"
+	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 )
 
 // glossaryVerbs is spec §3.3, the closed list of verbs. `completion bash|zsh|fish`
@@ -23,14 +24,6 @@ var glossaryVerbs = []string{
 // subNouns are the two sub-nouns spec §3.1 allows. They stand between a noun
 // and its verb.
 var subNouns = []string{"root", "backup"}
-
-// plumbingCommands are real commands that other programs call. They are not in
-// the table (help never lists them) but the TUI coverage names them.
-var plumbingCommands = []string{
-	"git-credential-helper get",
-	"git-credential-helper store",
-	"git-credential-helper erase",
-}
 
 // TestGlossaryVerbs: every verb in the command table is in the glossary.
 func TestGlossaryVerbs(t *testing.T) {
@@ -190,6 +183,60 @@ func TestCompletionFlagsMatchHelp(t *testing.T) {
 			if !slices.Contains(got, f) {
 				t.Errorf("ws %s: completion does not offer documented flag %s", c.name(), f)
 			}
+		}
+	}
+}
+
+// TestDispatchOnlyRunsTableCommands: Execute runs a command only when the table
+// holds it, so a verb wired into a dispatcher but missing from the table fails
+// as unknown instead of slipping past help, completion and the TUI coverage.
+func TestDispatchOnlyRunsTableCommands(t *testing.T) {
+	for _, c := range commands {
+		if unknown, _ := unknownCommand(append(slices.Clone(c.Path), "arg", "--flag")); unknown {
+			t.Errorf("table row %q is rejected as unknown", c.name())
+		}
+	}
+	for _, tc := range []struct {
+		args    []string
+		unknown string // "" when the words must pass
+	}{
+		{[]string{"repo"}, ""},
+		{[]string{"repo", "root"}, ""},
+		{[]string{"pass", "backup", "--help"}, ""},
+		{[]string{"git-credential-helper", "future-op"}, ""},
+		{[]string{"__complete", "repo", ""}, ""},
+		{[]string{"repo", "frobnicate"}, "repo frobnicate"},
+		{[]string{"repo", "root", "frobnicate", "x"}, "repo root frobnicate"},
+		{[]string{"completion", "powershell"}, "completion powershell"},
+		{[]string{"nonsense"}, "nonsense"},
+	} {
+		unknown, name := unknownCommand(tc.args)
+		if unknown != (tc.unknown != "") || name != tc.unknown {
+			t.Errorf("unknownCommand(%q) = %v, %q; want unknown %q", tc.args, unknown, name, tc.unknown)
+		}
+	}
+}
+
+// TestEveryNounHasATUIHome: every CLI noun, and every command without one, is
+// a TUI screen's noun or is hosted by one (nav.Spec.Hosts), so a new noun
+// cannot land with its commands scattered or parked nowhere.
+func TestEveryNounHasATUIHome(t *testing.T) {
+	seen := map[string]bool{}
+	words := append(commandNames(), plumbingCommands...)
+	for _, n := range nounSummaries {
+		words = append(words, n.Name)
+	}
+	for _, n := range workspaceSummaries {
+		words = append(words, n.Name)
+	}
+	for _, w := range words {
+		noun := strings.Fields(w)[0]
+		if seen[noun] {
+			continue
+		}
+		seen[noun] = true
+		if _, ok := nav.ForNoun(noun); !ok {
+			t.Errorf("CLI noun %q has no TUI screen: name a screen after it or host it (Hosts in internal/tui/nav/nav.go specs)", noun)
 		}
 	}
 }

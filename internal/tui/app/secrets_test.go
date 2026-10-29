@@ -75,10 +75,7 @@ func TestSecretsFooterFits(t *testing.T) {
 // TestPassAdviceOpensTheCommandBar: enter on the Dashboard's advice row asks for
 // the command bar with the command typed in.
 func TestPassAdviceOpensTheCommandBar(t *testing.T) {
-	m := send(loaded(t, 100, 30), noCopy(), press("1"))
-	for range 8 { // the advice is listed last
-		m = send(m, press("down"))
-	}
+	m := dashboardTo(t, send(loaded(t, 100, 30), noCopy(), press("1")), "A copy in the workspace") // listed last
 	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	_ = next
 	var open *nav.OpenCommandBarMsg

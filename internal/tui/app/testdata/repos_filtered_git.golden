@@ -1,4 +1,4 @@
-ws  Dashboard   Repos   Symlinks   Scratch   Sessions   Ignore   Secrets   Cron   Trash   Skills
+ws  🏠   📦 Repos   🔗   🧪   📼   🧹   🔄   🔐   ⏰   🚮   🧩   🔧
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 Run in 2 repos
 Runs with sh -c in each repo root; you can untick repos next. Erase `git` to run any command.
