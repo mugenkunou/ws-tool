@@ -24,7 +24,7 @@ func (s *stringSliceFlag) Set(v string) error {
 	return nil
 }
 
-const secretUsage = "usage: ws secret <ls|show|allow|mute|unmute|store> …"
+const secretUsage = "usage: ws secret <ls|show|allow|mute|unmute|skip|unskip|store> …"
 
 // runSecret dispatches `ws secret <verb>` (spec §5 secret).
 func runSecret(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -44,6 +44,10 @@ func runSecret(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 		return secretMute(rest, globals, stdin, stdout, stderr)
 	case "unmute":
 		return secretUnmute(rest, globals, stdin, stdout, stderr)
+	case "skip":
+		return secretSkip(rest, globals, stdin, stdout, stderr)
+	case "unskip":
+		return secretUnskip(rest, globals, stdin, stdout, stderr)
 	case "store":
 		return secretStore(rest, globals, stdin, stdout, stderr)
 	}
@@ -75,8 +79,9 @@ func loadSecretEnv(globals globalFlags, stderr io.Writer) (secretEnv, bool) {
 	return secretEnv{workspace: workspacePath, configPath: configPath, cfg: cfg}, true
 }
 
-// scanOptions are the scan's inputs: the ignore rules, the muted directories
-// (plus extra ones for one run) and, when withAllow is set, the allowlist.
+// scanOptions are the scan's inputs: the ignore rules, the skipped directories
+// (plus extra ones for one run), the muted anchors and, when withAllow is set,
+// the allowlist.
 func (e secretEnv) scanOptions(extraSkip []string, withAllow bool) (secret.ScanOptions, error) {
 	rules, err := wsconfig.LoadIgnoreRules(e.configPath)
 	if err != nil {
@@ -86,6 +91,7 @@ func (e secretEnv) scanOptions(extraSkip []string, withAllow bool) (secret.ScanO
 		WorkspacePath: e.workspace,
 		Engine:        ignore.BuildEngine(rules),
 		SkipDirs:      secret.MergeSkipDirs(e.workspace, e.cfg.Secret.SkipDirs, extraSkip),
+		Muted:         wsconfig.MutedMap(e.cfg),
 	}
 	if withAllow {
 		opts.Allowlist = wsconfig.AllowlistMap(e.cfg)
@@ -138,6 +144,7 @@ func secretLs(args []string, globals globalFlags, stdout, stderr io.Writer) int 
 	fs.SetOutput(io.Discard)
 	var skipDirFlags stringSliceFlag
 	fs.Var(&skipDirFlags, "skip-dir", "")
+	muted := fs.Bool("muted", false, "")
 	lf := registerListFlags(fs, "")
 	registerGlobalFlags(fs, &globals)
 	if err := parseInterspersed(fs, args); err != nil {
@@ -145,7 +152,7 @@ func secretLs(args []string, globals globalFlags, stdout, stderr io.Writer) int 
 		return 1
 	}
 	if len(fs.Args()) > 0 {
-		fmt.Fprintln(stderr, "usage: ws secret ls [--skip-dir <dir>]… [--filter <expr>] [--sort <fields>] [--wide]")
+		fmt.Fprintln(stderr, "usage: ws secret ls [--muted] [--skip-dir <dir>]… [--filter <expr>] [--sort <fields>] [--wide]")
 		return 1
 	}
 	env, ok := loadSecretEnv(globals, stderr)
@@ -162,17 +169,42 @@ func secretLs(args []string, globals globalFlags, stdout, stderr io.Writer) int 
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	findings, err := env.findings(extra)
+	all, err := env.findings(extra)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
+	}
+	// A muted finding stays in sight (unlike an allowed one, which the scan
+	// never returns at all) but, by default, out of the main list: --muted
+	// shows only those, like `ignore ls --muted`.
+	var findings []secret.Violation
+	for _, v := range all {
+		if v.Muted == *muted {
+			findings = append(findings, v)
+		}
 	}
 	if globals.verbose {
 		if dirs := secret.MergeSkipDirs(env.workspace, env.cfg.Secret.SkipDirs, extra); len(dirs) > 0 {
 			fmt.Fprintf(stderr, "[verbose] secret: skipping directories: %s\n", strings.Join(absPaths(env.workspace, dirs), ", "))
 		}
 	}
-	return renderList(globals, "secret.ls", schema, findings, lf, "No secrets found.", stdout, stderr)
+	none := "No secrets found."
+	if *muted {
+		none = "No muted findings."
+	}
+	code := renderList(globals, "secret.ls", schema, findings, lf, none, stdout, stderr)
+	if code == 0 && !*muted && !globals.quiet {
+		var mutedCount int
+		for _, v := range all {
+			if v.Muted {
+				mutedCount++
+			}
+		}
+		if mutedCount > 0 {
+			fmt.Fprintf(stderr, "%s: ws secret ls --muted\n", plural(mutedCount, "muted finding"))
+		}
+	}
+	return code
 }
 
 // ── show ───────────────────────────────────────────────────────────
@@ -279,11 +311,79 @@ func secretAllow(args []string, globals globalFlags, stdin io.Reader, stdout, st
 	return planResult.ExitCode()
 }
 
-// ── mute / unmute ──────────────────────────────────────────────────
+// ── mute / unmute (per-finding; stays in secret ls, quietly) ────────
 
-// muteDirs resolves directory arguments to workspace-relative paths. Every
+func secretMute(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("secret-mute", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if len(fs.Args()) == 0 {
+		fmt.Fprintln(stderr, "usage: ws secret mute <file:line…>  (at least one target is required)")
+		return 1
+	}
+	env, ok := loadSecretEnv(globals, stderr)
+	if !ok {
+		return 1
+	}
+	picked, ok := env.anchorFindings(fs.Args(), stderr)
+	if !ok {
+		return 1
+	}
+	out := quietOut(globals, stdout)
+	var toMute []secret.Violation
+	for _, v := range picked {
+		if v.Muted {
+			fmt.Fprintf(out, "Already muted: %s\n", secret.AbsAnchor(env.workspace, v))
+			continue
+		}
+		toMute = append(toMute, v)
+	}
+	p := Plan{Command: "secret.mute", Actions: secret.MuteActions(env.configPath, env.workspace, toMute)}
+	return runSecretPlan(p, "secret.mute", globals, stdin, stdout, stderr)
+}
+
+func secretUnmute(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("secret-unmute", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if len(fs.Args()) == 0 {
+		fmt.Fprintln(stderr, "usage: ws secret unmute <file:line…>  (at least one target is required)")
+		return 1
+	}
+	env, ok := loadSecretEnv(globals, stderr)
+	if !ok {
+		return 1
+	}
+	picked, ok := env.anchorFindings(fs.Args(), stderr)
+	if !ok {
+		return 1
+	}
+	out := quietOut(globals, stdout)
+	var toUnmute []secret.Violation
+	for _, v := range picked {
+		if !v.Muted {
+			fmt.Fprintf(out, "Not muted: %s\n", secret.AbsAnchor(env.workspace, v))
+			continue
+		}
+		toUnmute = append(toUnmute, v)
+	}
+	p := Plan{Command: "secret.unmute", Actions: secret.UnmuteActions(env.configPath, env.workspace, toUnmute)}
+	return runSecretPlan(p, "secret.unmute", globals, stdin, stdout, stderr)
+}
+
+// ── skip / unskip (directory-level; the directory is never scanned) ─
+
+// skipDirs resolves directory arguments to workspace-relative paths. Every
 // argument must be inside the workspace and not the workspace itself.
-func (e secretEnv) muteDirs(args []string, stderr io.Writer) ([]string, bool) {
+func (e secretEnv) skipDirs(args []string, stderr io.Writer) ([]string, bool) {
 	var rels []string
 	for _, a := range args {
 		rel, err := secret.WorkspaceRelDir(e.workspace, a)
@@ -298,8 +398,8 @@ func (e secretEnv) muteDirs(args []string, stderr io.Writer) ([]string, bool) {
 
 func (e secretEnv) abs(rel string) string { return filepath.Join(e.workspace, filepath.FromSlash(rel)) }
 
-func secretMute(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("secret-mute", flag.ContinueOnError)
+func secretSkip(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("secret-skip", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	registerGlobalFlags(fs, &globals)
 	if err := parseInterspersed(fs, args); err != nil {
@@ -307,14 +407,14 @@ func secretMute(args []string, globals globalFlags, stdin io.Reader, stdout, std
 		return 1
 	}
 	if len(fs.Args()) == 0 {
-		fmt.Fprintln(stderr, "usage: ws secret mute <dir…>")
+		fmt.Fprintln(stderr, "usage: ws secret skip <dir…>")
 		return 1
 	}
 	env, ok := loadSecretEnv(globals, stderr)
 	if !ok {
 		return 1
 	}
-	rels, ok := env.muteDirs(fs.Args(), stderr)
+	rels, ok := env.skipDirs(fs.Args(), stderr)
 	if !ok {
 		return 1
 	}
@@ -327,24 +427,24 @@ func secretMute(args []string, globals globalFlags, stdin io.Reader, stdout, std
 	}
 
 	out := quietOut(globals, stdout)
-	p := Plan{Command: "secret.mute"}
+	p := Plan{Command: "secret.skip"}
 	var planned []string
 	for _, rel := range rels {
 		if covered(planned, rel) {
 			continue
 		}
-		if by, exact, muted := secret.MutedBy(env.workspace, env.cfg.Secret.SkipDirs, rel); muted {
+		if by, exact, skipped := secret.SkippedBy(env.workspace, env.cfg.Secret.SkipDirs, rel); skipped {
 			note := "by itself"
 			if !exact {
 				note = "by " + env.abs(by)
 			}
-			fmt.Fprintf(out, "%s is already muted %s\n", env.abs(rel), note)
+			fmt.Fprintf(out, "%s is already skipped %s\n", env.abs(rel), note)
 			continue
 		}
 		planned = append(planned, rel)
-		p.Actions = append(p.Actions, secret.MuteAction(env.configPath, env.workspace, rel))
+		p.Actions = append(p.Actions, secret.SkipAction(env.configPath, env.workspace, rel))
 	}
-	return runSecretPlan(p, "secret.mute", globals, stdin, stdout, stderr)
+	return runSecretPlan(p, "secret.skip", globals, stdin, stdout, stderr)
 }
 
 // covered reports whether rel is one of dirs or lies under one.
@@ -357,8 +457,8 @@ func covered(dirs []string, rel string) bool {
 	return false
 }
 
-func secretUnmute(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("secret-unmute", flag.ContinueOnError)
+func secretUnskip(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("secret-unskip", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	registerGlobalFlags(fs, &globals)
 	if err := parseInterspersed(fs, args); err != nil {
@@ -366,42 +466,42 @@ func secretUnmute(args []string, globals globalFlags, stdin io.Reader, stdout, s
 		return 1
 	}
 	if len(fs.Args()) == 0 {
-		fmt.Fprintln(stderr, "usage: ws secret unmute <dir…>")
+		fmt.Fprintln(stderr, "usage: ws secret unskip <dir…>")
 		return 1
 	}
 	env, ok := loadSecretEnv(globals, stderr)
 	if !ok {
 		return 1
 	}
-	rels, ok := env.muteDirs(fs.Args(), stderr)
+	rels, ok := env.skipDirs(fs.Args(), stderr)
 	if !ok {
 		return 1
 	}
 
-	// A directory muted by a parent cannot be unmuted on its own: name the
+	// A directory skipped by a parent cannot be unskipped on its own: name the
 	// parent and change nothing.
 	for _, rel := range rels {
-		if by, exact, muted := secret.MutedBy(env.workspace, env.cfg.Secret.SkipDirs, rel); muted && !exact {
-			fmt.Fprintf(stderr, "%s is muted by %s; unmute that directory instead\n", env.abs(rel), env.abs(by))
+		if by, exact, skipped := secret.SkippedBy(env.workspace, env.cfg.Secret.SkipDirs, rel); skipped && !exact {
+			fmt.Fprintf(stderr, "%s is skipped by %s; unskip that directory instead\n", env.abs(rel), env.abs(by))
 			return 1
 		}
 	}
 
 	out := quietOut(globals, stdout)
-	p := Plan{Command: "secret.unmute"}
+	p := Plan{Command: "secret.unskip"}
 	seen := map[string]bool{}
 	for _, rel := range rels {
 		if seen[rel] {
 			continue
 		}
 		seen[rel] = true
-		if _, _, muted := secret.MutedBy(env.workspace, env.cfg.Secret.SkipDirs, rel); !muted {
-			fmt.Fprintf(out, "%s is not muted\n", env.abs(rel))
+		if _, _, skipped := secret.SkippedBy(env.workspace, env.cfg.Secret.SkipDirs, rel); !skipped {
+			fmt.Fprintf(out, "%s is not skipped\n", env.abs(rel))
 			continue
 		}
-		p.Actions = append(p.Actions, secret.UnmuteAction(env.configPath, env.workspace, rel))
+		p.Actions = append(p.Actions, secret.UnskipAction(env.configPath, env.workspace, rel))
 	}
-	return runSecretPlan(p, "secret.unmute", globals, stdin, stdout, stderr)
+	return runSecretPlan(p, "secret.unskip", globals, stdin, stdout, stderr)
 }
 
 // runSecretPlan runs a plan and reports it: the JSON envelope with the actions,

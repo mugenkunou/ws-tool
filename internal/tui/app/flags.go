@@ -58,6 +58,7 @@ var CLIFlagCoverage = []FlagCoverage{
 	{CLI: "ignore unmute", Flag: "--stale", How: "the Muted view lists the stale entries as rows; mark them and unmute (u)"},
 	{CLI: "ignore tree", Flag: "-L", How: "`:tree <dir> -L <n>`: the command passes its words to the CLI"},
 	{CLI: "ignore edit", Flag: "--editor", How: "n/a: the TUI opens the editor set in ws.json"},
+	{CLI: "secret ls", Flag: "--muted", How: "n/a: the TUI list always shows every finding, with muted rows styled quietly"},
 	{CLI: "secret ls", Flag: "--skip-dir", How: "CLI only: a one-run skip; the TUI's skip prompt saves the directory to secret.skip_dirs"},
 	{CLI: "pass backup enable", Flag: "--remote", How: "`:pass backup enable`: hands over to the CLI, which asks"},
 	{CLI: "pass backup enable", Flag: "--pass-entry", How: "`:pass backup enable`: hands over to the CLI, which asks"},

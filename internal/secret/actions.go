@@ -59,22 +59,27 @@ func DropAnchors(configPath string, anchors []string) error {
 	return wsconfig.Save(configPath, cfg)
 }
 
-// MuteAction mutes the workspace-relative directory rel in secret scans.
-func MuteAction(configPath, workspacePath, rel string) plan.Action {
+// SkipAction stops scanning the workspace-relative directory rel entirely
+// (secret.skip_dirs): nothing under it is read, so findings there never
+// appear, even at a quiet severity. This is for genuinely noisy non-code
+// trees (vendor dumps, archives) — a directory-level opt-out, distinct from
+// muting a finding, which keeps it in sight. Named Skip (not Mute) so the two
+// never get confused: see MuteActions for the anchor-level, stays-visible kind.
+func SkipAction(configPath, workspacePath, rel string) plan.Action {
 	abs := filepath.Join(workspacePath, filepath.FromSlash(rel))
 	return plan.Action{
-		ID:          "mute-" + abs,
-		Description: fmt.Sprintf("Mute %s in secret scans", abs),
+		ID:          "skip-" + abs,
+		Description: fmt.Sprintf("Skip %s in secret scans", abs),
 		Execute:     func() error { return AddSkipDir(configPath, rel) },
 	}
 }
 
-// UnmuteAction scans the workspace-relative directory rel again.
-func UnmuteAction(configPath, workspacePath, rel string) plan.Action {
+// UnskipAction scans the workspace-relative directory rel again.
+func UnskipAction(configPath, workspacePath, rel string) plan.Action {
 	abs := filepath.Join(workspacePath, filepath.FromSlash(rel))
 	return plan.Action{
-		ID:          "unmute-" + abs,
-		Description: fmt.Sprintf("Unmute %s in secret scans", abs),
+		ID:          "unskip-" + abs,
+		Description: fmt.Sprintf("Scan %s again", abs),
 		Execute:     func() error { return RemoveSkipDir(configPath, workspacePath, rel) },
 	}
 }
@@ -97,11 +102,11 @@ func RemoveSkipDir(configPath, workspacePath, rel string) error {
 	return wsconfig.Save(configPath, cfg)
 }
 
-// MutedBy reports which secret.skip_dirs entry covers the workspace-relative
+// SkippedBy reports which secret.skip_dirs entry covers the workspace-relative
 // directory rel: the covering directory (workspace-relative, however the entry
 // is written in the config), and whether that is rel itself (exact) rather
-// than a parent. ok is false when rel is not muted.
-func MutedBy(workspacePath string, skipDirs []string, rel string) (by string, exact, ok bool) {
+// than a parent. ok is false when rel is not skipped.
+func SkippedBy(workspacePath string, skipDirs []string, rel string) (by string, exact, ok bool) {
 	for _, d := range skipDirs {
 		r, valid := workspaceRel(workspacePath, strings.TrimSpace(d))
 		if !valid || r == "." {
@@ -115,6 +120,40 @@ func MutedBy(workspacePath string, skipDirs []string, rel string) (by string, ex
 		}
 	}
 	return by, false, ok
+}
+
+// ── mute (per-finding, stays visible) ─────────────────────────────
+
+// MuteActions mutes findings by anchor (secret.muted): unlike allow or skip,
+// a muted finding is never dropped from `secret ls` — it keeps appearing, at
+// a quieter severity (INFO). This is the volume knob for "I looked at this,
+// it's fine, but it's not worth hiding the way a false positive is."
+func MuteActions(configPath, workspacePath string, findings []Violation) []plan.Action {
+	var actions []plan.Action
+	for _, v := range findings {
+		anchor := Anchor(v)
+		actions = append(actions, plan.Action{
+			ID:          "mute-" + AbsAnchor(workspacePath, v),
+			Description: fmt.Sprintf("Mute %s (it keeps appearing, quietly)", AbsAnchor(workspacePath, v)),
+			Execute:     func() error { return wsconfig.AddToMuted(configPath, anchor) },
+		})
+	}
+	return actions
+}
+
+// UnmuteActions unmutes findings by anchor, letting them appear at their
+// matched severity again.
+func UnmuteActions(configPath, workspacePath string, findings []Violation) []plan.Action {
+	var actions []plan.Action
+	for _, v := range findings {
+		anchor := Anchor(v)
+		actions = append(actions, plan.Action{
+			ID:          "unmute-" + AbsAnchor(workspacePath, v),
+			Description: "Unmute " + AbsAnchor(workspacePath, v),
+			Execute:     func() error { _, err := wsconfig.RemoveFromMuted(configPath, anchor); return err },
+		})
+	}
+	return actions
 }
 
 // StaleAnchors returns the allowlist anchors that no pattern matches any more:

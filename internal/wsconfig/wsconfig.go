@@ -64,10 +64,11 @@ type Repo struct {
 	MaxParallel int      `json:"max_parallel"`
 }
 
-// Secret holds secret-scanning settings and the allowlist.
+// Secret holds secret-scanning settings, the allowlist and the muted anchors.
 type Secret struct {
 	Allowlist []string `json:"allowlist"`
 	SkipDirs  []string `json:"skip_dirs"`
+	Muted     []string `json:"muted"` // finding anchors (file:line) shown at a quieter severity; they still appear in secret ls
 }
 
 // Pass holds pass-store settings.
@@ -134,6 +135,7 @@ func Default() WsConfig {
 		Secret: Secret{
 			Allowlist: []string{},
 			SkipDirs:  []string{},
+			Muted:     []string{},
 		},
 		Ignore: Ignore{
 			WarnSizeMB: 5,
@@ -165,6 +167,9 @@ func normalize(cfg *WsConfig) {
 	}
 	if cfg.Secret.SkipDirs == nil {
 		cfg.Secret.SkipDirs = []string{}
+	}
+	if cfg.Secret.Muted == nil {
+		cfg.Secret.Muted = []string{}
 	}
 	if cfg.Ignore.Muted == nil {
 		cfg.Ignore.Muted = []string{}
@@ -301,6 +306,55 @@ func AllowlistMap(cfg WsConfig) map[string]struct{} {
 		allow[a] = struct{}{}
 	}
 	return allow
+}
+
+// AddToMuted records anchor in secret.muted (idempotent). Unlike the
+// allowlist, a muted finding still appears in `secret ls`, at a quieter
+// severity: it stays in sight, it just stops shouting.
+func AddToMuted(configPath, anchor string) error {
+	cfg, err := Load(configPath)
+	if err != nil {
+		return err
+	}
+	for _, a := range cfg.Secret.Muted {
+		if a == anchor {
+			return nil
+		}
+	}
+	cfg.Secret.Muted = append(cfg.Secret.Muted, anchor)
+	return Save(configPath, cfg)
+}
+
+// RemoveFromMuted removes anchor from secret.muted. Returns true if one was
+// removed.
+func RemoveFromMuted(configPath, anchor string) (bool, error) {
+	cfg, err := Load(configPath)
+	if err != nil {
+		return false, err
+	}
+	updated := make([]string, 0, len(cfg.Secret.Muted))
+	found := false
+	for _, a := range cfg.Secret.Muted {
+		if a == anchor {
+			found = true
+			continue
+		}
+		updated = append(updated, a)
+	}
+	if !found {
+		return false, nil
+	}
+	cfg.Secret.Muted = updated
+	return true, Save(configPath, cfg)
+}
+
+// MutedMap builds the scan muted-anchor map from the config.
+func MutedMap(cfg WsConfig) map[string]struct{} {
+	muted := make(map[string]struct{}, len(cfg.Secret.Muted))
+	for _, a := range cfg.Secret.Muted {
+		muted[a] = struct{}{}
+	}
+	return muted
 }
 
 // ConfigPath returns the absolute path of ws.json for a given workspace root.

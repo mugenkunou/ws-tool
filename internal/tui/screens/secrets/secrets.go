@@ -74,7 +74,7 @@ type step int
 const (
 	stepFix step = iota
 	stepPassEntryName
-	stepMuteDirInput
+	stepSkipDirInput
 )
 
 type handoverTag int
@@ -114,8 +114,11 @@ func New(e env.Env) Model {
 		scanning:   true,
 		list: reslist.New(secret.Schema(e.View(), e.Paths.Workspace), []reslist.Col[secret.Violation]{
 			{Key: "severity", Min: 8, Style: func(v secret.Violation, t string) string {
-				if v.Severity == "CRITICAL" {
-					return theme.Error.Render(t)
+				switch {
+				case v.Muted:
+					return theme.Muted.Render(t)
+				case v.Severity == "WARNING":
+					return theme.Warn.Render(t)
 				}
 				return t
 			}},
@@ -151,6 +154,7 @@ func Load(e env.Env) tea.Cmd {
 			Engine:        wsignore.BuildEngine(rules),
 			Allowlist:     wsconfig.AllowlistMap(e.Config),
 			SkipDirs:      secret.MergeSkipDirs(e.Paths.Workspace, e.Config.Secret.SkipDirs, nil),
+			Muted:         wsconfig.MutedMap(e.Config),
 		})
 		return LoadedMsg{Violations: vs, Health: h, Err: err}
 	}
@@ -339,13 +343,23 @@ func (m Model) ignoreFiles(rows []secret.Violation) (Model, tea.Cmd) {
 	return m.confirmActions("ignore.add", "Ignore", acts), nil
 }
 
-// muteDir asks which directory to mute, starting from the file's (m).
-func (m Model) muteDir(rows []secret.Violation) (Model, tea.Cmd) {
-	var cmd tea.Cmd
-	m.modal, cmd = m.modal.Prompt(stepMuteDirInput, prompt.New("Mute a directory in secret scans",
-		prompt.WithHint("Saved to secret.skip_dirs in config."),
-		prompt.WithValue(filepath.Dir(m.abs(rows[0])))))
-	return m, cmd
+// mute toggles the selected findings' quiet state directly (m): an unmuted
+// finding is muted and a muted one is unmuted, so the key reads the same way
+// `ignore mute` does — it never deletes the finding, only its volume.
+func (m Model) mute(rows []secret.Violation) (Model, tea.Cmd) {
+	var toMute, toUnmute []secret.Violation
+	for _, v := range rows {
+		if v.Muted {
+			toUnmute = append(toUnmute, v)
+		} else {
+			toMute = append(toMute, v)
+		}
+	}
+	acts := append(
+		secret.MuteActions(m.env.Paths.Config, m.env.Paths.Workspace, toMute),
+		secret.UnmuteActions(m.env.Paths.Config, m.env.Paths.Workspace, toUnmute)...,
+	)
+	return m.confirmActions("secret.mute", "Mute", acts), nil
 }
 
 // store asks for the pass entry name for the finding's value (s).
@@ -369,7 +383,7 @@ var actions = func() []reslist.Action[Model, secret.Violation] {
 		{Key: k.View, Scope: reslist.Cursor, Do: Model.show},
 		{Key: k.Allow, Scope: reslist.Selected, Do: Model.allow},
 		{Key: k.Ignore, Scope: reslist.Selected, Do: Model.ignoreFiles},
-		{Key: k.Mute, Scope: reslist.Cursor, Do: Model.muteDir},
+		{Key: k.Mute, Scope: reslist.Selected, Do: Model.mute},
 		{Key: k.Store, Scope: reslist.Cursor, Do: Model.store},
 	}
 }()
@@ -411,11 +425,33 @@ func (m Model) backupPush(rows []secret.Violation, args []string) (Model, tea.Cm
 		"Commit pending changes and push the pass store to "+m.health.RemoteURL, "pass", "backup", "push")(m, rows, args)
 }
 
-// unmute scans directories again: `unmute <dir>`. A directory muted by a parent
-// is refused, as the CLI does.
-func (m Model) unmute(_ []secret.Violation, args []string) (Model, tea.Cmd) {
+// skip asks which directory to stop scanning entirely: `skip <dir>` (or a
+// prompt, pre-filled with the cursor finding's directory, when no args).
+func (m Model) skip(rows []secret.Violation, args []string) (Model, tea.Cmd) {
+	if len(args) > 0 {
+		return m.skipDir(args[0])
+	}
+	var cmd tea.Cmd
+	m.modal, cmd = m.modal.Prompt(stepSkipDirInput, prompt.New("Skip a directory in secret scans",
+		prompt.WithHint("Saved to secret.skip_dirs in config. Nothing under it is scanned again."),
+		prompt.WithValue(filepath.Dir(m.abs(rows[0])))))
+	return m, cmd
+}
+
+func (m Model) skipDir(raw string) (Model, tea.Cmd) {
+	rel, err := secret.WorkspaceRelDir(m.env.Paths.Workspace, raw)
+	if err != nil {
+		return m, nav.Notify(nav.LevelError, err.Error())
+	}
+	return m.confirmActions("secret.skip", "Skip",
+		[]plan.Action{secret.SkipAction(m.env.Paths.Config, m.env.Paths.Workspace, rel)}), nil
+}
+
+// unskip scans directories again: `unskip <dir>`. A directory skipped by a
+// parent is refused, as the CLI does.
+func (m Model) unskip(_ []secret.Violation, args []string) (Model, tea.Cmd) {
 	if len(args) == 0 {
-		return m, nav.Notify(nav.LevelWarn, "usage: unmute <dir>")
+		return m, nav.Notify(nav.LevelWarn, "usage: unskip <dir>")
 	}
 	cfg, err := wsconfig.Load(m.env.Paths.Config)
 	if err != nil {
@@ -428,25 +464,26 @@ func (m Model) unmute(_ []secret.Violation, args []string) (Model, tea.Cmd) {
 		if err != nil {
 			return m, nav.Notify(nav.LevelError, err.Error())
 		}
-		by, exact, muted := secret.MutedBy(m.env.Paths.Workspace, cfg.Secret.SkipDirs, rel)
+		by, exact, skipped := secret.SkippedBy(m.env.Paths.Workspace, cfg.Secret.SkipDirs, rel)
 		switch {
 		case seen[rel]:
-		case !muted:
-			return m, nav.Notify(nav.LevelWarn, style.AbsPath(m.env.Paths.Workspace, rel)+" is not muted")
+		case !skipped:
+			return m, nav.Notify(nav.LevelWarn, style.AbsPath(m.env.Paths.Workspace, rel)+" is not skipped")
 		case !exact:
-			return m, nav.Notify(nav.LevelWarn, fmt.Sprintf("%s is muted by %s; unmute that directory instead",
+			return m, nav.Notify(nav.LevelWarn, fmt.Sprintf("%s is skipped by %s; unskip that directory instead",
 				style.AbsPath(m.env.Paths.Workspace, rel), style.AbsPath(m.env.Paths.Workspace, by)))
 		default:
-			acts = append(acts, secret.UnmuteAction(m.env.Paths.Config, m.env.Paths.Workspace, rel))
+			acts = append(acts, secret.UnskipAction(m.env.Paths.Config, m.env.Paths.Workspace, rel))
 		}
 		seen[rel] = true
 	}
-	return m.confirmActions("secret.unmute", "Unmute", acts), nil
+	return m.confirmActions("secret.unskip", "Unskip", acts), nil
 }
 
 // commands are the screen's `:` commands (spec §6.5): the CLI's words.
 var commands = []reslist.Command[Model, secret.Violation]{
-	{Name: "unmute", Args: "<dir>", Help: "scan a muted directory again", Scope: reslist.Global, Do: Model.unmute},
+	{Name: "skip", Args: "[dir]", Help: "stop scanning a directory entirely", Scope: reslist.Cursor, Do: Model.skip},
+	{Name: "unskip", Args: "<dir>", Help: "scan a skipped directory again", Scope: reslist.Global, Do: Model.unskip},
 	{Name: "pass init", Help: "set up the pass store (hands over to the CLI)", Scope: reslist.Global, Do: wizardCommand("pass", "init")},
 	{Name: "pass status", Help: "pass store and credential helper health", Scope: reslist.Global, Do: viewCommand("Pass status", "pass", "status")},
 	{Name: "pass audit", Help: "check the pass store for weak spots", Scope: reslist.Global,
@@ -499,17 +536,12 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 		}
 		return m.confirmActions("secret.store", "Store in pass",
 			[]plan.Action{secret.StoreAction(m.env.Paths.Config, m.env.Paths.Workspace, m.pending, entry)}), nil
-	case stepMuteDirInput:
+	case stepSkipDirInput:
 		r := msg.(prompt.ResultMsg)
 		if r.Cancelled {
 			return m, nil
 		}
-		rel, err := secret.WorkspaceRelDir(m.env.Paths.Workspace, r.Value)
-		if err != nil {
-			return m, nav.Notify(nav.LevelError, err.Error())
-		}
-		return m.confirmActions("secret.mute", "Mute",
-			[]plan.Action{secret.MuteAction(m.env.Paths.Config, m.env.Paths.Workspace, rel)}), nil
+		return m.skipDir(r.Value)
 	}
 	done := msg.(confirm.DoneMsg)
 	if done.Result.Aborted {

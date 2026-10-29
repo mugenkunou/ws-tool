@@ -122,11 +122,13 @@ var CLICoverage = func() []Coverage {
 		{CLI: "scratch tag", Screen: nav.ScreenScratch, Key: sc.Tag},
 		{CLI: "scratch rm", Screen: nav.ScreenScratch, Key: sc.Delete},
 
-		{CLI: "secret ls", Screen: sec, Why: List},
+		{CLI: "secret ls", Screen: sec, Why: List}, // --muted: the quiet findings
 		{CLI: "secret show", Screen: sec, Key: se.View},
 		{CLI: "secret allow", Screen: sec, Key: se.Allow},
-		{CLI: "secret mute", Screen: sec, Key: se.Mute},
-		{CLI: "secret unmute", Screen: sec, Cmd: "unmute"}, // checklist
+		{CLI: "secret mute", Screen: sec, Key: se.Mute},   // toggles mute/unmute on the selected rows
+		{CLI: "secret unmute", Screen: sec, Key: se.Mute}, // same key: a muted row unmutes
+		{CLI: "secret skip", Screen: sec, Cmd: "skip"},     // checklist
+		{CLI: "secret unskip", Screen: sec, Cmd: "unskip"}, // checklist
 		{CLI: "secret store", Screen: sec, Key: se.Store},
 
 		// pass and credential have no screen: Secrets hosts them (nav.Spec.Hosts).

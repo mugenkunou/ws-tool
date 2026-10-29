@@ -20,6 +20,11 @@ type Violation struct {
 	Line     int    `json:"line"`
 	Message  string `json:"message"`
 	Snippet  string `json:"snippet"`
+	// Muted is true when the finding's anchor is in secret.muted: it still
+	// appears in `secret ls`, at a quieter severity, rather than vanishing the
+	// way an allowed finding does. The point of scanning is to put potential
+	// secrets in front of a human; muting is a volume knob, not a delete key.
+	Muted bool `json:"muted,omitempty"`
 }
 
 type ScanOptions struct {
@@ -27,7 +32,15 @@ type ScanOptions struct {
 	Engine        *ignore.Engine
 	Allowlist     map[string]struct{}
 	SkipDirs      []string
+	// Muted is secret.muted: finding anchors ("path:line") shown at a quieter
+	// severity instead of their matched one. Unlike Allowlist, a muted finding
+	// is never dropped from the scan.
+	Muted map[string]struct{}
 }
+
+// mutedSeverity is what a muted finding's severity becomes, regardless of what
+// matched it: quiet, but never gone (spec parity with ignore.muted).
+const mutedSeverity = "INFO"
 
 var patterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)password\s*[:=]\s*[^\s]+`),
@@ -105,7 +118,7 @@ func Scan(opts ScanOptions) ([]Violation, error) {
 			return nil
 		}
 
-		matches, err := scanFile(path, rel, opts.Allowlist)
+		matches, err := scanFile(path, rel, opts.Allowlist, opts.Muted)
 		if err != nil {
 			return nil // skip unreadable files
 		}
@@ -119,7 +132,7 @@ func Scan(opts ScanOptions) ([]Violation, error) {
 	return violations, nil
 }
 
-func scanFile(absPath, rel string, allowlist map[string]struct{}) ([]Violation, error) {
+func scanFile(absPath, rel string, allowlist, muted map[string]struct{}) ([]Violation, error) {
 	f, err := os.Open(absPath)
 	if err != nil {
 		return nil, err
@@ -158,14 +171,20 @@ func scanFile(absPath, rel string, allowlist map[string]struct{}) ([]Violation, 
 			if _, ok := allowlist[anchor]; ok {
 				continue
 			}
+			severity := "WARNING"
+			isMuted := false
+			if _, ok := muted[anchor]; ok {
+				severity, isMuted = mutedSeverity, true
+			}
 			violations = append(violations, Violation{
 				Group:    "Secret",
 				Type:     "secret",
-				Severity: "CRITICAL",
+				Severity: severity,
 				Path:     rel,
 				Line:     lineNum,
 				Message:  "potential secret detected",
 				Snippet:  strings.TrimSpace(line),
+				Muted:    isMuted,
 			})
 			break
 		}

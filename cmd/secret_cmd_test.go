@@ -85,7 +85,7 @@ func TestSecretLsListsAndNeverWritesConfig(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut)
 	}
-	for _, want := range []string{"SEVERITY", "LOCATION", "MATCH", "CRITICAL", file + ":3", "password=hunter2"} {
+	for _, want := range []string{"SEVERITY", "LOCATION", "MATCH", "WARNING", file + ":3", "password=hunter2"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("ls output lacks %q:\n%s", want, out)
 		}
@@ -106,7 +106,7 @@ func TestSecretLsJSONIsRecordArray(t *testing.T) {
 	if err := json.Unmarshal(env.Data, &recs); err != nil {
 		t.Fatalf("data is not an array of records: %v\n%s", err, env.Data)
 	}
-	if len(recs) != 1 || recs[0]["location"] != file+":3" || recs[0]["severity"] != "CRITICAL" {
+	if len(recs) != 1 || recs[0]["location"] != file+":3" || recs[0]["severity"] != "WARNING" {
 		t.Fatalf("records: %v", recs)
 	}
 	if _, extra := recs[0]["violations"]; extra {
@@ -143,7 +143,7 @@ func TestSecretShowPrintsContext(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, errOut)
 	}
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if lines[0] != file+":3  CRITICAL  potential secret detected" {
+	if lines[0] != file+":3  WARNING  potential secret detected" {
 		t.Fatalf("header: %q", lines[0])
 	}
 	want := []string{
@@ -369,81 +369,65 @@ func TestSecretAllowCoversTheLineNotTheContent(t *testing.T) {
 	}
 }
 
-// ── mute / unmute ──
+// ── mute / unmute (per-finding; stays in secret ls, quietly) ──
 
 func TestSecretMuteAndUnmute(t *testing.T) {
 	workspace, file := secretWorkspace(t)
-	dir := filepath.Dir(file)
 
-	if code, _, e := wsRun(t, workspace, "", "secret", "mute", dir, "--quiet"); code != 0 {
+	if code, _, e := wsRun(t, workspace, "", "secret", "mute", file+":3", "--quiet"); code != 0 {
 		t.Fatalf("mute: %d %s", code, e)
 	}
-	if got := secretList(t, workspace, "skip_dirs"); len(got) != 1 || got[0] != "configs/myapp" {
-		t.Fatalf("skip_dirs is stored workspace-relative: %v", got)
+	if got := secretList(t, workspace, "muted"); len(got) != 1 || got[0] != "configs/myapp/app.properties:3" {
+		t.Fatalf("secret.muted is stored workspace-relative: %v", got)
 	}
-	if _, out, _ := wsRun(t, workspace, "", "secret", "ls"); !strings.Contains(out, "No secrets found") {
-		t.Fatalf("a muted directory is not scanned:\n%s", out)
+	// A muted finding stays in secret ls, quietly: it never vanishes the way
+	// an allowed or skipped one does.
+	if _, out, _ := wsRun(t, workspace, "", "secret", "ls"); strings.Contains(out, "app.properties") {
+		t.Fatalf("a muted finding should not show in the default list:\n%s", out)
+	}
+	if _, out, _ := wsRun(t, workspace, "", "secret", "ls", "--muted"); !strings.Contains(out, "app.properties") || !strings.Contains(out, "INFO") {
+		t.Fatalf("secret ls --muted should show it, quietly:\n%s", out)
 	}
 
-	if code, _, e := wsRun(t, workspace, "", "secret", "unmute", dir, "--quiet"); code != 0 {
+	if code, _, e := wsRun(t, workspace, "", "secret", "unmute", file+":3", "--quiet"); code != 0 {
 		t.Fatalf("unmute: %d %s", code, e)
 	}
-	if got := secretList(t, workspace, "skip_dirs"); len(got) != 0 {
-		t.Fatalf("skip_dirs after unmute: %v", got)
+	if got := secretList(t, workspace, "muted"); len(got) != 0 {
+		t.Fatalf("muted after unmute: %v", got)
 	}
 	if _, out, _ := wsRun(t, workspace, "", "secret", "ls"); !strings.Contains(out, "app.properties") {
-		t.Fatalf("unmuted: the finding is back:\n%s", out)
+		t.Fatalf("unmuted: the finding is back at full volume:\n%s", out)
 	}
 }
 
 func TestSecretMutePlanLine(t *testing.T) {
 	workspace, file := secretWorkspace(t)
-	dir := filepath.Dir(file)
-	_, out, _ := wsRun(t, workspace, "", "secret", "mute", dir, "--dry-run", "--no-color")
-	if !strings.Contains(out, "Mute "+dir+" in secret scans") {
+	_, out, _ := wsRun(t, workspace, "", "secret", "mute", file+":3", "--dry-run", "--no-color")
+	if !strings.Contains(out, "Mute "+file+":3 (it keeps appearing, quietly)") {
 		t.Fatalf("plan line: %q", out)
 	}
-	if got := secretList(t, workspace, "skip_dirs"); len(got) != 0 {
+	if got := secretList(t, workspace, "muted"); len(got) != 0 {
 		t.Fatalf("--dry-run muted: %v", got)
 	}
 }
 
-func TestSecretMuteRejections(t *testing.T) {
-	workspace, file := secretWorkspace(t)
-	for name, target := range map[string]string{
-		"the workspace itself": workspace,
-		"outside":              t.TempDir(),
-		"a file":               file,
-		"missing":              filepath.Join(workspace, "nope"),
-	} {
-		code, _, errOut := wsRun(t, workspace, "", "secret", "mute", target, "--quiet")
-		if code != 1 || errOut == "" {
-			t.Errorf("mute %s: code=%d err=%q", name, code, errOut)
-		}
-	}
-	if code, _, errOut := wsRun(t, workspace, "", "secret", "mute"); code != 1 || !strings.Contains(errOut, "usage") {
-		t.Fatalf("no target: %d %q", code, errOut)
-	}
-	if got := secretList(t, workspace, "skip_dirs"); len(got) != 0 {
-		t.Fatalf("a rejected mute changed the config: %v", got)
+func TestSecretMuteRequiresATarget(t *testing.T) {
+	workspace, _ := secretWorkspace(t)
+	if code, _, errOut := wsRun(t, workspace, "", "secret", "mute"); code != 1 || !strings.Contains(errOut, "at least one target") {
+		t.Fatalf("code=%d err=%q", code, errOut)
 	}
 }
 
 func TestSecretMuteAlreadyMutedGetsNoAction(t *testing.T) {
 	workspace, file := secretWorkspace(t)
-	configs := filepath.Join(workspace, "configs")
-	writeWs(t, workspace, "configs/myapp/sub/x.txt", "x\n")
-	if code, _, e := wsRun(t, workspace, "", "secret", "mute", configs, "--quiet"); code != 0 {
+	if code, _, e := wsRun(t, workspace, "", "secret", "mute", file+":3", "--quiet"); code != 0 {
 		t.Fatalf("mute: %d %s", code, e)
 	}
-	code, out, _ := wsRun(t, workspace, "", "secret", "mute", filepath.Dir(file))
-	if code != 0 || !strings.Contains(out, "already muted by "+configs) {
-		t.Fatalf("muted by a parent: code=%d out=%q", code, out)
+	code, out, _ := wsRun(t, workspace, "", "secret", "mute", file+":3")
+	if code != 0 || !strings.Contains(out, "Already muted: "+file+":3") {
+		t.Fatalf("already muted: code=%d out=%q", code, out)
 	}
-	if got := secretList(t, workspace, "skip_dirs"); len(got) != 1 {
-		t.Fatalf("no second entry: %v", got)
-	}
-	env := runJSON(t, workspace, []string{"secret", "mute", configs})
+	env := runJSON(t, workspace, []string{"secret", "mute", file + ":3"})
 	var data struct {
 		Actions []ActionStatus `json:"actions"`
 	}
@@ -453,34 +437,126 @@ func TestSecretMuteAlreadyMutedGetsNoAction(t *testing.T) {
 	}
 }
 
-func TestSecretMuteDedupesNestedTargets(t *testing.T) {
+func TestSecretUnmuteNotMutedGetsNoAction(t *testing.T) {
 	workspace, file := secretWorkspace(t)
-	_, out, _ := wsRun(t, workspace, "", "secret", "mute", filepath.Join(workspace, "configs"), filepath.Dir(file), "--dry-run")
+	code, out, _ := wsRun(t, workspace, "", "secret", "unmute", file+":3")
+	if code != 0 || !strings.Contains(out, "Not muted: "+file+":3") {
+		t.Fatalf("code=%d out=%q", code, out)
+	}
+}
+
+// ── skip / unskip (directory-level; the directory is never scanned) ──
+
+func TestSecretSkipAndUnskip(t *testing.T) {
+	workspace, file := secretWorkspace(t)
+	dir := filepath.Dir(file)
+
+	if code, _, e := wsRun(t, workspace, "", "secret", "skip", dir, "--quiet"); code != 0 {
+		t.Fatalf("skip: %d %s", code, e)
+	}
+	if got := secretList(t, workspace, "skip_dirs"); len(got) != 1 || got[0] != "configs/myapp" {
+		t.Fatalf("skip_dirs is stored workspace-relative: %v", got)
+	}
+	if _, out, _ := wsRun(t, workspace, "", "secret", "ls"); !strings.Contains(out, "No secrets found") {
+		t.Fatalf("a skipped directory is not scanned:\n%s", out)
+	}
+
+	if code, _, e := wsRun(t, workspace, "", "secret", "unskip", dir, "--quiet"); code != 0 {
+		t.Fatalf("unskip: %d %s", code, e)
+	}
+	if got := secretList(t, workspace, "skip_dirs"); len(got) != 0 {
+		t.Fatalf("skip_dirs after unskip: %v", got)
+	}
+	if _, out, _ := wsRun(t, workspace, "", "secret", "ls"); !strings.Contains(out, "app.properties") {
+		t.Fatalf("unskipped: the finding is back:\n%s", out)
+	}
+}
+
+func TestSecretSkipPlanLine(t *testing.T) {
+	workspace, file := secretWorkspace(t)
+	dir := filepath.Dir(file)
+	_, out, _ := wsRun(t, workspace, "", "secret", "skip", dir, "--dry-run", "--no-color")
+	if !strings.Contains(out, "Skip "+dir+" in secret scans") {
+		t.Fatalf("plan line: %q", out)
+	}
+	if got := secretList(t, workspace, "skip_dirs"); len(got) != 0 {
+		t.Fatalf("--dry-run skipped: %v", got)
+	}
+}
+
+func TestSecretSkipRejections(t *testing.T) {
+	workspace, file := secretWorkspace(t)
+	for name, target := range map[string]string{
+		"the workspace itself": workspace,
+		"outside":              t.TempDir(),
+		"a file":               file,
+		"missing":              filepath.Join(workspace, "nope"),
+	} {
+		code, _, errOut := wsRun(t, workspace, "", "secret", "skip", target, "--quiet")
+		if code != 1 || errOut == "" {
+			t.Errorf("skip %s: code=%d err=%q", name, code, errOut)
+		}
+	}
+	if code, _, errOut := wsRun(t, workspace, "", "secret", "skip"); code != 1 || !strings.Contains(errOut, "usage") {
+		t.Fatalf("no target: %d %q", code, errOut)
+	}
+	if got := secretList(t, workspace, "skip_dirs"); len(got) != 0 {
+		t.Fatalf("a rejected skip changed the config: %v", got)
+	}
+}
+
+func TestSecretSkipAlreadySkippedGetsNoAction(t *testing.T) {
+	workspace, file := secretWorkspace(t)
+	configs := filepath.Join(workspace, "configs")
+	writeWs(t, workspace, "configs/myapp/sub/x.txt", "x\n")
+	if code, _, e := wsRun(t, workspace, "", "secret", "skip", configs, "--quiet"); code != 0 {
+		t.Fatalf("skip: %d %s", code, e)
+	}
+	code, out, _ := wsRun(t, workspace, "", "secret", "skip", filepath.Dir(file))
+	if code != 0 || !strings.Contains(out, "already skipped by "+configs) {
+		t.Fatalf("skipped by a parent: code=%d out=%q", code, out)
+	}
+	if got := secretList(t, workspace, "skip_dirs"); len(got) != 1 {
+		t.Fatalf("no second entry: %v", got)
+	}
+	env := runJSON(t, workspace, []string{"secret", "skip", configs})
+	var data struct {
+		Actions []ActionStatus `json:"actions"`
+	}
+	_ = json.Unmarshal(env.Data, &data)
+	if env.Command != "secret.skip" || len(data.Actions) != 0 {
+		t.Fatalf("no action expected: %s", env.Data)
+	}
+}
+
+func TestSecretSkipDedupesNestedTargets(t *testing.T) {
+	workspace, file := secretWorkspace(t)
+	_, out, _ := wsRun(t, workspace, "", "secret", "skip", filepath.Join(workspace, "configs"), filepath.Dir(file), "--dry-run")
 	if n := strings.Count(out, "[dry-run]"); n != 1 {
 		t.Fatalf("a directory inside another target needs no action of its own, got %d:\n%s", n, out)
 	}
 }
 
-func TestSecretUnmuteAnyWrittenForm(t *testing.T) {
+func TestSecretUnskipAnyWrittenForm(t *testing.T) {
 	workspace, file := secretWorkspace(t)
 	dir := filepath.Dir(file)
 	t.Setenv("HOME", filepath.Dir(workspace))
 	// The same directory written four ways by hand, and another one that stays.
 	setSecretList(t, workspace, "skip_dirs", []string{"configs/myapp", dir, "./configs/myapp/", "~/Workspace/configs/myapp", "vendor"})
-	if code, _, e := wsRun(t, workspace, "", "secret", "unmute", dir, "--quiet"); code != 0 {
-		t.Fatalf("unmute: %d %s", code, e)
+	if code, _, e := wsRun(t, workspace, "", "secret", "unskip", dir, "--quiet"); code != 0 {
+		t.Fatalf("unskip: %d %s", code, e)
 	}
 	if got := secretList(t, workspace, "skip_dirs"); len(got) != 1 || got[0] != "vendor" {
 		t.Fatalf("every spelling should go, and only those: %v", got)
 	}
 }
 
-func TestSecretUnmuteNamesTheParent(t *testing.T) {
+func TestSecretUnskipNamesTheParent(t *testing.T) {
 	workspace, file := secretWorkspace(t)
 	configs := filepath.Join(workspace, "configs")
-	wsRun(t, workspace, "", "secret", "mute", configs, "--quiet")
-	code, _, errOut := wsRun(t, workspace, "", "secret", "unmute", filepath.Dir(file), "--quiet")
-	if code != 1 || !strings.Contains(errOut, configs) || !strings.Contains(errOut, "muted by") {
+	wsRun(t, workspace, "", "secret", "skip", configs, "--quiet")
+	code, _, errOut := wsRun(t, workspace, "", "secret", "unskip", filepath.Dir(file), "--quiet")
+	if code != 1 || !strings.Contains(errOut, configs) || !strings.Contains(errOut, "skipped by") {
 		t.Fatalf("code=%d err=%q", code, errOut)
 	}
 	if got := secretList(t, workspace, "skip_dirs"); len(got) != 1 {
@@ -488,10 +564,10 @@ func TestSecretUnmuteNamesTheParent(t *testing.T) {
 	}
 }
 
-func TestSecretUnmuteNotMutedIsNothingToDo(t *testing.T) {
+func TestSecretUnskipNotSkippedIsNothingToDo(t *testing.T) {
 	workspace, file := secretWorkspace(t)
-	code, out, _ := wsRun(t, workspace, "", "secret", "unmute", filepath.Dir(file))
-	if code != 0 || !strings.Contains(out, "is not muted") {
+	code, out, _ := wsRun(t, workspace, "", "secret", "unskip", filepath.Dir(file))
+	if code != 0 || !strings.Contains(out, "is not skipped") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 }

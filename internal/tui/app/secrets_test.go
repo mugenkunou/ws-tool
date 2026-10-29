@@ -33,7 +33,7 @@ func TestSnapshotSecrets(t *testing.T) {
 	}{
 		{"secrets_allow_checklist", []string{"7", "a"}},
 		{"secrets_ignore_checklist", []string{"7", "i"}},
-		{"secrets_mute_prompt", []string{"7", "m"}},
+		{"secrets_mute_checklist", []string{"7", "m"}},
 		{"secrets_store_prompt", []string{"7", "s"}},
 		{"secrets_marked", []string{"7", "space"}},
 		{"secrets_command_bar", []string{"7", ":", "p", "a", "s", "s", " ", "b"}},

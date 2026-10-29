@@ -76,7 +76,7 @@ var aliases = []alias{
 	// --secret-mode the interactive command is gone (the row after this one).
 	{Old: []string{"secret", "fix"}, New: []string{"secret", "allow"}, Hint: "secret allow <each finding>", Rewrite: secretFixRewrite("allowlist")},
 	{Old: []string{"secret", "fix"}, New: []string{"ignore", "add"}, Hint: "ignore add <file of each finding>", Rewrite: secretFixRewrite("exclude")},
-	{Old: []string{"secret", "fix"}, Removed: `ws: "secret fix" is gone: use ws secret allow, ws ignore add, ws secret mute, or ws secret store`},
+	{Old: []string{"secret", "fix"}, Removed: `ws: "secret fix" is gone: use ws secret allow, ws ignore add, ws secret skip, or ws secret store`},
 	{Old: []string{"secret", "setup"}, New: []string{"pass", "init"}},
 	{Old: []string{"secret", "status"}, New: []string{"pass", "status"}},
 	{Old: []string{"secret", "git", "remote"}, New: []string{"pass", "backup", "enable"}, Hint: "pass backup enable --remote <url>", Rewrite: gitRemoteRewrite([]string{"pass", "backup", "enable"})},

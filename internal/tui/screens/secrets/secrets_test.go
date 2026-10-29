@@ -82,6 +82,21 @@ func TestAllowActsOnTheMarkedRowsElseTheCursor(t *testing.T) {
 	}
 }
 
+// TestMuteActsOnTheMarkedRowsElseTheCursor: m mutes the cursor row with no
+// marks, or the marked rows when some are marked — the same pattern as a.
+// It stays visible in the checklist rather than disappearing like allow.
+func TestMuteActsOnTheMarkedRowsElseTheCursor(t *testing.T) {
+	m := newModel(t, healthy)
+	got := view(typed(m, "m"))
+	if !strings.Contains(got, "Projects/api/.env:3") || strings.Contains(got, "token.txt") {
+		t.Fatalf("m with no marks should mute the cursor row only:\n%s", got)
+	}
+	got = view(typed(m, "down", "space", "up", "m"))
+	if !strings.Contains(got, "token.txt:7") || strings.Contains(got, ".env:3") {
+		t.Fatalf("m with marks should mute the marked rows:\n%s", got)
+	}
+}
+
 func TestIgnoreActsOnTheSelectedRows(t *testing.T) {
 	m := newModel(t, healthy)
 	got := view(typed(m, "space", "down", "space", "i"))
@@ -92,13 +107,9 @@ func TestIgnoreActsOnTheSelectedRows(t *testing.T) {
 
 func TestMuteAndStoreTakeTheCursorRow(t *testing.T) {
 	m := newModel(t, healthy)
-	// Marks do not widen a cursor-scoped key: the prompt is about the cursor row.
+	// Marks do not widen a cursor-scoped key: s's prompt is about the cursor row.
 	marked := typed(m, "down", "space", "up")
-	got := view(typed(marked, "m"))
-	if !strings.Contains(got, ws+"/Projects/api") || strings.Contains(got, "Notes/keys") {
-		t.Fatalf("m should prompt with the cursor row's directory:\n%s", got)
-	}
-	got = view(typed(marked, "s"))
+	got := view(typed(marked, "s"))
 	if !strings.Contains(got, "Entry name for "+ws+"/Projects/api/.env:3") {
 		t.Fatalf("s should prompt for the cursor row's entry:\n%s", got)
 	}
@@ -134,7 +145,7 @@ func TestOldKeysAreGone(t *testing.T) {
 
 func TestCommands(t *testing.T) {
 	m := newModel(t, healthy)
-	want := []string{"unmute", "pass init", "pass status", "pass audit", "pass backup enable", "pass backup disable",
+	want := []string{"skip", "unskip", "pass init", "pass status", "pass audit", "pass backup enable", "pass backup disable",
 		"pass backup status", "pass backup push", "credential enable", "credential disable", "credential status"}
 	var got []string
 	for _, c := range m.Commands() {
@@ -175,9 +186,13 @@ func TestCommands(t *testing.T) {
 	if after, _ := run("pass backup disable"); !strings.Contains(view(after), "Disable the pass backup") {
 		t.Errorf("pass backup disable should open a checklist:\n%s", view(after))
 	}
-	// unmute needs a directory.
-	if _, cmd := run("unmute"); cmd == nil {
-		t.Error("unmute without a directory should say so")
+	// skip with no directory prompts for one.
+	if after, _ := run("skip"); !after.modal.Open() {
+		t.Error("skip without a directory should prompt for one")
+	}
+	// unskip needs a directory.
+	if _, cmd := run("unskip"); cmd == nil {
+		t.Error("unskip without a directory should say so")
 	}
 }
 

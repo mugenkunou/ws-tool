@@ -70,8 +70,10 @@ var resolvers = map[string]resolver{
 	"secret show":   fileTargets,
 	"secret allow":  fileTargets,
 	"secret store":  fileTargets,
-	"secret mute":   dirTargets,
-	"secret unmute": dirTargets,
+	"secret mute":   fileTargets,
+	"secret unmute": fileTargets,
+	"secret skip":   dirTargets,
+	"secret unskip": dirTargets,
 
 	"cron add": cronTargets,
 	"cron rm":  cronTargets,

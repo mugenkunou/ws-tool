@@ -28,6 +28,7 @@ func Schema(v resource.View, workspacePath string) resource.Schema[Violation] {
 			{Key: "type", Title: "Type", Value: func(x Violation) any { return x.Type }},
 			{Key: "group", Title: "Group", Value: func(x Violation) any { return x.Group }},
 			{Key: "message", Title: "Message", Value: func(x Violation) any { return x.Message }},
+			{Key: "muted", Title: "Muted", Value: func(x Violation) any { return x.Muted }},
 		},
 		Columns: []string{"severity", "location", "snippet"},
 	}

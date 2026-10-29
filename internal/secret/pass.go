@@ -155,10 +155,20 @@ func hasGitRemote(gitConfigPath string) bool {
 	return false
 }
 
+// resolveRoot follows root if it is itself a symlink (as the ws symlink
+// convention makes ~/.password-store), so WalkDir sees the real directory
+// instead of a single opaque "L---" entry that it never descends into.
+func resolveRoot(root string) string {
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		return resolved
+	}
+	return root
+}
+
 // countGPGFiles counts .gpg files in the store directory.
 func countGPGFiles(root string) int {
 	count := 0
-	filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	filepath.WalkDir(resolveRoot(root), func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -187,7 +197,7 @@ func countGPGFiles(root string) int {
 // those benefit most from having username metadata.
 func auditEntryMetadata(root string) []PassAuditFinding {
 	var findings []PassAuditFinding
-	filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	filepath.WalkDir(resolveRoot(root), func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}

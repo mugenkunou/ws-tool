@@ -143,7 +143,7 @@ func TestStaleAnchors(t *testing.T) {
 	}
 }
 
-func TestMutedBy(t *testing.T) {
+func TestSkippedBy(t *testing.T) {
 	ws := filepath.Join(t.TempDir(), "Workspace")
 	t.Setenv("HOME", filepath.Dir(ws))
 	dirs := []string{"configs", filepath.Join(ws, "abs/dir"), "~/Workspace/tilde"}
@@ -162,21 +162,21 @@ func TestMutedBy(t *testing.T) {
 		"configs2":      {"", false, false},
 		"other/configs": {"", false, false},
 	} {
-		by, exact, ok := MutedBy(ws, dirs, rel)
+		by, exact, ok := SkippedBy(ws, dirs, rel)
 		if by != want.by || exact != want.exact || ok != want.ok {
-			t.Errorf("MutedBy(%q) = %q %v %v, want %+v", rel, by, exact, ok, want)
+			t.Errorf("SkippedBy(%q) = %q %v %v, want %+v", rel, by, exact, ok, want)
 		}
 	}
 }
 
-func TestMuteUnmuteActions(t *testing.T) {
+func TestSkipUnskipActions(t *testing.T) {
 	ws, cfg := newConfig(t)
 	home := filepath.Dir(ws)
 	t.Setenv("HOME", home)
-	if err := MuteAction(cfg, ws, "vendor").Execute(); err != nil {
+	if err := SkipAction(cfg, ws, "vendor").Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if err := MuteAction(cfg, ws, "vendor").Execute(); err != nil { // idempotent
+	if err := SkipAction(cfg, ws, "vendor").Execute(); err != nil { // idempotent
 		t.Fatal(err)
 	}
 	c, _ := wsconfig.Load(cfg)
@@ -187,7 +187,7 @@ func TestMuteUnmuteActions(t *testing.T) {
 	if err := wsconfig.Save(cfg, c); err != nil {
 		t.Fatal(err)
 	}
-	if a := UnmuteAction(cfg, ws, "vendor"); a.Description != "Unmute "+filepath.Join(ws, "vendor")+" in secret scans" {
+	if a := UnskipAction(cfg, ws, "vendor"); a.Description != "Scan "+filepath.Join(ws, "vendor")+" again" {
 		t.Fatalf("description %q", a.Description)
 	} else if err := a.Execute(); err != nil {
 		t.Fatal(err)
@@ -195,6 +195,28 @@ func TestMuteUnmuteActions(t *testing.T) {
 	c, _ = wsconfig.Load(cfg)
 	if !slices.Equal(c.Secret.SkipDirs, []string{"other"}) {
 		t.Fatalf("only the other entry should stay: %v", c.Secret.SkipDirs)
+	}
+}
+
+func TestMuteUnmuteActions(t *testing.T) {
+	ws, cfg := newConfig(t)
+	v := Violation{Path: "a.env", Line: 1}
+	if err := MuteActions(cfg, ws, []Violation{v})[0].Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if err := MuteActions(cfg, ws, []Violation{v})[0].Execute(); err != nil { // idempotent
+		t.Fatal(err)
+	}
+	c, _ := wsconfig.Load(cfg)
+	if !slices.Equal(c.Secret.Muted, []string{"a.env:1"}) {
+		t.Fatalf("muted: %v", c.Secret.Muted)
+	}
+	if err := UnmuteActions(cfg, ws, []Violation{v})[0].Execute(); err != nil {
+		t.Fatal(err)
+	}
+	c, _ = wsconfig.Load(cfg)
+	if len(c.Secret.Muted) != 0 {
+		t.Fatalf("muted after unmute: %v", c.Secret.Muted)
 	}
 }
 

@@ -485,7 +485,8 @@ valid JSON. `ws config edit` checks before saving.
 | `repo.exclude_dirs` | directories never searched | hand |
 | `repo.max_parallel` | reserved: fleet commands run one repo at a time | hand |
 | `secret.allowlist` | findings marked as false positives (`file:line` anchors) | `secret allow`, `secret store` |
-| `secret.skip_dirs` | directories secret scanning skips (muted) | `secret mute\|unmute` |
+| `secret.muted` | findings shown at a quieter severity; they keep appearing (`file:line` anchors) | `secret mute\|unmute` |
+| `secret.skip_dirs` | directories secret scanning skips entirely | `secret skip\|unskip` |
 | `pass.pass_entry` | the pass entry with the API token for the pass backup's visibility check | `pass backup enable` |
 | `ignore.*` | thresholds for sync warnings | hand |
 | `ignore_rules.exclude` | paths ignored by sync (user rules, on top of the built-in template) | `ignore add\|rm` |
@@ -623,7 +624,8 @@ prints help.
 | `open` | open a directory in your editor (§4.10) | scratch |
 | `enable` / `disable` | switch an integration on or off | trash, credential, completion, pass backup |
 | `status` | the health of an integration (not a list of rows) | trash, credential, pass, backup, sync |
-| `mute` / `unmute` | hide / show warnings for a path and everything under it; nothing else changes | ignore, secret |
+| `mute` / `unmute` | hide / show a warning or finding at a quieter severity; it still appears, nothing else changes | ignore (a path and everything under it), secret (one finding) |
+| `skip` / `unskip` | stop / resume scanning a directory entirely; nothing under it is read | secret |
 | `prune` | delete rows by age (`--older-than`) | trash |
 | `run` | execute now | repo (a command in each repo), cron (a job) |
 | `git` | run a git command line, as typed, in each repo | repo |
@@ -695,11 +697,13 @@ ws ignore check <path>                    RO  will this path sync, and which rul
 ws ignore tree [dir] [-L n]               RO  browse the tree with sync status
 ws ignore edit                            RW  edit the rules in your editor
 
-ws secret ls                              RO  secret findings
+ws secret ls [--muted]                     RO  secret findings; --muted: the quiet ones
 ws secret show <file:line>                RO  a finding in context
 ws secret allow <file:line…>              RW  mark findings as false positives
-ws secret mute <dir…>                     RW  stop scanning a directory
-ws secret unmute <dir…>                   RW  scan it again
+ws secret mute <file:line…>               RW  hide a finding's severity (it keeps appearing)
+ws secret unmute <file:line…>             RW  show it at full severity again
+ws secret skip <dir…>                     RW  stop scanning a directory
+ws secret unskip <dir…>                   RW  scan it again
 ws secret store <file:line> [entry]       RW  copy the value into pass and allow the finding
 
 ws pass init                              RW  create the pass store (GPG key, git)
@@ -771,7 +775,7 @@ rebase-or-merge question, so an alias would promise the old behaviour.)
 | `ignore fix` | `ignore add`, `ignore mute`, `scratch add`, or shell `rm` |
 | `secret scan` | `secret ls` |
 | `secret scan --pass` | `pass audit` |
-| `secret fix` | `secret allow`, `ignore add`, `secret mute`, `secret store` |
+| `secret fix` | `secret allow`, `ignore add`, `secret skip`, `secret store` |
 | `secret setup`, `secret status` | `pass init`, `pass status` |
 | `secret git remote\|status\|log\|push` | `pass backup enable --remote\|status\|status\|push` |
 | `git-credential-helper setup\|status\|disconnect`, `credential …` | `credential enable\|status\|disable` |
@@ -900,7 +904,7 @@ Then the path is cleaned.
 
 **Config values are the exception.** `ws.json` has no current directory, so relative paths
 in it resolve against `<workspace>`. When a command writes CLI input into config
-(`repo root add`, `secret mute`, `ignore add`), it resolves the input by the rules above,
+(`repo root add`, `secret skip`, `ignore add`), it resolves the input by the rules above,
 then stores it workspace-relative if it is inside the workspace, absolute otherwise.
 
 ### 4.6 Exit codes
@@ -1715,7 +1719,7 @@ workspace path as a second argument`. `symlink edit`, `symlink backup`, `symlink
 
 Skills are the folders of instructions that coding tools such as Claude Code or Codex load
 on demand. A skill is a folder, or a symlink to one, that holds a `SKILL.md` with `name` and
-`description` frontmatter. ws keeps skills on two shelves and links them into the skills
+`description` frontmatter. ws keeps skills on three shelves and links them into the skills
 folder of each tool that should have them:
 
 - **Built-in.** Skills that ship inside the ws binary (today `workspace-write` and
@@ -1724,6 +1728,11 @@ folder of each tool that should have them:
   at that copy. Every `ws skill` command and `ws init` refresh it when the binary's version or
   content differs from what is there, so a new ws updates every tool with no reinstall. Only
   ws writes them; to change one, `eject` it.
+- **Managed.** Skills that a tool binary ships (today `agent-tmux`, via `agent-tmux skill`).
+  ws copies them into `<workspace>/agent/skills/<name>/` and keeps the copy in step with the
+  binary (see `--providers` under `ws skill install`). Before the first copy, `scan`, `show` and
+  the Skills screen list each one greyed: ready to install when the binary is on `PATH`, or
+  "install `<bin>` first" when it is not. Installing a ready one copies it, then links it.
 - **Yours.** Your own skills, in `<workspace>/agent/skills/<name>/`. A skill that is a symlink
   works too: `agent/skills/<name>` may point anywhere.
 
@@ -1864,8 +1873,9 @@ Link review-pr → ~/.claude/skills/review-pr [y/n/a/q] y
 them (today `agent-tmux`); it never scans `PATH`. For each one found on `PATH`, ws runs
 `<bin> skill` (5 s timeout), reads `name` from the SKILL.md frontmatter and writes the output to
 `agent/skills/<name>/SKILL.md`, with a `.ws-provider` file that holds the binary's name. The copy
-is a skill of yours, so `scan` lists it under Yours (`from <bin>`) and `install` links it like any
-other; `--providers --tool <name>` copies and links in one step. It writes only new copies and
+is a managed skill, so `scan` lists it under Managed (`from <bin>`) and `install` links it like any
+other; `ws skill install <name> --tool <t>` and `--providers --tool <name>` copy and link in one
+step. It writes only new copies and
 copies that differ, and only folders that carry `.ws-provider`: a skill of yours with the same
 name is never touched and is reported. A provider that fails or times out is reported and the
 others still run (exit 1 at the end). Run it again after upgrading the binary; `ws skill check`
@@ -2574,17 +2584,23 @@ TUI: `e` hands the terminal to the editor.
 
 `secret` lists secret findings: lines in synced workspace files that look like credentials.
 ws scans every file that syncs (it skips what the ignore rules exclude and the directories
-muted with `secret mute`), and reports at most one finding per line. The Secrets screen
-shows them, under a header with the `pass` and `credential` health.
+skipped with `secret skip`), and reports at most one finding per line. The point of scanning
+is to put potential secrets in front of a human; a pattern match is not proof, so `secret`
+gives you a volume knob as well as a delete key. `mute` is the volume knob: a muted finding
+keeps appearing in `secret ls`, at a quieter severity, exactly like `ignore mute`. `allow` is
+the delete key: for a genuine false positive, it never appears again. The Secrets screen shows
+them, under a header with the `pass` and `credential` health.
 
 | Command | RO/RW | Does | TUI |
 | --- | --- | --- | --- |
-| `ws secret ls` | RO | the findings | screen |
+| `ws secret ls` | RO | the findings (`--muted`: the quiet ones) | screen |
 | `ws secret show <file:line>` | RO | a finding in context | `enter` |
 | `ws secret allow <file:line…>` | RW | mark findings as false positives | `a` |
 | `ws ignore add <file…>` | RW | stop syncing the file (see `ws ignore`) | `i` |
-| `ws secret mute <dir…>` | RW | stop scanning a directory | `m` |
-| `ws secret unmute <dir…>` | RW | scan it again | `:unmute` |
+| `ws secret mute <file:line…>` | RW | hide a finding's severity; it keeps appearing | `m` |
+| `ws secret unmute <file:line…>` | RW | show it at full severity again | `m` (toggles) |
+| `ws secret skip <dir…>` | RW | stop scanning a directory entirely | `:skip` |
+| `ws secret unskip <dir…>` | RW | scan it again | `:unskip` |
 | `ws secret store <file:line> [entry]` | RW | copy the value into pass, then allow the finding | `s` |
 
 #### Findings and anchors
@@ -2596,37 +2612,43 @@ shows them, under a header with the `pass` and `credential` health.
 - **Not a finding:** comment lines (`#`, `//`, `--`, `/*`, `*`, `;`, `rem`); placeholder
   values (`<…>`, `${…}`, `{{…}}`, `changeme`, `example`, `xxx`, `your_password`, `TODO`, …);
   values of 8 or more characters with low entropy or a repeating pattern; lines that are not
-  valid UTF-8 or contain NUL. Every finding is CRITICAL.
+  valid UTF-8 or contain NUL. Every finding is WARNING, or INFO when it is muted.
 - **Anchors.** A finding is named by its location, `file:line`. As an argument, the file part
   resolves like any path (§4.5): `/home/user/Workspace/configs/myapp/app.properties:3`,
   `./app.properties:3`. ws stores it workspace-relative: `configs/myapp/app.properties:3`.
-- **An allow covers a line number, not its content.** It survives edits that keep the
-  finding on the same line. When lines are inserted or removed above it, the finding moves,
-  appears again at its new line, and needs another `secret allow`. The old anchor is then
-  stale, and the next `secret allow` drops it. If an allowed line later holds a different
-  secret, the allow still hides it.
+- **An allow or a mute covers a line number, not its content.** Either survives edits that
+  keep the finding on the same line. When lines are inserted or removed above it, the finding
+  moves, appears again at its new line, and needs another `secret allow` or `secret mute`. The
+  old anchor is then stale: the next `secret allow` drops stale anchors from `secret.allowlist`
+  automatically (unlike `secret.muted`, which nothing prunes yet — a stale muted anchor just
+  sits there unused). If an allowed or muted line later holds a different secret, the allow or
+  mute still covers it.
 
 #### `ws secret ls`
 
 ```text
-ws secret ls [--skip-dir <dir>]… [--filter <expr>] [--sort <fields>] [--wide] [--json]
+ws secret ls [--muted] [--skip-dir <dir>]… [--filter <expr>] [--sort <fields>] [--wide] [--json]
 ```
 
-Lists the findings that are not allowed. It never writes `ws.json` (decision: listing has no side effects).
+Lists the findings that are not allowed. A muted finding (anchor in `secret.muted`) is left out
+of the default list — it still exists, it is just not clutter — and `--muted` shows only those,
+at their quieter severity. It never writes `ws.json` (decision: listing has no side effects).
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
+| `--muted` | off | the muted findings instead of the rest |
 | `--skip-dir <dir>` | none | also skip this directory, for this run only (repeatable) |
 | `--filter`, `--sort`, `--wide` | — | as in §4.3 |
 
 Fields: `severity`, `location` (`/abs/file:line`), `snippet` (Match, the trimmed line), `path`,
-`line`, `type`, `group`, `message`. Default columns: severity, location, snippet.
+`line`, `type`, `group`, `message`, `muted`. Default columns: severity, location, snippet.
 
 ```text
 $ ws secret ls
 SEVERITY  LOCATION                                              MATCH
-CRITICAL  /home/user/Workspace/configs/myapp/app.properties:3   password=hunter2
-CRITICAL  /home/user/Workspace/notes/deploy.md:14               token: ghp_x8Kq…
+WARNING   /home/user/Workspace/configs/myapp/app.properties:3   password=hunter2
+WARNING   /home/user/Workspace/notes/deploy.md:14               token: ghp_x8Kq…
+3 muted findings: ws secret ls --muted
 ```
 
 JSON: `secret.ls`. `data` is the array of records (decision). The pass and credential data
@@ -2636,7 +2658,8 @@ are in `pass status`, `pass audit` and `credential status`. `skipped_dirs` is `s
 Exit: 0 with or without findings; 1 on bad flags, an unknown field, or a `--skip-dir`
 outside the workspace.
 
-TUI: the screen.
+TUI: the screen; every finding is shown, muted rows styled quietly rather than split into a
+separate view (there being just one more severity level, not three views as in `ignore`).
 
 #### `ws secret show`
 
@@ -2649,7 +2672,7 @@ marked.
 
 ```text
 $ ws secret show ~/Workspace/configs/myapp/app.properties:3
-/home/user/Workspace/configs/myapp/app.properties:3  CRITICAL  potential secret detected
+/home/user/Workspace/configs/myapp/app.properties:3  WARNING  potential secret detected
      1  # app settings
      2  user=admin
  →   3  password=hunter2
@@ -2693,40 +2716,85 @@ TUI: `a` on the selected rows. Secrets has nothing to add, so here `a` means all
 #### `ws secret mute`
 
 ```text
-ws secret mute <dir…> [--dry-run]
+ws secret mute <file:line…> [--dry-run]
 ```
 
-Adds directories to `ws.json` `secret.skip_dirs`, stored workspace-relative. `secret ls` does
-not scan muted directories. Like `ignore mute`, this does not change what syncs.
+Adds finding anchors to `ws.json` `secret.muted`. Unlike `allow`, a muted finding is never
+dropped from `secret ls` — it just moves out of the default list and into `--muted` (see
+above), at a quieter severity (`INFO`). The point is a volume knob, not a delete key: "I
+looked at this, it's probably fine, but it's not worth hiding the way a false positive is."
+At least one target is required (decision: mirrors `secret allow`).
 
-Each target must be an existing directory inside the workspace, and not the workspace itself.
-A directory that is already muted, by itself or by a parent, gets no action.
+Each target must be a current finding. An already-muted finding gets no action.
 
-Plan: one action per directory, pre-checked: `Mute /home/user/Workspace/references/vendor in secret scans`.
+Plan: one action per finding, pre-checked:
+`Mute /home/user/Workspace/references/vendor/README.md:12 (it keeps appearing, quietly)`.
 
 JSON: `secret.mute`, `data.actions`.
 
 Exit: 0, 1, 3.
 
-TUI: `m` prompts for a directory, pre-filled with the cursor finding's directory.
+TUI: `m` on the selected rows, toggling: an unmuted row mutes, a muted row unmutes. Secrets'
+`m` always meant "hide the warning, don't delete anything" even before the anchor-level mute
+existed, so this reuses the key rather than adding a new one.
 
 #### `ws secret unmute`
 
 ```text
-ws secret unmute <dir…> [--dry-run]
+ws secret unmute <file:line…> [--dry-run]
 ```
 
-Removes directories from `secret.skip_dirs`, however the entry is written there
-(relative, absolute or `~`). If the directory is muted by a parent entry, ws names the parent
-and changes nothing. A directory that is not muted means nothing to do.
+Removes finding anchors from `secret.muted`, so they appear at full severity again. A target
+that is not currently muted gets no action.
 
-Plan: one action per directory, pre-checked: `Unmute /home/user/Workspace/references/vendor in secret scans`.
+Plan: one action per finding, pre-checked: `Unmute /home/user/Workspace/references/vendor/README.md:12`.
 
 JSON: `secret.unmute`, `data.actions`.
 
 Exit: 0, 1, 3.
 
-TUI: `:unmute <dir>`.
+TUI: `m` (it toggles both ways).
+
+#### `ws secret skip`
+
+```text
+ws secret skip <dir…> [--dry-run]
+```
+
+Adds directories to `ws.json` `secret.skip_dirs`, stored workspace-relative. `secret ls` does
+not scan skipped directories at all — nothing under one is read, so a finding there can never
+appear, even muted. This is the harsher, directory-level opt-out: for a genuinely noisy
+non-code tree (a vendor dump, an archive), not for "I looked at this one line." Like
+`ignore mute`, this does not change what syncs.
+
+Each target must be an existing directory inside the workspace, and not the workspace itself.
+A directory that is already skipped, by itself or by a parent, gets no action.
+
+Plan: one action per directory, pre-checked: `Skip /home/user/Workspace/references/vendor in secret scans`.
+
+JSON: `secret.skip`, `data.actions`.
+
+Exit: 0, 1, 3.
+
+TUI: `:skip` prompts for a directory, pre-filled with the cursor finding's directory; `:skip <dir>` skips it directly.
+
+#### `ws secret unskip`
+
+```text
+ws secret unskip <dir…> [--dry-run]
+```
+
+Removes directories from `secret.skip_dirs`, however the entry is written there
+(relative, absolute or `~`). If the directory is skipped by a parent entry, ws names the parent
+and changes nothing. A directory that is not skipped means nothing to do.
+
+Plan: one action per directory, pre-checked: `Scan /home/user/Workspace/references/vendor again`.
+
+JSON: `secret.unskip`, `data.actions`.
+
+Exit: 0, 1, 3.
+
+TUI: `:unskip <dir>`.
 
 #### `ws secret store`
 
@@ -4395,12 +4463,13 @@ the pass store isn't in the workspace, the header ends with a dim `ℹ no worksp
 | `enter` | show the finding in context | cursor |
 | `a` | allow (false positive) | selected |
 | `i` | ignore the file (stop syncing it) | selected |
-| `m` | mute a directory: prompt pre-filled with the file's directory | cursor |
+| `m` | mute, toggling: an unmuted row mutes, a muted row unmutes | selected |
 | `s` | store the value in pass: prompt for the entry name | cursor |
 
-`:` commands: `unmute <dir>`, `pass init`, `pass status`, `pass audit`, `pass backup enable`,
-`pass backup disable`, `pass backup status`, `pass backup push`, `credential enable`,
-`credential disable`, `credential status`.
+`:` commands: `skip [dir]` (prompts when no directory is given, pre-filled with the cursor
+finding's directory), `unskip <dir>`, `pass init`, `pass status`, `pass audit`,
+`pass backup enable`, `pass backup disable`, `pass backup status`, `pass backup push`,
+`credential enable`, `credential disable`, `credential status`.
 
 Here `a` means allow, because Secrets has nothing to add. It's the one screen where a
 global letter takes the screen's own verb, and the footer says "a allow".

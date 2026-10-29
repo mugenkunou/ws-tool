@@ -180,13 +180,18 @@ var commands = []command{
 		Flags: []flagDoc{{Name: "-L", Short: "-L", Arg: "<n>", Desc: "show n levels below <dir>"}}},
 	{Path: []string{"ignore", "edit"}, Summary: "edit the rules in your editor", Flags: []flagDoc{editorFlag}},
 
-	{Path: []string{"secret", "ls"}, Summary: "secret findings", RO: true,
-		Flags:  []flagDoc{{Name: "--skip-dir", Arg: "<dir>", Desc: "also skip this directory, for this run only (repeatable)"}},
+	{Path: []string{"secret", "ls"}, Summary: "secret findings; --muted: muted findings", RO: true,
+		Flags: []flagDoc{
+			{Name: "--muted", Desc: "the muted findings instead of the rest"},
+			{Name: "--skip-dir", Arg: "<dir>", Desc: "also skip this directory, for this run only (repeatable)"},
+		},
 		Fields: fieldsOf(func() resource.Schema[secret.Violation] { return secret.Schema(resource.CLIView(), "") })},
 	{Path: []string{"secret", "show"}, Args: "<file:line>", Summary: "a finding in context", RO: true},
 	{Path: []string{"secret", "allow"}, Args: "<file:line…>", Summary: "mark findings as false positives"},
-	{Path: []string{"secret", "mute"}, Args: "<dir…>", Summary: "stop scanning a directory"},
-	{Path: []string{"secret", "unmute"}, Args: "<dir…>", Summary: "scan it again"},
+	{Path: []string{"secret", "mute"}, Args: "<file:line…>", Summary: "hide a finding's severity (it keeps appearing)"},
+	{Path: []string{"secret", "unmute"}, Args: "<file:line…>", Summary: "show it at full severity again"},
+	{Path: []string{"secret", "skip"}, Args: "<dir…>", Summary: "stop scanning a directory"},
+	{Path: []string{"secret", "unskip"}, Args: "<dir…>", Summary: "scan it again"},
 	{Path: []string{"secret", "store"}, Args: "<file:line> [entry]", Summary: "copy the value into pass and allow the finding"},
 
 	{Path: []string{"pass", "init"}, Summary: "create the pass store (GPG key, git)"},
