@@ -68,7 +68,6 @@ var resolvers = map[string]resolver{
 
 	"secret show":   fileTargets,
 	"secret allow":  fileTargets,
-	"secret store":  fileTargets,
 	"secret mute":   fileTargets,
 	"secret unmute": fileTargets,
 	"secret skip":   dirTargets,

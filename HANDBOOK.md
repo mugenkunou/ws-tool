@@ -484,7 +484,7 @@ valid JSON. `ws config edit` checks before saving.
 | `repo.roots` | directories searched for git repos | `repo root add\|rm` |
 | `repo.exclude_dirs` | directories never searched | hand |
 | `repo.max_parallel` | reserved: fleet commands run one repo at a time | hand |
-| `secret.allowlist` | findings marked as false positives (`file:line` anchors) | `secret allow`, `secret store` |
+| `secret.allowlist` | findings marked as false positives (`file:line` anchors) | `secret allow` |
 | `secret.muted` | findings shown at a quieter severity; they keep appearing (`file:line` anchors) | `secret mute\|unmute` |
 | `secret.skip_dirs` | directories secret scanning skips entirely | `secret skip\|unskip` |
 | `pass.pass_entry` | the pass entry with the API token for the pass backup's visibility check | `pass backup enable` |
@@ -599,8 +599,8 @@ such as `rclone bisync`.
 | `session` | terminal sessions and their recordings, owned by agent-tmux: `ws session …` is `agent-tmux …` | Sessions |
 | `ignore` | what the sync client syncs: ignore rules, muted directories, sync warnings | Ignore |
 | `secret` | secret findings in workspace files | Secrets |
-| `pass` | the pass(1) password store | Secrets (header, `:pass …`) |
-| `credential` | ws as git's credential helper, backed by pass | Secrets (header, `:credential …`) |
+| `pass` | the pass(1) password store | Pass |
+| `credential` | ws as git's credential helper, backed by pass | Credentials |
 | `cron` | ws-managed cron jobs | Cron |
 | `sync` | the one-way mirror of the workspace for folder-sync clients (`sync.mirror.target`) | Sync |
 | `trash` | the XDG trash and the soft-delete integrations | Trash |
@@ -702,7 +702,6 @@ ws secret mute <file:line…>               RW  hide a finding's severity (it ke
 ws secret unmute <file:line…>             RW  show it at full severity again
 ws secret skip <dir…>                     RW  stop scanning a directory
 ws secret unskip <dir…>                   RW  scan it again
-ws secret store <file:line> [entry]       RW  copy the value into pass and allow the finding
 
 ws pass init                              RW  create the pass store (GPG key, git)
 ws pass status                            RO  store, git, remote and credential-helper health
@@ -773,7 +772,7 @@ rebase-or-merge question, so an alias would promise the old behaviour.)
 | `ignore fix` | `ignore add`, `ignore mute`, `scratch add`, or shell `rm` |
 | `secret scan` | `secret ls` |
 | `secret scan --pass` | `pass audit` |
-| `secret fix` | `secret allow`, `ignore add`, `secret skip`, `secret store` |
+| `secret fix` | `secret allow`, `ignore add`, `secret skip` |
 | `secret setup`, `secret status` | `pass init`, `pass status` |
 | `secret git remote\|status\|log\|push` | `pass backup enable --remote\|status\|status\|push` |
 | `git-credential-helper setup\|status\|disconnect`, `credential …` | `credential enable\|status\|disable` |
@@ -2547,7 +2546,7 @@ is to put potential secrets in front of a human; a pattern match is not proof, s
 gives you a volume knob as well as a delete key. `mute` is the volume knob: a muted finding
 keeps appearing in `secret ls`, at a quieter severity, exactly like `ignore mute`. `allow` is
 the delete key: for a genuine false positive, it never appears again. The Secrets screen shows
-them, under a header with the `pass` and `credential` health.
+them. Pass and credential health have their own screens, Pass and Credentials.
 
 | Command | RO/RW | Does | TUI |
 | --- | --- | --- | --- |
@@ -2559,7 +2558,6 @@ them, under a header with the `pass` and `credential` health.
 | `ws secret unmute <file:line…>` | RW | show it at full severity again | `m` (toggles) |
 | `ws secret skip <dir…>` | RW | stop scanning a directory entirely | `:skip` |
 | `ws secret unskip <dir…>` | RW | scan it again | `:unskip` |
-| `ws secret store <file:line> [entry]` | RW | copy the value into pass, then allow the finding | `s` |
 
 #### Findings and anchors
 
@@ -2754,60 +2752,26 @@ Exit: 0, 1, 3.
 
 TUI: `:unskip <dir>`.
 
-#### `ws secret store`
-
-```text
-ws secret store <file:line> [entry] [--dry-run]
-```
-
-Copies a finding's value into pass, then allows the finding. It needs an initialized store
-(`ws pass init`) and exactly one target, which must be a current finding.
-
-- **The value** is the text after the keyword and its `:` or `=`, without surrounding quotes
-  or a trailing `#` or `//` comment. A finding without a key and value (a private key
-  header, a bare provider token) has no value to read: ws exits 1, and you store it with
-  `pass insert <entry>`.
-- **The entry name** is `entry`, or else a suggestion: the file's parent directory, the file
-  name without its extension, and the keyword. For example, `configs/myapp/app.properties`
-  with `password=` gives `myapp/app/password`. Spaces, `:` and `\` become `_`, and leading
-  dots are dropped.
-- **An existing entry is never overwritten** (decision). The action fails, and you pick
-  another name.
-
-Plan: one action, pre-checked:
-`Store the value of /home/user/Workspace/configs/myapp/app.properties:3 in pass as myapp/app/password, then allow it`.
-The value goes to `pass insert` on stdin, never on a command line.
-
-The file is not rewritten. The secret stays in it until you change it, so ws ends with a hint:
-replace the value with `$(pass show myapp/app/password)` or an environment variable, and rotate
-the credential if the file has already synced.
-
-JSON: `secret.store`. `data.actions` and `data.entry`.
-
-Exit: 0, 1.
-
-TUI: `s` prompts for the entry name, pre-filled with the suggestion, then shows the checklist.
-
 ---
 
 ### `ws pass`
 
 `pass` is the pass(1) password store on this machine (`$PASSWORD_STORE_DIR`, else
-`~/.password-store`). It holds the values that `secret store` takes out of files, and the git
-tokens that `ws credential` serves. It has no rows: its health is the Secrets header, and
-`:pass …` runs its commands on the Secrets screen. ws runs `pass` and `gpg` to do the work.
+`~/.password-store`). It holds the git tokens that `ws credential` serves and whatever else you keep in it
+(`pass insert <entry>`). The Pass screen lists its health, one fact per row, and `:` runs its
+commands there. ws runs `pass` and `gpg` to do the work.
 The `pass` commands work without an initialized workspace (decision), because the store
 belongs to the machine.
 
 | Command | RO/RW | Does | TUI |
 | --- | --- | --- | --- |
-| `ws pass init` | RW | create the store with a GPG key, and turn on git versioning | `:pass init` |
-| `ws pass status` | RO | gpg, pass, store, git, remote, credential helper | Secrets header, `:pass status` |
-| `ws pass audit` | RO | problems with the store and its entries | `:pass audit` |
-| `ws pass backup enable [--remote <url>]` | RW | set up the private git backup | `:pass backup enable` |
-| `ws pass backup disable` | RW | stop backing up | `:pass backup disable` |
-| `ws pass backup status` | RO | remote, ahead/behind, recent commits | `:pass backup status` |
-| `ws pass backup push` | RW | commit anything pending and push | `:pass backup push` |
+| `ws pass init` | RW | create the store with a GPG key, and turn on git versioning | `:init` |
+| `ws pass status` | RO | gpg, pass, store, git, remote, credential helper | Pass screen, `:status` |
+| `ws pass audit` | RO | problems with the store and its entries | `:audit` |
+| `ws pass backup enable [--remote <url>]` | RW | set up the private git backup | `:backup enable` |
+| `ws pass backup disable` | RW | stop backing up | `:backup disable` |
+| `ws pass backup status` | RO | remote, ahead/behind, recent commits | `:backup status` |
+| `ws pass backup push` | RW | commit anything pending and push | `:backup push` |
 
 #### `ws pass init`
 
@@ -2867,8 +2831,8 @@ JSON: `pass.status`. Keys: `gpg_available`, `pass_installed`, `initialized`, `st
 
 Exit: 0. A missing piece is reported, not an error.
 
-TUI: the Secrets header shows it on one line (`✔ pass  ✔ store (42 entries)  ✔ git  ▲ no
-remote  ✔ credential helper`). `:pass status` opens the full report as a view.
+TUI: the Pass screen lists it, one row per fact (gpg, pass, store, git, remote, workspace
+copy). `:status` opens the full report as a view.
 
 #### `ws pass audit`
 
@@ -2891,7 +2855,7 @@ findings).
 
 Exit: 0 with or without findings.
 
-TUI: `:pass audit` opens the findings as a view; `esc` returns.
+TUI: `:audit` opens the findings as a view; `esc` returns.
 
 #### `ws pass backup`
 
@@ -3058,7 +3022,7 @@ ws suggests this gently, and only where you'd look anyway:
   When the store is already a symlink into the workspace, the line reads
   `✔ workspace copy  /home/user/Workspace/symlinks/home/.password-store`.
 - `pass init` and `pass backup enable` end with the same one-line tip.
-- The Secrets header ends with a dim `ℹ no workspace copy`.
+- The Pass screen ends with a `workspace copy` row, empty when there is none.
 - The Dashboard lists it as advice: last, at info level, never as a warning (§6.5). `enter`
   pre-fills the command in the command bar.
 
@@ -3070,15 +3034,15 @@ report it. (decision, by the user: advise without shouting.)
 ### `ws credential`
 
 `credential` is ws acting as git's credential helper: when git needs HTTPS credentials, it
-asks ws, and ws answers from pass. It has no rows: its health shows in the Secrets header,
-and `:credential …` runs its commands on the Secrets screen. It works without a workspace.
+asks ws, and ws answers from pass. The Credentials screen lists its health (gpg, pass, store, helper), and `:` runs its
+commands there. It works without a workspace.
 In a workspace, `enable` and `status` also look at the remotes of the workspace repos.
 
 | Command | RO/RW | Does | TUI |
 | --- | --- | --- | --- |
-| `ws credential enable` | RW | make git use ws (pass) for credentials | `:credential enable` |
-| `ws credential disable` | RW | stop it | `:credential disable` |
-| `ws credential status` | RO | helper config, pass entries, remote coverage | Secrets header, `:credential status` |
+| `ws credential enable` | RW | make git use ws (pass) for credentials | `:enable` |
+| `ws credential disable` | RW | stop it | `:disable` |
+| `ws credential status` | RO | helper config, pass entries, remote coverage | Credentials screen, `:status` |
 
 #### Lookup
 
@@ -3165,7 +3129,7 @@ JSON: `credential.status`. Keys: `connected`, `helper`, `pass` (the `pass status
 
 Exit: 0.
 
-TUI: the Secrets header shows `credential helper` connected or not. `:credential status` shows
+TUI: the Credentials screen shows `credential helper` connected or not. `:status` shows
 the full report, paged.
 
 #### Plumbing: `ws git-credential-helper get|store|erase`
@@ -3173,7 +3137,7 @@ the full report, paged.
 These are what git runs. They are hidden and unchanged, never print anything except the
 answer, and need no workspace. `get` reads git's request (`protocol=`, `host=`, `path=`) on
 stdin and prints `username=` and `password=` by the lookup above. `store` and `erase` read
-stdin and do nothing: entries are managed with `ws secret store`, `ws credential enable` or
+stdin and do nothing: entries are managed with `ws credential enable` or
 `pass insert`. Any other operation exits 0 silently. `ws credential get|store|erase` does the
 same, for git configs written by older versions (decision).
 
@@ -4113,7 +4077,7 @@ ws tui
 ```
 
 Opens the interactive terminal UI on the Dashboard. The screens are Dashboard, Repos, Symlinks,
-Scratch, Sessions, Ignore, Sync, Secrets, Cron, Trash, Skills and Workspace, reached with tab,
+Scratch, Sessions, Ignore, Sync, Secrets, Pass, Credentials, Cron, Trash, Skills and Workspace, reached with tab,
 shift+tab and `:<screen>`. It honours
 `--workspace`. If the workspace is not initialized, it opens the setup screen. stdin
 and stdout must be a terminal.
@@ -4233,15 +4197,15 @@ a add • ctrl+d unlink • l link • space mark … • tab screens • : comm
 
 ### 6.2 Screens
 
-Tab order: Dashboard, Repos, Symlinks, Scratch, Sessions, Ignore, Sync, Secrets, Cron, Trash,
-Skills, Workspace. Every screen except the Dashboard is the list of its noun's rows, the same
+Tab order: Dashboard, Repos, Symlinks, Scratch, Sessions, Ignore, Sync, Secrets, Pass,
+Credentials, Cron, Trash, Skills, Workspace. Every screen except the Dashboard is the list of its noun's rows, the same
 rows as `ws <noun> ls`. Workspace is ws's own settings: the commands without a noun
 (`version`, `layout`, `config`, `completion`). `tab` and `shift+tab` switch screens; the
 active tab is a reversed block. When the titles do not fit, the tabs drop to icons and the
 active tab keeps its title.
 
-Each screen is named after a CLI noun or hosts nouns that have no screen: Secrets hosts
-`pass` and `credential`, Workspace hosts `config`, `completion`, `version` and `layout`.
+Each screen is named after a CLI noun or hosts nouns that have no screen: Credentials hosts
+`git-credential-helper`, Workspace hosts `config`, `completion`, `version` and `layout`.
 Every CLI noun has exactly one such home (§9.10).
 
 ### 6.3 Global keys
@@ -4411,8 +4375,7 @@ view and the counts: `Warnings 12 · Muted 47 · Ignored 3,210`.
 
 `:` commands: `rm <path>`, `check <path>`, `tree [dir]` (paged), `lint <path>`.
 
-**Secrets.** The header shows pass store, git, remote and credential-helper health. When
-the pass store isn't in the workspace, the header ends with a dim `ℹ no workspace copy`.
+**Secrets.** The findings, and nothing else: pass and credential health are on their own screens.
 
 | Key | Does | Rows |
 | --- | --- | --- |
@@ -4420,12 +4383,17 @@ the pass store isn't in the workspace, the header ends with a dim `ℹ no worksp
 | `a` | allow (false positive) | selected |
 | `i` | ignore the file (stop syncing it) | selected |
 | `m` | mute, toggling: an unmuted row mutes, a muted row unmutes | selected |
-| `s` | store the value in pass: prompt for the entry name | cursor |
 
 `:` commands: `skip [dir]` (prompts when no directory is given, pre-filled with the cursor
-finding's directory), `unskip <dir>`, `pass init`, `pass status`, `pass audit`,
-`pass backup enable`, `pass backup disable`, `pass backup status`, `pass backup push`,
-`credential enable`, `credential disable`, `credential status`.
+finding's directory), `unskip <dir>`.
+
+**Pass.** One row per fact about the store: gpg, pass, store, git, remote, workspace copy.
+Rows are not acted on; the screen is its `:` commands: `init`, `status`, `audit`,
+`backup enable`, `backup disable`, `backup status`, `backup push`. `init` and
+`backup enable` hand the terminal to the CLI wizard.
+
+**Credentials.** One row per fact about the helper: gpg, pass, store, credential helper.
+`:` commands: `enable`, `disable` (wizards) and `status` (paged).
 
 Here `a` means allow, because Secrets has nothing to add. It's the one screen where a
 global letter takes the screen's own verb, and the footer says "a allow".
@@ -4509,7 +4477,7 @@ that fails to load is an error. Completion off in `$SHELL` is advice: `enter` pr
 | `:<screen>` | switch screen. Any unique prefix of the noun or title works: `:rep`, `:dot`, `:sess`, `:dash` |
 | `:<verb> [args]` | the active screen's command, the CLI words after the noun: `:link` on Symlinks is `ws symlink link` |
 | `:<noun> <verb> [args]` | switch to the noun's screen and run it there: `:repo git status` |
-| `:<hosted noun> <verb> [args]` | the same, on the screen that hosts the noun: `:pass audit` (Secrets), `:config edit` (Workspace) |
+| `:<hosted noun> <verb> [args]` | the same, on the screen that hosts the noun: `:config edit` (Workspace) |
 | `:help`, `:q` | full help; quit |
 
 While typing, the bar shows the matching completions after the cursor, dimmed. `tab`
@@ -4777,7 +4745,7 @@ and matching. It runs these programs:
 | --- | --- | --- | --- |
 | `git` | git | `repo …`, `pass backup …` | for those commands |
 | `agent-tmux` | [agent-tmux](https://github.com/mugenkunou/agent-tmux) | `ws session …` (exec), the Sessions screen, `ws session` completion | for sessions |
-| `pass`, `gpg` | pass, gnupg | `pass …`, `secret store`, `credential …`, backup tokens | for those commands |
+| `pass`, `gpg` | pass, gnupg | `pass …`, `credential …`, backup tokens | for those commands |
 | `crontab` | cron | `cron …` | for cron |
 | `sh`, `bash` | — | `repo run`, cron job scripts, shell integrations | yes |
 | `sudo` | sudo | symlinks whose host path needs root (`/etc/…`) | for those symlinks |
@@ -5139,8 +5107,8 @@ rows as targets does the same thing.
 
 The TUI and the CLI call the same `internal/` packages. Logic that both need lives in
 `internal/`, not `cmd/`, so they cannot drift (for example `workspace.ResolvePaths`,
-`repo.DescribeSync`, `symlink.Detect`, `secret.ResolveGitToken` and the `secret allow|store`
-mutations, `cron.AddActions` and `RemoveActions`, `trash.Record*Provisions`, and the action
+`repo.DescribeSync`, `symlink.Detect`, `credential.ResolveGitToken` and the `secret allow`
+mutation, `cron.AddActions` and `RemoveActions`, `trash.Record*Provisions`, and the action
 plan types in `internal/plan`). The TUI is built on Charm v2: `charm.land/bubbletea/v2`,
 `charm.land/bubbles/v2` and `charm.land/lipgloss/v2`. The user-facing behaviour is Part 6.
 
@@ -5151,7 +5119,7 @@ plan types in `internal/plan`). The TUI is built on Charm v2: `charm.land/bubble
 | `internal/tui/app` | Root model. Owns the screens (built from `registry.go`), routes messages, handles global keys, lays out header, body, notice and footer, and shows the setup screen when the workspace is not initialized. `coverage.go` and `flags.go` record how the TUI covers each CLI command and flag. |
 | `internal/tui/nav` | The contract between app and screens: the `Screen` enum and its `specs` (icon, title, noun, hosted nouns), the `Component` interface, the Dashboard's `Summary`/`Card`/`Issue`, `ResizeMsg`, `UpMsg`, `GotoMsg`, `RefreshMsg`, `ReloadEnvMsg`, `NoticeMsg`, `CommandMsg`. |
 | `internal/tui/keys` | **Every key binding** (`keys.go`). The app handles `Global`, and each screen and dialog handles its own map. |
-| `internal/tui/screens/<name>` | One package per screen: dashboard, repos, symlinks, scratch, sessions, ignore, sync, secrets, cron, trash, skills, workspace, setup. State is unexported, and outputs are exported `LoadedMsg` types; `card.go` turns a `LoadedMsg` into the screen's Dashboard card. |
+| `internal/tui/screens/<name>` | One package per screen: dashboard, repos, symlinks, scratch, sessions, ignore, sync, secrets, pass, credential, cron, trash, skills, workspace, setup. State is unexported, and outputs are exported `LoadedMsg` types; `card.go` turns a `LoadedMsg` into the screen's Dashboard card. |
 | `internal/tui/cmdbar` | The `:` command bar: a one-line input drawn in place of the footer, with inline completion from the active screen's commands, the screen names and the global commands. It emits `nav.CommandMsg`. |
 | `internal/tui/confirm` | The action-plan checklist: review (toggle), running (one `tea.Cmd` per action), done. Emits `DoneMsg{Result}`. |
 | `internal/tui/prompt`, `choose` | Text input with ghost-panel suggestions (fixed list or async `Completer`), and a single-choice list. |

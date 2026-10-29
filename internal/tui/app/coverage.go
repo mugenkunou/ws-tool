@@ -54,6 +54,7 @@ var CLICoverage = func() []Coverage {
 	shell := "shell integration; nothing to show in a TUI"
 	git := "git plumbing, called by git itself"
 	ws, sy, sec := nav.ScreenWorkspace, nav.ScreenSync, nav.ScreenSecrets
+	pa, crt := nav.ScreenPass, nav.ScreenCredential
 	return []Coverage{
 		{CLI: "init", Screen: ws, Why: Elsewhere, Note: "the TUI shows its setup screen until the workspace is initialized"},
 		{CLI: "version", Screen: ws, Why: List},
@@ -125,26 +126,26 @@ var CLICoverage = func() []Coverage {
 		{CLI: "secret ls", Screen: sec, Why: List}, // --muted: the quiet findings
 		{CLI: "secret show", Screen: sec, Key: se.View},
 		{CLI: "secret allow", Screen: sec, Key: se.Allow},
-		{CLI: "secret mute", Screen: sec, Key: se.Mute},   // toggles mute/unmute on the selected rows
-		{CLI: "secret unmute", Screen: sec, Key: se.Mute}, // same key: a muted row unmutes
+		{CLI: "secret mute", Screen: sec, Key: se.Mute},    // toggles mute/unmute on the selected rows
+		{CLI: "secret unmute", Screen: sec, Key: se.Mute},  // same key: a muted row unmutes
 		{CLI: "secret skip", Screen: sec, Cmd: "skip"},     // checklist
 		{CLI: "secret unskip", Screen: sec, Cmd: "unskip"}, // checklist
-		{CLI: "secret store", Screen: sec, Key: se.Store},
 
-		// pass and credential have no screen: Secrets hosts them (nav.Spec.Hosts).
-		{CLI: "pass init", Screen: sec, Cmd: "pass init"},     // hands over to the CLI wizard
-		{CLI: "pass status", Screen: sec, Cmd: "pass status"}, // a view; the header shows the health
-		{CLI: "pass audit", Screen: sec, Cmd: "pass audit"},
-		{CLI: "pass backup enable", Screen: sec, Cmd: "pass backup enable"}, // hands over
-		{CLI: "pass backup disable", Screen: sec, Cmd: "pass backup disable"},
-		{CLI: "pass backup status", Screen: sec, Cmd: "pass backup status"},
-		{CLI: "pass backup push", Screen: sec, Cmd: "pass backup push"},
-		{CLI: "credential enable", Screen: sec, Cmd: "credential enable"}, // hands over
-		{CLI: "credential disable", Screen: sec, Cmd: "credential disable"},
-		{CLI: "credential status", Screen: sec, Cmd: "credential status"}, // paged
-		{CLI: "git-credential-helper get", Screen: sec, Why: Plumbing, Note: git},
-		{CLI: "git-credential-helper store", Screen: sec, Why: Plumbing, Note: git},
-		{CLI: "git-credential-helper erase", Screen: sec, Why: Plumbing, Note: git},
+		// pass and credential have their own screens (three flat tabs, one per
+		// CLI noun).
+		{CLI: "pass init", Screen: pa, Cmd: "init"}, // hands over to the CLI wizard
+		{CLI: "pass status", Screen: pa, Why: List}, // the screen's header shows the health
+		{CLI: "pass audit", Screen: pa, Cmd: "audit"},
+		{CLI: "pass backup enable", Screen: pa, Cmd: "backup enable"}, // hands over
+		{CLI: "pass backup disable", Screen: pa, Cmd: "backup disable"},
+		{CLI: "pass backup status", Screen: pa, Cmd: "backup status"},
+		{CLI: "pass backup push", Screen: pa, Cmd: "backup push"},
+		{CLI: "credential enable", Screen: crt, Cmd: "enable"}, // hands over
+		{CLI: "credential disable", Screen: crt, Cmd: "disable"},
+		{CLI: "credential status", Screen: crt, Cmd: "status"}, // paged
+		{CLI: "git-credential-helper get", Screen: crt, Why: Plumbing, Note: git},
+		{CLI: "git-credential-helper store", Screen: crt, Why: Plumbing, Note: git},
+		{CLI: "git-credential-helper erase", Screen: crt, Why: Plumbing, Note: git},
 
 		{CLI: "trash ls", Screen: nav.ScreenTrash, Why: List},
 		{CLI: "trash restore", Screen: nav.ScreenTrash, Key: tr.Restore},

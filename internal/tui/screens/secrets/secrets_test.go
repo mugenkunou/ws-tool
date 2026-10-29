@@ -25,13 +25,13 @@ var findings = []secret.Violation{
 	{Severity: "CRITICAL", Path: "Notes/keys/token.txt", Line: 7, Type: "generic", Snippet: "token=abc123"},
 }
 
-func newModel(t *testing.T, health Health) Model {
+func newModel(t *testing.T) Model {
 	t.Helper()
 	t.Setenv("HOME", "/home/tester")
 	e := env.Env{Paths: workspace.Paths{Workspace: ws, Config: ws + "/ws.json"}, Config: wsconfig.Default()}
 	var c nav.Component = New(e)
 	c, _ = c.Update(nav.ResizeMsg{Width: 100, Height: 30})
-	c, _ = c.Update(LoadedMsg{Violations: findings, Health: health})
+	c, _ = c.Update(LoadedMsg{Violations: findings})
 	return c.(Model)
 }
 
@@ -66,10 +66,8 @@ func typed(m Model, ks ...string) Model {
 
 func view(m Model) string { return ansi.Strip(m.View()) }
 
-var healthy = Health{Pass: secret.PassHealth{Installed: true, GPGAvailable: true, Initialized: true, GitBacked: true, EntryCount: 3}}
-
 func TestAllowActsOnTheMarkedRowsElseTheCursor(t *testing.T) {
-	m := newModel(t, healthy)
+	m := newModel(t)
 	// No marks: the cursor row (the first).
 	got := view(typed(m, "a"))
 	if !strings.Contains(got, "Projects/api/.env:3") || strings.Contains(got, "token.txt") {
@@ -86,7 +84,7 @@ func TestAllowActsOnTheMarkedRowsElseTheCursor(t *testing.T) {
 // marks, or the marked rows when some are marked — the same pattern as a.
 // It stays visible in the checklist rather than disappearing like allow.
 func TestMuteActsOnTheMarkedRowsElseTheCursor(t *testing.T) {
-	m := newModel(t, healthy)
+	m := newModel(t)
 	got := view(typed(m, "m"))
 	if !strings.Contains(got, "Projects/api/.env:3") || strings.Contains(got, "token.txt") {
 		t.Fatalf("m with no marks should mute the cursor row only:\n%s", got)
@@ -98,43 +96,22 @@ func TestMuteActsOnTheMarkedRowsElseTheCursor(t *testing.T) {
 }
 
 func TestIgnoreActsOnTheSelectedRows(t *testing.T) {
-	m := newModel(t, healthy)
+	m := newModel(t)
 	got := view(typed(m, "space", "down", "space", "i"))
 	if !strings.Contains(got, "Ignore") || !strings.Contains(got, ".env") || !strings.Contains(got, "token.txt") {
 		t.Fatalf("i should list every marked file:\n%s", got)
 	}
 }
 
-func TestMuteAndStoreTakeTheCursorRow(t *testing.T) {
-	m := newModel(t, healthy)
-	// Marks do not widen a cursor-scoped key: s's prompt is about the cursor row.
-	marked := typed(m, "down", "space", "up")
-	got := view(typed(marked, "s"))
-	if !strings.Contains(got, "Entry name for "+ws+"/Projects/api/.env:3") {
-		t.Fatalf("s should prompt for the cursor row's entry:\n%s", got)
-	}
-}
-
-func TestStoreNeedsAPassStore(t *testing.T) {
-	m := newModel(t, Health{})
-	m, cmd := send(m, kp("s"))
-	if m.CapturesKeys() || cmd == nil {
-		t.Fatalf("s without a store should notify, not prompt")
-	}
-	if msg, ok := cmd().(nav.NoticeMsg); !ok || !strings.Contains(msg.Text, ":pass init") {
-		t.Fatalf("notice: %#v", msg)
-	}
-}
-
 func TestEnterShowsTheFindingInContext(t *testing.T) {
-	m := typed(newModel(t, healthy), "enter")
+	m := typed(newModel(t), "enter")
 	if m.level != levelDetail {
 		t.Fatal("enter should open the detail view")
 	}
 }
 
 func TestOldKeysAreGone(t *testing.T) {
-	m := newModel(t, healthy)
+	m := newModel(t)
 	for _, k := range []string{"l", "L", "e", "p", "D", "g", "v", "o", "S", "C", "c", "X"} {
 		after, cmd := send(m, kp(k))
 		if after.CapturesKeys() || after.level != levelList || (cmd != nil && k != "g") {
@@ -144,9 +121,8 @@ func TestOldKeysAreGone(t *testing.T) {
 }
 
 func TestCommands(t *testing.T) {
-	m := newModel(t, healthy)
-	want := []string{"skip", "unskip", "pass init", "pass status", "pass audit", "pass backup enable", "pass backup disable",
-		"pass backup status", "pass backup push", "credential enable", "credential disable", "credential status"}
+	m := newModel(t)
+	want := []string{"skip", "unskip"}
 	var got []string
 	for _, c := range m.Commands() {
 		got = append(got, c.Name)
@@ -158,34 +134,6 @@ func TestCommands(t *testing.T) {
 	run := func(line string) (Model, tea.Cmd) {
 		return send(m, nav.CommandMsg{Words: strings.Fields(line), Line: line})
 	}
-	if after, _ := run("pass audit"); after.level != levelDetail {
-		t.Error("pass audit should open a view")
-	}
-	if after, _ := run("pass status"); after.level != levelDetail {
-		t.Error("pass status should open a view")
-	}
-	if after, _ := run("pass backup status"); after.level != levelDetail {
-		t.Error("pass backup status should open a view")
-	}
-	for _, line := range []string{"pass init", "pass backup enable", "credential enable", "credential disable", "credential status"} {
-		if after, cmd := run(line); cmd == nil || after.level == levelDetail || after.CapturesKeys() {
-			t.Errorf("%s should hand the terminal over", line)
-		}
-	}
-	// A checklist, not a direct run.
-	noRemote := healthy
-	noRemote.Pass.GitRemote = false
-	if after, _ := send(newModel(t, noRemote), nav.CommandMsg{Words: []string{"pass", "backup", "push"}}); after.CapturesKeys() {
-		t.Error("pass backup push without a remote should not open a checklist")
-	}
-	remote := healthy
-	remote.Pass.GitRemote = true
-	if after, _ := send(newModel(t, remote), nav.CommandMsg{Words: []string{"pass", "backup", "push"}}); !strings.Contains(view(after), "Push the pass store") {
-		t.Errorf("pass backup push should open a checklist:\n%s", view(after))
-	}
-	if after, _ := run("pass backup disable"); !strings.Contains(view(after), "Disable the pass backup") {
-		t.Errorf("pass backup disable should open a checklist:\n%s", view(after))
-	}
 	// skip with no directory prompts for one.
 	if after, _ := run("skip"); !after.modal.Open() {
 		t.Error("skip without a directory should prompt for one")
@@ -196,35 +144,15 @@ func TestCommands(t *testing.T) {
 	}
 }
 
-func TestCommandLeavesTheDetailView(t *testing.T) {
-	m := typed(newModel(t, healthy), "enter")
-	m, _ = send(m, nav.CommandMsg{Words: []string{"pass", "audit"}})
-	if m.detailTitle != "Pass store audit" {
-		t.Fatalf("title %q", m.detailTitle)
-	}
-}
-
 func TestFilterMsgNarrowsTheList(t *testing.T) {
-	m, _ := send(newModel(t, healthy), nav.FilterMsg{Screen: nav.ScreenSecrets, Filter: "path=token"})
+	m, _ := send(newModel(t), nav.FilterMsg{Screen: nav.ScreenSecrets, Filter: "path=token"})
 	if got := view(m); !strings.Contains(got, "token.txt") || strings.Contains(got, ".env") {
 		t.Fatalf("filter not applied:\n%s", got)
 	}
 }
 
-func TestHeaderCue(t *testing.T) {
-	h := healthy
-	if strings.Contains(view(newModel(t, h)), "no workspace copy") {
-		t.Error("cue shown although the store has a workspace copy")
-	}
-	h.CopyCommand = "symlink add ~/.password-store --dir"
-	first := strings.SplitN(view(newModel(t, h)), "\n", 2)[0]
-	if !strings.HasSuffix(strings.TrimSpace(first), "ℹ no workspace copy") {
-		t.Errorf("header should end with the cue:\n%s", first)
-	}
-}
-
 func TestYIsTheCLIJSON(t *testing.T) {
-	m := typed(newModel(t, healthy), "y")
+	m := typed(newModel(t), "y")
 	want, err := json.MarshalIndent(secret.Schema(resource.CLIView(), ws).Record(findings[0]), "", "  ")
 	if err != nil {
 		t.Fatal(err)

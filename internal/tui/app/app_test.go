@@ -16,6 +16,7 @@ import (
 	wscron "github.com/mugenkunou/ws-tool/internal/cron"
 	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/mirror"
+	"github.com/mugenkunou/ws-tool/internal/pass"
 	"github.com/mugenkunou/ws-tool/internal/repo"
 	wsscratch "github.com/mugenkunou/ws-tool/internal/scratch"
 	"github.com/mugenkunou/ws-tool/internal/secret"
@@ -24,8 +25,10 @@ import (
 	wstrash "github.com/mugenkunou/ws-tool/internal/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/credential"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/cron"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
+	passscreen "github.com/mugenkunou/ws-tool/internal/tui/screens/pass"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/repos"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/scratch"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/secrets"
@@ -109,8 +112,9 @@ func fixtures() []tea.Msg {
 		}},
 		secrets.LoadedMsg{
 			Violations: []secret.Violation{{Severity: "CRITICAL", Path: "Projects/api/.env", Line: 3, Snippet: "password=hunter2"}},
-			Health:     secrets.Health{Pass: secret.PassHealth{Installed: true, GPGAvailable: true, Initialized: true, GitBacked: true, EntryCount: 42}},
 		},
+		passscreen.LoadedMsg{Pass: pass.PassHealth{Installed: true, GPGAvailable: true, Initialized: true, GitBacked: true, GitRemote: true, EntryCount: 7, StorePath: "/home/tester/.password-store"}},
+		credential.LoadedMsg{Connected: true, Helper: "ws git-credential-helper", Pass: pass.PassHealth{Installed: true, GPGAvailable: true, Initialized: true}},
 		cron.LoadedMsg{Jobs: []cron.Job{
 			{Name: "pass-backup", Schedule: "0 * * * *", Description: "push the pass store", Installed: true, CrontabOK: true,
 				Interval: time.Hour, LastRun: wscron.RunRecord{Job: "pass-backup", Time: fixedClock().Add(-2 * time.Hour)}},
@@ -620,7 +624,7 @@ func TestDashboardOpensTheScreenAtTheProblem(t *testing.T) {
 // TestDashboardGrid: arrows move spatially between cards and never open a
 // screen; ↑ from the top row returns to the attention list; enter opens.
 func TestDashboardGrid(t *testing.T) {
-	// 3 columns: Repos Symlinks Scratch / Sessions Ignore Sync / Secrets Cron Trash / Skills Workspace
+	// 3 columns: Repos Symlinks Scratch / Sessions Ignore Sync / Secrets Pass Credentials / Cron Trash Skills / Workspace
 	m := loaded(t, 100, 30)
 	selected := func(m Model) string { return focusedCard(t, m) }
 	// Leave the attention list for the grid's first card.
@@ -635,8 +639,8 @@ func TestDashboardGrid(t *testing.T) {
 	}
 	steps := []struct{ key, want string }{
 		{"right", "Symlinks"}, {"right", "Scratch"}, {"right", "Scratch"}, // edge stops
-		{"down", "Sync"}, {"left", "Ignore"}, {"down", "Cron"}, {"down", "Workspace"}, {"down", "Workspace"},
-		{"up", "Cron"}, {"up", "Ignore"}, {"up", "Symlinks"}, {"left", "Repos"}, {"l", "Symlinks"}, {"h", "Repos"},
+		{"down", "Sync"}, {"left", "Ignore"}, {"down", "Pass"}, {"down", "Trash"}, {"down", "Workspace"}, {"down", "Workspace"},
+		{"up", "Cron"}, {"up", "Secrets"}, {"up", "Sessions"}, {"up", "Repos"}, {"left", "Repos"}, {"l", "Symlinks"}, {"h", "Repos"},
 	}
 	for _, st := range steps {
 		m = send(m, press(st.key))

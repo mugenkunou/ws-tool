@@ -199,24 +199,3 @@ func hiddenFromScan(opts ScanOptions, rel string) bool {
 	}
 	return opts.Engine != nil && !opts.Engine.Evaluate(rel, false).Included
 }
-
-// StoreAction copies a finding's value into pass as entry, then allows the
-// finding. It is one action, because allow must not run when the insert fails.
-// An existing entry is never overwritten.
-func StoreAction(configPath, workspacePath string, v Violation, entry string) plan.Action {
-	anchor, abs := Anchor(v), AbsAnchor(workspacePath, v)
-	value := ExtractSecretValue(v.Snippet)
-	return plan.Action{
-		ID:          "store-" + abs,
-		Description: fmt.Sprintf("Store the value of %s in pass as %s, then allow it", abs, entry),
-		Execute: func() error {
-			if value == "" {
-				return fmt.Errorf("no value to read from %s; store it with `pass insert %s`", abs, entry)
-			}
-			if err := InsertEntry(entry, value); err != nil {
-				return err
-			}
-			return wsconfig.AddToAllowlist(configPath, anchor)
-		},
-	}
-}

@@ -121,7 +121,7 @@ func TestSecretFixRewrites(t *testing.T) {
 }
 
 // TestSecretFixWithoutModeIsGone: the interactive loop has no successor, and
-// the pass mode has none either (secret store takes exactly one finding).
+// the pass mode has none either.
 func TestSecretFixWithoutModeIsGone(t *testing.T) {
 	workspace := initWorkspace(t)
 	for _, args := range [][]string{

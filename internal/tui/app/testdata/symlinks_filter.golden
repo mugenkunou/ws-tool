@@ -1,4 +1,4 @@
-ws  🏠   📦   🔗 Symlinks   🧪   📼   🧹   🔄   🔐   ⏰   🚮   🧩   🔧
+ws  🏠   📦   🔗 Symlinks   🧪   📼   🧹   🔄   🔐   🗝️   🔑   ⏰   🚮   🧩   🔧
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  Host path                                   Workspace copy                App     Status      Sudo
  ~/.gitconfig                                symlinks/home/.gitconfig              ✘ broken

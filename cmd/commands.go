@@ -189,7 +189,6 @@ var commands = []command{
 	{Path: []string{"secret", "unmute"}, Args: "<file:line…>", Summary: "show it at full severity again"},
 	{Path: []string{"secret", "skip"}, Args: "<dir…>", Summary: "stop scanning a directory"},
 	{Path: []string{"secret", "unskip"}, Args: "<dir…>", Summary: "scan it again"},
-	{Path: []string{"secret", "store"}, Args: "<file:line> [entry]", Summary: "copy the value into pass and allow the finding"},
 
 	{Path: []string{"pass", "init"}, Summary: "create the pass store (GPG key, git)"},
 	{Path: []string{"pass", "status"}, Summary: "store, git, remote and credential-helper health", RO: true},

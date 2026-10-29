@@ -1,4 +1,4 @@
-ws  🏠   📦   🔗   🧪   📼   🧹 Ignore   🔄   🔐   ⏰   🚮   🧩   🔧
+ws  🏠   📦   🔗   🧪   📼   🧹 Ignore   🔄   🔐   🗝️   🔑   ⏰   🚮   🧩   🔧
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 Warnings 2 · Muted 1 · Ignored 2
  Severity    Type          Size       Path
@@ -27,4 +27,4 @@ Warnings 2 · Muted 1 · Ignored 2
 
 
 
-i ignore • u unmute • e edit rules • v next view … • ctrl+r refresh • : command • ? help • q quit
+i ignore • u unmute • p prune stale • e edit rules … • ctrl+r refresh • : command • ? help • q quit

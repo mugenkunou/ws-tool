@@ -26,6 +26,8 @@ const (
 	ScreenIgnore
 	ScreenSync
 	ScreenSecrets
+	ScreenPass
+	ScreenCredential
 	ScreenCron
 	ScreenTrash
 	ScreenSkills
@@ -42,7 +44,7 @@ type Spec struct {
 	// switch to it (spec §6.6). The Dashboard and Workspace have none.
 	Noun string
 	// Hosts are CLI nouns with no screen of their own whose `:` commands this
-	// screen runs (`pass audit` on Secrets). The screen's Commands() name them
+	// screen runs (`git-credential-helper` on Credentials). The screen's Commands() name them
 	// with the noun (`pass audit`), and they work from any screen.
 	Hosts []string
 }
@@ -56,10 +58,13 @@ var specs = [screenCount]Spec{
 	ScreenSessions:  {Icon: "📼", Title: "Sessions", Noun: "session"},
 	ScreenIgnore:    {Icon: "🧹", Title: "Ignore", Noun: "ignore"},
 	ScreenSync:      {Icon: "🔄", Title: "Sync", Noun: "sync"},
-	ScreenSecrets:   {Icon: "🔐", Title: "Secrets", Noun: "secret", Hosts: []string{"pass", "credential", "git-credential-helper"}},
-	ScreenCron:      {Icon: "⏰", Title: "Cron", Noun: "cron"},
-	ScreenTrash:     {Icon: "🚮", Title: "Trash", Noun: "trash"},
-	ScreenSkills:    {Icon: "🧩", Title: "Skills", Noun: "skill"},
+	ScreenSecrets:   {Icon: "🔐", Title: "Secrets", Noun: "secret"},
+	ScreenPass:      {Icon: "🗝️", Title: "Pass", Noun: "pass"},
+	ScreenCredential: {Icon: "🔑", Title: "Credentials", Noun: "credential",
+		Hosts: []string{"git-credential-helper"}},
+	ScreenCron:   {Icon: "⏰", Title: "Cron", Noun: "cron"},
+	ScreenTrash:  {Icon: "🚮", Title: "Trash", Noun: "trash"},
+	ScreenSkills: {Icon: "🧩", Title: "Skills", Noun: "skill"},
 	ScreenWorkspace: {Icon: "🔧", Title: "Workspace",
 		Hosts: []string{"config", "completion", "version", "layout", "env", "init", "tui", "help"}},
 }

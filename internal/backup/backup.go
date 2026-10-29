@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mugenkunou/ws-tool/internal/credential"
 	"github.com/mugenkunou/ws-tool/internal/repo"
-	"github.com/mugenkunou/ws-tool/internal/secret"
 )
 
 // DefaultBranch is the branch ws commits to and pushes unless settings say
@@ -236,7 +236,7 @@ func Push(path, branch string) error {
 // do with the result: VisibilityResult.Refusal says whether to stop, and
 // Notice what to warn about.
 func CheckRemote(remoteURL, passEntry string) repo.VisibilityResult {
-	return repo.CheckRepoVisibility(remoteURL, secret.ResolveGitToken(remoteURL, passEntry))
+	return repo.CheckRepoVisibility(remoteURL, credential.ResolveGitToken(remoteURL, passEntry))
 }
 
 // Git runs git in the repository at path and returns stdout. The error is

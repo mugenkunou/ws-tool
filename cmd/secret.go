@@ -24,7 +24,7 @@ func (s *stringSliceFlag) Set(v string) error {
 	return nil
 }
 
-const secretUsage = "usage: ws secret <ls|show|allow|mute|unmute|skip|unskip|store> …"
+const secretUsage = "usage: ws secret <ls|show|allow|mute|unmute|skip|unskip> …"
 
 // runSecret dispatches `ws secret <verb>` (spec §5 secret).
 func runSecret(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -48,8 +48,6 @@ func runSecret(args []string, globals globalFlags, stdin io.Reader, stdout, stde
 		return secretSkip(rest, globals, stdin, stdout, stderr)
 	case "unskip":
 		return secretUnskip(rest, globals, stdin, stdout, stderr)
-	case "store":
-		return secretStore(rest, globals, stdin, stdout, stderr)
 	}
 	fmt.Fprintf(stderr, "unknown command: secret %s\n", verb)
 	fmt.Fprintln(stderr, secretUsage)
@@ -512,86 +510,6 @@ func runSecretPlan(p Plan, command string, globals globalFlags, stdin io.Reader,
 		return writeJSONDryRun(stdout, stderr, command, globals.dryRun, map[string]any{"actions": planResult.Actions})
 	}
 	return planResult.ExitCode()
-}
-
-// ── store ──────────────────────────────────────────────────────────
-
-func secretStore(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("secret-store", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	registerGlobalFlags(fs, &globals)
-	if err := parseInterspersed(fs, args); err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	pos := fs.Args()
-	if len(pos) < 1 || len(pos) > 2 {
-		fmt.Fprintln(stderr, "usage: ws secret store <file:line> [entry]")
-		return 1
-	}
-	env, ok := loadSecretEnv(globals, stderr)
-	if !ok {
-		return 1
-	}
-	health := secret.CheckPass()
-	if !health.Installed || !health.Initialized {
-		fmt.Fprintln(stderr, "the pass store is not initialized: run ws pass init")
-		return 1
-	}
-	picked, ok := env.anchorFindings(pos[:1], stderr)
-	if !ok {
-		return 1
-	}
-	v := picked[0]
-	abs := secret.AbsAnchor(env.workspace, v)
-	if secret.ExtractSecretValue(v.Snippet) == "" {
-		entry := "<entry>"
-		if len(pos) == 2 {
-			entry = pos[1]
-		}
-		fmt.Fprintf(stderr, "no value to read at %s (it has no key and value); store it with: pass insert %s\n", abs, entry)
-		return 1
-	}
-	entry := secret.SuggestPassEntry(v.Path, v.Snippet)
-	if len(pos) == 2 {
-		entry = strings.TrimSpace(pos[1])
-		if err := validEntryName(entry); err != nil {
-			fmt.Fprintln(stderr, err.Error())
-			return 1
-		}
-	}
-
-	p := Plan{Command: "secret.store", Actions: []Action{secret.StoreAction(env.configPath, env.workspace, v, entry)}}
-	planResult := RunPlan(p, stdin, stdout, globals)
-	if globals.json {
-		return writeJSONDryRun(stdout, stderr, "secret.store", globals.dryRun, map[string]any{
-			"actions": planResult.Actions, "entry": entry,
-		})
-	}
-	if planResult.ExecutedCount() > 0 && !planResult.HasFailures() {
-		out := textOut(globals, stdout)
-		fmt.Fprintln(out)
-		fmt.Fprintf(out, "  The secret is still in %s.\n", filepath.Join(env.workspace, filepath.FromSlash(v.Path)))
-		fmt.Fprintf(out, "  Replace the value with $(pass show %s) or an environment variable,\n", entry)
-		fmt.Fprintln(out, "  and rotate the credential if the file has already synced.")
-	}
-	return planResult.ExitCode()
-}
-
-// validEntryName rejects an entry name that would leave the pass store.
-func validEntryName(entry string) error {
-	if entry == "" {
-		return fmt.Errorf("the pass entry name is empty")
-	}
-	if strings.HasPrefix(entry, "/") || strings.HasPrefix(entry, "~") {
-		return fmt.Errorf("pass entry %q must be a name inside the store, such as myapp/password", entry)
-	}
-	for _, part := range strings.Split(entry, "/") {
-		if part == ".." || part == "." || part == "" {
-			return fmt.Errorf("pass entry %q is not a valid name", entry)
-		}
-	}
-	return nil
 }
 
 // ── helpers ────────────────────────────────────────────────────────

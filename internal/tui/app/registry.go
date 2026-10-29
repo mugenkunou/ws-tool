@@ -6,9 +6,11 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/credential"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/cron"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/dashboard"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/pass"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/repos"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/scratch"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/secrets"
@@ -34,18 +36,20 @@ type screenEntry struct {
 // fails when a screen has no entry, so a new nav.Screen cannot be left without
 // a component.
 var registry = map[nav.Screen]screenEntry{
-	nav.ScreenDashboard: {New: component(dashboard.New)},
-	nav.ScreenRepos:     {New: component(repos.New), Keys: keyMap(keys.Repos)},
-	nav.ScreenSymlinks:  {New: component(symlinks.New), Keys: keyMap(keys.Symlinks)},
-	nav.ScreenScratch:   {New: component(scratch.New), Keys: keyMap(keys.Scratch)},
-	nav.ScreenSessions:  {New: component(sessions.New), Keys: keyMap(keys.Sessions)},
-	nav.ScreenIgnore:    {New: component(ignore.New), Keys: keyMap(keys.Ignore)},
-	nav.ScreenSync:      {New: component(sync.New), Keys: keyMap(keys.Sync)},
-	nav.ScreenSecrets:   {New: component(secrets.New), Keys: keyMap(keys.Secrets)},
-	nav.ScreenCron:      {New: component(cron.New), Keys: keyMap(keys.Cron)},
-	nav.ScreenTrash:     {New: component(trash.New), Keys: keyMap(keys.Trash)},
-	nav.ScreenSkills:    {New: component(skills.New), Keys: keyMap(keys.Skills)},
-	nav.ScreenWorkspace: {New: component(workspace.New), Keys: keyMap(keys.Workspace)},
+	nav.ScreenDashboard:  {New: component(dashboard.New)},
+	nav.ScreenRepos:      {New: component(repos.New), Keys: keyMap(keys.Repos)},
+	nav.ScreenSymlinks:   {New: component(symlinks.New), Keys: keyMap(keys.Symlinks)},
+	nav.ScreenScratch:    {New: component(scratch.New), Keys: keyMap(keys.Scratch)},
+	nav.ScreenSessions:   {New: component(sessions.New), Keys: keyMap(keys.Sessions)},
+	nav.ScreenIgnore:     {New: component(ignore.New), Keys: keyMap(keys.Ignore)},
+	nav.ScreenSync:       {New: component(sync.New), Keys: keyMap(keys.Sync)},
+	nav.ScreenSecrets:    {New: component(secrets.New), Keys: keyMap(keys.Secrets)},
+	nav.ScreenPass:       {New: component(pass.New), Keys: keyMap(keys.Pass)},
+	nav.ScreenCredential: {New: component(credential.New), Keys: keyMap(keys.Credential)},
+	nav.ScreenCron:       {New: component(cron.New), Keys: keyMap(keys.Cron)},
+	nav.ScreenTrash:      {New: component(trash.New), Keys: keyMap(keys.Trash)},
+	nav.ScreenSkills:     {New: component(skills.New), Keys: keyMap(keys.Skills)},
+	nav.ScreenWorkspace:  {New: component(workspace.New), Keys: keyMap(keys.Workspace)},
 }
 
 func component[T nav.Component](f func(env.Env) T) func(env.Env) nav.Component {

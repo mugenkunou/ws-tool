@@ -1,4 +1,4 @@
-package secret
+package pass
 
 import (
 	"fmt"
@@ -309,25 +309,6 @@ func GitRemoteURL() string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
-}
-
-// InsertEntry stores a value in the pass store under the given entry name. It
-// never overwrites: an existing entry is an error, and the caller picks another
-// name (spec §5 secret store). The value goes to `pass insert -m` on stdin,
-// never on a command line. -m reads until EOF, so one call serves single and
-// multi-line values; plain `pass insert` asks for a retyped copy and the old
-// `-f` form (which also overwrote) failed on that second read.
-func InsertEntry(entryName, value string) error {
-	if PassEntryExists(entryName) {
-		return fmt.Errorf("pass entry %s already exists; pick another name", entryName)
-	}
-	cmd := exec.Command("pass", "insert", "-m", entryName)
-	cmd.Stdin = strings.NewReader(value + "\n")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("pass insert failed: %s", strings.TrimSpace(string(out)))
-	}
-	return nil
 }
 
 // CopyCommand is the `symlink add` command (without the leading ws) that puts the

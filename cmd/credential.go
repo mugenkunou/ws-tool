@@ -10,8 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/mugenkunou/ws-tool/internal/credential"
+	"github.com/mugenkunou/ws-tool/internal/pass"
 	"github.com/mugenkunou/ws-tool/internal/repo"
-	"github.com/mugenkunou/ws-tool/internal/secret"
 	"github.com/mugenkunou/ws-tool/internal/style"
 )
 
@@ -54,7 +55,7 @@ const plumbingHelp = "ws git-credential-helper get|store|erase: git's credential
 // runGitCredentialHelper is the git plumbing (spec §5 credential, Plumbing).
 // It prints nothing but the answer to `get`, and needs no workspace. `store`
 // and `erase` read stdin and do nothing, because pass entries are managed with
-// `ws secret store`, `ws credential enable` or `pass insert`. Any other
+// `ws credential enable` or `pass insert`. Any other
 // operation exits 0 silently, so a future git verb never breaks a helper line;
 // only a person at a terminal sees a usage line.
 func runGitCredentialHelper(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -79,13 +80,13 @@ func runGitCredentialHelper(args []string, globals globalFlags, stdin io.Reader,
 }
 
 func runCredentialGet(stdin io.Reader, stdout io.Writer) int {
-	req := secret.ParseCredentialInput(stdin)
-	resp := secret.LookupCredential(req)
+	req := credential.ParseCredentialInput(stdin)
+	resp := credential.LookupCredential(req)
 	if resp.Password == "" {
 		// No credentials found: exit silently so git tries the next helper.
 		return 0
 	}
-	secret.FormatCredentialOutput(stdout, resp)
+	credential.FormatCredentialOutput(stdout, resp)
 	return 0
 }
 
@@ -113,7 +114,7 @@ func credentialEnable(args []string, globals globalFlags, stdin io.Reader, stdou
 	out := quietOut(globals, stdout)
 	nc := globals.noColor
 
-	if h := secret.CheckPass(); !h.Initialized {
+	if h := pass.CheckPass(); !h.Initialized {
 		fmt.Fprintln(stderr, style.ResultError(nc, "The pass store is not initialized: run ws pass init"))
 		return 1
 	}
@@ -439,7 +440,7 @@ func printRemoteEntries(w io.Writer, remotes []remoteEntry, nc bool) {
 }
 
 // printCredentialPassHealth renders pass store health in credential status output.
-func printCredentialPassHealth(w io.Writer, h secret.PassHealth, nc bool) {
+func printCredentialPassHealth(w io.Writer, h pass.PassHealth, nc bool) {
 	check := func(ok bool) string {
 		if ok {
 			return style.IconCheck(nc)
@@ -558,7 +559,7 @@ func resolveRemoteEntry(e remoteEntry, useHTTPPath bool) remoteEntry {
 	if useHTTPPath {
 		sentPath = e.Path
 	}
-	e.PassEntry = secret.ResolveCredentialEntry(e.Host, sentPath)
+	e.PassEntry = credential.ResolveCredentialEntry(e.Host, sentPath)
 	e.Exists = e.PassEntry != ""
 	switch {
 	case !e.Exists:
@@ -570,7 +571,7 @@ func resolveRemoteEntry(e remoteEntry, useHTTPPath bool) remoteEntry {
 	}
 	if !useHTTPPath && e.Path != "" {
 		repoEntry := "git/" + e.Host + "/" + e.Path
-		if secret.PassEntryExists(repoEntry) {
+		if credential.PassEntryExists(repoEntry) {
 			e.IgnoredEntry = repoEntry
 		}
 	}

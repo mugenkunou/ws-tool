@@ -1,4 +1,4 @@
-package secret
+package credential
 
 import (
 	"bufio"
@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/mugenkunou/ws-tool/internal/pass"
 )
 
 // CredentialRequest holds the key=value pairs git sends on stdin.
@@ -150,7 +152,7 @@ func ParsePassEntry(content string) CredentialResponse {
 // PassEntryExists checks whether a pass entry exists without decrypting it.
 // It checks for the .gpg file in the store directory.
 func PassEntryExists(entry string) bool {
-	h := CheckPass()
+	h := pass.CheckPass()
 	if !h.Initialized {
 		return false
 	}

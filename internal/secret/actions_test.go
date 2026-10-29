@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mugenkunou/ws-tool/internal/pass"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
@@ -220,147 +221,6 @@ func TestMuteUnmuteActions(t *testing.T) {
 	}
 }
 
-// shimPass puts a pass(1) stand-in on PATH: plain files under
-// $PASSWORD_STORE_DIR, never overwriting, never touching the real store.
-func shimPass(t *testing.T) (store, log string) {
-	t.Helper()
-	dir := t.TempDir()
-	store = filepath.Join(dir, "store")
-	log = filepath.Join(dir, "calls.log")
-	if err := os.MkdirAll(store, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(store, ".gpg-id"), []byte("K\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	script := "#!/bin/sh\necho \"$*\" >> \"$PASS_SHIM_LOG\"\nif [ \"$1\" != insert ]; then exit 1; fi\nshift\n[ \"$1\" = -m ] && shift\nf=\"$PASSWORD_STORE_DIR/$1.gpg\"\n[ -e \"$f\" ] && exit 1\nmkdir -p \"$(dirname \"$f\")\"\ncat > \"$f\"\n"
-	bin := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(bin, "pass"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("PASSWORD_STORE_DIR", store)
-	t.Setenv("PASS_SHIM_LOG", log)
-	return store, log
-}
-
-func TestInsertEntryNeverOverwrites(t *testing.T) {
-	store, log := shimPass(t)
-	if err := InsertEntry("a/b", "first"); err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := os.ReadFile(filepath.Join(store, "a", "b.gpg")); string(got) != "first\n" {
-		t.Fatalf("stored %q", got)
-	}
-	err := InsertEntry("a/b", "second")
-	if err == nil || !strings.Contains(err.Error(), "already exists") {
-		t.Fatalf("want an already-exists error, got %v", err)
-	}
-	if got, _ := os.ReadFile(filepath.Join(store, "a", "b.gpg")); string(got) != "first\n" {
-		t.Fatalf("the entry was overwritten: %q", got)
-	}
-	calls, _ := os.ReadFile(log)
-	if strings.Count(string(calls), "insert") != 1 || strings.Contains(string(calls), "-f") {
-		t.Fatalf("pass calls: %q", calls)
-	}
-}
-
-func TestInsertEntryMultiline(t *testing.T) {
-	store, _ := shimPass(t)
-	if err := InsertEntry("k", "line1\nline2"); err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := os.ReadFile(filepath.Join(store, "k.gpg")); string(got) != "line1\nline2\n" {
-		t.Fatalf("stored %q", got)
-	}
-}
-
-func TestStoreActionAllowsOnlyAfterInsert(t *testing.T) {
-	ws, cfg := newConfig(t)
-	shimPass(t)
-	v := Violation{Path: "configs/app.env", Line: 3, Snippet: "password=hunter2"}
-
-	a := StoreAction(cfg, ws, v, "app/password")
-	if want := "Store the value of " + ws + "/configs/app.env:3 in pass as app/password, then allow it"; a.Description != want {
-		t.Fatalf("description %q", a.Description)
-	}
-	if err := a.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	c, _ := wsconfig.Load(cfg)
-	if !slices.Equal(c.Secret.Allowlist, []string{"configs/app.env:3"}) {
-		t.Fatalf("allowlist: %v", c.Secret.Allowlist)
-	}
-
-	// The entry exists now: the action fails and must not allow anything new.
-	v2 := Violation{Path: "configs/other.env", Line: 1, Snippet: "password=hunter3"}
-	if err := StoreAction(cfg, ws, v2, "app/password").Execute(); err == nil {
-		t.Fatal("storing over an existing entry must fail")
-	}
-	c, _ = wsconfig.Load(cfg)
-	if len(c.Secret.Allowlist) != 1 {
-		t.Fatalf("a failed insert must not allow the finding: %v", c.Secret.Allowlist)
-	}
-
-	// No value to read (a key header): the action fails.
-	v3 := Violation{Path: "k.pem", Line: 1, Snippet: "-----BEGIN RSA PRIVATE KEY-----"}
-	if err := StoreAction(cfg, ws, v3, "k/pem").Execute(); err == nil || !strings.Contains(err.Error(), "pass insert k/pem") {
-		t.Fatalf("want a pointer to pass insert, got %v", err)
-	}
-}
-
-func TestWorkspaceCopy(t *testing.T) {
-	root := t.TempDir()
-	ws := filepath.Join(root, "Workspace")
-	target := filepath.Join(ws, "symlinks", "home", ".password-store")
-	if err := os.MkdirAll(target, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	store := filepath.Join(root, ".password-store")
-
-	if _, ok := WorkspaceCopy(store, ws); ok {
-		t.Fatal("a missing store is no copy")
-	}
-	if err := os.MkdirAll(store, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := WorkspaceCopy(store, ws); ok {
-		t.Fatal("a plain directory is no copy")
-	}
-	if err := os.Remove(store); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(target, store); err != nil {
-		t.Fatal(err)
-	}
-	if got, ok := WorkspaceCopy(store, ws); !ok || got != target {
-		t.Fatalf("a link into the workspace: %q %v", got, ok)
-	}
-
-	outside := filepath.Join(root, "elsewhere")
-	if err := os.MkdirAll(outside, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	other := filepath.Join(root, "link2")
-	if err := os.Symlink(outside, other); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := WorkspaceCopy(other, ws); ok {
-		t.Fatal("a link outside the workspace is no copy")
-	}
-	// The workspace itself is not a copy.
-	third := filepath.Join(root, "link3")
-	if err := os.Symlink(ws, third); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := WorkspaceCopy(third, ws); ok {
-		t.Fatal("the workspace root is not a copy")
-	}
-}
-
 func TestScanFindsPrivateKeyHeaders(t *testing.T) {
 	ws, _ := newConfig(t)
 	if err := os.WriteFile(filepath.Join(ws, "id.txt"), []byte("-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-- password=hunter2\n"), 0o644); err != nil {
@@ -379,7 +239,7 @@ func TestScanFindsPrivateKeyHeaders(t *testing.T) {
 func TestAuditMessagesNameCurrentCommands(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("PASSWORD_STORE_DIR", filepath.Join(dir, "none"))
-	for _, f := range AuditPassStore(CheckPass()).Findings {
+	for _, f := range pass.AuditPassStore(pass.CheckPass()).Findings {
 		for _, old := range []string{"ws secret setup", "secret git", "pass git"} {
 			if strings.Contains(f.Message, old) {
 				t.Errorf("audit message %q names the old command %q", f.Message, old)

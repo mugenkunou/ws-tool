@@ -421,7 +421,6 @@ type SecretsMap struct {
 	Allow  key.Binding // a: allow, a false positive (selected)
 	Ignore key.Binding // i: ignore the file (selected)
 	Mute   key.Binding // m: mute a directory (cursor)
-	Store  key.Binding // s: store the value in pass (cursor)
 	Back   key.Binding
 }
 
@@ -433,23 +432,53 @@ func Secrets() SecretsMap {
 		Allow:  key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "allow")),
 		Ignore: key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "ignore")),
 		Mute:   key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mute")),
-		Store:  key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "store")),
 		Back:   back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
 func (k SecretsMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.View, k.Allow, k.Ignore, k.Mute, k.Store}
+	return []key.Binding{k.View, k.Allow, k.Ignore, k.Mute}
 }
 
 // FullHelp implements help.KeyMap.
 func (k SecretsMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.View, k.Back},
-		{k.Allow, k.Ignore, k.Mute, k.Store},
+		{k.Allow, k.Ignore, k.Mute},
 	}
 }
+
+// PassMap is the binding set for the Pass screen: pass store health and the
+// operations that keep it healthy. It has no verb keys of its own: init,
+// audit and the backup life cycle are `:` commands (handovers and views).
+type PassMap struct {
+	Back key.Binding
+}
+
+// Pass returns the Pass screen bindings.
+func Pass() PassMap { return PassMap{Back: back()} }
+
+// ShortHelp implements help.KeyMap.
+func (k PassMap) ShortHelp() []key.Binding { return nil }
+
+// FullHelp implements help.KeyMap.
+func (k PassMap) FullHelp() [][]key.Binding { return [][]key.Binding{{k.Back}} }
+
+// CredentialMap is the binding set for the Credential screen: git credential
+// helper status and setup. enable, disable and status are `:` commands.
+type CredentialMap struct {
+	Back key.Binding
+}
+
+// Credential returns the Credential screen bindings.
+func Credential() CredentialMap { return CredentialMap{Back: back()} }
+
+// ShortHelp implements help.KeyMap.
+func (k CredentialMap) ShortHelp() []key.Binding { return nil }
+
+// FullHelp implements help.KeyMap.
+func (k CredentialMap) FullHelp() [][]key.Binding { return [][]key.Binding{{k.Back}} }
 
 // CronMap is the binding set for the cron screen (spec §6.5).
 type CronMap struct {

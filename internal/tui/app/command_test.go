@@ -41,9 +41,10 @@ func (fakeKeys) ShortHelp() []key.Binding  { return nil }
 func (fakeKeys) FullHelp() [][]key.Binding { return nil }
 
 var screenCommands = map[nav.Screen][]nav.CommandInfo{
-	nav.ScreenRepos:    {{Name: "git", Args: "<args…>", Help: "git"}, {Name: "root ls"}, {Name: "root rm", Args: "<dir>"}},
-	nav.ScreenSymlinks: {{Name: "add", Args: "<path…>"}, {Name: "backup enable"}, {Name: "backup push"}, {Name: "backup status"}},
-	nav.ScreenSecrets:  {{Name: "pass audit"}, {Name: "credential status"}},
+	nav.ScreenRepos:      {{Name: "git", Args: "<args…>", Help: "git"}, {Name: "root ls"}, {Name: "root rm", Args: "<dir>"}},
+	nav.ScreenSymlinks:   {{Name: "add", Args: "<path…>"}, {Name: "backup enable"}, {Name: "backup push"}, {Name: "backup status"}},
+	nav.ScreenPass:       {{Name: "audit"}, {Name: "init"}, {Name: "backup enable"}, {Name: "backup disable"}, {Name: "backup push"}},
+	nav.ScreenCredential: {{Name: "enable"}, {Name: "disable"}, {Name: "status"}},
 }
 
 // withCommands gives some screens `:` commands, recording what they receive.
@@ -155,13 +156,13 @@ func TestCommandBarRoutes(t *testing.T) {
 	})
 	t.Run("noun and command", func(t *testing.T) {
 		m, got, _ := withCommands(t)
-		m = runLineKeys(t, m, "pass audit") // pass has no screen: Secrets hosts it
-		if m.active != nav.ScreenSecrets || len(*got) != 1 || strings.Join((*got)[0].Words, " ") != "pass audit" {
+		m = runLineKeys(t, m, "pass audit")
+		if m.active != nav.ScreenPass || len(*got) != 1 || strings.Join((*got)[0].Words, " ") != "audit" {
 			t.Fatalf("active %v got %+v", m.active.Title(), *got)
 		}
 		m, got, _ = withCommands(t)
-		m = runLineKeys(t, m, "secret pass audit")
-		if m.active != nav.ScreenSecrets || len(*got) != 1 || strings.Join((*got)[0].Words, " ") != "pass audit" {
+		m = runLineKeys(t, m, "credential enable")
+		if m.active != nav.ScreenCredential || len(*got) != 1 || strings.Join((*got)[0].Words, " ") != "enable" {
 			t.Fatalf("active %v got %+v", m.active.Title(), *got)
 		}
 		m, got, _ = withCommands(t)
@@ -240,7 +241,7 @@ func TestCandidates(t *testing.T) {
 	m, _, _ := withCommands(t)
 	m = send(m, press("3"))
 	c := m.candidates()
-	for _, want := range []string{"symlink", "symlinks", "dashboard", "sessions", "session", "repo git", "secret pass audit", "config show", "config edit", "help", "q", "quit"} {
+	for _, want := range []string{"symlink", "symlinks", "dashboard", "sessions", "session", "repo git", "pass audit", "config show", "config edit", "help", "q", "quit"} {
 		found := false
 		for _, x := range c {
 			found = found || x == want

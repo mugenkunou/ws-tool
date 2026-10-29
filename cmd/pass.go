@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/mugenkunou/ws-tool/internal/backup"
-	"github.com/mugenkunou/ws-tool/internal/secret"
+	"github.com/mugenkunou/ws-tool/internal/pass"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
@@ -53,7 +53,7 @@ func optionalWorkspace(globals globalFlags) (workspacePath, configPath string, h
 
 // passReport is everything `pass status` reports.
 type passReport struct {
-	Health     secret.PassHealth
+	Health     pass.PassHealth
 	RemoteURL  string
 	CredState  string // connected, stale or disconnected
 	CredValue  string
@@ -62,7 +62,7 @@ type passReport struct {
 }
 
 func gatherPassReport(globals globalFlags) passReport {
-	r := passReport{Health: secret.CheckPass()}
+	r := passReport{Health: pass.CheckPass()}
 	if r.Health.GitBacked && r.Health.GitRemote {
 		r.RemoteURL = backup.RemoteURL(r.Health.StorePath)
 	}
@@ -70,7 +70,7 @@ func gatherPassReport(globals globalFlags) passReport {
 	r.CredState, _ = helperCheck(r.CredValue)
 	r.Workspace, _, _ = optionalWorkspace(globals)
 	if r.Workspace != "" && r.Health.StorePath != "" {
-		r.CopyTarget, _ = secret.WorkspaceCopy(r.Health.StorePath, r.Workspace)
+		r.CopyTarget, _ = pass.WorkspaceCopy(r.Health.StorePath, r.Workspace)
 	}
 	return r
 }
@@ -99,7 +99,7 @@ func (r passReport) copyTip() string {
 	if r.CopyTarget != "" || r.Workspace == "" || r.Health.StorePath == "" {
 		return ""
 	}
-	return "ws " + secret.CopyCommand(r.Health.StorePath)
+	return "ws " + pass.CopyCommand(r.Health.StorePath)
 }
 
 // passTip is the tip line for the commands that end with one, "" when none.
@@ -206,7 +206,7 @@ func passAudit(args []string, globals globalFlags, stdout, stderr io.Writer) int
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	res := secret.AuditPassStore(secret.CheckPass())
+	res := pass.AuditPassStore(pass.CheckPass())
 	if globals.json {
 		return writeJSON(stdout, stderr, "pass.audit", map[string]any{"findings": res.Findings})
 	}
@@ -246,7 +246,7 @@ func passInit(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 	out := quietOut(globals, stdout)
 	nc := globals.noColor
 
-	health := secret.CheckPass()
+	health := pass.CheckPass()
 	if !health.GPGAvailable {
 		fmt.Fprintln(stderr, style.ResultError(nc, "gpg not found. Install the package gnupg (sudo apt install gnupg)."))
 		return 1
@@ -270,14 +270,14 @@ func passInit(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		p.Actions = append(p.Actions, Action{
 			ID:          "pass-init",
 			Description: fmt.Sprintf("Initialize the pass store %s with GPG key %s", health.StorePath, id),
-			Execute:     func() error { return secret.InitStore(id) },
+			Execute:     func() error { return pass.InitStore(id) },
 		})
 	}
 	if !health.GitBacked {
 		p.Actions = append(p.Actions, Action{
 			ID:          "pass-git-init",
 			Description: "Turn on git versioning for the pass store",
-			Execute:     secret.InitGit,
+			Execute:     pass.InitGit,
 		})
 	}
 	if url := strings.TrimSpace(*gitRemote); url != "" && (!health.GitBacked || backup.RemoteURL(health.StorePath) != url) {
@@ -324,7 +324,7 @@ func passInit(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 // user numbers. --quiet and --json take the first and say which on stderr.
 func chooseGPGKey(globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) (string, bool) {
 	nc := globals.noColor
-	keys, err := secret.ListGPGKeys()
+	keys, err := pass.ListGPGKeys()
 	if err != nil || len(keys) == 0 {
 		fmt.Fprintln(stderr, style.ResultError(nc, "No GPG secret key found."))
 		fmt.Fprintln(stderr, style.Mutedf(nc, "Generate one with: gpg --full-generate-key"))
@@ -367,14 +367,14 @@ func countEntries(n int) string {
 // ws.json setting is pass.pass_entry, kept only when a workspace exists.
 func passBackupSpec(globals globalFlags) backupSpec {
 	workspacePath, configPath, hasConfig := optionalWorkspace(globals)
-	store := secret.CheckPass().StorePath
+	store := pass.CheckPass().StorePath
 	return backupSpec{
 		job:       "pass-backup",
 		repoPath:  store,
 		workspace: workspacePath,
 
 		requires: func() error {
-			h := secret.CheckPass()
+			h := pass.CheckPass()
 			switch {
 			case !h.Installed:
 				return fmt.Errorf("pass not found. Install the package pass.")
@@ -385,7 +385,7 @@ func passBackupSpec(globals globalFlags) backupSpec {
 		},
 		initialized: func() bool { return backup.IsRepo(store) },
 		initPlan:    "Turn on git versioning for the pass store",
-		init:        secret.InitGit,
+		init:        pass.InitGit,
 
 		load: func() (backupSettings, error) {
 			var s backupSettings
@@ -423,7 +423,7 @@ func passBackupSpec(globals globalFlags) backupSpec {
 			return backup.CommitAll(store, message)
 		},
 		defaultMessage: "ws pass backup push",
-		entryCount:     func() int { return secret.CheckPass().EntryCount },
+		entryCount:     func() int { return pass.CheckPass().EntryCount },
 		tip:            func() string { return passTip(globals) },
 	}
 }

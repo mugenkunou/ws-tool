@@ -1,18 +1,13 @@
-// Package secrets is the secrets screen (spec §6.5): pass store and credential
-// helper health above the `secret ls` findings, with the keys allow, ignore the
-// file, mute a directory and store in pass. The `pass` and `credential` commands
-// are `:` commands: views (`pass status`, `pass audit`, `pass backup status`)
-// and checklists run here, the wizards (`pass init`, `pass backup enable`,
-// `credential enable|disable`) and the paged `credential status` are handed to
-// the CLI.
+// Package secrets is the secrets screen (spec §6.5): the `secret ls` findings,
+// with the keys allow, ignore the file and mute a directory, and the `:` commands
+// skip and unskip.
 //
-// Navigation levels: list → detail (context, status, audit). esc returns to the
-// list; esc in the list asks the app to go up.
+// Navigation levels: list → detail (context). esc returns to the list; esc in
+// the list asks the app to go up.
 package secrets
 
 import (
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -29,7 +24,6 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/format"
-	"github.com/mugenkunou/ws-tool/internal/tui/handover"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/modal"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
@@ -39,22 +33,10 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
-// Health is pass store + credential helper state.
-type Health struct {
-	Pass       secret.PassHealth
-	RemoteURL  string
-	CredHelper bool
-	// CopyCommand is the `symlink add` command that would put the pass store
-	// into the workspace, what `ws pass status` shows as its tip. Empty when the
-	// store is already there or there is no store to copy.
-	CopyCommand string
-}
-
-// LoadedMsg carries scan violations and health. Other components (the
-// dashboard) may observe it.
+// LoadedMsg carries scan violations. Other components (the dashboard) may
+// observe it.
 type LoadedMsg struct {
 	Violations []secret.Violation
-	Health     Health
 	Err        error
 }
 
@@ -73,13 +55,8 @@ type step int
 
 const (
 	stepFix step = iota
-	stepPassEntryName
 	stepSkipDirInput
 )
-
-type handoverTag int
-
-const handoverWizard handoverTag = iota
 
 // Model is the secrets screen state.
 type Model struct {
@@ -91,10 +68,8 @@ type Model struct {
 	level      level
 	modal      modal.Model
 
-	health      Health
 	loaded      bool
 	scanning    bool
-	pending     secret.Violation // target of a multi-step fix
 	detailTitle string
 	width       int
 	height      int
@@ -128,26 +103,12 @@ func New(e env.Env) Model {
 	}
 }
 
-// Load runs `secret scan` and gathers health.
+// Load runs `secret scan`.
 func Load(e env.Env) tea.Cmd {
 	return func() tea.Msg {
-		h := Health{Pass: secret.CheckPass()}
-		if h.Pass.GitBacked && h.Pass.GitRemote {
-			h.RemoteURL = secret.GitRemoteURL()
-		}
-		if h.Pass.Initialized && h.Pass.StorePath != "" {
-			if _, ok := secret.WorkspaceCopy(h.Pass.StorePath, e.Paths.Workspace); !ok {
-				h.CopyCommand = secret.CopyCommand(h.Pass.StorePath)
-			}
-		}
-		if out, err := exec.Command("git", "config", "--global", "credential.helper").Output(); err == nil {
-			v := strings.TrimSpace(string(out))
-			h.CredHelper = strings.Contains(v, "ws") || strings.Contains(v, "git-credential-helper")
-		}
-
 		rules, err := wsconfig.LoadIgnoreRules(e.Paths.Config)
 		if err != nil {
-			return LoadedMsg{Health: h, Err: err}
+			return LoadedMsg{Err: err}
 		}
 		vs, err := secret.Scan(secret.ScanOptions{
 			WorkspacePath: e.Paths.Workspace,
@@ -156,7 +117,7 @@ func Load(e env.Env) tea.Cmd {
 			SkipDirs:      secret.MergeSkipDirs(e.Paths.Workspace, e.Config.Secret.SkipDirs, nil),
 			Muted:         wsconfig.MutedMap(e.Config),
 		})
-		return LoadedMsg{Violations: vs, Health: h, Err: err}
+		return LoadedMsg{Violations: vs, Err: err}
 	}
 }
 
@@ -179,53 +140,6 @@ func viewContext(e env.Env, v secret.Violation) tea.Cmd {
 			b.WriteString(fmt.Sprintf("%s%s %s\n", mark, theme.Muted.Render(fmt.Sprintf("%4d", cl.Number)), line))
 		}
 		return detailMsg{title: title, text: strings.TrimRight(b.String(), "\n")}
-	}
-}
-
-func audit() tea.Cmd {
-	return func() tea.Msg {
-		res := secret.AuditPassStore(secret.CheckPass())
-		if len(res.Findings) == 0 {
-			return detailMsg{title: "Pass store audit", text: theme.OK.Render("✔ No problems found in the pass store.")}
-		}
-		var b strings.Builder
-		for _, f := range res.Findings {
-			if f.Entry == "" {
-				b.WriteString(theme.Warn.Render("! ") + f.Message + "\n")
-				continue
-			}
-			b.WriteString(theme.Warn.Render("! ") + theme.Bold.Render(f.Entry) + "  " + f.Message + "\n")
-		}
-		return detailMsg{title: "Pass store audit", text: strings.TrimRight(b.String(), "\n")}
-	}
-}
-
-// viewCLI shows what a read-only CLI command prints, so the view is the CLI's
-// own output and cannot drift from it.
-func viewCLI(e env.Env, title string, args ...string) tea.Cmd {
-	return func() tea.Msg {
-		c := handover.WS(e.Paths, append(args, "--no-color")...)
-		out, err := c.CombinedOutput()
-		text := strings.TrimRight(string(out), "\n")
-		if err != nil && text == "" {
-			text = theme.Error.Render(err.Error())
-		}
-		return detailMsg{title: title, text: text}
-	}
-}
-
-// runCLI is a checklist action that runs a CLI command without its own prompt
-// (`--quiet` accepts it), the checklist having asked already.
-func runCLI(e env.Env, args ...string) func() error {
-	return func() error {
-		out, err := handover.WS(e.Paths, append(args, "--quiet")...).CombinedOutput()
-		if err != nil {
-			if msg := strings.TrimSpace(string(out)); msg != "" {
-				return fmt.Errorf("%s", msg)
-			}
-			return err
-		}
-		return nil
 	}
 }
 
@@ -254,7 +168,7 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	switch msg := msg.(type) {
 	case nav.ResizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.list = m.list.SetSize(msg.Width, max(msg.Height-2, 0)) // two status lines
+		m.list = m.list.SetSize(msg.Width, max(msg.Height-1, 0)) // one scan-status line above the list
 		m.detail.SetWidth(msg.Width)
 		m.detail.SetHeight(max(msg.Height-1, 0))
 		m.modal = m.modal.SetSize(msg.Width, msg.Height)
@@ -263,7 +177,6 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		return m.rescan()
 	case LoadedMsg:
 		m.scanning, m.loaded = false, true
-		m.health = msg.Health
 		if msg.Err != nil {
 			m.list = m.list.SetError(msg.Err)
 			return m, nil
@@ -280,11 +193,6 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	case detailMsg:
 		m.detailTitle = msg.title
 		m.detail.SetContent(msg.text)
-		return m, nil
-	case handover.DoneMsg:
-		if _, ok := msg.Tag.(handoverTag); ok {
-			return m.rescan()
-		}
 		return m, nil
 	}
 
@@ -362,20 +270,6 @@ func (m Model) mute(rows []secret.Violation) (Model, tea.Cmd) {
 	return m.confirmActions("secret.mute", "Mute", acts), nil
 }
 
-// store asks for the pass entry name for the finding's value (s).
-func (m Model) store(rows []secret.Violation) (Model, tea.Cmd) {
-	if h := m.health.Pass; !h.Installed || !h.Initialized {
-		return m, nav.Notify(nav.LevelWarn, "The pass store is not initialized: run :pass init")
-	}
-	v := rows[0]
-	m.pending = v
-	var cmd tea.Cmd
-	m.modal, cmd = m.modal.Prompt(stepPassEntryName, prompt.New("Store this secret in pass",
-		prompt.WithHint(fmt.Sprintf("Entry name for %s:%d", m.abs(v), v.Line)),
-		prompt.WithValue(secret.SuggestPassEntry(v.Path, v.Snippet))))
-	return m, cmd
-}
-
 // actions is every secrets key and the rows it acts on.
 var actions = func() []reslist.Action[Model, secret.Violation] {
 	k := keys.Secrets()
@@ -384,46 +278,8 @@ var actions = func() []reslist.Action[Model, secret.Violation] {
 		{Key: k.Allow, Scope: reslist.Selected, Do: Model.allow},
 		{Key: k.Ignore, Scope: reslist.Selected, Do: Model.ignoreFiles},
 		{Key: k.Mute, Scope: reslist.Selected, Do: Model.mute},
-		{Key: k.Store, Scope: reslist.Cursor, Do: Model.store},
 	}
 }()
-
-// wizard hands the terminal to the CLI, then refreshes.
-func (m Model) wizard(args ...string) tea.Cmd {
-	return handover.Run(handover.Pause(handover.WS(m.env.Paths, args...)), handoverWizard)
-}
-
-type commandFn = func(Model, []secret.Violation, []string) (Model, tea.Cmd)
-
-// viewCommand opens a view of what the CLI prints.
-func viewCommand(title string, args ...string) commandFn {
-	return func(m Model, _ []secret.Violation, _ []string) (Model, tea.Cmd) {
-		return m.openDetail(title, viewCLI(m.env, title, args...))
-	}
-}
-
-// wizardCommand hands the terminal to the CLI command.
-func wizardCommand(args ...string) commandFn {
-	return func(m Model, _ []secret.Violation, _ []string) (Model, tea.Cmd) { return m, m.wizard(args...) }
-}
-
-// cliChecklist is a checklist with one action that runs the CLI command.
-func cliChecklist(command, title, desc string, args ...string) commandFn {
-	return func(m Model, _ []secret.Violation, _ []string) (Model, tea.Cmd) {
-		return m.confirmActions(command, title, []plan.Action{{
-			ID: command, Description: desc, Execute: runCLI(m.env, args...),
-		}}), nil
-	}
-}
-
-// backupPush commits and pushes the pass store: needs the git remote.
-func (m Model) backupPush(rows []secret.Violation, args []string) (Model, tea.Cmd) {
-	if ph := m.health.Pass; !ph.GitBacked || !ph.GitRemote {
-		return m, nav.Notify(nav.LevelWarn, "Pass backup is not enabled: run :pass backup enable")
-	}
-	return cliChecklist("pass.backup.push", "Push the pass store",
-		"Commit pending changes and push the pass store to "+m.health.RemoteURL, "pass", "backup", "push")(m, rows, args)
-}
 
 // skip asks which directory to stop scanning entirely: `skip <dir>` (or a
 // prompt, pre-filled with the cursor finding's directory, when no args).
@@ -484,23 +340,6 @@ func (m Model) unskip(_ []secret.Violation, args []string) (Model, tea.Cmd) {
 var commands = []reslist.Command[Model, secret.Violation]{
 	{Name: "skip", Args: "[dir]", Help: "stop scanning a directory entirely", Scope: reslist.Cursor, Do: Model.skip},
 	{Name: "unskip", Args: "<dir>", Help: "scan a skipped directory again", Scope: reslist.Global, Do: Model.unskip},
-	{Name: "pass init", Help: "set up the pass store (hands over to the CLI)", Scope: reslist.Global, Do: wizardCommand("pass", "init")},
-	{Name: "pass status", Help: "pass store and credential helper health", Scope: reslist.Global, Do: viewCommand("Pass status", "pass", "status")},
-	{Name: "pass audit", Help: "check the pass store for weak spots", Scope: reslist.Global,
-		Do: func(m Model, _ []secret.Violation, _ []string) (Model, tea.Cmd) {
-			return m.openDetail("Pass store audit", audit())
-		}},
-	{Name: "pass backup enable", Help: "back the pass store up to a git remote (hands over to the CLI)", Scope: reslist.Global, Do: wizardCommand("pass", "backup", "enable")},
-	{Name: "pass backup disable", Help: "stop backing the pass store up", Scope: reslist.Global,
-		Do: cliChecklist("pass.backup.disable", "Disable the pass backup", "Remove the pass backup remote and its cron job", "pass", "backup", "disable")},
-	{Name: "pass backup status", Help: "remote, ahead/behind, recent commits", Scope: reslist.Global, Do: viewCommand("Pass backup", "pass", "backup", "status")},
-	{Name: "pass backup push", Help: "commit and push the pass store", Scope: reslist.Global, Do: Model.backupPush},
-	{Name: "credential enable", Help: "set up the git credential helper (hands over to the CLI)", Scope: reslist.Global, Do: wizardCommand("credential", "enable")},
-	{Name: "credential disable", Help: "remove the git credential helper (hands over to the CLI)", Scope: reslist.Global, Do: wizardCommand("credential", "disable")},
-	{Name: "credential status", Help: "credential helper per remote (paged)", Scope: reslist.Global,
-		Do: func(m Model, _ []secret.Violation, _ []string) (Model, tea.Cmd) {
-			return m, handover.Run(handover.Paged(handover.WS(m.env.Paths, "credential", "status")), handoverWizard)
-		}},
 }
 
 // Commands implements nav.Commander.
@@ -525,17 +364,6 @@ func (m Model) updateList(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 
 func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 	switch st {
-	case stepPassEntryName:
-		r := msg.(prompt.ResultMsg)
-		if r.Cancelled {
-			return m, nil
-		}
-		entry := strings.TrimSpace(r.Value)
-		if err := validEntryName(entry); err != nil {
-			return m, nav.Notify(nav.LevelError, err.Error())
-		}
-		return m.confirmActions("secret.store", "Store in pass",
-			[]plan.Action{secret.StoreAction(m.env.Paths.Config, m.env.Paths.Workspace, m.pending, entry)}), nil
 	case stepSkipDirInput:
 		r := msg.(prompt.ResultMsg)
 		if r.Cancelled {
@@ -554,23 +382,6 @@ func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 	}
 	m, cmd := m.rescan()
 	return m, tea.Batch(nav.Notify(level, confirm.Summary(done.Result)), cmd)
-}
-
-// validEntryName rejects an entry name that would leave the pass store, as
-// `secret store` does.
-func validEntryName(entry string) error {
-	if entry == "" {
-		return fmt.Errorf("the pass entry name is empty")
-	}
-	if strings.HasPrefix(entry, "/") || strings.HasPrefix(entry, "~") {
-		return fmt.Errorf("pass entry %q must be a name inside the store, such as myapp/password", entry)
-	}
-	for _, part := range strings.Split(entry, "/") {
-		if part == ".." || part == "." || part == "" {
-			return fmt.Errorf("pass entry %q is not a valid name", entry)
-		}
-	}
-	return nil
 }
 
 func (m Model) abs(v secret.Violation) string { return style.AbsPath(m.env.Paths.Workspace, v.Path) }
@@ -601,39 +412,6 @@ func (m Model) ignoreAction(v secret.Violation) plan.Action {
 	}
 }
 
-func mark(ok bool, label string) string {
-	if ok {
-		return theme.OK.Render("✔ " + label)
-	}
-	return theme.Warn.Render("! " + label)
-}
-
-func (m Model) healthLine() string {
-	if !m.loaded {
-		return theme.Muted.Render("Checking pass store…")
-	}
-	h := m.health.Pass
-	parts := []string{mark(h.Installed && h.GPGAvailable, "pass")}
-	if h.Initialized {
-		parts = append(parts, mark(true, fmt.Sprintf("store (%s)", format.Plural(h.EntryCount, "entry"))))
-	} else {
-		parts = append(parts, mark(false, "store"))
-	}
-	parts = append(parts, mark(h.GitBacked, "git"))
-	if h.GitBacked {
-		if h.GitRemote {
-			parts = append(parts, mark(true, "remote"))
-		} else {
-			parts = append(parts, theme.Warn.Render("! no remote"))
-		}
-	}
-	parts = append(parts, mark(m.health.CredHelper, "credential helper"))
-	if m.health.CopyCommand != "" {
-		parts = append(parts, theme.Muted.Render("ℹ no workspace copy"))
-	}
-	return strings.Join(parts, "  ")
-}
-
 func (m Model) statusLine() string {
 	if m.scanning {
 		return theme.Muted.Render("Scanning for secrets…")
@@ -650,7 +428,7 @@ func (m Model) View() string {
 	case m.level == levelDetail:
 		return lipgloss.JoinVertical(lipgloss.Left, clip.Render(theme.Bold.Render(m.detailTitle)), m.detail.View())
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, clip.Render(m.healthLine()), clip.Render(m.statusLine()), m.list.View())
+	return lipgloss.JoinVertical(lipgloss.Left, clip.Render(m.statusLine()), m.list.View())
 }
 
 // KeyMap implements nav.Component.

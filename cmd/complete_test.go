@@ -126,7 +126,7 @@ func TestCompleteSubcommands(t *testing.T) {
 		},
 		{
 			args:      []string{"secret", ""},
-			wantSome:  []string{"ls", "show", "allow", "mute", "unmute", "store"},
+			wantSome:  []string{"ls", "show", "allow", "mute", "unmute"},
 			wantNone:  []string{"scan", "fix", "setup"},
 			directive: compDirectiveNoFileComp,
 		},

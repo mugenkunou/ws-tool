@@ -1,4 +1,4 @@
-package secret
+package pass
 
 import (
 	"os"
