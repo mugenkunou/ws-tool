@@ -21,7 +21,7 @@ func TestIgnoreCommands(t *testing.T) {
 func TestIgnoreScopes(t *testing.T) {
 	want := []string{
 		"i:selected", "m:selected", "s:selected", "ctrl+d:selected", "e:global", "v:global", // Warnings
-		"i:selected", "u:selected", "e:global", "v:global", // Muted
+		"i:selected", "u:selected", "p:all", "e:global", "v:global", // Muted
 		"ctrl+d:selected", "e:global", "v:global", // Ignored
 	}
 	if got := declaredScopes(t, loaded(t, 100, 30), nav.ScreenIgnore); !slices.Equal(got, want) {
