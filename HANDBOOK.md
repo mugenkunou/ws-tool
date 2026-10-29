@@ -601,12 +601,13 @@ such as `rclone bisync`.
 | `pass` | the pass(1) password store | Secrets (header, `:pass …`) |
 | `credential` | ws as git's credential helper, backed by pass | Secrets (header, `:credential …`) |
 | `cron` | ws-managed cron jobs | Cron |
-| `sync` | the one-way mirror of the workspace for folder-sync clients (`sync.mirror.target`) | — (CLI and cron only) |
+| `sync` | the one-way mirror of the workspace for folder-sync clients (`sync.mirror.target`) | Sync |
 | `trash` | the XDG trash and the soft-delete integrations | Trash |
-| `config` | `ws.json` | `:config …` |
-| `completion` | shell completion | — |
+| `config` | `ws.json` | Workspace (row, `:config …`) |
+| `completion` | shell completion | Workspace (rows, `:completion …`) |
 
-Workspace commands without a noun: `ws init`, `ws layout`, `ws env`, `ws tui`, `ws version`, `ws help`. Bare `ws`
+Workspace commands without a noun: `ws init`, `ws layout`, `ws env`, `ws tui`, `ws version`, `ws help`. The
+Workspace screen hosts them, and every noun above has exactly one screen (`TestEveryNounHasATUIHome`). Bare `ws`
 prints help.
 
 ### 3.3 Verb glossary
@@ -3708,8 +3709,8 @@ OneDrive, a USB stick). `ws sync push` copies the workspace into `sync.mirror.ta
 folder the client watches, and the client uploads it (Factor XII). The mirror is ws's: you
 never edit it. MEGA does not need this noun (§2.6).
 
-There is no TUI screen: `sync` is CLI and cron only (§6.9). Every command needs `rsync` on
-`PATH`.
+TUI: the Sync screen (§6.5) is `ws sync status` and runs `:push`; `restore` is CLI only, since
+it runs once on a fresh machine. Every command needs `rsync` on `PATH`.
 
 | Command | RO/RW | Does |
 | --- | --- | --- |
@@ -3787,6 +3788,11 @@ Exit: 0, including a busy lock. 1 on a failed check, a refusal, or an rsync erro
 Cron: the `sync-push` job runs `ws sync push --quiet` every 30 minutes. It is not installed
 by default: `ws cron add sync-push`.
 
+TUI: `:push` on the Sync screen opens a one-action checklist ("Push to <target>: N to copy, M
+to delete"), built from the same questions the CLI asks. Where the CLI would ask first (a
+foreign stamp, or deletions over `sync.max_delete_pct`), the action starts unchecked with the
+question in the note, and ticking it is the answer.
+
 #### `ws sync status`
 
 ```text
@@ -3800,6 +3806,9 @@ Changes nothing.
 JSON: `sync.status`.
 
 Exit: 0, whatever the state. 1 on a failed check.
+
+TUI: the Sync screen's header shows the same lines, above the list of what the next push
+would copy or delete.
 
 #### `ws sync restore`
 
@@ -3821,21 +3830,23 @@ Exit: 0, 1.
 
 ### Workspace commands
 
-Commands about the workspace itself and the ws binary. There is no TUI screen of their own. The
-command bar covers `config` (`:config show`, `:config edit`), and the setup screen covers `init`.
+Commands about the workspace itself and the ws binary. The Workspace screen hosts them (§6.5):
+its rows are `version`, `ws.json`, the completion state of each shell and `layout`, and its `:`
+commands are `config show|edit` and `completion enable|disable`, from any screen. The setup
+screen covers `init`.
 
 | Command | RO/RW | Does | TUI |
 | --- | --- | --- | --- |
 | `ws init` | RW | create the workspace layout, `ws.json` and `.megaignore` | setup screen `enter` |
-| `ws layout` | RO | print the workspace folders and the homes outside it, with their purpose | — |
-| `ws env` | RO | print the paths scripts use, as shell `export` lines | — |
+| `ws layout` | RO | print the workspace folders and the homes outside it, with their purpose | Workspace rows |
+| `ws env` | RO | print the paths scripts use, as shell `export` lines | — (for scripts) |
 | `ws config show [--defaults]` | RO | print the resolved `ws.json`, or the built-in defaults | `:config show` |
 | `ws config edit` | RW | open `ws.json` in `$EDITOR`, validate, save | `:config edit` |
-| `ws completion bash\|zsh\|fish` | RO | print the completion script | — |
-| `ws completion enable [--shell s]` | RW | add completion to the shell rc file | — |
-| `ws completion disable [--shell s]` | RW | remove it | — |
+| `ws completion bash\|zsh\|fish` | RO | print the completion script | — (for shells) |
+| `ws completion enable [--shell s]` | RW | add completion to the shell rc file | `:completion enable` |
+| `ws completion disable [--shell s]` | RW | remove it | `:completion disable` |
 | `ws tui` | RO | open the terminal UI | — |
-| `ws version [--short]` | RO | print version information | — |
+| `ws version [--short]` | RO | print version information | Workspace row |
 | `ws help [noun [verb…]]` | RO | print help | `?` |
 
 Global flags, accepted before or after the command:
@@ -4429,6 +4440,40 @@ gone is listed and cannot be installed.
 `:` commands: `install [<tool>]`, `uninstall [<tool>]`. A tool named in the command skips the
 chooser. A row the CLI would skip (already installed, broken, or a link that is not ws's) is
 named in the checklist's note.
+
+The Dashboard card counts the skills and those installed somewhere. A broken link and a skill
+of yours that shares a built-in's name are warnings, each opening the screen filtered to its
+rows.
+
+**Sync.** The header is `ws sync status`: mirror folder, last push, stamp state, pending
+totals, and a notice for skipped symlinks. The list is what the next push would copy or delete
+(action, path). The load is `ws sync`'s rsync dry run, and it re-reads `ws.json`, so a new
+target takes effect on refresh. With no `sync.mirror.target` the screen says how to set it
+(`:config edit`, then refresh). A missing rsync or a bad target is the screen's error. There
+are no keys beyond the list's.
+
+`:` commands: `push` (§5, `ws sync push`).
+
+The Dashboard card shows the last push's age and the pending count. A wiped stamp, a foreign
+stamp and a tripped delete guard are warnings. None is an error, since a push still works in
+each case. A workspace with no target gets a muted line and no attention row.
+
+**Workspace.** ws's own settings, one row per setting (setting, state, value, note):
+`version` (ws version, config schema, platform, Go version); `ws.json` (ok, invalid or missing,
+with the load error as the note, never a crash); `completion bash|zsh|fish` (on or off, with
+the rc file; the `$SHELL` row says "your shell"); `layout <folder>`, one per `ws layout`
+folder with its purpose; and `home <name>` for the temp, cache, session and scratch homes with
+their `WS_*` variable. `enter` on the `ws.json` row hands over `config edit`.
+
+`:` commands, from any screen (hosted nouns, §6.6): `config show` (paged), `config edit`
+(editor; every screen reloads on return), `completion enable [--shell s]` and `completion
+disable [--shell s]`. The completion commands act on the marked completion rows, else the
+completion row under the cursor, else `$SHELL`, and show the CLI's plan, one action per
+shell, pre-checked.
+
+The Dashboard card reads "ws vX · ws.json ok" and which shells have completion. A `ws.json`
+that fails to load is an error. Completion off in `$SHELL` is advice: `enter` pre-fills
+`:completion enable`.
 
 ### 6.6 Command bar
 

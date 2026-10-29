@@ -215,7 +215,8 @@ Your SSH config, shell setup and editor settings are back. Go make tea. 🍵
 
 ## 🖥️ The TUI
 
-`ws tui`: one screen per noun, a dashboard of what needs attention. k9s-style keys:
+`ws tui`: one screen per noun, a dashboard of what needs attention, and a Workspace tab for
+ws itself (version, `ws.json`, shell completion, layout). k9s-style keys:
 
 | Key | Does |
 | --- | --- |
