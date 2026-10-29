@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/mugenkunou/ws-tool/internal/mirror"
 	"github.com/mugenkunou/ws-tool/internal/style"
@@ -57,30 +56,7 @@ func syncOptions(globals globalFlags, stderr io.Writer) (mirror.Options, error) 
 	if err != nil {
 		return mirror.Options{}, err
 	}
-	return optionsFrom(ws, cfg)
-}
-
-func optionsFrom(ws string, cfg wsconfig.WsConfig) (mirror.Options, error) {
-	state, err := wsconfig.StateDir()
-	if err != nil {
-		return mirror.Options{}, err
-	}
-	o := mirror.Options{
-		Workspace:    ws,
-		Rules:        cfg.IgnoreRules,
-		Exclude:      cfg.Sync.Exclude,
-		MaxDeletePct: cfg.Sync.MaxDeletePct,
-		StateDir:     state,
-	}
-	if t := strings.TrimSpace(cfg.Sync.Mirror.Target); t != "" {
-		o.Target = t // relative: Check rejects it
-		if strings.HasPrefix(t, "~") || strings.HasPrefix(t, "/") {
-			if o.Target, err = wsconfig.ExpandUserPath(t); err != nil {
-				return mirror.Options{}, err
-			}
-		}
-	}
-	return o, nil
+	return mirror.OptionsFrom(ws, cfg)
 }
 
 // askOrRefuse asks a safety question. Under --quiet or --json (cron) nobody can
@@ -132,28 +108,22 @@ func syncPush(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 	defer p.Close()
 
 	// Symlink and wiped-mirror warnings go to stderr so cron logs keep them.
-	if n := len(p.Filter.Symlinks); n > 0 {
-		fmt.Fprintln(stderr, style.ResultWarning(nc, "%s skipped: symlinks never sync (ws ignore lint lists them)", pluralize(n, "symlink")))
+	if w := mirror.SymlinkWarning(len(p.Filter.Symlinks)); w != "" {
+		fmt.Fprintln(stderr, style.ResultWarning(nc, "%s", w))
 	}
-	switch p.State {
-	case mirror.StampWiped:
-		fmt.Fprintln(stderr, style.ResultWarning(nc, "The mirror was emptied since the last push (%s). Re-uploading %s; older copies are in your sync client's trash.",
-			p.Last.Time.Local().Format("2006-01-02 15:04"), pluralize(p.Filter.Files, "file")))
-	case mirror.StampForeign:
-		msg := fmt.Sprintf("%s was last written by another push, not this machine's. Sync is one-way: push from one machine only. Push anyway?", o.Target)
-		if globals.dryRun {
-			fmt.Fprintln(out, style.ResultWarning(nc, "%s", strings.TrimSuffix(msg, " Push anyway?")))
-		} else if !askOrRefuse(globals, stdin, stdout, msg) {
-			fmt.Fprintln(stderr, "Refused: the mirror belongs to another push. Run ws sync push by hand to confirm.")
-			return 1
-		}
+	if w := p.WipedWarning(); w != "" {
+		fmt.Fprintln(stderr, style.ResultWarning(nc, "%s", w))
 	}
-	if p.GuardTripped() {
-		msg := fmt.Sprintf("This push deletes %d of %d files in the mirror (over sync.max_delete_pct). Continue?", len(p.Deleted), p.MirrorFiles)
+	for _, q := range p.Questions() {
 		if globals.dryRun {
-			fmt.Fprintln(out, style.ResultWarning(nc, "%s", strings.TrimSuffix(msg, " Continue?")))
-		} else if !askOrRefuse(globals, stdin, stdout, msg) {
-			fmt.Fprintln(stderr, "Refused: too many deletions. Check the workspace, then run ws sync push by hand to confirm.")
+			fmt.Fprintln(out, style.ResultWarning(nc, "%s", q.Warning))
+		} else if !askOrRefuse(globals, stdin, stdout, q.Prompt()) {
+			switch q.Kind {
+			case mirror.AskForeign:
+				fmt.Fprintln(stderr, "Refused: the mirror belongs to another push. Run ws sync push by hand to confirm.")
+			default:
+				fmt.Fprintln(stderr, "Refused: too many deletions. Check the workspace, then run ws sync push by hand to confirm.")
+			}
 			return 1
 		}
 	}
@@ -191,17 +161,6 @@ func syncPush(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 	return 0
 }
 
-type syncStatusReport struct {
-	Target         string            `json:"target"`
-	Stamp          mirror.StampState `json:"stamp"`
-	LastPush       *mirror.LastPush  `json:"last_push"`
-	PendingChanges int               `json:"pending_changes"`
-	PendingDeletes int               `json:"pending_deletes"`
-	Files          int               `json:"files"`
-	Bytes          int64             `json:"bytes"`
-	Symlinks       []string          `json:"skipped_symlinks"`
-}
-
 func syncStatus(args []string, globals globalFlags, stdout, stderr io.Writer) int {
 	if _, ok := parseSyncFlags("sync-status", args, &globals, stderr); !ok {
 		return 1
@@ -217,41 +176,19 @@ func syncStatus(args []string, globals globalFlags, stdout, stderr io.Writer) in
 		return 1
 	}
 	defer p.Close()
-	r := syncStatusReport{Target: o.Target, Stamp: p.State, LastPush: p.Last,
-		PendingChanges: len(p.Changed), PendingDeletes: len(p.Deleted),
-		Files: p.Filter.Files, Bytes: p.Filter.Bytes, Symlinks: nonNil(p.Filter.Symlinks)}
+	r := mirror.StatusOf(p)
 	if globals.json {
 		return writeJSON(stdout, stderr, "sync.status", r)
 	}
 	out := textOut(globals, stdout)
 	nc := globals.noColor
-	fmt.Fprintf(out, "  %-12s %s\n", "Mirror", r.Target)
-	if r.LastPush != nil {
-		fmt.Fprintf(out, "  %-12s %s · %s · %s · %d copied · %d deleted\n", "Last push",
-			r.LastPush.Time.Local().Format("2006-01-02 15:04"), pluralize(r.LastPush.Files, "file"),
-			style.HumanBytes(r.LastPush.Bytes), r.LastPush.Changed, r.LastPush.Deleted)
-	} else {
-		fmt.Fprintf(out, "  %-12s %s\n", "Last push", "never (from this machine)")
+	for _, f := range r.Facts() {
+		fmt.Fprintf(out, "  %-12s %s\n", f.Label, f.Value)
 	}
-	fmt.Fprintf(out, "  %-12s %s\n", "Stamp", stampLabel(r.Stamp))
-	fmt.Fprintf(out, "  %-12s %d to copy · %d to delete (%s, %s in all)\n", "Pending",
-		r.PendingChanges, r.PendingDeletes, pluralize(r.Files, "file"), style.HumanBytes(r.Bytes))
-	if n := len(r.Symlinks); n > 0 {
-		fmt.Fprintln(out, style.ResultWarning(nc, "%s skipped: symlinks never sync (ws ignore lint lists them)", pluralize(n, "symlink")))
+	if w := mirror.SymlinkWarning(len(r.Symlinks)); w != "" {
+		fmt.Fprintln(out, style.ResultWarning(nc, "%s", w))
 	}
 	return 0
-}
-
-func stampLabel(s mirror.StampState) string {
-	switch s {
-	case mirror.StampOK:
-		return "ok (written by this machine's last push)"
-	case mirror.StampWiped:
-		return "missing: the mirror was emptied since the last push; the next push re-uploads"
-	case mirror.StampForeign:
-		return "foreign: another push wrote the mirror; the next push asks first"
-	}
-	return "none yet (first push)"
 }
 
 func syncRestore(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -281,7 +218,7 @@ func syncRestore(args []string, globals globalFlags, stdin io.Reader, stdout, st
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}
-		if o, err = optionsFrom(ws, cfg); err != nil {
+		if o, err = mirror.OptionsFrom(ws, cfg); err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			return 1
 		}

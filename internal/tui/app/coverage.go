@@ -69,7 +69,7 @@ var CLICoverage = func() []Coverage {
 		{CLI: "completion enable", Screen: ws, Why: CLIOnly, Note: "not yet in the TUI"},
 		{CLI: "completion disable", Screen: ws, Why: CLIOnly, Note: "not yet in the TUI"},
 
-		{CLI: "sync push", Screen: sy, Why: CLIOnly, Note: "not yet in the TUI"},
+		{CLI: "sync push", Screen: sy, Cmd: "push"},
 		{CLI: "sync status", Screen: sy, Why: List},
 		{CLI: "sync restore", Screen: sy, Why: CLIOnly, Note: "run once on a fresh machine, before the TUI has a workspace"},
 

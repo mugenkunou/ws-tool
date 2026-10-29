@@ -176,7 +176,17 @@ func overlay(base, box string, width, height int) string {
 		if w := lipgloss.Width(l); w < x {
 			l += strings.Repeat(" ", x-w)
 		}
-		lines[y+i] = ansi.Truncate(l, x, "") + bl + ansi.TruncateLeft(l, x+bw, "")
+		// A wide character cut by either edge of the box must not shift the
+		// line: pad the left part to x, and replace a half-covered character on
+		// the right by spaces.
+		left := ansi.Truncate(l, x, "")
+		left += strings.Repeat(" ", x-lipgloss.Width(left))
+		rest := lipgloss.Width(l) - x - bw
+		right := ansi.TruncateLeft(l, x+bw, "")
+		if extra := lipgloss.Width(right) - max(rest, 0); extra > 0 {
+			right = strings.Repeat(" ", extra) + ansi.TruncateLeft(l, x+bw+extra, "")
+		}
+		lines[y+i] = left + bl + right
 	}
 	return strings.Join(lines, "\n")
 }

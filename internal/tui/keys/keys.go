@@ -789,17 +789,23 @@ func back() key.Binding {
 	return key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back"))
 }
 
-// SyncMap is the binding set for the Sync screen.
-type SyncMap struct{}
+// SyncMap is the binding set for the Sync screen. It has no verb keys of its
+// own: pushing is the `:push` command, and the list's keys are the shared ones.
+type SyncMap struct {
+	Table table.KeyMap
+	Back  key.Binding
+}
 
 // Sync returns the Sync screen bindings.
-func Sync() SyncMap { return SyncMap{} }
+func Sync() SyncMap { return SyncMap{Table: Table(), Back: back()} }
 
 // ShortHelp implements help.KeyMap.
 func (k SyncMap) ShortHelp() []key.Binding { return nil }
 
 // FullHelp implements help.KeyMap.
-func (k SyncMap) FullHelp() [][]key.Binding { return nil }
+func (k SyncMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom}}
+}
 
 // WorkspaceMap is the binding set for the Workspace screen.
 type WorkspaceMap struct{}
