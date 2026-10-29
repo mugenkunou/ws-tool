@@ -240,3 +240,37 @@ func TestEveryNounHasATUIHome(t *testing.T) {
 		}
 	}
 }
+
+// TestFlagCoverage: every flag of every CLI command has exactly one TUI
+// decision in CLIFlagCoverage, and every entry names a real command and flag.
+func TestFlagCoverage(t *testing.T) {
+	type key struct{ cli, flag string }
+	real := map[key]bool{}
+	for _, c := range commands {
+		if c.Program != "" {
+			continue
+		}
+		for _, f := range c.Flags {
+			real[key{c.name(), f.Name}] = true
+		}
+	}
+	covered := map[key]bool{}
+	for _, c := range app.CLIFlagCoverage {
+		k := key{c.CLI, c.Flag}
+		if covered[k] {
+			t.Errorf("flag %s of %q is listed twice in CLIFlagCoverage (internal/tui/app/flags.go): keep one entry", c.Flag, c.CLI)
+		}
+		covered[k] = true
+		if !real[k] {
+			t.Errorf("CLIFlagCoverage lists flag %s of %q, which the CLI does not have: remove it from internal/tui/app/flags.go", c.Flag, c.CLI)
+		}
+		if strings.TrimSpace(c.How) == "" {
+			t.Errorf("flag %s of %q has an empty How: say where the TUI offers it, or why not (internal/tui/app/flags.go)", c.Flag, c.CLI)
+		}
+	}
+	for k := range real {
+		if !covered[k] {
+			t.Errorf("flag %s of %q has no TUI decision: add it to CLIFlagCoverage in internal/tui/app/flags.go", k.flag, k.cli)
+		}
+	}
+}
