@@ -191,10 +191,10 @@ func audit() tea.Cmd {
 		var b strings.Builder
 		for _, f := range res.Findings {
 			if f.Entry == "" {
-				b.WriteString(theme.Warn.Render("⚠ ") + f.Message + "\n")
+				b.WriteString(theme.Warn.Render("! ") + f.Message + "\n")
 				continue
 			}
-			b.WriteString(theme.Warn.Render("⚠ ") + theme.Bold.Render(f.Entry) + "  " + f.Message + "\n")
+			b.WriteString(theme.Warn.Render("! ") + theme.Bold.Render(f.Entry) + "  " + f.Message + "\n")
 		}
 		return detailMsg{title: "Pass store audit", text: strings.TrimRight(b.String(), "\n")}
 	}
@@ -605,7 +605,7 @@ func mark(ok bool, label string) string {
 	if ok {
 		return theme.OK.Render("✔ " + label)
 	}
-	return theme.Muted.Render("✘ " + label)
+	return theme.Warn.Render("! " + label)
 }
 
 func (m Model) healthLine() string {
@@ -624,7 +624,7 @@ func (m Model) healthLine() string {
 		if h.GitRemote {
 			parts = append(parts, mark(true, "remote"))
 		} else {
-			parts = append(parts, theme.Warn.Render("⚠ no remote"))
+			parts = append(parts, theme.Warn.Render("! no remote"))
 		}
 	}
 	parts = append(parts, mark(m.health.CredHelper, "credential helper"))

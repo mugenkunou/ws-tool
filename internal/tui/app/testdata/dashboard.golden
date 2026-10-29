@@ -4,11 +4,11 @@ ws  🏠 Dashboard   📦   🔗   🧪   📼   🧹   🔄   🔐   ⏰   🚮
 
 🚨 Needs attention (10)
 › ✘ 2 symlinks broken, missing or drifted                                                🔗 Symlinks
-  ✘ 1 possible secret in workspace files                                                  🔐 Secrets
   ✘ Cron job repo-sync failing (exit 2)                                                      ⏰ Cron
   ! 2 repos out of sync (1 dirty, 1 behind, 1 ahead)                                        📦 Repos
   ! 2 sync hygiene violations (bloat, depth, build artifacts)                              🧹 Ignore
   ! Another push wrote the mirror; the next push asks before overwriting it                  🔄 Sync
+  ! 1 possible secret in workspace files                                                  🔐 Secrets
   ! Pass store has no git remote — secrets live only on this machine                      🔐 Secrets
   ! Soft-delete is off for 1 of 3 integrations                                              🚮 Trash
   ! 1 skill link to a folder that is gone                                                  🧩 Skills
@@ -26,5 +26,5 @@ ws  🏠 Dashboard   📦   🔗   🧪   📼   🧹   🔄   🔐   ⏰   🚮
 │ ● recording                  │ │ 1 in included paths          │ │ 3 to copy · 1 to delete      │
 ╰──────────────────────────────╯ ╰──────────────────────────────╯ ╰──────────────────────────────╯
 ╭──────────────────────────────╮ ╭──────────────────────────────╮ ╭──────────────────────────────╮
-│ 🔐 Secrets                 ✘ │ │ ⏰ Cron                    ✘ │ │ 🚮 Trash                   ! │
+│ 🔐 Secrets                 ! │ │ ⏰ Cron                    ✘ │ │ 🚮 Trash                   ! │
 ←→↑↓ move • enter open • ctrl+r refresh • : command • ? help • q quit
