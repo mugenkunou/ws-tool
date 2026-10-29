@@ -14,6 +14,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/agenttmux"
 	wscron "github.com/mugenkunou/ws-tool/internal/cron"
 	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
+	"github.com/mugenkunou/ws-tool/internal/mirror"
 	"github.com/mugenkunou/ws-tool/internal/repo"
 	wsscratch "github.com/mugenkunou/ws-tool/internal/scratch"
 	"github.com/mugenkunou/ws-tool/internal/secret"
@@ -120,7 +121,24 @@ func fixtures() []tea.Msg {
 			{Name: "sql-style", Path: ws + "/agent/skills/sql-style", Shelf: "yours", Tools: []string{}},
 			{Name: "old-link", Path: ws + "/agent/skills/old-link", Shelf: "yours", Broken: true, Tools: []string{}},
 		}},
-		syncscreen.LoadedMsg{},
+		syncscreen.LoadedMsg{
+			At: fixedClock(), Configured: true,
+			Options: mirror.Options{Workspace: ws, Target: "/home/tester/MEGA/ws-mirror"},
+			Status: mirror.Status{
+				Target: "/home/tester/MEGA/ws-mirror", Stamp: mirror.StampForeign,
+				LastPush: &mirror.LastPush{Stamp: mirror.Stamp{PushID: "a1", Host: "box", Time: fixedClock().Add(-2 * time.Hour)},
+					Target: "/home/tester/MEGA/ws-mirror", Files: 1204, Bytes: 48 << 20, Changed: 7, Deleted: 1},
+				PendingChanges: 3, PendingDeletes: 1, Files: 1210, Bytes: 49 << 20, Symlinks: []string{"Projects/api/link"},
+			},
+			Changes: []syncscreen.Change{
+				{Path: "Notes/2026-10.md", Action: mirror.ActionCopy},
+				{Path: "Projects/api/main.go", Action: mirror.ActionCopy},
+				{Path: "Projects/web/index.html", Action: mirror.ActionCopy},
+				{Path: "Notes/old-draft.md", Action: mirror.ActionDelete},
+			},
+			Questions: []mirror.Question{{Kind: mirror.AskForeign, Ask: "Push anyway?",
+				Warning: "/home/tester/MEGA/ws-mirror was last written by another push, not this machine's. Sync is one-way: push from one machine only."}},
+		},
 		workspacescreen.LoadedMsg{},
 		trash.LoadedMsg{
 			Status: wstrash.Status{
@@ -296,6 +314,7 @@ func TestSnapshots(t *testing.T) {
 		{"trash_purge_prompt", []string{"9", "p"}},
 		{"trash_marked_delete", []string{"9", "ctrl+a", "ctrl+d"}},
 		{"trash_marked_restore", []string{"9", "space", "r"}},
+		{"sync", []string{"6", "tab"}},
 		{"skills", []string{"0"}},
 		{"skills_install_chooser", []string{"0", "i"}},
 		{"skills_marked_uninstall", []string{"0", "ctrl+a", "u"}},

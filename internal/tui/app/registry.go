@@ -40,7 +40,7 @@ var registry = map[nav.Screen]screenEntry{
 	nav.ScreenScratch:   {New: component(scratch.New), Keys: keyMap(keys.Scratch)},
 	nav.ScreenSessions:  {New: component(sessions.New), Keys: keyMap(keys.Sessions)},
 	nav.ScreenIgnore:    {New: component(ignore.New), Keys: keyMap(keys.Ignore)},
-	nav.ScreenSync:      {New: component(sync.New)},
+	nav.ScreenSync:      {New: component(sync.New), Keys: keyMap(keys.Sync)},
 	nav.ScreenSecrets:   {New: component(secrets.New), Keys: keyMap(keys.Secrets)},
 	nav.ScreenCron:      {New: component(cron.New), Keys: keyMap(keys.Cron)},
 	nav.ScreenTrash:     {New: component(trash.New), Keys: keyMap(keys.Trash)},
