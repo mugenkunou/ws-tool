@@ -16,7 +16,7 @@ type Screen int
 // Adding a screen: add its constant here and its row in specs, its
 // constructor in the app's registry (internal/tui/app/registry.go), and make
 // its LoadedMsg a Summary so the Dashboard has its card. Tests fail until
-// every step is done (HANDBOOK.md §9.8).
+// every step is done (HANDBOOK.md §9.10, "Adding a screen").
 const (
 	ScreenDashboard Screen = iota
 	ScreenRepos

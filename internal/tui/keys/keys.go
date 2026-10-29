@@ -7,7 +7,7 @@
 //   - :               the command bar, which takes the CLI's own words
 //   - /               filter the list (the CLI's --filter expressions)
 //   - ?               full help · q quit (ctrl+c always quits)
-//   - tab shift+tab ] [ 1-9   next / previous screen; jump to a screen
+//   - tab shift+tab ] [   next / previous screen (:<screen> jumps to one)
 //   - ctrl+r          refresh this screen
 //   - d  y            describe the cursor row; show it as JSON
 //   - e  a  ctrl+d    edit, add, delete: the same keys on every screen that has

@@ -33,7 +33,7 @@ const (
 // command forces a TUI decision; TestCoverageKeysExist and
 // TestCoverageCommandsExist fail when an entry names a key or `:` command its
 // screen does not offer, and TestCoverageReasons when an entry with neither
-// gives no reason. See HANDBOOK.md §7.5 and §9.8.
+// gives no reason. See HANDBOOK.md §6.9 and §9.10.
 type Coverage struct {
 	CLI    string     // "symlink add"
 	Screen nav.Screen // where it lives: the screen of its noun (nav.ForNoun)

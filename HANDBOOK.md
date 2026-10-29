@@ -4076,7 +4076,8 @@ ws tui
 ```
 
 Opens the interactive terminal UI on the Dashboard. The screens are Dashboard, Repos, Symlinks,
-Scratch, Sessions, Ignore, Secrets, Cron, Trash and Skills, reached with 1–9, 0 and tab. It honours
+Scratch, Sessions, Ignore, Sync, Secrets, Cron, Trash, Skills and Workspace, reached with tab,
+shift+tab and `:<screen>`. It honours
 `--workspace`. If the workspace is not initialized, it opens the setup screen. stdin
 and stdout must be a terminal.
 
@@ -4171,7 +4172,7 @@ a `:` command bar that takes the CLI's own words.
 ### 6.1 Frame
 
 ```text
-ws  Dashboard¹  Repos²  Symlinks³  Scratch⁴  Sessions⁵  Ignore⁶  Secrets⁷  Cron⁸  Trash⁹  Skills⁰   tabs
+ws  🏠   📦   🔗 Symlinks   🧪   📼   🧹   🔄   🔐   ⏰   🚮   🧩   🔧                              tabs
 ────────────────────────────────────────────────────────────────────────────────────────   rule
  Host path          Workspace copy                       App     Status    Sudo           body
  ~/.bashrc          symlinks/home/.bashrc                bash    ✔ ok
@@ -4195,9 +4196,16 @@ a add • ctrl+d unlink • l link • space mark … • tab screens • : comm
 
 ### 6.2 Screens
 
-Tab order: Dashboard, Repos, Symlinks, Scratch, Sessions, Ignore, Secrets, Cron, Trash, Skills.
-Every screen except the Dashboard is the list of its noun's rows, the same rows as
-`ws <noun> ls`. `tab` and `shift+tab` switch screens; the active tab is a reversed block.
+Tab order: Dashboard, Repos, Symlinks, Scratch, Sessions, Ignore, Sync, Secrets, Cron, Trash,
+Skills, Workspace. Every screen except the Dashboard is the list of its noun's rows, the same
+rows as `ws <noun> ls`. Workspace is ws's own settings: the commands without a noun
+(`version`, `layout`, `config`, `completion`). `tab` and `shift+tab` switch screens; the
+active tab is a reversed block. When the titles do not fit, the tabs drop to icons and the
+active tab keeps its title.
+
+Each screen is named after a CLI noun or hosts nouns that have no screen: Secrets hosts
+`pass` and `credential`, Workspace hosts `config`, `completion`, `version` and `layout`.
+Every CLI noun has exactly one such home (§9.10).
 
 ### 6.3 Global keys
 
@@ -4267,7 +4275,8 @@ and restores on Trash), as in k9s. Global keys never change meaning. The `:`
 commands are listed with each screen. They are the CLI's words after the noun.
 
 **Dashboard.** The workspace's home: a greeting, **Needs attention** (errors, then
-warnings, then info), and an overview grid with one card per screen. `↑` `↓` move in the
+warnings, then info), and an overview grid with one card per screen. Each screen derives its
+own card and attention rows from its load result, so every screen has a card. `↑` `↓` move in the
 list, and all four arrows move in the grid (`↑` from the top row returns to the list).
 `enter` on a problem opens its screen with the first affected row selected (or filtered to
 the affected rows, where one filter says it). `enter` on a card opens its screen. The Symlinks
@@ -4429,8 +4438,8 @@ named in the checklist's note.
 | --- | --- |
 | `:<screen>` | switch screen. Any unique prefix of the noun or title works: `:rep`, `:dot`, `:sess`, `:dash` |
 | `:<verb> [args]` | the active screen's command, the CLI words after the noun: `:link` on Symlinks is `ws symlink link` |
-| `:<noun> <verb> [args]` | switch to the noun's screen and run it there: `:pass audit` |
-| `:config show`, `:config edit` | workspace config |
+| `:<noun> <verb> [args]` | switch to the noun's screen and run it there: `:repo git status` |
+| `:<hosted noun> <verb> [args]` | the same, on the screen that hosts the noun: `:pass audit` (Secrets), `:config edit` (Workspace) |
 | `:help`, `:q` | full help; quit |
 
 While typing, the bar shows the matching completions after the cursor, dimmed. `tab`
@@ -4480,9 +4489,13 @@ Everything else is native.
 
 ### 6.9 Parity
 
-Every CLI command is reachable in the TUI as a key, a `:` command, or the screen's list.
-The only exceptions are plumbing (`git-credential-helper get|store|erase`), shell output
-(`completion …`), `sync …` (CLI and cron only), and `version`, `help` and `tui` themselves. A test enforces this (§9.10).
+Every CLI command is reachable in the TUI as a key, a `:` command, or the screen's list, on
+the screen that owns its noun. The exceptions each carry a stated reason: plumbing
+(`git-credential-helper get|store|erase`), shell output (`completion bash|zsh|fish`, `env`),
+what the TUI covers outside a screen (`init` is the setup screen, `help` is `?`, `tui` is the
+TUI), and a few deliberate CLI-only commands (`sync restore`, `skill eject`, `skill check`).
+Every flag of every command has a recorded TUI decision too. Tests enforce all of this
+(§9.10).
 
 ### 6.10 Cues
 
@@ -4914,8 +4927,11 @@ add or rename one:
 5. **A rename keeps the old name as a hidden alias** in the alias table (§9.7). A hidden
    alias is absent from help and completion, prints the rename hint on stderr when a person
    types it, and stays silent when called as plumbing.
-6. **Give the command a TUI home in the same change:** a screen key named after the verb, or
-   a `:` command (§6.5), plus its entry in `internal/tui/app/coverage.go`.
+6. **Give the command a TUI home in the same change**, on the screen that owns its noun
+   (§6.2): a screen key named after the verb, or a `:` command (§6.5), plus its entry in
+   `internal/tui/app/coverage.go`, and a line per flag in `internal/tui/app/flags.go`. A new
+   noun needs a screen or a host (§9.10, "Adding a screen"). The tests below fail until
+   each step is done, and their messages name the file to edit.
 
 **RO or RW.** A command that writes to disk, config or system state is RW. RO handlers
 receive `(args, globals, stdout, stderr)` with no stdin and no prompts. RW handlers also
@@ -4975,6 +4991,13 @@ The grammar is enforced by tests, not review. `cmd/commands.go` holds one table 
 (`command{Path, Args, Summary, RO, Flags, Fields}`, one entry per line of §3.4). It is the
 single source for help, shell completion and the TUI coverage test, so they cannot drift.
 
+**The table gates dispatch.** `Execute` runs a command only when the table holds it
+(`unknownCommand`): a verb wired into a noun's `switch` but missing from the table fails as
+`unknown command`, so it cannot run while help, completion and the coverage tests know
+nothing of it. Plumbing nouns (`plumbingCommands`) own their words, since git expects the
+credential helper to ignore operations it does not know. `TestDispatchOnlyRunsTableCommands`
+checks both directions.
+
 1. **Every subcommand has its own help.** `ws <noun> <verb> --help` prints the usage, the
    arguments, the command's own flags and, for `ls`, its field names. `ws <noun> --help`
    lists the verbs, one line each. A group help that only prints `<a|b|c>` is a bug.
@@ -4982,7 +5005,8 @@ single source for help, shell completion and the TUI coverage test, so they cann
    verbs and check that each is in the glossary, that completion offers exactly those verbs,
    that no hidden alias appears in help or completion, and that every verb has a coverage
    entry (`TestGlossaryVerbs`, `TestHelpEveryCommand`, `TestCLICoverage`,
-   `TestCompletersOfferEverySubcommand`, `TestCompletionFlagsMatchHelp`).
+   `TestCompletersOfferEverySubcommand`, `TestCompletionFlagsMatchHelp`). Every flag has a
+   TUI decision (`TestFlagCoverage`), and every noun a TUI screen (`TestEveryNounHasATUIHome`).
 3. **Hidden aliases are data, in one table** (`cmd/aliases.go`). Each entry maps an old
    command-line prefix to the new one and is marked *typed* (it prints the rename hint) or
    *plumbing* (silent: crontab lines, git, shell hooks). A test runs every alias and checks
@@ -5054,10 +5078,10 @@ plan types in `internal/plan`). The TUI is built on Charm v2: `charm.land/bubble
 
 | Package | Role |
 | --- | --- |
-| `internal/tui/app` | Root model. Owns the screens, routes messages, handles global keys, lays out header, body, notice and footer, and shows the setup screen when the workspace is not initialized. |
-| `internal/tui/nav` | The contract between app and screens: the `Screen` enum, the `Component` interface, `ResizeMsg`, `UpMsg`, `GotoMsg`, `RefreshMsg`, `ReloadEnvMsg`, `NoticeMsg`, `CommandMsg`. |
+| `internal/tui/app` | Root model. Owns the screens (built from `registry.go`), routes messages, handles global keys, lays out header, body, notice and footer, and shows the setup screen when the workspace is not initialized. `coverage.go` and `flags.go` record how the TUI covers each CLI command and flag. |
+| `internal/tui/nav` | The contract between app and screens: the `Screen` enum and its `specs` (icon, title, noun, hosted nouns), the `Component` interface, the Dashboard's `Summary`/`Card`/`Issue`, `ResizeMsg`, `UpMsg`, `GotoMsg`, `RefreshMsg`, `ReloadEnvMsg`, `NoticeMsg`, `CommandMsg`. |
 | `internal/tui/keys` | **Every key binding** (`keys.go`). The app handles `Global`, and each screen and dialog handles its own map. |
-| `internal/tui/screens/<name>` | One package per screen: dashboard, repos, symlinks, scratch, sessions, ignore, secrets, cron, trash, setup. State is unexported, and outputs are exported `LoadedMsg` types. |
+| `internal/tui/screens/<name>` | One package per screen: dashboard, repos, symlinks, scratch, sessions, ignore, sync, secrets, cron, trash, skills, workspace, setup. State is unexported, and outputs are exported `LoadedMsg` types; `card.go` turns a `LoadedMsg` into the screen's Dashboard card. |
 | `internal/tui/cmdbar` | The `:` command bar: a one-line input drawn in place of the footer, with inline completion from the active screen's commands, the screen names and the global commands. It emits `nav.CommandMsg`. |
 | `internal/tui/confirm` | The action-plan checklist: review (toggle), running (one `tea.Cmd` per action), done. Emits `DoneMsg{Result}`. |
 | `internal/tui/prompt`, `choose` | Text input with ghost-panel suggestions (fixed list or async `Completer`), and a single-choice list. |
@@ -5089,9 +5113,22 @@ for the same verb share one `Do`.
 **Parity is tested, not reviewed.**
 
 - `cmd` `TestCLICoverage`: every CLI subcommand (read from its help) has an entry in
-  `internal/tui/app/coverage.go`: a screen key, a `:` command, the screen's list, or a stated
-  reason it is CLI-only. A new command fails until that is decided.
-- `app` `TestCoverageKeysExist`: each entry's key or `:` command is one its screen offers.
+  `internal/tui/app/coverage.go`: a screen key, a `:` command, or a `Reason` (`List`,
+  `Elsewhere`, `Plumbing`, `Shell`, `CLIOnly` with a note). A new command fails until that is
+  decided.
+- `cmd` `TestFlagCoverage`: every flag of every command has a line in
+  `internal/tui/app/flags.go` saying where the TUI offers it or why it does not.
+- `cmd` `TestEveryNounHasATUIHome`: every CLI noun is a screen's noun or hosted by one.
+- `cmd` `TestDispatchOnlyRunsTableCommands`: only table commands (and plumbing) run.
+- `app` `TestCoverageKeysExist`, `TestCoverageCommandsExist`: each entry's key or `:` command
+  is one its screen offers.
+- `app` `TestCoverageReasons`: an entry with neither key nor command gives a reason; none is
+  parked on the Dashboard (`TestNoCoverageOnTheDashboard`), and each is on the screen that owns
+  its noun.
+- `app` `TestRegistryCoversEveryScreen`: every `nav.Screen` has a spec and a registry entry,
+  and every list screen names its key map, so the key tests below cannot skip it.
+- `app` `TestDashboardHasACardForEveryScreen`: every screen's load result gives the
+  Dashboard a card.
 - `app` `TestListScreensShareListKeys`: every list screen is a `reslist`, and none binds a
   global key (`enter esc : / ? q ctrl+r d y e a ctrl+d space ctrl+space ctrl+\ ctrl+a > <` and
   movement) to another verb. Secrets' `a` (allow) is the one listed exception.
@@ -5137,11 +5174,13 @@ for the same verb share one `Do`.
   `handover.DoneMsg`. What is handed over is in §6.8.
 - **Text never names a key.** Empty states, notices and help take the key from the binding
   (`k.Add.Help().Key`), so a remap cannot leave a stale "press G" behind.
-- **Dashboard.** It derives everything from other screens' `LoadedMsg` and has no actions of its
-  own. `enter` on a problem sends the target screen a `Focus*Msg` carrying a filter expression
-  (Symlinks: a row to select) or a row to select, alongside `nav.Goto`. To add an attention item,
-  extend the area's derivation function in `screens/dashboard`, with the filter that shows
-  exactly its rows.
+- **Dashboard.** It has no actions and no per-screen code. Every screen's `LoadedMsg` is a
+  `nav.Summary`: its `Card()` (in the screen's `card.go`) returns the card's lines and its
+  `nav.Issue`s, and the Dashboard observes the broadcast results and lays them out. `enter` on
+  a problem sends the target screen the issue's `Focus` message (a row to select) or a
+  `nav.FilterMsg` with its `Filter`, alongside `nav.Goto`. To add an attention item, extend the
+  screen's `Card()`, with the filter that shows exactly its rows. A load that must not change
+  the card (Symlinks' second, walked load) returns `ok == false`.
 - **Mouse.** The app captures the mouse in cell-motion mode so a drag selects text and release
   copies it: `selection` extracts the dragged cells from the rendered frame (terminal-style,
   emoji-width aware) and draws the highlight, and `clip.Copy` emits OSC 52 and also pipes to
@@ -5165,6 +5204,22 @@ for the same verb share one `Do`.
   clipped to the terminal.
 - **Stale results.** A screen that can reload while a load is in flight tags loads with a
   generation counter and drops stale results (see `repos`).
+
+**Adding a screen.** A screen is declared once per place below, and a test fails until each
+is done:
+
+1. `internal/tui/nav/nav.go`: a `Screen` constant (its position is the tab order) and its row
+   in `specs`: icon (Emoji_Presentation only), title, the CLI noun it is named after, and the
+   nouns it hosts. `TestRegistryCoversEveryScreen`, `TestEveryNounHasATUIHome`.
+2. `internal/tui/screens/<name>`: the component, loading in a `tea.Cmd`, and `card.go` making
+   its `LoadedMsg` a `nav.Summary`. `TestDashboardHasACardForEveryScreen`.
+3. `internal/tui/app/registry.go`: its constructor, and `Keys` when it is a `reslist`.
+   `TestRegistryCoversEveryScreen`.
+4. `internal/tui/keys/keys.go`: its key map. `TestNoKeyTwiceOnAScreen`, `TestFooterFits`.
+5. `internal/tui/app/coverage.go` and `flags.go`: its commands and flags, moved off any
+   screen that covered them before. `TestCoverageReasons`, `TestFlagCoverage`.
+6. `internal/tui/app/app_test.go`: a `LoadedMsg` in `fixtures()` and a snapshot.
+7. This handbook: §6.2, the screen's keys in §6.5, and the package table above.
 
 **Changing a component.** Before: identify its state (the `Model` struct), inputs (the messages
 `Update` handles), outputs (exported messages and `nav.*` commands), key bindings (its map in
