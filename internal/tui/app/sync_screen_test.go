@@ -58,22 +58,17 @@ func TestSyncPushAsksFirstWhenTheCLIWould(t *testing.T) {
 	}
 }
 
-// TestSyncPushWhenThereIsNothingToDo: an up-to-date mirror says so instead of
-// opening an empty checklist; so does a workspace without a target.
+// TestSyncPushWhenThereIsNothingToDo: an up-to-date mirror still gets the
+// checklist, as `ws sync push` still runs and records the push; a workspace
+// without a target says how to set one.
 func TestSyncPushWhenThereIsNothingToDo(t *testing.T) {
-	cases := []struct {
-		name string
-		msg  syncscreen.LoadedMsg
-		want string
-	}{
-		{"current", syncscreen.LoadedMsg{Configured: true, Status: mirror.Status{Stamp: mirror.StampOK}}, "Nothing to push"},
-		{"unconfigured", syncscreen.LoadedMsg{}, "Sync is not set up"},
+	current := syncApp(t, syncscreen.LoadedMsg{Configured: true, Options: mirror.Options{Target: "/m"}, Status: mirror.Status{Target: "/m", Stamp: mirror.StampOK}})
+	if v := tuitest.Plain(view(runLineKeys(t, current, "push"))); !strings.Contains(v, "[x] Push to /m") {
+		t.Errorf("an up-to-date mirror should still offer the push:\n%s", v)
 	}
-	for _, c := range cases {
-		m := runLineKeys(t, syncApp(t, c.msg), "push")
-		if got := lastNotice(m); !strings.Contains(got, c.want) {
-			t.Errorf("%s: notice = %q, want %q", c.name, got, c.want)
-		}
+	m := runLineKeys(t, syncApp(t, syncscreen.LoadedMsg{}), "push")
+	if got := lastNotice(m); !strings.Contains(got, "Sync is not set up") {
+		t.Errorf("unconfigured: notice = %q", got)
 	}
 }
 

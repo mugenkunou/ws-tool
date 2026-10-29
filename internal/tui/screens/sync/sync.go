@@ -223,8 +223,6 @@ func (m Model) push() (Model, tea.Cmd) {
 		return m, nav.Notify(nav.LevelWarn, "Sync is not set up. "+m.setupHint())
 	case s.Err != nil:
 		return m, nav.Notify(nav.LevelWarn, "Cannot push: "+s.Err.Error())
-	case len(s.Changes) == 0 && len(s.Questions) == 0 && s.Status.Stamp == mirror.StampOK:
-		return m, nav.Notify(nav.LevelInfo, "Nothing to push: the mirror is up to date.")
 	}
 	o := s.Options
 	var approved []mirror.QuestionKind
