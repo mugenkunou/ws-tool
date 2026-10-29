@@ -68,6 +68,8 @@ func TestMain(m *testing.M) {
 	// The built-in skills embedded in the binary change as they are written;
 	// tests start with none and add a fake shelf (withBuiltins) when they need one.
 	skill.BuiltinFS = fstest.MapFS{}
+	// The same for the managed shelf: tests that want a provider fake one.
+	skill.Providers = nil
 
 	code := m.Run()
 	unhide()

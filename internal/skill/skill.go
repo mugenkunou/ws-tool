@@ -100,8 +100,11 @@ type Skill struct {
 	Dev string
 	// Ejected is the ws version a skill of yours was ejected from.
 	Ejected string
-	// Provider is the binary a skill of yours was copied from (`ws skill sync`).
+	// Provider is the binary a managed skill comes from.
 	Provider string
+	// Offer is set on a managed skill with no copy in agent/skills/ yet: one
+	// of the Offer states. Path is where the copy will go.
+	Offer string
 	// Shadowed is a skill of yours with a built-in's name and no .ws-ejected
 	// file. It is listed with a warning; the built-in wins.
 	Shadowed bool
@@ -151,6 +154,7 @@ func List(workspace string) ([]Skill, error) {
 		}
 		if v, err := os.ReadFile(filepath.Join(p, ProviderFile)); err == nil {
 			s.Provider = strings.TrimSpace(string(v))
+			s.Shelf = Managed
 		}
 		out = append(out, s)
 	}
@@ -186,7 +190,10 @@ type Row struct {
 	Dev      string `json:"dev,omitempty"`
 	Ejected  string `json:"ejected_from,omitempty"`
 	Shadowed bool   `json:"shadowed,omitempty"`
-	Tools    []Cell `json:"tools"`
+	Provider string `json:"provider,omitempty"`
+	// Offer is a managed skill not copied yet (see Skill.Offer).
+	Offer string `json:"offer,omitempty"`
+	Tools []Cell `json:"tools"`
 }
 
 // ToolState is one tool's column header.
@@ -213,7 +220,7 @@ func Scan(home, workspace string, tools []Tool) (Result, error) {
 	if tools == nil {
 		tools = Tools
 	}
-	skills, err := All(home, workspace)
+	skills, err := Available(home, workspace)
 	if err != nil {
 		return Result{}, err
 	}
@@ -222,7 +229,7 @@ func Scan(home, workspace string, tools []Tool) (Result, error) {
 		res.Tools = append(res.Tools, ToolState{Name: t.Name, Detected: t.Detected(home), Unverified: t.Unverified})
 	}
 	for _, s := range skills {
-		row := Row{Skill: s.Name, Shelf: s.Shelf, Broken: s.Broken, Version: s.VersionOf(), Dev: s.Dev, Ejected: s.Ejected, Shadowed: s.Shadowed}
+		row := Row{Skill: s.Name, Shelf: s.Shelf, Broken: s.Broken, Version: s.VersionOf(), Dev: s.Dev, Ejected: s.Ejected, Shadowed: s.Shadowed, Provider: s.Provider, Offer: s.Offer}
 		for _, t := range tools {
 			row.Tools = append(row.Tools, Cell{Tool: t.Name, Installed: Installed(home, t, s.Name)})
 		}
@@ -232,13 +239,17 @@ func Scan(home, workspace string, tools []Tool) (Result, error) {
 }
 
 // Install links the skill into the tool's skills folder. It creates the folder
-// when needed and never replaces anything that is already there.
+// when needed and never replaces anything that is already there. An offered
+// managed skill is copied into agent/skills/ first.
 func Install(home, workspace string, t Tool, s Skill) error {
 	if s.Broken {
 		return fmt.Errorf("%s: its target is gone", s.Name)
 	}
 	if s.Shadowed {
 		return fmt.Errorf("%s: same name as a built-in; the built-in wins", s.Name)
+	}
+	if s.Offer != "" && s.Offer != OfferReady {
+		return fmt.Errorf("%s: %s", s.Name, Note(s))
 	}
 	target := s.Path
 	if target == "" {
@@ -248,6 +259,11 @@ func Install(home, workspace string, t Tool, s Skill) error {
 	link := filepath.Join(dir, s.Name)
 	if _, err := os.Lstat(link); err == nil {
 		return fmt.Errorf("%s already exists", link)
+	}
+	if s.Offer == OfferReady {
+		if err := copyOffer(workspace, s); err != nil {
+			return err
+		}
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err

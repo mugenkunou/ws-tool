@@ -1,5 +1,6 @@
-// Package skills is the agent-skills screen: every skill on both shelves, the
-// built-ins and yours in agent/skills/, and the tools it is installed in, with install and uninstall on keys and as `:`
+// Package skills is the agent-skills screen: every skill on every shelf (the
+// built-ins, the managed ones tool binaries ship, greyed until copied, and
+// yours in agent/skills/) and the tools it is installed in, with install and uninstall on keys and as `:`
 // commands (spec §6.5). It is the TUI side of `ws skill`.
 package skills
 
@@ -67,7 +68,12 @@ func New(e env.Env) Model {
 		env:  e,
 		keys: keys.Skills(),
 		list: reslist.New(skill.Schema(e.View()), []reslist.Col[Entry]{
-			{Key: "skill", Min: 16, Weight: 1},
+			{Key: "skill", Min: 16, Weight: 1, Style: func(e Entry, t string) string {
+				if e.Offer != "" {
+					return theme.Muted.Render(t) // a managed skill not copied yet
+				}
+				return t
+			}},
 			{Key: "shelf", Min: 14, Style: func(e Entry, t string) string {
 				if e.Shadowed {
 					return theme.Warn.Render(t)
@@ -295,11 +301,17 @@ func (m Model) confirmInstall(t skill.Tool, rows []Entry) (nav.Component, tea.Cm
 		case r.Shadowed:
 			skipped = append(skipped, r.Name+": the built-in of that name wins")
 			continue
+		case r.Offer != "" && r.Offer != skill.OfferReady:
+			skipped = append(skipped, r.Name+": "+r.Note)
+			continue
 		case skill.Installed(m.home, t, r.Name):
 			skipped = append(skipped, r.Name+": already there")
 			continue
 		}
 		desc := fmt.Sprintf("Link %s → %s/%s", r.Name, t.Dir, r.Name)
+		if r.Offer != "" {
+			desc = fmt.Sprintf("Copy the skill of %s → %s, then link it → %s/%s", r.Provider, m.env.Rel(r.Path), t.Dir, r.Name)
+		}
 		if !t.Detected(m.home) {
 			desc += " (tool not detected; creates the folder)"
 		}
@@ -307,7 +319,7 @@ func (m Model) confirmInstall(t skill.Tool, rows []Entry) (nav.Component, tea.Cm
 			ID:          "skill-install-" + t.Name + "-" + r.Name,
 			Description: desc,
 			Execute: func() error {
-				return skill.Install(m.home, ws, t, skill.Skill{Name: r.Name, Path: r.Path, Shelf: r.Shelf})
+				return skill.Install(m.home, ws, t, skill.Skill{Name: r.Name, Path: r.Path, Shelf: r.Shelf, Provider: r.Provider, Offer: r.Offer})
 			},
 		})
 	}

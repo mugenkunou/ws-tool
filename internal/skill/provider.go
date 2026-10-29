@@ -34,6 +34,13 @@ const (
 	ProviderFailed   = "failed"   // `<bin> skill` failed or printed no usable skill
 )
 
+// Offer states: a managed skill with no copy in agent/skills/ yet.
+const (
+	OfferReady    = "ready"     // the binary is on PATH: install copies the skill, then links it
+	OfferNoBinary = "no-binary" // the binary is not on PATH; installing it makes the skill ready
+	OfferFailed   = "failed"    // `<bin> skill` failed
+)
+
 // ProviderState is one provider's skill held against its copy in the workspace.
 type ProviderState struct {
 	Bin   string
@@ -180,6 +187,49 @@ func InspectProviders(workspace string, bins []string) []ProviderState {
 	return out
 }
 
+// Offered lists the managed skills that have no copy in agent/skills/ yet,
+// sorted by name. A binary that is not on PATH, or whose `skill` fails, is
+// listed under its own name: the skill's name is known only from its output.
+// A provider whose skill name is taken by a skill of yours is left out; `skill
+// check` reports it.
+func Offered(workspace string, bins []string) []Skill {
+	copies := providerCopies(workspace)
+	var out []Skill
+	for _, st := range InspectProviders(workspace, bins) {
+		switch {
+		case st.State == ProviderNew:
+			out = append(out, Skill{Name: st.Name, Path: st.Dir(workspace), Shelf: Managed, Provider: st.Bin, Offer: OfferReady})
+		case st.State == ProviderFailed && len(copies[st.Bin]) == 0:
+			out = append(out, Skill{Name: st.Bin, Shelf: Managed, Provider: st.Bin, Offer: OfferFailed})
+		}
+	}
+	for _, bin := range bins {
+		if _, err := exec.LookPath(bin); err != nil && len(copies[bin]) == 0 {
+			out = append(out, Skill{Name: bin, Shelf: Managed, Provider: bin, Offer: OfferNoBinary})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// copyOffer writes the copy of an offered skill, from the binary's output now.
+func copyOffer(workspace string, s Skill) error {
+	for _, st := range InspectProviders(workspace, []string{s.Provider}) {
+		if st.Name != s.Name {
+			continue
+		}
+		switch st.State {
+		case ProviderCurrent:
+			return nil
+		case ProviderNew, ProviderStale:
+			return WriteProvider(workspace, st)
+		case ProviderConflict:
+			return st.Err
+		}
+	}
+	return fmt.Errorf("%s no longer ships a skill named %s", s.Provider, s.Name)
+}
+
 // WriteProvider writes a new or stale provider copy: SKILL.md (atomically) and
 // the marker.
 func WriteProvider(workspace string, p ProviderState) error {
@@ -220,7 +270,7 @@ func providerFindings(workspace string, states []ProviderState) []Finding {
 			file = filepath.Join(file, "SKILL.md")
 		}
 		add := func(format string, a ...any) {
-			out = append(out, Finding{Level: LevelWarning, Shelf: Yours, Skill: p.Name, File: file, Message: fmt.Sprintf(format, a...)})
+			out = append(out, Finding{Level: LevelWarning, Shelf: Managed, Skill: p.Name, File: file, Message: fmt.Sprintf(format, a...)})
 		}
 		switch p.State {
 		case ProviderStale:

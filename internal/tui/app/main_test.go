@@ -12,6 +12,7 @@ import (
 func TestMain(m *testing.M) {
 	// Tests see only the skills they write, not the ones embedded in the binary.
 	skill.BuiltinFS = fstest.MapFS{}
+	skill.Providers = nil
 
 	// The Sessions screen runs agent-tmux; never the one installed here.
 	unhide := agenttmuxtest.Hide()

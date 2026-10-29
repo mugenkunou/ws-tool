@@ -119,18 +119,22 @@ func runSkillScan(args []string, globals globalFlags, stdout, stderr io.Writer, 
 // per skill and one column per tool. A cell is installed or not; a column whose
 // tool is not detected has a dim header, and the footer says the same in words
 // for a terminal without color. A skill of yours that a built-in shadows gets a
-// warning instead of cells.
+// warning instead of cells. A managed skill not copied yet is dim, with what
+// makes it installable after its cells.
 func renderSkillGrid(out io.Writer, res skill.Result, nc bool, home string) {
 	if len(res.Rows) == 0 {
 		fmt.Fprintln(out, "No skills. Put a folder with a SKILL.md in agent/skills/.")
 		return
 	}
-	var builtins, yours []skill.Row
+	var builtins, managed, yours []skill.Row
 	nameW := 0
 	for _, r := range res.Rows {
-		if r.Shelf == skill.Builtin {
+		switch r.Shelf {
+		case skill.Builtin:
 			builtins = append(builtins, r)
-		} else {
+		case skill.Managed:
+			managed = append(managed, r)
+		default:
 			yours = append(yours, r)
 		}
 		nameW = max(nameW, len(r.Skill))
@@ -143,7 +147,10 @@ func renderSkillGrid(out io.Writer, res skill.Result, nc bool, home string) {
 	if len(builtins) > 0 {
 		sections = append(sections, section{"Built-in (ws " + res.Version + ")", builtins})
 	}
-	if len(yours) > 0 || len(builtins) == 0 {
+	if len(managed) > 0 {
+		sections = append(sections, section{"Managed (shipped by tools, copied into " + tildePath(home, res.Root) + ")", managed})
+	}
+	if len(yours) > 0 || len(builtins)+len(managed) == 0 {
 		sections = append(sections, section{"Yours (" + tildePath(home, res.Root) + ")", yours})
 	}
 	labelW := len(sections[0].title)
@@ -173,7 +180,11 @@ func renderSkillGrid(out io.Writer, res skill.Result, nc bool, home string) {
 				fmt.Fprintf(out, "  %s  %s\n", r.Skill, style.Warningf(nc, "%s same name as a built-in; the built-in wins", style.IconWarning(nc)))
 				continue
 			}
-			fmt.Fprintf(out, "%-*s", labelW, skillLabel(r, nameW))
+			label := fmt.Sprintf("%-*s", labelW, skillLabel(r, nameW))
+			if r.Offer != "" {
+				label = style.Mutedf(nc, "%s", label)
+			}
+			fmt.Fprint(out, label)
 			var line strings.Builder
 			for i, c := range r.Tools {
 				mark := style.Mutedf(nc, "%s", notMark(nc))
@@ -184,6 +195,9 @@ func renderSkillGrid(out io.Writer, res skill.Result, nc bool, home string) {
 				if i < len(r.Tools)-1 {
 					line.WriteString(strings.Repeat(" ", len(res.Tools[i].Name)-1))
 				}
+			}
+			if r.Offer != "" {
+				line.WriteString("  " + style.Mutedf(nc, "%s", offerHint(r.Skill, r.Provider, r.Offer)))
 			}
 			fmt.Fprintln(out, line.String())
 		}
@@ -226,6 +240,17 @@ func skillLabel(r skill.Row, nameW int) string {
 		return "  " + r.Skill
 	}
 	return fmt.Sprintf("  %-*s  %s", nameW, r.Skill, extra)
+}
+
+// offerHint says what makes an offered managed skill installable.
+func offerHint(name, provider, offer string) string {
+	switch offer {
+	case skill.OfferReady:
+		return "ready: ws skill install " + name
+	case skill.OfferNoBinary:
+		return "install " + provider + " on this machine, then ws skill install " + name
+	}
+	return "`" + provider + " skill` failed; see ws skill check"
 }
 
 // tildePath shortens a path under home to ~/….
@@ -405,7 +430,7 @@ func runSkillInstall(args []string, globals globalFlags, stdin io.Reader, stdout
 	if dev.set {
 		return runSkillDev(fs.Args(), dev.dir, *toolName, globals, stdin, stdout, stderr, home, workspacePath)
 	}
-	skills, err := skill.All(home, workspacePath)
+	skills, err := skill.Available(home, workspacePath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -435,6 +460,10 @@ func runSkillInstall(args []string, globals globalFlags, stdin io.Reader, stdout
 				fmt.Fprintf(stderr, "no such skill: %s\n", n)
 				return 1
 			}
+			if s.Offer != "" && s.Offer != skill.OfferReady {
+				fmt.Fprintf(stderr, "%s: %s\n", n, offerHint(s.Name, s.Provider, s.Offer))
+				return 1
+			}
 			chosen = append(chosen, s)
 		}
 	} else {
@@ -444,7 +473,7 @@ func runSkillInstall(args []string, globals globalFlags, stdin io.Reader, stdout
 		}
 		var cands []skill.Skill
 		for _, s := range skills {
-			if s.Broken || s.Shadowed || skill.Installed(home, tool, s.Name) {
+			if s.Broken || s.Shadowed || (s.Offer != "" && s.Offer != skill.OfferReady) || skill.Installed(home, tool, s.Name) {
 				continue
 			}
 			cands = append(cands, s)
@@ -480,6 +509,9 @@ func runSkillInstall(args []string, globals globalFlags, stdin io.Reader, stdout
 			continue
 		}
 		desc := fmt.Sprintf("Link %s → %s/%s", s.Name, tool.Dir, s.Name)
+		if s.Offer != "" {
+			desc = fmt.Sprintf("Copy the skill of %s → %s, then link it → %s/%s", s.Provider, tildePath(home, s.Path), tool.Dir, s.Name)
+		}
 		if !tool.Detected(home) {
 			desc += " (tool not detected; creates the folder)"
 		}
@@ -647,8 +679,11 @@ type skillShowData struct {
 	Version string      `json:"version,omitempty"`
 	Dev     string      `json:"dev,omitempty"`
 	Ejected string      `json:"ejected_from,omitempty"`
-	Path    string      `json:"path"`
-	Tools   []string    `json:"tools"`
+	// Provider and Offer are a managed skill's; Path is where an offer's copy will go.
+	Provider string   `json:"provider,omitempty"`
+	Offer    string   `json:"offer,omitempty"`
+	Path     string   `json:"path"`
+	Tools    []string `json:"tools"`
 	// Shadowed is the path of a skill of yours that has this built-in's name.
 	Shadowed string `json:"shadowed,omitempty"`
 }
@@ -667,7 +702,7 @@ func runSkillShow(args []string, globals globalFlags, stdout, stderr io.Writer, 
 		fmt.Fprintln(stderr, usage)
 		return 1
 	}
-	all, err := skill.All(home, workspacePath)
+	all, err := skill.Available(home, workspacePath)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
@@ -681,7 +716,7 @@ func runSkillShow(args []string, globals globalFlags, stdout, stderr io.Writer, 
 		fmt.Fprintln(stdout, s.Path)
 		return 0
 	}
-	d := skillShowData{Name: s.Name, Shelf: s.Shelf, Version: s.VersionOf(), Dev: s.Dev, Ejected: s.Ejected, Path: s.Path, Tools: []string{}}
+	d := skillShowData{Name: s.Name, Shelf: s.Shelf, Version: s.VersionOf(), Dev: s.Dev, Ejected: s.Ejected, Provider: s.Provider, Offer: s.Offer, Path: s.Path, Tools: []string{}}
 	for _, t := range skill.Tools {
 		if skill.Installed(home, t, s.Name) {
 			d.Tools = append(d.Tools, t.Name)
@@ -707,7 +742,15 @@ func runSkillShow(args []string, globals globalFlags, stdout, stderr io.Writer, 
 	case s.Shelf == skill.Builtin:
 		style.KV(out, "version", d.Version, nc)
 	}
-	style.KV(out, "path", tildePath(home, s.Path), nc)
+	if s.Provider != "" {
+		style.KV(out, "from", s.Provider, nc)
+	}
+	switch {
+	case s.Offer != "":
+		style.KV(out, "status", offerHint(s.Name, s.Provider, s.Offer), nc)
+	default:
+		style.KV(out, "path", tildePath(home, s.Path), nc)
+	}
 	style.KV(out, "tools", joinOrNone(d.Tools), nc)
 	if d.Shadowed != "" {
 		fmt.Fprintf(out, "%s %s has the same name; the built-in wins\n", style.IconWarning(nc), tildePath(home, d.Shadowed))
@@ -805,7 +848,7 @@ func runSkillProviders(toolName string, globals globalFlags, stdin io.Reader, st
 		if !linkToo {
 			continue
 		}
-		s := skill.Skill{Name: st.Name, Path: st.Dir(workspacePath), Shelf: skill.Yours}
+		s := skill.Skill{Name: st.Name, Path: st.Dir(workspacePath), Shelf: skill.Managed}
 		if !skill.Linked(home, tool, s) {
 			p.Actions = append(p.Actions, Action{
 				ID:          "skill-install-" + tool.Name + "-" + st.Name,

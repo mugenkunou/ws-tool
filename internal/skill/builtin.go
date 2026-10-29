@@ -24,6 +24,10 @@ const (
 	Builtin Shelf = "built-in"
 	// Yours are the skills in <workspace>/agent/skills/.
 	Yours Shelf = "yours"
+	// Managed skills ship with a tool binary (Providers). ws copies them into
+	// agent/skills/ and keeps the copy in step with the binary. Before the
+	// first copy they are listed as offers (see Offered).
+	Managed Shelf = "managed"
 )
 
 var (
@@ -335,6 +339,26 @@ func All(home, workspace string) ([]Skill, error) {
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+// Available is All plus the managed skills not copied yet (Offered), so a
+// listing shows them before the first install. An offer whose name a skill
+// already has is left out.
+func Available(home, workspace string) ([]Skill, error) {
+	all, err := All(home, workspace)
+	if err != nil {
+		return nil, err
+	}
+	taken := map[string]bool{}
+	for _, s := range all {
+		taken[s.Name] = true
+	}
+	for _, o := range Offered(workspace, Providers) {
+		if !taken[o.Name] {
+			all = append(all, o)
+		}
+	}
+	return all, nil
 }
 
 // Find returns the skill a name means: the one that wins a name clash.

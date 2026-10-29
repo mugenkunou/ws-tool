@@ -138,3 +138,61 @@ func TestSkillProviderMissingBinaryIsQuiet(t *testing.T) {
 		t.Fatalf("check: %d\n%s", code, out)
 	}
 }
+
+func TestSkillScanOffersManagedBeforeCopy(t *testing.T) {
+	withBuiltins(t)
+	e := newSkEnv(t)
+	fakeProvider(t, "fake-bin", fakeSkill, false)
+
+	code, out, _ := e.run("", "skill", "scan")
+	if code != 0 || !strings.Contains(out, "Managed (") || !strings.Contains(out, "ready: ws skill install fake-tool") {
+		t.Fatalf("scan: %d\n%s", code, out)
+	}
+	if _, err := os.Stat(filepath.Join(e.ws, "agent", "skills", "fake-tool")); err == nil {
+		t.Fatal("scan copied the skill")
+	}
+	if code, out, _ := e.run("", "skill", "show", "fake-tool"); code != 0 || !strings.Contains(out, "managed") || !strings.Contains(out, "ready:") {
+		t.Fatalf("show: %d\n%s", code, out)
+	}
+
+	// Installing it by name copies it, then links it.
+	code, out, errOut := e.run("a\n", "skill", "install", "fake-tool", "--tool", "claude")
+	if code != 0 {
+		t.Fatalf("install: %d\n%s%s", code, out, errOut)
+	}
+	dest := filepath.Join(e.ws, "agent", "skills", "fake-tool")
+	if got, _ := os.ReadFile(filepath.Join(dest, "SKILL.md")); string(got) != fakeSkill {
+		t.Fatalf("copy = %q", got)
+	}
+	if link, err := os.Readlink(filepath.Join(e.home, ".claude", "skills", "fake-tool")); err != nil || link != dest {
+		t.Fatalf("link = %q, %v", link, err)
+	}
+	if _, out, _ := e.run("", "skill", "scan"); strings.Contains(out, "ready:") || !strings.Contains(out, "Managed (") {
+		t.Fatalf("scan after install:\n%s", out)
+	}
+	if code, out, _ := e.run("", "skill", "check"); code != 0 || !strings.Contains(out, "No drift") {
+		t.Fatalf("check: %d %s", code, out)
+	}
+}
+
+func TestSkillOfferWithoutBinary(t *testing.T) {
+	withBuiltins(t)
+	e := newSkEnv(t)
+	old := skill.Providers
+	skill.Providers = []string{"no-such-bin-xyz"}
+	t.Cleanup(func() { skill.Providers = old })
+
+	_, out, _ := e.run("", "skill", "scan")
+	if !strings.Contains(out, "no-such-bin-xyz") || !strings.Contains(out, "install no-such-bin-xyz on this machine") {
+		t.Fatalf("scan:\n%s", out)
+	}
+	code, _, errOut := e.run("a\n", "skill", "install", "no-such-bin-xyz", "--tool", "claude")
+	if code != 1 || !strings.Contains(errOut, "install no-such-bin-xyz on this machine") {
+		t.Fatalf("install: %d %s", code, errOut)
+	}
+	// The picklist leaves it out.
+	_, out, _ = e.run("\n", "skill", "install", "--tool", "claude")
+	if strings.Contains(out, "no-such-bin-xyz") {
+		t.Fatalf("picklist offers it:\n%s", out)
+	}
+}

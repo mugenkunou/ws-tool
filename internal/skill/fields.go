@@ -16,19 +16,23 @@ type Entry struct {
 	// Note says dev mode, the version an ejected copy came from, or a name clash.
 	Note     string
 	Shadowed bool
+	// Provider and Offer are a managed skill's (see Skill).
+	Provider string
+	Offer    string
 	// Tools are the names of the tools where the skill is installed, in table order.
 	Tools []string
 }
 
-// Entries lists every skill on both shelves with the tools it is installed in.
+// Entries lists every skill on every shelf, offers included, with the tools it
+// is installed in.
 func Entries(home, workspace string) ([]Entry, error) {
-	skills, err := All(home, workspace)
+	skills, err := Available(home, workspace)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Entry, 0, len(skills))
 	for _, s := range skills {
-		e := Entry{Name: s.Name, Path: s.Path, Broken: s.Broken, Shelf: s.Shelf, Note: Note(s), Shadowed: s.Shadowed, Tools: []string{}}
+		e := Entry{Name: s.Name, Path: s.Path, Broken: s.Broken, Shelf: s.Shelf, Note: Note(s), Shadowed: s.Shadowed, Provider: s.Provider, Offer: s.Offer, Tools: []string{}}
 		for _, t := range Tools {
 			if Installed(home, t, s.Name) {
 				e.Tools = append(e.Tools, t.Name)
@@ -44,6 +48,12 @@ func Note(s Skill) string {
 	switch {
 	case s.Shadowed:
 		return "same name as a built-in; the built-in wins"
+	case s.Offer == OfferReady:
+		return "ready to install"
+	case s.Offer == OfferNoBinary:
+		return "install " + s.Provider + " first"
+	case s.Offer == OfferFailed:
+		return "`" + s.Provider + " skill` failed"
 	case s.Dev != "":
 		return "dev"
 	case s.Ejected != "":
