@@ -66,8 +66,8 @@ var CLICoverage = func() []Coverage {
 		{CLI: "completion bash", Screen: ws, Why: Shell, Note: shell},
 		{CLI: "completion zsh", Screen: ws, Why: Shell, Note: shell},
 		{CLI: "completion fish", Screen: ws, Why: Shell, Note: shell},
-		{CLI: "completion enable", Screen: ws, Why: CLIOnly, Note: "not yet in the TUI"},
-		{CLI: "completion disable", Screen: ws, Why: CLIOnly, Note: "not yet in the TUI"},
+		{CLI: "completion enable", Screen: ws, Cmd: "completion enable"},
+		{CLI: "completion disable", Screen: ws, Cmd: "completion disable"},
 
 		{CLI: "sync push", Screen: sy, Why: CLIOnly, Note: "not yet in the TUI"},
 		{CLI: "sync status", Screen: sy, Why: List},

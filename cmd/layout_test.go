@@ -128,9 +128,9 @@ func TestLayoutListsEveryFolderAndHome(t *testing.T) {
 	var env struct {
 		Command string `json:"command"`
 		Data    struct {
-			Workspace string           `json:"workspace"`
-			Folders   []layoutFolder   `json:"folders"`
-			Homes     []workspace.Home `json:"homes"`
+			Workspace string                   `json:"workspace"`
+			Folders   []workspace.LayoutFolder `json:"folders"`
+			Homes     []workspace.Home         `json:"homes"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &env); err != nil {

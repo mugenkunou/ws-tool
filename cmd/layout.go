@@ -5,21 +5,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
-
-// layoutFolder is one row of `ws layout --json`.
-type layoutFolder struct {
-	Path    string `json:"path"` // absolute
-	Rel     string `json:"rel"`  // relative to the workspace, with forward slashes
-	Purpose string `json:"purpose"`
-	Exists  bool   `json:"exists"`
-}
 
 // scriptPaths resolves the workspace and the homes outside it. It needs no
 // initialized workspace: without ws.json, scratch is the default root.
@@ -68,12 +59,7 @@ func runLayout(args []string, globals globalFlags, stdout, stderr io.Writer) int
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	folders := make([]layoutFolder, len(workspace.Layout))
-	for i, d := range workspace.Layout {
-		abs := filepath.Join(workspacePath, filepath.FromSlash(d.Path))
-		info, err := os.Stat(abs)
-		folders[i] = layoutFolder{Path: abs, Rel: d.Path, Purpose: d.Purpose, Exists: err == nil && info.IsDir()}
-	}
+	folders := workspace.LayoutFolders(workspacePath)
 	if globals.json {
 		return writeJSON(stdout, stderr, "layout", map[string]any{
 			"workspace": workspacePath,

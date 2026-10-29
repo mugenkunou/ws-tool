@@ -152,3 +152,23 @@ func (p InitPlan) WriteMegaignore() error {
 	}
 	return ignore.WriteMegaignore(p.Megaignore, rules)
 }
+
+// LayoutFolder is one Layout folder as this workspace has it: one row of
+// `ws layout --json`.
+type LayoutFolder struct {
+	Path    string `json:"path"` // absolute
+	Rel     string `json:"rel"`  // relative to the workspace, with forward slashes
+	Purpose string `json:"purpose"`
+	Exists  bool   `json:"exists"`
+}
+
+// LayoutFolders resolves Layout under workspacePath and says which folders exist.
+func LayoutFolders(workspacePath string) []LayoutFolder {
+	out := make([]LayoutFolder, len(Layout))
+	for i, d := range Layout {
+		abs := filepath.Join(workspacePath, filepath.FromSlash(d.Path))
+		info, err := os.Stat(abs)
+		out[i] = LayoutFolder{Path: abs, Rel: d.Path, Purpose: d.Purpose, Exists: err == nil && info.IsDir()}
+	}
+	return out
+}

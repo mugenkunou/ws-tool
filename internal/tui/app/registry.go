@@ -45,7 +45,7 @@ var registry = map[nav.Screen]screenEntry{
 	nav.ScreenCron:      {New: component(cron.New), Keys: keyMap(keys.Cron)},
 	nav.ScreenTrash:     {New: component(trash.New), Keys: keyMap(keys.Trash)},
 	nav.ScreenSkills:    {New: component(skills.New), Keys: keyMap(keys.Skills)},
-	nav.ScreenWorkspace: {New: component(workspace.New)},
+	nav.ScreenWorkspace: {New: component(workspace.New), Keys: keyMap(keys.Workspace)},
 }
 
 func component[T nav.Component](f func(env.Env) T) func(env.Env) nav.Component {

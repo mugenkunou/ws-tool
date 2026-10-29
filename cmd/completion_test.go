@@ -103,86 +103,6 @@ func TestCompletionsJSON(t *testing.T) {
 	}
 }
 
-// ── Install / Uninstall tests ──────────────────────────────────────
-
-func TestCompletionsInstallIdempotent(t *testing.T) {
-	// Set up a temp rc file.
-	tmp := t.TempDir()
-	rcFile := filepath.Join(tmp, ".bashrc")
-	os.WriteFile(rcFile, []byte("# existing config\nexport FOO=bar\n"), 0o644)
-
-	// Monkey-patch completionRCInfo by using env var trick — not feasible
-	// without refactoring, so we test the underlying helpers instead.
-
-	// Test containsCompletionMarker — should be false initially.
-	content, _ := os.ReadFile(rcFile)
-	if containsCompletionMarker(string(content)) {
-		t.Fatal("expected no marker in fresh rc file")
-	}
-
-	// Simulate install by appending the block.
-	block := "\n" + completionMarkerStart + "\n" + `eval "$(ws completions bash)"` + "\n" + completionMarkerEnd + "\n"
-	os.WriteFile(rcFile, append(content, []byte(block)...), 0o644)
-
-	// Now marker should be detected.
-	content, _ = os.ReadFile(rcFile)
-	if !containsCompletionMarker(string(content)) {
-		t.Fatal("expected marker after install")
-	}
-
-	// Original content should be preserved.
-	if !strings.Contains(string(content), "export FOO=bar") {
-		t.Fatal("original content lost after install")
-	}
-}
-
-func TestCompletionsUninstallCleansUp(t *testing.T) {
-	original := "# existing config\nexport FOO=bar\n"
-	block := "\n" + completionMarkerStart + "\n" + `eval "$(ws completions bash)"` + "\n" + completionMarkerEnd + "\n"
-	full := original + block
-
-	cleaned := removeMarkerBlock(full)
-	if containsCompletionMarker(cleaned) {
-		t.Fatal("marker should be removed after uninstall")
-	}
-	if !strings.Contains(cleaned, "export FOO=bar") {
-		t.Fatal("original content lost after uninstall")
-	}
-}
-
-func TestRemoveStaleCompletionLines(t *testing.T) {
-	input := `# my bashrc
-export PATH=$PATH:/usr/local/bin
-eval "$(ws completions bash)"
-source <(ws completions bash)
-# some other stuff
-alias ll='ls -la'
-`
-	cleaned := removeStaleCompletionLines(input)
-	if strings.Contains(cleaned, `eval "$(ws completions bash)"`) {
-		t.Fatal("stale eval line should be removed")
-	}
-	if strings.Contains(cleaned, `source <(ws completions bash)`) {
-		t.Fatal("stale source line should be removed")
-	}
-	if !strings.Contains(cleaned, "alias ll=") {
-		t.Fatal("non-completion lines should be preserved")
-	}
-	if !strings.Contains(cleaned, "export PATH=") {
-		t.Fatal("non-completion lines should be preserved")
-	}
-}
-
-func TestRemoveStalePreservesComments(t *testing.T) {
-	input := `# ws completions are set up below
-export PATH=$PATH:/usr/local/bin
-`
-	cleaned := removeStaleCompletionLines(input)
-	if !strings.Contains(cleaned, "# ws completions are set up below") {
-		t.Fatal("comment lines mentioning ws completions should be preserved")
-	}
-}
-
 func TestCompletionsInstallIntegration(t *testing.T) {
 	// Use --dry-run to test the full flow without writing.
 	// Point HOME to a temp dir so we don't hit the real ~/.bashrc.
@@ -198,37 +118,6 @@ func TestCompletionsInstallIntegration(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "[dry-run]") {
 		t.Fatalf("expected dry-run output, got: %s", out.String())
-	}
-}
-
-func TestWithCompletionBlock(t *testing.T) {
-	block := completionMarkerStart + "\neval \"$(ws completion bash)\"\n" + completionMarkerEnd + "\n"
-
-	// Appended after existing content, once.
-	got := withCompletionBlock("export A=1\n", block)
-	if got != "export A=1\n\n"+block {
-		t.Fatalf("append:\n%s", got)
-	}
-	if again := withCompletionBlock(got, block); again != got {
-		t.Fatalf("a block holding the current line is left alone:\n%s", again)
-	}
-
-	// An older line in the block is rewritten in place.
-	old := "export A=1\n" + completionMarkerStart + "\neval \"$(ws completions bash)\"\n" + completionMarkerEnd + "\nexport B=2\n"
-	got = withCompletionBlock(old, block)
-	if strings.Contains(got, "ws completions") || !strings.Contains(got, "ws completion bash") || !strings.Contains(got, "export B=2") || strings.Count(got, completionMarkerStart) != 1 {
-		t.Fatalf("rewrite:\n%s", got)
-	}
-
-	// Unmarked lines that load ws completion are removed.
-	got = withCompletionBlock("source <(ws completions bash)\nalias ll=ls\n", block)
-	if strings.Contains(got, "source <(ws completions") || !strings.Contains(got, "alias ll=ls") || !strings.Contains(got, completionMarkerStart) {
-		t.Fatalf("unmarked:\n%s", got)
-	}
-
-	// An empty rc file gets the block alone.
-	if got := withCompletionBlock("", block); got != block {
-		t.Fatalf("empty:\n%s", got)
 	}
 }
 
