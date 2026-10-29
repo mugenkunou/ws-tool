@@ -807,14 +807,31 @@ func (k SyncMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom}}
 }
 
-// WorkspaceMap is the binding set for the Workspace screen.
-type WorkspaceMap struct{}
+// WorkspaceMap is the binding set for the Workspace screen. The settings change
+// through `:` commands (`completion enable`, `config edit`), so its one key
+// opens the ws.json row.
+type WorkspaceMap struct {
+	Table table.KeyMap
+	Open  key.Binding
+	Back  key.Binding
+}
 
 // Workspace returns the Workspace screen bindings.
-func Workspace() WorkspaceMap { return WorkspaceMap{} }
+func Workspace() WorkspaceMap {
+	return WorkspaceMap{
+		Table: Table(),
+		Open:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "edit ws.json")),
+		Back:  back(),
+	}
+}
 
 // ShortHelp implements help.KeyMap.
-func (k WorkspaceMap) ShortHelp() []key.Binding { return nil }
+func (k WorkspaceMap) ShortHelp() []key.Binding { return []key.Binding{k.Open} }
 
 // FullHelp implements help.KeyMap.
-func (k WorkspaceMap) FullHelp() [][]key.Binding { return nil }
+func (k WorkspaceMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
+		k.ShortHelp(),
+	}
+}

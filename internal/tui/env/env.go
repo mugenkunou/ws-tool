@@ -29,6 +29,9 @@ type Env struct {
 	// HistoryFile is where the Repos screen keeps the command lines it ran
 	// (machine-local state). Empty keeps the history in memory only.
 	HistoryFile string
+	// Version is the ws version the build stamped (cmd.appVersion), which the
+	// command that starts the TUI sets; Load leaves it empty.
+	Version string
 
 	// Clock is the time source for display-only uses (greetings, ages). Nil
 	// means time.Now; tests pin it.

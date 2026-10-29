@@ -12,12 +12,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/mugenkunou/ws-tool/internal/agenttmux"
+	"github.com/mugenkunou/ws-tool/internal/buildinfo"
 	wscron "github.com/mugenkunou/ws-tool/internal/cron"
 	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/mirror"
 	"github.com/mugenkunou/ws-tool/internal/repo"
 	wsscratch "github.com/mugenkunou/ws-tool/internal/scratch"
 	"github.com/mugenkunou/ws-tool/internal/secret"
+	"github.com/mugenkunou/ws-tool/internal/shellcomp"
 	"github.com/mugenkunou/ws-tool/internal/symlink"
 	wstrash "github.com/mugenkunou/ws-tool/internal/trash"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
@@ -139,7 +141,7 @@ func fixtures() []tea.Msg {
 			Questions: []mirror.Question{{Kind: mirror.AskForeign, Ask: "Push anyway?",
 				Warning: "/home/tester/MEGA/ws-mirror was last written by another push, not this machine's. Sync is one-way: push from one machine only."}},
 		},
-		workspacescreen.LoadedMsg{},
+		workspaceFixture(),
 		trash.LoadedMsg{
 			Status: wstrash.Status{
 				Root: "/home/tester/.Trash", Items: 2, Files: 12, SizeBytes: 3 << 20, WarnSizeBytes: 10 << 30,
@@ -153,6 +155,31 @@ func fixtures() []tea.Msg {
 			},
 		},
 	}
+}
+
+// workspaceFixture is the Workspace screen's settings: completion on in bash
+// (the shell in use), off elsewhere, and a workspace missing one folder.
+func workspaceFixture() workspacescreen.LoadedMsg {
+	m := workspacescreen.LoadedMsg{
+		Info:       buildinfo.Info{Version: "v0.15.0", ConfigSchema: 1, Platform: "linux/amd64", GoVersion: "go1.26.2"},
+		ConfigPath: ws + "/ws.json",
+		Completion: []shellcomp.Status{
+			{Shell: "bash", RC: "/home/tester/.bashrc", Enabled: true, Current: true},
+			{Shell: "zsh", RC: "/home/tester/.zshrc"},
+			{Shell: "fish", RC: "/home/tester/.config/fish/conf.d/ws.fish"},
+		},
+	}
+	for _, d := range workspace.Layout {
+		m.Folders = append(m.Folders, workspace.LayoutFolder{Path: ws + "/" + d.Path, Rel: d.Path, Purpose: d.Purpose, Exists: d.Path != "archive"})
+	}
+	getenv := func(k string) string {
+		if k == "HOME" {
+			return "/home/tester"
+		}
+		return ""
+	}
+	m.Homes = workspace.ScriptHomes(getenv, "/home/tester/Scratch")
+	return m
 }
 
 // send feeds msgs through Update, discarding commands (no IO in tests).
@@ -332,6 +359,18 @@ func TestSnapshots(t *testing.T) {
 			tuitest.Golden(t, c.name, view(m))
 		})
 	}
+}
+
+// TestSnapshotWorkspace: the Workspace tab has no digit key, so the table above
+// cannot reach it.
+func TestSnapshotWorkspace(t *testing.T) {
+	m := send(loaded(t, 100, 30), jump(nav.ScreenWorkspace))
+	tuitest.Golden(t, "workspace", view(m))
+
+	// The checklist `completion enable` opens, for the shell named (not
+	// $SHELL), so the snapshot does not depend on the machine.
+	m = runLineKeys(t, m, "completion enable --shell zsh")
+	tuitest.Golden(t, "workspace_completion_checklist", view(m))
 }
 
 func TestSnapshotLoading(t *testing.T) {

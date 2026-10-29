@@ -270,9 +270,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case nav.ReloadEnvMsg:
-		o := m.overrides
+		o, version := m.overrides, m.env.Version
 		return m, func() tea.Msg {
 			e, err := env.Load(o)
+			e.Version = version
 			return envLoadedMsg{env: e, err: err}
 		}
 

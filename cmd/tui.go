@@ -47,6 +47,7 @@ func runTUI(args []string, globals globalFlags, stdin io.Reader, stdout, stderr 
 		Workspace: globals.workspace,
 	}
 	e, loadErr := env.Load(overrides)
+	e.Version = appVersion
 
 	p := tea.NewProgram(app.New(overrides, e, loadErr), tea.WithInput(inFile), tea.WithOutput(outFile))
 	if _, err := p.Run(); err != nil {

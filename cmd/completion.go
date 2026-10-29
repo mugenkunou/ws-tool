@@ -4,15 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
-)
 
-// Sentinel markers for idempotent enable/disable.
-const (
-	completionMarkerStart = "# >>> ws shell completion >>>"
-	completionMarkerEnd   = "# <<< ws shell completion <<<"
+	"github.com/mugenkunou/ws-tool/internal/shellcomp"
 )
 
 func runCompletion(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -211,29 +205,13 @@ func runCompletionEnable(args []string, globals globalFlags, stdin io.Reader, st
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	rcPath, line, err := completionRCInfo(shell)
+	rcPath, actions, err := shellcomp.EnablePlan(shell)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
 
-	content, _ := os.ReadFile(rcPath) // a missing rc file is created
-	block := fmt.Sprintf("%s\n%s\n%s\n", completionMarkerStart, line, completionMarkerEnd)
-	updated := withCompletionBlock(string(content), block)
-
-	pl := Plan{Command: "completion.enable"}
-	if updated != string(content) {
-		pl.Actions = append(pl.Actions, Action{
-			ID:          "completion-enable",
-			Description: fmt.Sprintf("Load ws completion from %s", rcPath),
-			Execute: func() error {
-				if err := os.MkdirAll(filepath.Dir(rcPath), 0o755); err != nil {
-					return err
-				}
-				return os.WriteFile(rcPath, []byte(updated), 0o644)
-			},
-		})
-	}
+	pl := Plan{Command: "completion.enable", Actions: actions}
 	res := RunPlan(pl, stdin, stdout, globals)
 
 	if globals.json {
@@ -245,7 +223,7 @@ func runCompletionEnable(args []string, globals globalFlags, stdin io.Reader, st
 	switch {
 	case len(pl.Actions) == 0:
 		fmt.Fprintf(out, "Completion is already enabled in %s\n", rcPath)
-	case res.WasExecuted("completion-enable"):
+	case res.WasExecuted(shellcomp.EnableID):
 		fmt.Fprintf(out, "Completion enabled in %s\n", rcPath)
 		fmt.Fprintf(out, "Run `source %s` or open a new terminal to activate.\n", rcPath)
 	}
@@ -258,23 +236,13 @@ func runCompletionDisable(args []string, globals globalFlags, stdin io.Reader, s
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	rcPath, _, err := completionRCInfo(shell)
+	rcPath, actions, err := shellcomp.DisablePlan(shell)
 	if err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
 
-	content, _ := os.ReadFile(rcPath)
-	cleaned := removeMarkerBlock(string(content))
-
-	pl := Plan{Command: "completion.disable"}
-	if containsCompletionMarker(string(content)) {
-		pl.Actions = append(pl.Actions, Action{
-			ID:          "completion-disable",
-			Description: fmt.Sprintf("Remove ws completion from %s", rcPath),
-			Execute:     func() error { return os.WriteFile(rcPath, []byte(cleaned), 0o644) },
-		})
-	}
+	pl := Plan{Command: "completion.disable", Actions: actions}
 	res := RunPlan(pl, stdin, stdout, globals)
 
 	if globals.json {
@@ -286,7 +254,7 @@ func runCompletionDisable(args []string, globals globalFlags, stdin io.Reader, s
 	switch {
 	case len(pl.Actions) == 0:
 		fmt.Fprintf(out, "Completion is not enabled in %s\n", rcPath)
-	case res.WasExecuted("completion-disable"):
+	case res.WasExecuted(shellcomp.DisableID):
 		fmt.Fprintf(out, "Completion removed from %s\n", rcPath)
 	}
 	return res.ExitCode()
@@ -297,31 +265,6 @@ func actionsOrEmpty(res PlanResult) []ActionStatus {
 		return []ActionStatus{}
 	}
 	return res.Actions
-}
-
-// withCompletionBlock returns text with the marked block set to block: an
-// existing block (current or older line) is replaced in place, unmarked lines
-// that load ws completion are removed, and a missing block is appended.
-func withCompletionBlock(text, block string) string {
-	if containsCompletionMarker(text) {
-		start := strings.Index(text, completionMarkerStart)
-		end := strings.Index(text, completionMarkerEnd)
-		if end > start {
-			end += len(completionMarkerEnd)
-			if end < len(text) && text[end] == '\n' {
-				end++
-			}
-			return removeStaleCompletionLines(text[:start]) + block + removeStaleCompletionLines(text[end:])
-		}
-	}
-	cleaned := removeStaleCompletionLines(text)
-	if cleaned != "" && !strings.HasSuffix(cleaned, "\n") {
-		cleaned += "\n"
-	}
-	if cleaned != "" {
-		cleaned += "\n"
-	}
-	return cleaned + block
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -339,109 +282,5 @@ func parseCompletionFlags(args []string, globals *globalFlags) (string, error) {
 	if fs.NArg() > 0 {
 		return "", fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
-	sh := strings.ToLower(strings.TrimSpace(*shell))
-	if sh == "" {
-		sh = detectShell()
-	}
-	if sh != "bash" && sh != "zsh" && sh != "fish" {
-		return "", fmt.Errorf("unsupported shell %q (use --shell bash|zsh|fish)", sh)
-	}
-	return sh, nil
-}
-
-// detectShell resolves the current shell from $SHELL.
-func detectShell() string {
-	s := os.Getenv("SHELL")
-	if s == "" {
-		return "bash" // safe default on Linux
-	}
-	base := filepath.Base(s)
-	switch base {
-	case "bash", "zsh", "fish":
-		return base
-	default:
-		return base
-	}
-}
-
-// completionRCInfo returns the rc file path and the eval line for a given shell.
-func completionRCInfo(shell string) (rcPath, evalLine string, err error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", "", err
-	}
-	switch shell {
-	case "bash":
-		return filepath.Join(home, ".bashrc"), `eval "$(ws completion bash)"`, nil
-	case "zsh":
-		return filepath.Join(home, ".zshrc"), `eval "$(ws completion zsh)"`, nil
-	case "fish":
-		confDir := os.Getenv("XDG_CONFIG_HOME")
-		if confDir == "" {
-			confDir = filepath.Join(home, ".config")
-		}
-		return filepath.Join(confDir, "fish", "conf.d", "ws.fish"), "ws completion fish | source", nil
-	default:
-		return "", "", fmt.Errorf("unsupported shell: %s", shell)
-	}
-}
-
-// containsCompletionMarker returns true if the text contains our sentinel markers.
-func containsCompletionMarker(text string) bool {
-	return strings.Contains(text, completionMarkerStart)
-}
-
-// removeMarkerBlock removes everything between (and including) the sentinel
-// markers. Preserves the rest of the file exactly.
-func removeMarkerBlock(text string) string {
-	start := strings.Index(text, completionMarkerStart)
-	if start < 0 {
-		return text
-	}
-	end := strings.Index(text, completionMarkerEnd)
-	if end < 0 {
-		return text
-	}
-	end += len(completionMarkerEnd)
-	// Also consume the trailing newline after the end marker.
-	if end < len(text) && text[end] == '\n' {
-		end++
-	}
-	// Also consume a leading newline before the start marker.
-	if start > 0 && text[start-1] == '\n' {
-		start--
-	}
-	return text[:start] + text[end:]
-}
-
-// removeStaleCompletionLines removes any pre-existing ws completion lines
-// that were manually added before the sentinel system existed.
-// This handles the duplicate-entry problem.
-func removeStaleCompletionLines(text string) string {
-	lines := strings.Split(text, "\n")
-	var cleaned []string
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if isStaleCompletionLine(trimmed) {
-			continue
-		}
-		cleaned = append(cleaned, line)
-	}
-	return strings.Join(cleaned, "\n")
-}
-
-// isStaleCompletionLine detects old-style manual completion setup lines.
-func isStaleCompletionLine(line string) bool {
-	// Common patterns people might have added manually:
-	//   eval "$(ws completions bash)"
-	//   source <(ws completions bash)
-	//   ws completions bash | source
-	if strings.Contains(line, "ws completions") || strings.Contains(line, "ws completion ") || strings.Contains(line, "ws-completions") {
-		// Don't match comment lines (they're harmless).
-		if strings.HasPrefix(line, "#") {
-			return false
-		}
-		return true
-	}
-	return false
+	return shellcomp.Resolve(*shell)
 }

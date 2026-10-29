@@ -5,11 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"runtime"
 
 	"github.com/mugenkunou/ws-tool/internal/agenttmux"
+	"github.com/mugenkunou/ws-tool/internal/buildinfo"
 	"github.com/mugenkunou/ws-tool/internal/style"
-	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // appVersion is set at build time via ldflags:
@@ -18,10 +17,7 @@ import (
 var appVersion = "dev"
 
 type versionData struct {
-	Version      string `json:"version"`
-	ConfigSchema int    `json:"config_schema"`
-	Platform     string `json:"platform"`
-	GoVersion    string `json:"go_version"`
+	buildinfo.Info
 	// AgentTmux is the installed agent-tmux's version, "" when it is missing;
 	// AgentTmuxLatest is a newer release, "" when there is none.
 	AgentTmux       string `json:"agent_tmux"`
@@ -54,12 +50,7 @@ func runVersion(args []string, globals globalFlags, stdout, stderr io.Writer) in
 		return 0
 	}
 
-	data := versionData{
-		Version:      appVersion,
-		ConfigSchema: wsconfig.CurrentSchema,
-		Platform:     runtime.GOOS + "/" + runtime.GOARCH,
-		GoVersion:    runtime.Version(),
-	}
+	data := versionData{Info: buildinfo.New(appVersion)}
 	ctx := context.Background()
 	if v, err := agenttmux.Version(ctx); err == nil {
 		data.AgentTmux = v
