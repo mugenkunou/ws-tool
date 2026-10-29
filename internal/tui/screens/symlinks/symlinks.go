@@ -18,6 +18,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/plan"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/symlink"
+	"github.com/mugenkunou/ws-tool/internal/tui/complete"
 	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/format"
@@ -25,6 +26,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/modal"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
+	"github.com/mugenkunou/ws-tool/internal/tui/prompt"
 	"github.com/mugenkunou/ws-tool/internal/tui/reslist"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
@@ -34,11 +36,9 @@ import (
 type Entry = symlink.Entry
 
 // LoadedMsg carries the result of loading the symlink list. Other components
-// (the dashboard) may observe it. Entries are the rows `ws symlink ls` shows by
-// default; Found counts known configs that exist here and are not symlinked yet.
+// (the dashboard) may observe it. Entries are the rows `ws symlink ls` shows.
 type LoadedMsg struct {
 	Entries []Entry
-	Found   int
 	// Walked is true when the load included the $HOME walk for untracked links. The
 	// first load of every refresh leaves it out (the Dashboard shows that one); the
 	// screen follows it with one that walks.
@@ -107,13 +107,6 @@ func (r addRequest) args() []string {
 	return out
 }
 
-// checklistMsg carries the rows of the add checklist: what Detect found.
-type checklistMsg struct {
-	rows []symlink.CheckRow
-	home string
-	err  error
-}
-
 // addPreparedMsg carries what the paths expand to.
 type addPreparedMsg struct {
 	req        addRequest
@@ -127,6 +120,7 @@ type step int
 
 const (
 	stepAdd step = iota
+	stepAddPath
 	stepUnlink
 	stepLink
 )
@@ -171,8 +165,6 @@ func statusStyle(e Entry, text string) string {
 		return theme.OK.Render("✔ " + text)
 	case symlink.StatusBroken:
 		return theme.Error.Render("✘ " + text)
-	case symlink.StatusFound:
-		return theme.Muted.Render(text)
 	}
 	return theme.Warn.Render("⚠ " + text)
 }
@@ -187,7 +179,7 @@ func load(e env.Env, walk bool) tea.Cmd {
 		if err != nil {
 			return LoadedMsg{Err: err, Walked: walk}
 		}
-		return LoadedMsg{Entries: l.Entries(), Found: len(l.Found()), Notes: l.Notes, Walked: walk}
+		return LoadedMsg{Entries: l.All, Notes: l.Notes, Walked: walk}
 	}
 }
 
@@ -334,9 +326,6 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	case addPreparedMsg:
 		m.preparing = false
 		return m.prepared(msg)
-	case checklistMsg:
-		m.preparing = false
-		return m.openChecklist(msg)
 	case handover.DoneMsg:
 		tag, ok := msg.Tag.(handoverTag)
 		if !ok {
@@ -373,7 +362,7 @@ var actions = func() []reslist.Action[Model, Entry] {
 // command share one function.
 var commands = []reslist.Command[Model, Entry]{
 	{Name: "add", Args: "[<host> [<ws>]] [--dir]", Scope: reslist.Marked,
-		Help: "take a path into the workspace; alone: the checklist", Do: Model.addCommand},
+		Help: "take a path into the workspace; alone: asks for the path", Do: Model.addCommand},
 	{Name: "link", Args: "[<path>…]", Scope: reslist.Global,
 		Help: "repair the shown links, or the named ones", Do: Model.linkCommand},
 	{Name: "unlink --all", Scope: reslist.Global,
@@ -400,15 +389,13 @@ func (m Model) updateList(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 // ── add ────────────────────────────────────────────────────────────
 
 // add is `a`: with marks, take the marked rows that are drifted (the live file wins)
-// or untracked (registered, nothing moves); without, open the checklist of what was
-// found on this machine, as `ws symlink add` with no path does.
+// or untracked (registered, nothing moves); without, ask for the path to take.
 func (m Model) add(marked []Entry) (Model, tea.Cmd) {
 	if m.preparing {
 		return m, nil
 	}
 	if len(marked) == 0 {
-		m.preparing = true
-		return m, prepareChecklist(m.env)
+		return m.promptPath()
 	}
 	var paths []string
 	for _, e := range marked {
@@ -423,58 +410,14 @@ func (m Model) add(marked []Entry) (Model, tea.Cmd) {
 	return m, prepareAdd(m.env, addRequest{paths: paths})
 }
 
-// prepareChecklist runs Detect (no $HOME walk) and groups what it found.
-func prepareChecklist(e env.Env) tea.Cmd {
-	return func() tea.Msg {
-		l, err := symlink.Load(e.Paths.Workspace, e.Paths.Config, false)
-		if err != nil {
-			return checklistMsg{err: err}
-		}
-		home, _ := os.UserHomeDir()
-		return checklistMsg{rows: symlink.ChecklistRows(l.Found()), home: home}
-	}
-}
-
-// openChecklist is the add checklist: one row per item (ordinary checked,
-// secret or sudo unchecked).
-func (m Model) openChecklist(msg checklistMsg) (Model, tea.Cmd) {
-	if msg.err != nil {
-		return m, nav.Notify(nav.LevelError, msg.err.Error())
-	}
-	if len(msg.rows) == 0 {
-		return m, nav.Notify(nav.LevelInfo, "Nothing found: no known config on this machine is waiting to be symlinked.")
-	}
-	p := m.env.Paths
-	pl := plan.Plan{Command: "symlink.add"}
-	for _, r := range msg.rows {
-		r := r
-		desc := "Add " + r.App + ": " + r.Label(msg.home)
-		switch {
-		case r.Sudo:
-			desc += theme.Warn.Render("  🔒 sudo: run ws symlink add in a terminal")
-		case r.Secret:
-			desc += theme.Warn.Render("  🔑 secret")
-		}
-		pl.Actions = append(pl.Actions, plan.Action{
-			ID:          "symlink-add-" + r.Items[0].System,
-			Description: desc,
-			Execute: func() error {
-				if r.Sudo {
-					return fmt.Errorf("%s needs sudo: run ws symlink add %s in a terminal", r.Items[0].System, r.Items[0].System)
-				}
-				for _, it := range r.Items {
-					if _, err := symlink.Add(symlink.AddOptions{WorkspacePath: p.Workspace, ConfigPath: p.Config, Host: it.System, Dir: it.Dir || it.Kind == symlink.KindFolder}); err != nil {
-						return fmt.Errorf("%s: %w", it.System, err)
-					}
-				}
-				return nil
-			},
-		})
-	}
-	rows := msg.rows
-	c := confirm.New("Add symlinks", pl).WithChecked(func(i int, _ plan.Action) bool { return rows[i].Checked })
-	m.modal = m.modal.Confirm(stepAdd, c)
-	return m, nil
+// promptPath asks for the host path `a` takes, as `ws symlink add <host-path>` does.
+func (m Model) promptPath() (Model, tea.Cmd) {
+	var cmd tea.Cmd
+	m.modal, cmd = m.modal.Prompt(stepAddPath, prompt.New("Add a path to the workspace",
+		prompt.WithHint("A file or folder on this machine. :add <path> [<ws-path>] [--dir] takes more."),
+		prompt.WithValue("~/"),
+		prompt.WithCompleter(complete.Dirs)))
+	return m, cmd
 }
 
 // addCommand is `:add`: `add <host> [<ws-path>] [--dir]`; alone, the same as the key.
@@ -732,6 +675,14 @@ func sudoPaths(rows []Entry) []string {
 }
 
 func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
+	if st == stepAddPath {
+		r := msg.(prompt.ResultMsg)
+		if v := strings.TrimSpace(r.Value); !r.Cancelled && v != "" && v != "~/" && !m.preparing {
+			m.preparing = true
+			return m, prepareAdd(m.env, addRequest{paths: []string{v}})
+		}
+		return m, nil
+	}
 	done := msg.(confirm.DoneMsg)
 	if done.Result.Aborted {
 		return m, nil

@@ -106,13 +106,7 @@ func runSymlinkLs(args []string, globals globalFlags, stdout, stderr io.Writer, 
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	// Found rows are not shown unless a filter asks for them.
-	showFound := symlink.WantsFound(lf.query().Terms)
-	rows := listing.Entries()
-	if showFound {
-		rows = listing.All
-	}
-	if code := renderList(globals, "symlink.ls", symlink.Schema(resource.CLIView()), rows, lf, "No managed symlinks.", stdout, stderr); code != 0 {
+	if code := renderList(globals, "symlink.ls", symlink.Schema(resource.CLIView()), listing.All, lf, "No managed symlinks.", stdout, stderr); code != 0 {
 		return code
 	}
 	if globals.json || globals.quiet {
@@ -121,13 +115,6 @@ func runSymlinkLs(args []string, globals globalFlags, stdout, stderr io.Writer, 
 	out := textOut(globals, stdout)
 	for _, note := range listing.Notes {
 		fmt.Fprintln(out, style.Mutedf(globals.noColor, "%s", note))
-	}
-	if n := len(listing.Found()); n > 0 && !showFound {
-		noun := "known configs"
-		if n == 1 {
-			noun = "known config"
-		}
-		fmt.Fprintln(out, style.Mutedf(globals.noColor, "%s", fmt.Sprintf("%d %s found, not symlinked: ws symlink add", n, noun)))
 	}
 	return 0
 }
@@ -158,21 +145,13 @@ func runSymlinkAdd(args []string, globals globalFlags, stdin io.Reader, stdout, 
 	fs.SetOutput(io.Discard)
 	wholeDir := fs.Bool("dir", false, "")
 	eachFile := fs.Bool("files", false, "")
-	app := fs.String("app", "", "")
 	registerGlobalFlags(fs, &globals)
 	if err := parseInterspersed(fs, args); err != nil {
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
 	rest := fs.Args()
-	if len(rest) == 0 || *app != "" {
-		if len(rest) > 0 || *wholeDir || *eachFile {
-			fmt.Fprintln(stderr, "usage: ws symlink add --app <name>  (no paths or --dir/--files)")
-			return 1
-		}
-		return runSymlinkAddFound(*app, globals, stdin, stdout, stderr, workspacePath, configPath)
-	}
-	if len(rest) > 2 {
+	if len(rest) == 0 || len(rest) > 2 {
 		fmt.Fprintln(stderr, "usage: ws symlink add <host-path> [<ws-path>] [--dir | --files]")
 		return 1
 	}
@@ -252,86 +231,6 @@ func runSymlinkAdd(args []string, globals globalFlags, stdin io.Reader, stdout, 
 	}
 
 	return runAddPlan(opts, globals, stdin, stdout, stderr, out, workspacePath)
-}
-
-// addHasTerminal reports whether a person is at the keyboard: stdin is a character
-// device that is not /dev/null. A variable so tests can stand in for a person.
-var addHasTerminal = func() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil || fi.Mode()&os.ModeCharDevice == 0 {
-		return false
-	}
-	null, err := os.Stat(os.DevNull)
-	return err != nil || !os.SameFile(fi, null)
-}
-
-// runSymlinkAddFound is `add` with no path: the checklist of what Detect found, or
-// with --app every ordinary (not secret, not sudo) item found for that app.
-func runSymlinkAddFound(app string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer, workspacePath, configPath string) int {
-	out := textOut(globals, stdout)
-	if globals.json {
-		out = io.Discard
-	}
-	listing, err := symlink.Load(workspacePath, configPath, false)
-	if err != nil {
-		fmt.Fprintln(stderr, err.Error())
-		return 1
-	}
-	found := listing.Found()
-	home, _ := os.UserHomeDir()
-	base := symlink.AddOptions{WorkspacePath: workspacePath, ConfigPath: configPath}
-
-	if app != "" {
-		if !slices.Contains(symlink.Apps(), app) {
-			fmt.Fprintf(stderr, "unknown app %q; known apps: %s\n", app, strings.Join(symlink.Apps(), ", "))
-			return 1
-		}
-		var rows []symlink.CheckRow
-		skipped := 0
-		for _, r := range symlink.ChecklistRows(found) {
-			switch {
-			case r.App != app:
-			case r.Checked:
-				rows = append(rows, r)
-			default:
-				skipped++
-			}
-		}
-		if len(rows) == 0 {
-			msg := fmt.Sprintf("nothing found for %s", app)
-			if skipped > 0 {
-				msg += fmt.Sprintf(" (%d secret or sudo item(s) are added one by one: ws symlink add <host-path>)", skipped)
-			}
-			fmt.Fprintln(stderr, msg)
-			return 1
-		}
-		return runAddPlan(addOptionsFor(rows, base), globals, stdin, stdout, stderr, out, workspacePath)
-	}
-
-	rows := symlink.ChecklistRows(found)
-	if len(rows) == 0 {
-		if globals.json {
-			return writeJSON(stdout, stderr, "symlink.add", map[string]any{"actions": []ActionStatus{}})
-		}
-		fmt.Fprintln(out, "Nothing found: no known config on this machine is waiting to be symlinked.")
-		return 0
-	}
-	if !addHasTerminal() || globals.json || globals.quiet {
-		// No person to ask: show what was found, as `ls --filter status=found`, and change nothing.
-		return runSymlinkLs([]string{"--filter", "status=found"}, globals, stdout, stderr, workspacePath, configPath)
-	}
-	chosen, cancelled := askChecklist(stdin, out, rows, home, globals.noColor)
-	if cancelled {
-		fmt.Fprintln(stderr, "cancelled")
-		return 130
-	}
-	if len(chosen) == 0 {
-		fmt.Fprintln(out, "Nothing selected.")
-		return 0
-	}
-	// The answer was the confirmation: show the plan lines and run them.
-	globals.autoAccept = true
-	return runAddPlan(addOptionsFor(chosen, base), globals, stdin, stdout, stderr, out, workspacePath)
 }
 
 // managedEntry finds the entry for a host path.

@@ -10,7 +10,6 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/agenttmux"
 	"github.com/mugenkunou/ws-tool/internal/cron"
 	"github.com/mugenkunou/ws-tool/internal/repo"
-	"github.com/mugenkunou/ws-tool/internal/symlink"
 	"github.com/mugenkunou/ws-tool/internal/trash"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
@@ -165,9 +164,6 @@ func resolveCompletions(args []string, globals globalFlags) ([]string, int) {
 		prev := args[len(args)-2]
 		if strings.HasPrefix(prev, "-") && !strings.Contains(prev, "=") {
 			if ok, dir := flagValueDirective(prev); ok {
-				if prev == "--app" {
-					return filterPrefix(symlink.Apps(), args[len(args)-1]), compDirectiveNoFileComp
-				}
 				if strings.TrimLeft(prev, "-") == "shell" {
 					return filterPrefix([]string{"bash", "zsh", "fish"}, args[len(args)-1]), compDirectiveNoFileComp
 				}

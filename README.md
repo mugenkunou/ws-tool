@@ -21,7 +21,7 @@ go install github.com/mugenkunou/ws-tool@latest      # Go ≥ 1.26
 sudo mv "$(go env GOPATH)/bin/ws-tool" /usr/local/bin/ws
 
 ws init                    # 🏗️  layout + ws.json + sync rules; offers the built-in skills
-ws symlink add             # 🔗 a checklist of the configs ws found; Enter takes the ticked ones
+ws symlink add ~/.gitconfig  # 🔗 move a file into the workspace, link it back
 ws tui                     # 🖥️  look around
 ```
 

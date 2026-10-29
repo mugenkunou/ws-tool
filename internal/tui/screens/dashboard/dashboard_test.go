@@ -148,19 +148,15 @@ func TestSymlinksAreaCountsEntriesAndNamesProblems(t *testing.T) {
 			row("/h/.untracked", symlink.StatusUntracked, false),
 			row("/h/.orphan", symlink.StatusOrphan, false),
 		},
-		Found: 4,
 	})
 	if got := a.lines[0]; got != "4 symlinks managed" {
 		t.Errorf("first line = %q", got)
 	}
-	if len(a.issues) != 2 {
+	if len(a.issues) != 1 {
 		t.Fatalf("issues = %+v", a.issues)
 	}
 	if is := a.issues[0]; is.Sev != nav.SevError || is.Text != "3 symlinks broken, missing or drifted" {
 		t.Errorf("problem line = %+v", is)
-	}
-	if is := a.issues[1]; is.Sev != nav.SevInfo || is.Text != "4 known configs found, not symlinked" || is.Advice {
-		t.Errorf("info line = %+v", is)
 	}
 	if a := cardOf(symlinks.LoadedMsg{Entries: []symlink.Entry{row("/h/.ok", symlink.StatusOK, true)}}); len(a.issues) != 0 {
 		t.Errorf("a healthy list raises nothing: %+v", a.issues)

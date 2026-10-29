@@ -100,20 +100,17 @@ var commands = []command{
 	{Path: []string{"repo", "root", "ls"}, Summary: "list discovery roots", RO: true},
 	{Path: []string{"repo", "root", "rm"}, Args: "<dir>", Summary: "remove a discovery root"},
 
-	{Path: []string{"symlink", "ls"}, Summary: "managed symlinks, problems, and what was found", RO: true,
+	{Path: []string{"symlink", "ls"}, Summary: "managed symlinks and problems", RO: true,
 		Fields:   fieldsOf(func() resource.Schema[symlink.Entry] { return symlink.Schema(resource.CLIView()) }),
-		Examples: []string{"ws symlink ls", "ws symlink ls --filter status=found"}},
-	{Path: []string{"symlink", "add"}, Args: "[<host-path> [<ws-path>]]", Summary: "take into the workspace; no path: a checklist",
+		Examples: []string{"ws symlink ls", "ws symlink ls --filter status=broken"}},
+	{Path: []string{"symlink", "add"}, Args: "<host-path> [<ws-path>]", Summary: "take a path into the workspace",
 		Flags: []flagDoc{
 			{Name: "--dir", Desc: "take a folder whole, as one entry"},
 			{Name: "--files", Desc: "take every file in a folder as its own entry"},
-			{Name: "--app", Arg: "<name>", Desc: "add everything found for one app, without asking"},
 		},
 		Examples: []string{
-			"ws symlink add                                a checklist of what was found",
 			"ws symlink add ~/.gitconfig                   to symlinks/home/.gitconfig",
 			"ws symlink add ~/Screenshots artifacts/shots  to artifacts/shots",
-			"ws symlink add --app git",
 			"ws symlink add ~/.password-store --dir",
 		}},
 	{Path: []string{"symlink", "link"}, Args: "[<host-path>…]", Summary: "make or repair links from the workspace copies",

@@ -3,7 +3,6 @@ package symlink
 import (
 	"os"
 	"runtime"
-	"strings"
 
 	"github.com/mugenkunou/ws-tool/internal/resource"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
@@ -15,7 +14,7 @@ type Entry = Record
 
 // Listing is what Detect found, ready to show.
 type Listing struct {
-	// All is every record: ws.json entries first, then found, untracked and orphan.
+	// All is every record: ws.json entries first, then untracked and orphan.
 	All []Entry
 	// Notes are things worth saying once (the $HOME walk stopped at its cap).
 	Notes []string
@@ -39,36 +38,13 @@ func Load(workspacePath, configPath string, walk bool) (Listing, error) {
 	return Listing{All: res.Records, Notes: res.Notes}, nil
 }
 
-// Entries are the default rows of `ls`: every ws.json entry and every problem
-// (untracked, orphan, and any entry that is not ok). Found rows are left out.
-func (l Listing) Entries() []Entry {
-	out := make([]Entry, 0, len(l.All))
-	for _, e := range l.All {
-		if e.Status != StatusFound {
-			out = append(out, e)
-		}
-	}
-	return out
-}
-
-// Found is the records of known configs that exist here and are not symlinked yet.
-func (l Listing) Found() []Entry {
-	var out []Entry
-	for _, e := range l.All {
-		if e.Status == StatusFound {
-			out = append(out, e)
-		}
-	}
-	return out
-}
-
 // Problems counts the rows that need attention: every registered entry that is not
 // ok, plus untracked links and orphans.
 func (l Listing) Problems() int {
 	n := 0
 	for _, e := range l.All {
 		switch e.Status {
-		case StatusOK, StatusFound:
+		case StatusOK:
 		default:
 			n++
 		}
@@ -98,15 +74,4 @@ func Schema(v resource.View) resource.Schema[Entry] {
 		},
 		Columns: []string{"system", "workspace_path", "app", "status", "sudo"},
 	}
-}
-
-// WantsFound reports whether a filter asks for found rows (status=found), which
-// `ls` hides by default.
-func WantsFound(terms []resource.Term) bool {
-	for _, t := range terms {
-		if !t.Negate && t.Key == "status" && strings.EqualFold(t.Value, string(StatusFound)) {
-			return true
-		}
-	}
-	return false
 }

@@ -152,27 +152,16 @@ func TestDetectRelativeLinkCountsAsOK(t *testing.T) {
 	}
 }
 
-// ── rule 2: catalog items ──────────────────────────────────────────
+// ── a known config that is not symlinked is never reported ─────────
 
-func TestDetectFoundItems(t *testing.T) {
+func TestDetectNeverSuggests(t *testing.T) {
 	m := newMachine(t)
 	m.file(t, m.home_(".gitconfig"), "[user]")
-	m.file(t, m.home_(".config/Code/User/settings.json"), "{}")
-	m.file(t, m.home_(".config/Code/User/globalStorage/state.vscdb"), "db") // not a catalog item
-	m.file(t, m.home_(".bash_history"), "secret")                           // never suggested
-	m.file(t, m.home_(".ssh/known_hosts"), "x")                             // never suggested
-	r := m.detect("linux", false)
-	g := find(t, r, m.home_(".gitconfig"))
-	if g.Status != StatusFound || g.App != "git" || g.Original != "symlinks/home/.gitconfig" || g.Secret || g.Sudo {
-		t.Errorf("%+v", g)
-	}
-	if v := find(t, r, m.home_(".config/Code/User/settings.json")); v.App != "vscode" || v.Status != StatusFound {
-		t.Errorf("%+v", v)
-	}
-	for _, no := range []string{".config/Code/User/globalStorage/state.vscdb", ".bash_history", ".ssh/known_hosts", ".config/Code"} {
-		if has(r, m.home_(no)) {
-			t.Errorf("%s must not be suggested", no)
-		}
+	m.file(t, m.home_(".config/nvim/init.lua"), "x")
+	m.file(t, m.home_(".ssh/id_rsa"), "-----BEGIN")
+	m.file(t, "/etc/hosts", "127.0.0.1")
+	if r := m.detect("linux", true); len(r.Records) != 0 {
+		t.Fatalf("a real file ws.json does not know is none of ws's business: %+v", r.Records)
 	}
 }
 
@@ -185,112 +174,12 @@ func TestDetectLinkElsewhereIsSilent(t *testing.T) {
 	}
 }
 
-func TestDetectCatalogFolderFoundOnce(t *testing.T) {
-	m := newMachine(t)
-	m.file(t, m.home_(".config/nvim/init.lua"), "x")
-	m.file(t, m.home_(".config/nvim/lua/a.lua"), "x")
-	r := m.detect("linux", false)
-	var nvim []Record
-	for _, rec := range r.Records {
-		if strings.HasPrefix(rec.System, m.home_(".config/nvim")) {
-			nvim = append(nvim, rec)
-		}
-	}
-	if len(nvim) != 1 || nvim[0].System != m.home_(".config/nvim") || !nvim[0].Dir || nvim[0].Kind != KindFolder || nvim[0].App != "neovim" {
-		t.Fatalf("the folder is one item: %+v", nvim)
-	}
-}
-
-func TestDetectFileInsideAFolderEntryIsNotFound(t *testing.T) {
-	m := newMachine(t)
-	m.file(t, m.home_(".claude/commands/a.md"), "x")
-	m.file(t, m.home_(".claude/CLAUDE.md"), "x")
-	entry := wsconfig.Link{System: m.home_(".claude"), Original: "symlinks/home/.claude", Dir: true}
-	r := m.detect("linux", false, entry)
-	if has(r, m.home_(".claude/CLAUDE.md")) || has(r, m.home_(".claude/commands")) {
-		t.Fatalf("inside a folder entry nothing is suggested: %+v", r.Records)
-	}
-	// An entry for the folder itself is not suggested again either.
-	m = newMachine(t)
-	m.file(t, m.home_(".config/nvim/init.lua"), "x")
-	r = m.detect("linux", false, wsconfig.Link{System: m.home_(".config/nvim"), Original: "symlinks/home/.config/nvim", Dir: true})
-	if len(by(r, StatusFound)) != 0 {
-		t.Fatalf("%+v", by(r, StatusFound))
-	}
-}
-
-func TestDetectEntryIsNotFoundAgain(t *testing.T) {
+func TestDetectEntryIsOneRecord(t *testing.T) {
 	m := newMachine(t)
 	m.file(t, m.home_(".gitconfig"), "[user]") // drifted: a real file
 	r := m.detect("linux", false, wsconfig.Link{System: m.home_(".gitconfig"), Original: "symlinks/home/.gitconfig"})
 	if n := len(r.Records); n != 1 || r.Records[0].Status != StatusDrifted {
 		t.Fatalf("one record, drifted: %+v", r.Records)
-	}
-}
-
-func TestDetectSSHKeyAndPubPair(t *testing.T) {
-	m := newMachine(t)
-	m.file(t, m.home_(".ssh/id_rsa"), "-----BEGIN")
-	m.file(t, m.home_(".ssh/id_rsa.pub"), "ssh-rsa AAA")
-	m.file(t, m.home_(".ssh/id_rsa.ws-backup"), "old")
-	m.file(t, m.home_(".ssh/id_ed25519.pub"), "ssh-ed25519 AAA") // a lone .pub
-	m.file(t, m.home_(".ssh/config"), "Host *")
-	r := m.detect("linux", false)
-	key := find(t, r, m.home_(".ssh/id_rsa"))
-	pub := find(t, r, m.home_(".ssh/id_rsa.pub"))
-	if !key.Secret || pub.Secret {
-		t.Errorf("the private key is secret, its .pub is not: %+v %+v", key, pub)
-	}
-	if key.Group != m.home_(".ssh/id_rsa") || pub.Group != key.Group {
-		t.Errorf("a private key and its .pub share one group: %q %q", key.Group, pub.Group)
-	}
-	if lone := find(t, r, m.home_(".ssh/id_ed25519.pub")); lone.Group != lone.System {
-		t.Errorf("a lone .pub is its own group: %+v", lone)
-	}
-	if has(r, m.home_(".ssh/id_rsa.ws-backup")) {
-		t.Error("*.ws-backup is never matched")
-	}
-	count := 0
-	for _, rec := range r.Records {
-		if rec.System == m.home_(".ssh/id_rsa") {
-			count++
-		}
-	}
-	if count != 1 {
-		t.Errorf("id_* must not match the .pub as a key: %d records for id_rsa", count)
-	}
-}
-
-func TestDetectSudoAndOS(t *testing.T) {
-	m := newMachine(t)
-	m.file(t, "/etc/hosts", "127.0.0.1")
-	m.file(t, m.home_(".config/lazygit/config.yml"), "x")                     // linux row
-	m.file(t, m.home_("Library/Application Support/lazygit/config.yml"), "x") // mac row
-	linux := m.detect("linux", false)
-	hosts := find(t, linux, "/etc/hosts")
-	if hosts.Status != StatusFound || !hosts.Sudo || hosts.App != "hosts" || hosts.Original != "symlinks/system/etc/hosts" {
-		t.Errorf("%+v", hosts)
-	}
-	if !has(linux, m.home_(".config/lazygit/config.yml")) || has(linux, m.home_("Library/Application Support/lazygit/config.yml")) {
-		t.Errorf("linux sees the linux row only: %+v", linux.Records)
-	}
-	mac := m.detect("darwin", false)
-	if has(mac, m.home_(".config/lazygit/config.yml")) || !has(mac, m.home_("Library/Application Support/lazygit/config.yml")) {
-		t.Errorf("mac sees the mac row only: %+v", mac.Records)
-	}
-	if !has(mac, "/etc/hosts") {
-		t.Error("an `any` row matches every OS")
-	}
-}
-
-func TestDetectGlobFolders(t *testing.T) {
-	m := newMachine(t)
-	m.file(t, m.home_(".config/JetBrains/IntelliJIdea2025.1/keymaps/mine.xml"), "x")
-	m.file(t, m.home_(".config/JetBrains/GoLand2025.1/keymaps/mine.xml"), "x")
-	r := m.detect("linux", false)
-	got := by(r, StatusFound)
-	if len(got) != 2 || got[0].App != "jetbrains" || got[0].Kind != KindFolder {
-		t.Fatalf("one item per match: %+v", got)
 	}
 }
 

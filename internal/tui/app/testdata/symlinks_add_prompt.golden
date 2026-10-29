@@ -1,6 +1,9 @@
 ws  🏠   📦   🔗 Symlinks   🧪   📼   🧹   🔄   🔐   ⏰   🚮   🧩   🔧
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-Scanning…
+Add a path to the workspace
+A file or folder on this machine. :add <path> [<ws-path>] [--dir] takes more.
+
+› ~/
 
 
 
@@ -24,7 +27,4 @@ Scanning…
 
 
 
-
-
-
-a add • ctrl+d unlink • l link • space mark … • ctrl+r refresh • : command • ? help • q quit
+enter submit • tab complete • esc back

@@ -117,62 +117,15 @@ func TestNoHardcodedKeyNames(t *testing.T) {
 	}
 }
 
-// TestAddWithNothingMarkedScansForTheChecklist: without marks, a looks for what the
-// catalog knows about this machine (no prompt for a path).
-func TestAddWithNothingMarkedScansForTheChecklist(t *testing.T) {
-	c, cmd := pressRun(screen(t, fixtureRows()), "a")
-	if cmd == nil || !c.(Model).preparing || c.CapturesKeys() {
-		t.Fatal("a with no marks starts the scan, and opens no path prompt")
+// TestAddWithNothingMarkedAsksForAPath: without marks, a asks for the path to take;
+// it scans for nothing and suggests nothing.
+func TestAddWithNothingMarkedAsksForAPath(t *testing.T) {
+	c := press(screen(t, fixtureRows()), "a")
+	if !c.CapturesKeys() || c.(Model).preparing {
+		t.Fatalf("a with no marks opens the path prompt:\n%s", plain(c))
 	}
-}
-
-// TestChecklistIsTheCLIsChecklist: the rows are ChecklistRows, checked the same way,
-// and nothing found is a notice.
-func TestChecklistIsTheCLIsChecklist(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("WS_SYMLINK_ROOT", t.TempDir())
-	root := filepath.Join(t.TempDir(), "Workspace")
-	if err := os.MkdirAll(filepath.Join(root, "symlinks"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	cfgPath := wsconfig.ConfigPath(root)
-	if err := wsconfig.Save(cfgPath, wsconfig.Default()); err != nil {
-		t.Fatal(err)
-	}
-	e := env.Env{Paths: workspace.Paths{Workspace: root, Config: cfgPath}}
-
-	// Nothing found: a notice, no dialog.
-	msg := prepareChecklist(e)().(checklistMsg)
-	m, cmd := New(e).openChecklist(msg)
-	if m.modal.Open() || cmd == nil {
-		t.Fatal("nothing found: a notice")
-	}
-
-	// A git config (ordinary) and an ssh key (secret).
-	for name, body := range map[string]string{".gitconfig": "[user]\n", ".ssh/id_rsa": "KEY\n", ".ssh/id_rsa.pub": "PUB\n"} {
-		p := filepath.Join(home, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	msg = prepareChecklist(e)().(checklistMsg)
-	if len(msg.rows) != 2 {
-		t.Fatalf("rows = %+v", msg.rows)
-	}
-	sized, _ := New(e).Update(nav.ResizeMsg{Width: 120, Height: 24})
-	m, _ = sized.(Model).openChecklist(msg)
-	v := ansi.Strip(m.View())
-	for _, want := range []string{"Add git: ~/.gitconfig", "Add ssh: ~/.ssh/id_rsa + .pub", "secret"} {
-		if !strings.Contains(v, want) {
-			t.Errorf("checklist lacks %q:\n%s", want, v)
-		}
-	}
-	if !strings.Contains(v, "[x] Add git") || !strings.Contains(v, "[ ] Add ssh") {
-		t.Errorf("ordinary rows are checked, secret rows are not:\n%s", v)
+	if v := plain(c); !strings.Contains(v, "Add a path to the workspace") {
+		t.Errorf("prompt:\n%s", v)
 	}
 }
 
@@ -337,10 +290,10 @@ func TestCommandsAreTheSpecList(t *testing.T) {
 // TestCommandsRouteThroughCommandMsg: a command reaches the same function its
 // key does.
 func TestCommandsRouteThroughCommandMsg(t *testing.T) {
-	// `add` alone is the key: the checklist scan.
-	c, cmd0 := command(screen(t, fixtureRows()), "add")
-	if cmd0 == nil || !c.(Model).preparing {
-		t.Error(":add without paths should start the checklist scan, as the key does")
+	// `add` alone is the key: the path prompt.
+	c, _ := command(screen(t, fixtureRows()), "add")
+	if !c.CapturesKeys() {
+		t.Error(":add without paths should open the path prompt, as the key does")
 	}
 	// `add` with paths scans them.
 	c, cmd := command(screen(t, fixtureRows()), "add /h/.x")

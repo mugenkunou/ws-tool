@@ -249,9 +249,8 @@ func TestSymlinkAddRefusals(t *testing.T) {
 	if code, _, errOut = e.run(""); code != 0 {
 		t.Fatalf("ws with only the workspace flag prints help: %d %s", code, errOut)
 	}
-	// With no path, add asks (or, without a terminal, lists what was found): exit 0.
-	asTerminal(t, false)
-	if code, out, errOut = e.run("", "symlink", "add"); code != 0 {
+	// With no path, add has nothing to take: it never suggests one.
+	if code, out, errOut = e.run("", "symlink", "add"); code != 1 || !strings.Contains(errOut, "usage:") {
 		t.Fatalf("no path: exit %d out=%s stderr=%s", code, out, errOut)
 	}
 	if code, _, errOut = e.run("", "symlink", "add", real, "agent/x", "extra"); code != 1 || !strings.Contains(errOut, "usage:") {

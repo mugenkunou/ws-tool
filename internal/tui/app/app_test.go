@@ -313,7 +313,7 @@ func TestSnapshots(t *testing.T) {
 		{"repos_marked", []string{"2", "space", "down", "space", "down", "space"}},
 		{"repos_range_marked", []string{"2", "down", "space", "down", "down", "ctrl+space"}},
 		{"symlinks", []string{"3"}},
-		{"symlinks_add_scanning", []string{"3", "a"}}, // the checklist follows when the scan returns
+		{"symlinks_add_prompt", []string{"3", "a"}},
 		{"symlinks_filter", []string{"3", "/", "s", "t", "a", "t", "u", "s", "!", "=", "o", "k", "enter"}},
 		{"symlinks_sorted_marked", []string{"3", ">", "space", "down", "space"}},
 		{"symlinks_marked_unlink", []string{"3", "space", "down", "space", "ctrl+d"}},

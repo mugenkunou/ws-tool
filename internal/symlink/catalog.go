@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 )
 
@@ -23,7 +22,7 @@ const (
 	OSMac   = "mac"
 )
 
-// Item is one well-known config the binary can suggest (docs/plans/0003/catalog.md).
+// Item is one well-known config the binary knows (docs/plans/0003/catalog.md).
 // Path uses ~ for $HOME; a * is a glob over one path segment. A Secret item starts
 // unchecked in the checklist, and so does a Sudo item (it needs root to link).
 type Item struct {
@@ -35,7 +34,7 @@ type Item struct {
 	OS     string
 }
 
-// Catalog is the built-in list of suggestions. It lives only in the binary: it is
+// Catalog is the built-in list of known configs: it labels, never suggests. It lives only in the binary: it is
 // never written to a file and the user cannot edit it. It is sorted by app, then
 // path. A row marked "M" is one whose path varies by version or setup.
 //
@@ -186,21 +185,6 @@ var Catalog = []Item{
 	{"zsh", "~/.zprofile", KindFile, false, false, OSAny},
 	{"zsh", "~/.zshenv", KindFile, false, false, OSAny},
 	{"zsh", "~/.zshrc", KindFile, false, false, OSAny},
-}
-
-// Apps is every app label in the catalog, sorted and without repeats: the values
-// `ws symlink add --app` completes.
-func Apps() []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, it := range Catalog {
-		if !seen[it.App] {
-			seen[it.App] = true
-			out = append(out, it.App)
-		}
-	}
-	sort.Strings(out)
-	return out
 }
 
 // IsCatalogSecret reports whether a host path is one the catalog lists as a secret

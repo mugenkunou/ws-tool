@@ -18,7 +18,6 @@ type Status string
 
 const (
 	StatusOK        Status = "ok"        // in ws.json, linked and healthy
-	StatusFound     Status = "found"     // a catalog item exists here and is not managed: add
 	StatusUntracked Status = "untracked" // a host link points into the workspace but is not in ws.json: add <host-path>
 	StatusOrphan    Status = "orphan"    // content under symlinks/ with no entry in ws.json: link <host-path>
 	StatusMissing   Status = "missing"   // in ws.json, nothing at the host path (a new laptop): link
@@ -73,8 +72,6 @@ type Record struct {
 	Dir           bool
 	// Registered is true when the record is a ws.json entry.
 	Registered bool
-	// Group ties a private key to its .pub so the checklist shows one row.
-	Group string
 }
 
 // Result is what Detect found.
@@ -321,29 +318,6 @@ func (d *detector) consider(it Item, host string) {
 		}
 		return // a link to somewhere else is none of our business
 	}
-	if d.managed(host) {
-		return
-	}
-	if li.IsDir() != (it.Kind == KindFolder) {
-		return
-	}
-	original := MirrorPath(host, d.home)
-	if original == "" {
-		return
-	}
-	group := host
-	if it.App == "ssh" && strings.HasSuffix(host, ".pub") {
-		group = strings.TrimSuffix(host, ".pub")
-		if _, err := os.Lstat(d.real(group)); err != nil {
-			group = host
-		}
-	}
-	d.seen[host] = true
-	d.res.Records = append(d.res.Records, Record{
-		Status: StatusFound, App: it.App, Secret: it.Secret, Sudo: it.Sudo, Kind: it.Kind, System: host,
-		Original: original, WorkspacePath: d.abs(original), Dir: it.Kind == KindFolder,
-		Message: "a known config that is not symlinked yet", Group: group,
-	})
 }
 
 // skipped reports whether the walk leaves a $HOME-relative folder alone.

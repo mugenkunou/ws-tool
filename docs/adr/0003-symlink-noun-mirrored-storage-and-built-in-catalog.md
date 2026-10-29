@@ -5,6 +5,13 @@ date: 2026-10-24
 
 # `ws symlink`: one mirrored storage tree and a built-in catalog
 
+> **Amended 2026-10-29: suggestions removed.** ws no longer looks for catalog paths on the
+> machine. There is no `found` status, no `ls` footer, no Dashboard line, no checklist for
+> `add` with no path and no `--app`. `add` needs a path, in the CLI and the TUI. The catalog
+> stays in the binary only to label an add (app), to start credential files unchecked and to
+> take config folders whole. Wherever the text below says the catalog suggests, read it
+> that way.
+
 The command for linking host files into the workspace started as "symlink my config files
 into the workspace". By October 2026 it held
 SSH private keys, kube configs, whole folders (VS Code snippets, `~/.claude/skills`) and

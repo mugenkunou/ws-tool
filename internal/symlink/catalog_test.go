@@ -3,7 +3,6 @@ package symlink
 import (
 	"path"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 )
@@ -129,9 +128,5 @@ func TestCatalogShape(t *testing.T) {
 	}
 	if len(Catalog) < 130 || len(Catalog) > 160 {
 		t.Errorf("about 130 rows expected, have %d", len(Catalog))
-	}
-	apps := Apps()
-	if !sort.StringsAreSorted(apps) || len(apps) < 50 {
-		t.Errorf("Apps() = %v", apps)
 	}
 }

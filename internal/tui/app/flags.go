@@ -40,7 +40,6 @@ var CLIFlagCoverage = []FlagCoverage{
 	{CLI: "repo configure", Flag: "--detached", How: "the list filter on the detached column (/ detached=true)"},
 	{CLI: "symlink add", Flag: "--dir", How: "`:add <host> [<ws>] --dir`"},
 	{CLI: "symlink add", Flag: "--files", How: "CLI only: the TUI opens a checklist of a folder's entries, not one entry per file"},
-	{CLI: "symlink add", Flag: "--app", How: "the add checklist (a): one row per known app config, none added unasked"},
 	{CLI: "symlink unlink", Flag: "--all", How: "`:unlink --all`"},
 	{CLI: "skill scan", Flag: "--tool", How: "n/a: the list has a column per tool"},
 	{CLI: "skill show", Flag: "--path", How: "CLI only: a script flag (prints a bare path)"},

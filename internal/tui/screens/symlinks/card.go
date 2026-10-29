@@ -31,9 +31,5 @@ func (m LoadedMsg) Card() (nav.Screen, nav.Card, bool) {
 	} else if m.Registered() > 0 {
 		c.Lines = append(c.Lines, theme.OK.Render("all links healthy"))
 	}
-	if m.Found > 0 {
-		c.Issues = append(c.Issues, nav.Issue{Sev: nav.SevInfo, Screen: nav.ScreenSymlinks,
-			Text: format.Plural(m.Found, "known config") + " found, not symlinked"})
-	}
 	return nav.ScreenSymlinks, c, true
 }

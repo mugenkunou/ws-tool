@@ -211,14 +211,14 @@ and `/etc/hosts` at `symlinks/system/etc/hosts`. Two apps with a file of the sam
 collide, and any file under `symlinks/` maps back to its host path by removing the prefix. To
 store something elsewhere, give two paths: `ws symlink add <host-path> <ws-path>`.
 
-**ws knows what is worth keeping.** A catalog compiled into the binary lists about 140
-well-known configs (git, ssh, shells, editors, terminals, cloud CLIs, AI tools). ws checks it
-silently and reports only what exists on this machine and is not symlinked yet. `ws symlink add`
-with no arguments shows that list as a checklist. Folders that mix config with state
-(`~/.ssh`, `~/.claude`, `~/.gnupg`) are never listed whole, only their safe children.
+**ws never suggests what to link.** You name every path: `ws symlink add <host-path>`. A
+small catalog compiled into the binary only labels what you add (the app column) and marks
+credential files, which start unchecked, and config folders, which are taken whole.
+Folders that mix config with state (`~/.ssh`, `~/.claude`, `~/.gnupg`) are never taken whole
+unless you say `--dir`.
 
 **Secrets may be tracked.** Private keys and credential files sometimes have to follow you.
-They live in the same tree as everything else and start unchecked in the checklist. Rotation
+They live in the same tree as everything else and start unchecked in the add checklist. Rotation
 and access control stay your responsibility.
 
 *Eyes open:* a change to the symlinked file changes the original in sync, and sync is the only
@@ -661,10 +661,8 @@ ws repo root add <dir>                    RW  add a discovery root
 ws repo root ls                           RO  list discovery roots
 ws repo root rm <dir>                     RW  remove a discovery root
 
-ws symlink ls                             RO  managed symlinks, problems, and what was found
-ws symlink add                            RW  checklist of known configs found on this machine (needs a terminal)
+ws symlink ls                             RO  managed symlinks and problems
 ws symlink add <host-path> [<ws-path>]    RW  move into the workspace and link back; <ws-path> picks where
-ws symlink add --app <name>               RW  everything found for one app, without asking
 ws symlink add <folder> [--dir|--files]   RW  a folder as one entry, or one entry per file
 ws symlink link [<host-path>…]            RW  make or repair links from the workspace copies
 ws symlink unlink <host-path…> | --all    RW  put the real content back, stop managing it
@@ -1362,10 +1360,8 @@ one wins:
 
 | Command | RO/RW | Does | TUI |
 | --- | --- | --- | --- |
-| `ws symlink ls` | RO | managed symlinks, problems, and what was found | screen |
-| `ws symlink add` | RW | checklist of known configs found on this machine (needs a terminal) | `a` |
-| `ws symlink add <host-path> [<ws-path>]` | RW | move into the workspace and link back; `<ws-path>` picks where | `:add` |
-| `ws symlink add --app <name>` | RW | everything found for one app, without asking | |
+| `ws symlink ls` | RO | managed symlinks and problems | screen |
+| `ws symlink add <host-path> [<ws-path>]` | RW | move into the workspace and link back; `<ws-path>` picks where | `a`, `:add` |
 | `ws symlink add <folder> [--dir\|--files]` | RW | a folder as one entry, or one entry per file | `:add … --dir` |
 | `ws symlink link [<host-path>…]` | RW | make or repair links from the workspace copies | `l`, `:link` |
 | `ws symlink unlink <host-path…> \| --all` | RW | put the real content back, stop managing it | `ctrl+d`, `:unlink --all` |
@@ -1409,30 +1405,27 @@ one wins:
   client) is the protection. To keep history, run `git init` in `symlinks/`; `ws repo` will
   see it.
 
-#### The catalog and the seven statuses
+#### The catalog and the six statuses
 
 ws holds a catalog of about 140 well-known configs in the binary (`internal/symlink/catalog.go`,
-the data in `docs/plans/0003/catalog.md`): the host path or glob, file or folder, a secret
-flag, a sudo flag, the OS (`any`, `linux` or `mac`) and an app label. It is never written to
-a file and you cannot edit it. It is a source of suggestions, not of state: every symlink you
-have is in `ws.json`, whether it came from the catalog or from a path you typed.
+the data in `docs/plans/0003/catalog.md`). It is never written to a file and you cannot edit
+it, and it never suggests anything: ws does not look for these paths and `add` with no path
+does not exist. `add <host-path>` reads it for three things: the `app` label, whether the
+path is a credential file (unchecked in a folder's list), and whether the path is a folder
+that is always taken whole. Every symlink you have is in `ws.json`, whether its path is in
+the catalog or not.
 
-ws checks the catalog silently and reports only what exists on this machine and is not
-managed. Mixed folders (`~/.ssh`, `~/.claude`, `~/.config/Code`, `~/.gnupg`, `~/.docker`)
-are never listed whole, because they hold known_hosts, history and credentials: the catalog
-lists their safe children, and a test fails if a row names anything on the never-suggested
-list (`docs/plans/0003/catalog.md`). A path on that list can still be added by hand: the list
-governs suggestions, not what you may do. There is no heuristic scan: anything outside the
-catalog goes through `add <path>`.
+Mixed folders (`~/.ssh`, `~/.claude`, `~/.config/Code`, `~/.gnupg`, `~/.docker`) are never
+catalog rows whole, because they hold known_hosts, history and credentials; a test fails if a
+row names anything on the never-listed set (`docs/plans/0003/catalog.md`).
 
-Every row of `ls` has one status. ws keeps no state between runs: it compares four things
-each time, `ws.json`, the files under `symlinks/`, the catalog paths on the host, and (for
-`ls` only) a bounded walk of `$HOME`.
+Every row of `ls` has one status. ws keeps no state between runs: it compares three things
+each time, `ws.json`, the files under `symlinks/`, and (for `ls` only) a bounded walk of
+`$HOME`.
 
 | Status | Meaning | Command |
 | --- | --- | --- |
 | `ok` | in `ws.json`, linked, and the workspace copy exists | none |
-| `found` | a catalog item exists here and is not managed | `add` |
 | `untracked` | a host link points into the workspace but is not in `ws.json` | `add <host-path>` registers it, moves nothing |
 | `orphan` | content sits under `symlinks/` with no entry in `ws.json` | `link <host-path>` |
 | `missing` | in `ws.json`, nothing at the host path (a new machine) | `link` |
@@ -1444,17 +1437,12 @@ How each is decided:
 1. **Entries.** A host path that is a link to the entry's workspace copy, with the copy
    present, is `ok`. A link with a wrong or missing target is `broken`. Nothing there is
    `missing`. A real file or folder there is `drifted`.
-2. **Found.** Each catalog row for this OS has its `~` and globs expanded. An item is
-   `found` when it exists as a real file or folder (not a link), is not already an entry,
-   and is not inside a folder entry. A link to somewhere outside the workspace is skipped
-   silently. `~/.ssh/id_*` never matches a `.pub` or a `.ws-backup`, and a private key and
-   its `.pub` travel as one group.
-3. **Untracked** (only when the walk is on). The walk goes four levels under `$HOME`, never
+2. **Untracked** (only when the walk is on). The walk goes four levels under `$HOME`, never
    follows links, skips `.cache`, `.git`, `node_modules`, `.local/share`, `.npm`,
    `.cargo/registry`, `.rustup`, `.var`, `snap`, the trash and any mount of the workspace,
    and stops after 200,000 nodes with a note. Catalog paths are also checked directly, at any
    depth. A link whose target is inside the workspace and that no entry covers is `untracked`.
-4. **Orphans.** A file under `symlinks/` that no entry's original equals or contains, and
+3. **Orphans.** A file under `symlinks/` that no entry's original equals or contains, and
    whose host path (the mirror reversed) has no entry. A folder that mirrors a catalog folder
    is one orphan and is not entered.
 
@@ -1476,17 +1464,13 @@ Lists every entry, plus every row in a problem status (`untracked`, `orphan`, `b
 `$HOME` walk, and a walk of `symlinks/`), changes nothing and never needs sudo. `ls` takes no
 targets.
 
-`found` rows are not shown by default. `ls` ends with the footer
-`N known configs found, not symlinked: ws symlink add`, written only when N is above 0 and
-neither `--json` nor `--quiet` is set. `--filter status=found` shows them.
-
 | Field | Meaning |
 | --- | --- |
 | `system` | the host path |
 | `original` | the workspace copy as stored in `ws.json` (workspace-relative), or where it would go |
 | `workspace_path` | absolute path of the workspace copy |
 | `app` | the catalog label; blank for a path you added yourself |
-| `status` | one of the seven statuses |
+| `status` | one of the six statuses |
 | `message` | why the row is not `ok` |
 | `dir` | the row is one whole folder |
 | `sudo` | host-side changes need root |
@@ -1500,7 +1484,6 @@ HOST PATH              WORKSPACE COPY                                      APP  
 /home/user/.bashrc     /home/user/Workspace/symlinks/home/.bashrc          bash    ok
 /home/user/.gitconfig  /home/user/Workspace/symlinks/home/.gitconfig       git     broken
 /etc/hosts             /home/user/Workspace/symlinks/system/etc/hosts      hosts   drifted  yes
-4 known configs found, not symlinked: ws symlink add
 ```
 
 `--json`: schema 3, command `symlink.ls`. `data` is the list of records, with every field
@@ -1514,9 +1497,7 @@ TUI: the Symlinks screen shows exactly these rows. Status shows as `✔ ok`, `�
 #### `ws symlink add`
 
 ```text
-ws symlink add
 ws symlink add <host-path> [<ws-path>] [--dir | --files] [--dry-run]
-ws symlink add --app <name>
 ```
 
 Takes the live content at a host path into the workspace and leaves a symlink behind.
@@ -1540,7 +1521,7 @@ forces one entry for any folder (`~/.password-store`). `--files` takes every fil
 folder as its own entry without asking. An unknown folder without either lists its files and
 asks which to take (Enter for everything but catalog secrets, `all`, `none`, or numbers like
 `1,3`; `--quiet` and `--json` take the defaults). A second path goes with a file or `--dir`,
-not with `--files` or the file list. A path on the never-suggested list can still be added.
+not with `--files` or the file list. Any path can be added by hand.
 
 There is no secret question at add time: a private key goes to `symlinks/home/.ssh/` like any
 other file. `secret ls` scans `symlinks/` like the rest of the workspace, so a private key
@@ -1553,30 +1534,7 @@ plan (1 when all failed, 3 when some did) and the other paths still go ahead. Su
 detected as described under Terms. `--dry-run` prints the plan and changes nothing. A failed
 step puts back what it moved, so the host path is never left empty.
 
-**With no arguments**, `add` needs a terminal. It shows what was found, grouped by app:
-
-```text
-Found on this machine, not symlinked yet:
-  [x] 1  git       ~/.gitconfig, ~/.gitignore_global
-  [x] 2  vscode    ~/.config/Code/User/settings.json, ~/.config/Code/User/keybindings.json, … (5 items)
-  [ ] 3  ssh       ~/.ssh/id_rsa + .pub                         🔑 secret
-  [ ] 4  hosts     /etc/hosts                                   🔒 sudo
-Stored under symlinks/ at the same path as on this machine.
-Enter = checked ones · all · none · 1,3 · q quits :
-```
-
-One row per app holds its items that are neither secret nor sudo (checked). Every secret or
-sudo item is its own row (unchecked), and a private key with its `.pub` is one row. The answer
-is exactly `Enter`, `all`, `none`, or a comma list of numbers; anything else asks again. `q`,
-or the input ending, cancels with exit 130. After the answer ws prints the same plan lines
-as `add <host-path>` and runs them without asking each again. Without a terminal (stdin is not
-one, or `--json` or `--quiet` is set) it prints the found rows, as
-`ls --filter status=found`, and changes nothing.
-
-**`--app <name>`** skips the question and adds every non-secret, non-sudo item found for that
-app, asking per action as usual. It exits 1 when the app has nothing found (and says how many
-secret or sudo items were left for `add <host-path>`), or when the name is not a catalog
-label. It takes no paths.
+**With no arguments**, `add` prints its usage and exits 1: ws never suggests a path.
 
 Output:
 
@@ -1605,8 +1563,8 @@ TUI: `a`.
 
 - **With marked rows**, it takes the drifted ones (the live file wins) and registers the
   untracked ones. The others are listed in a note.
-- **Without marks**, it opens the same checklist as the CLI, from the same detection. Sudo
-  rows are listed, unchecked, and fail with a pointer to the CLI.
+- **Without marks**, it asks for a host path, then shows the add checklist for it. Sudo
+  paths are handed to the CLI.
 - `:add <host-path> [<ws-path>] [--dir]` is the two-path form.
 
 #### `ws symlink link`
@@ -3091,7 +3049,7 @@ ws symlink add ~/.password-store --dir
 
 The store and its git history move into `symlinks/home/.password-store`, and
 `~/.password-store` becomes a symlink to it, so `pass` works as before. The pass store is on
-the catalog's never-suggested list, so `ws symlink add` never offers it: this is a command
+the catalog's never-listed set: this is a command
 you type on purpose, and it is a second sync path next to the store's own remote.
 
 ws suggests this gently, and only where you'd look anyway:
@@ -4360,7 +4318,7 @@ list, and all four arrows move in the grid (`↑` from the top row returns to th
 `enter` on a problem opens its screen with the first affected row selected (or filtered to
 the affected rows, where one filter says it). `enter` on a card opens its screen. The Symlinks
 card reads `N symlinks managed`. A problem line names the broken, missing or drifted entries,
-and an info line, `N known configs found, not symlinked`, appears when N is above 0 (the
+(the
 Dashboard does not run the `$HOME` walk for untracked links). The Dashboard has no actions of its own.
 
 Some rows are advice, not problems. They are listed last, at info level, never in red or
@@ -4388,13 +4346,11 @@ are a line in the prompt, and the history puts the ones you run most first.
 
 | Key | Does | Rows |
 | --- | --- | --- |
-| `a` | add. With marks: take the marked rows (a drifted row's live file wins; an untracked link is registered). Without: the checklist of known configs found on this machine, the same as `ws symlink add` with no path | marked, else none |
+| `a` | add. With marks: take the marked rows (a drifted row's live file wins; an untracked link is registered). Without: a prompt for the path to take, the same as `ws symlink add <host-path>` | marked, else none |
 | `ctrl+d` | unlink | selected |
 | `l` | link: repair the missing and broken links and register orphans (the workspace copy wins); a drifted row is left for `a` | shown |
 
-The rows are exactly those of `ws symlink ls` (the `found` rows are not shown; they are in the
-checklist). Sudo rows are handed to the CLI in the terminal; in the checklist they are listed
-unchecked and fail with a pointer to the CLI. (decision: unlink is `ctrl+d` like every other
+The rows are exactly those of `ws symlink ls`. Sudo rows are handed to the CLI in the terminal. (decision: unlink is `ctrl+d` like every other
 destructive verb, §6.3, not `u`, which is already `unmute` on Ignore.)
 
 `:` commands: `add <host-path> [<ws-path>] [--dir]`, `link [<path>…]`, `unlink --all`.
