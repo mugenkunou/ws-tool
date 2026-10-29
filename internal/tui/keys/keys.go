@@ -346,6 +346,7 @@ type IgnoreMap struct {
 	Scratch      key.Binding // Warnings: move to scratch
 	Delete       key.Binding // Warnings: delete the path (to trash)
 	Unmute       key.Binding // Muted
+	Prune        key.Binding // Muted: `ignore unmute --stale`, remove every stale entry
 	StopIgnoring key.Binding // Ignored: `ignore rm`, sync it again
 	EditRules    key.Binding // any view
 	NextView     key.Binding // any view
@@ -367,6 +368,7 @@ func Ignore() IgnoreMap {
 		Scratch:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "scratch")),
 		Delete:       del,
 		Unmute:       key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "unmute")),
+		Prune:        key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "prune stale")),
 		StopIgnoring: stop,
 		EditRules:    edit,
 		NextView:     key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "next view")),
@@ -378,7 +380,7 @@ func Ignore() IgnoreMap {
 func (k IgnoreMap) viewKeys(v IgnoreView) []key.Binding {
 	switch v {
 	case IgnoreMuted:
-		return []key.Binding{k.Ignore, k.Unmute, k.EditRules, k.NextView}
+		return []key.Binding{k.Ignore, k.Unmute, k.Prune, k.EditRules, k.NextView}
 	case IgnoreIgnored:
 		return []key.Binding{k.StopIgnoring, k.EditRules, k.NextView}
 	}
@@ -407,7 +409,7 @@ func (k IgnoreMap) ShortHelp() []key.Binding { return k.viewKeys(IgnoreWarnings)
 func (k IgnoreMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
-		{k.Ignore, k.Mute, k.Scratch, k.Delete, k.Unmute, k.StopIgnoring, k.EditRules, k.NextView},
+		{k.Ignore, k.Mute, k.Scratch, k.Delete, k.Unmute, k.Prune, k.StopIgnoring, k.EditRules, k.NextView},
 	}
 }
 

@@ -103,7 +103,10 @@ func New(e env.Env) Model {
 		{Key: "type", Min: 12},
 		{Key: "size_bytes", Min: 9},
 		{Key: "path", Min: 20, Weight: 1, Style: func(v wsignore.Violation, t string) string {
-			if v.Muted {
+			switch {
+			case v.Type == wsignore.StaleType:
+				return theme.Gone.Render(t)
+			case v.Muted:
 				return theme.Muted.Render(t)
 			}
 			return t
@@ -126,6 +129,8 @@ func New(e env.Env) Model {
 
 func severityStyle(v wsignore.Violation, t string) string {
 	switch {
+	case v.Type == wsignore.StaleType:
+		return theme.Gone.Render("gone")
 	case v.Muted:
 		return theme.Muted.Render("muted")
 	case v.Severity == "CRITICAL":
@@ -254,18 +259,24 @@ func (m Model) within(abs string) bool {
 
 // split puts the live warnings in Warnings, the muted ones in Muted, and the
 // paths that do not sync in Ignored; `:lint <path>` keeps what is under it.
+// In Muted the stale entries come last, so the live ones are never buried
+// under rows whose path is gone.
 func (m Model) split() Model {
-	var live, muted []wsignore.Violation
+	var live, muted, stale []wsignore.Violation
 	for _, v := range append(slices.Clone(m.all), m.stale...) {
 		if !m.within(m.abs(v.Path)) {
 			continue
 		}
-		if v.Muted {
+		switch {
+		case v.Type == wsignore.StaleType:
+			stale = append(stale, v)
+		case v.Muted:
 			muted = append(muted, v)
-		} else {
+		default:
 			live = append(live, v)
 		}
 	}
+	muted = append(muted, stale...)
 	var ignored []wsignore.IgnoredPath
 	for _, p := range m.allPaths {
 		if m.within(m.abs(p.Path)) {
@@ -304,6 +315,15 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		}
 		m.all, m.allPaths, m.stale = msg.Violations, msg.Ignored, msg.Stale
 		return m.split(), nil
+	case nav.FilterMsg:
+		// The Dashboard opens the screen on the rows that need attention: the
+		// stale-mute issue filters the Muted view to the stale rows, so p acts
+		// on exactly them.
+		m.view = keys.IgnoreMuted
+		m.muted = m.muted.SetFilter(msg.Filter)
+		m.warn = m.warn.SetFilter("")
+		m.ignored = m.ignored.SetFilter("")
+		return m, nil
 	case checkMsg:
 		return m, nav.Notify(msg.level, msg.text)
 	case handover.DoneMsg:
@@ -421,7 +441,9 @@ var warnActions = func() []reslist.Action[Model, wsignore.Violation] {
 	}, common[wsignore.Violation]()...)
 }()
 
-// mutedActions is every key of the Muted view.
+// mutedActions is every key of the Muted view. p, which sweeps every stale
+// entry at once, is Scope All: with a filter on (the Dashboard's stale issue
+// opens one) it sweeps the stale rows shown, with marks it sweeps those.
 var mutedActions = func() []reslist.Action[Model, wsignore.Violation] {
 	k := keys.Ignore()
 	return append([]reslist.Action[Model, wsignore.Violation]{
@@ -429,6 +451,9 @@ var mutedActions = func() []reslist.Action[Model, wsignore.Violation] {
 			return m.ignorePaths(m.pathsOf(rows))
 		}},
 		{Key: k.Unmute, Scope: reslist.Selected, Do: Model.unmuteRows},
+		{Key: k.Prune, Scope: reslist.All, Do: func(m Model, rows []wsignore.Violation) (Model, tea.Cmd) {
+			return m.pruneStale(rows)
+		}},
 	}, common[wsignore.Violation]()...)
 }()
 
@@ -669,9 +694,39 @@ func (m Model) mutePaths(paths []string) (Model, tea.Cmd) {
 	return m.open("Mute "+format.Plural(len(actions), "path"), "Already muted.", "", actions)
 }
 
+// pruneStale is `ignore unmute --stale` as one key: remove the muted entries
+// whose path no longer exists. The Muted view keeps them last and struck
+// through, so p on the unfiltered view is the whole cleanup; with a filter
+// or marks it sweeps only those. Stale rows unmute like any other (u).
+func (m Model) pruneStale(rows []wsignore.Violation) (Model, tea.Cmd) {
+	e := m.env
+	var actions []plan.Action
+	seen := map[string]bool{}
+	for _, v := range rows {
+		if v.Type != wsignore.StaleType {
+			continue
+		}
+		entry := wsignore.NormalizeRel(v.Path)
+		if seen[entry] {
+			continue
+		}
+		seen[entry] = true
+		actions = append(actions, plan.Action{
+			ID:          "ignore-unmute-" + m.abs(entry),
+			Description: "Remove " + m.abs(entry) + " (muted, no longer exists)",
+			Execute: func() error {
+				_, err := wsconfig.RemoveIgnoreMuted(e.Paths.Config, e.Paths.Workspace, entry)
+				return err
+			},
+		})
+	}
+	return m.open("Remove "+format.Plural(len(actions), "stale entry"), "No stale muted paths: nothing to do.", "", actions)
+}
+
 // unmuteRows is `ignore unmute` for Muted rows. A row muted through a parent
 // directory unmutes that entry, once however many of its rows are chosen; a row
-// muted by an included directory cannot be unmuted here.
+// muted by an included directory cannot be unmuted here. A stale row says so:
+// the path is gone, so the checklist calls the entry removed, not unmuted.
 func (m Model) unmuteRows(rows []wsignore.Violation) (Model, tea.Cmd) {
 	cfg, e := m.config(), m.env
 	eng := wsignore.BuildEngine(cfg.IgnoreRules)
@@ -680,6 +735,22 @@ func (m Model) unmuteRows(rows []wsignore.Violation) (Model, tea.Cmd) {
 	seen := map[string]bool{}
 	for _, v := range rows {
 		abs := m.abs(v.Path)
+		if v.Type == wsignore.StaleType {
+			entry := wsignore.NormalizeRel(v.Path)
+			if seen[entry] {
+				continue
+			}
+			seen[entry] = true
+			actions = append(actions, plan.Action{
+				ID:          "ignore-unmute-" + abs,
+				Description: "Remove " + abs + " (muted, no longer exists)",
+				Execute: func() error {
+					_, err := wsconfig.RemoveIgnoreMuted(e.Paths.Config, e.Paths.Workspace, entry)
+					return err
+				},
+			})
+			continue
+		}
 		st := wsignore.MuteStateOf(eng, muted, wsignore.NormalizeRel(v.Path), false)
 		switch {
 		case !st.Muted:

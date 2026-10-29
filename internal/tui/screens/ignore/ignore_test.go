@@ -159,7 +159,7 @@ func TestMutedKeys(t *testing.T) {
 }
 
 // TestMutedViewListsStaleEntries: a muted path that no longer exists is a Muted
-// row, and u unmutes it like any other.
+// row, u removes the entry, and p sweeps every stale row in one plan.
 func TestMutedViewListsStaleEntries(t *testing.T) {
 	f := newFixture(t)
 	if _, err := wsconfig.AddIgnoreMuted(f.cfg, "old"); err != nil {
@@ -173,10 +173,39 @@ func TestMutedViewListsStaleEntries(t *testing.T) {
 	f.press("v")
 	f.expect(t, []string{"stale-mute", "old"})
 	f.press("u")
-	f.expect(t, []string{"Unmute " + f.abs("old")})
+	f.expect(t, []string{"Remove " + f.abs("old") + " (muted, no longer exists)"})
 	if got := (LoadedMsg{Violations: []wsignore.Violation{{Muted: true}, {}}, Stale: wsignore.StaleViolations(f.root, []string{"old"})}).Actionable(); got != 1 {
 		t.Errorf("stale rows are not warnings: Actionable = %d", got)
 	}
+}
+
+// TestPruneSweepsStaleEntries: p is `ignore unmute --stale`: one checklist
+// action per stale entry, whatever else the Muted view holds, and nothing to
+// do when none are stale.
+func TestPruneSweepsStaleEntries(t *testing.T) {
+	f := newFixture(t)
+	f.c, _ = f.c.Update(LoadedMsg{
+		Violations: []wsignore.Violation{{Type: "bloat", Severity: "WARNING", Path: "Projects/a.dat", Muted: true}},
+		Stale:      wsignore.StaleViolations(f.root, []string{"old", "gone/deeper"}),
+	})
+	f.press("v", "p")
+	f.expect(t, []string{"Remove 2 stale entries",
+		"Remove " + f.abs("old") + " (muted, no longer exists)",
+		"Remove " + f.abs("gone/deeper") + " (muted, no longer exists)"},
+		"Projects/a.dat") // live muted rows stay out of the plan
+
+	f.press("esc") // cancel: nothing was removed
+	if _, err := wsconfig.Load(f.cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	f.press("p") // still nothing marked or filtered: the whole view again
+	f.expect(t, []string{"Remove 2 stale entries"})
+
+	// With the filter the Dashboard's issue opens, p sweeps only what shows.
+	f.press("esc", "/")
+	f.press("t", "y", "p", "e", "=", "s", "t", "a", "l", "e", "-") // type=stale-
+	f.expect(t, []string{"/type=stale-"}, "a.dat")
 }
 
 func TestIgnoredStopIgnoringIsRm(t *testing.T) {

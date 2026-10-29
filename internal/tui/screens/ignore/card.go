@@ -3,6 +3,7 @@ package ignore
 import (
 	"fmt"
 
+	wsignore "github.com/mugenkunou/ws-tool/internal/ignore"
 	"github.com/mugenkunou/ws-tool/internal/tui/format"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
@@ -28,7 +29,10 @@ func (m LoadedMsg) Card() (nav.Screen, nav.Card, bool) {
 		if n == 1 {
 			text += "s"
 		}
-		c.Issues = append(c.Issues, nav.Issue{Sev: nav.SevInfo, Screen: nav.ScreenIgnore, Text: text})
+		// Opening the issue filters the Muted view to the stale rows, so p
+		// (prune stale) sweeps exactly them.
+		c.Issues = append(c.Issues, nav.Issue{Sev: nav.SevInfo, Screen: nav.ScreenIgnore,
+			Text: text, Filter: "type=" + wsignore.StaleType})
 	}
 	return nav.ScreenIgnore, c, true
 }

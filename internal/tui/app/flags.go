@@ -54,7 +54,7 @@ var CLIFlagCoverage = []FlagCoverage{
 	{CLI: "scratch open", Flag: "--print-path", How: "CLI only: a script flag (prints a bare path)"},
 	{CLI: "scratch tag", Flag: "--rm", How: "the tag prompt (t): `-tag` removes a tag"},
 	{CLI: "ignore ls", Flag: "--muted", How: "the Muted view (v switches views)"},
-	{CLI: "ignore unmute", Flag: "--stale", How: "the Muted view lists the stale entries as rows; mark them and unmute (u)"},
+	{CLI: "ignore unmute", Flag: "--stale", How: "the Muted view lists the stale entries last, struck through; p prunes them (all, or the marked/filtered ones)"},
 	{CLI: "ignore tree", Flag: "-L", How: "`:tree <dir> -L <n>`: the command passes its words to the CLI"},
 	{CLI: "ignore edit", Flag: "--editor", How: "n/a: the TUI opens the editor set in ws.json"},
 	{CLI: "secret ls", Flag: "--muted", How: "n/a: the TUI list always shows every finding, with muted rows styled quietly"},

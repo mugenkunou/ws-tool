@@ -28,6 +28,10 @@ var (
 	Error     = lipgloss.NewStyle().Foreground(colorError)
 	Rule      = lipgloss.NewStyle().Foreground(colorMuted)
 	Selection = lipgloss.NewStyle().Reverse(true) // mouse text selection
+	// Gone is a path that no longer exists: dim and struck through, as a
+	// deleted filename in git diff. The strike is the meaning; the dim only
+	// keeps it apart from the cursor row's plain text.
+	Gone = lipgloss.NewStyle().Foreground(colorMuted).Strikethrough(true)
 	// Marked colours a marked list row, as k9s does: the whole row's text in
 	// the mark colour, nothing inserted.
 	Marked = lipgloss.NewStyle().Foreground(colorMark)
