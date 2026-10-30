@@ -120,7 +120,7 @@ func TestVersionCheckAgentTmux(t *testing.T) {
 		{"unknown", `{"version":"v0.1.0","latest":"","status":"unknown","error":"timeout"}`, nil, []string{"release check failed: timeout"}, []string{"update available"}, ""},
 		{"too old (fails)", ``, errors.New("unknown flag: --check"), []string{"too old to check \u2014 upgrade", agenttmux.InstallLines[0]}, []string{"update available"}, "v0.0.9"},
 		{"too old (not json)", `v0.0.9`, nil, []string{"too old to check \u2014 upgrade"}, nil, "v0.0.9"},
-		{"missing", ``, agenttmux.ErrMissing, []string{"not installed", agenttmux.InstallLines[1]}, []string{"update available"}, ""},
+		{"missing", ``, agenttmux.ErrMissing, []string{"not installed", agenttmux.InstallLines[0]}, []string{"update available"}, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

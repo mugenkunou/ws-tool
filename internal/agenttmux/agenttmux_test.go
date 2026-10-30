@@ -214,7 +214,6 @@ func TestCheckNudge(t *testing.T) {
 	want := []string{
 		"agent-tmux v0.2.0 is available",
 		"download: https://github.com/mugenkunou/agent-tmux/releases/latest",
-		"or:       go install github.com/mugenkunou/agent-tmux/cmd/agent-tmux@latest",
 	}
 	if !slices.Equal(n.Lines(), want) {
 		t.Errorf("lines = %q", n.Lines())

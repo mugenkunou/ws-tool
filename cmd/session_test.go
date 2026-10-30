@@ -85,7 +85,6 @@ func TestSessionWithoutAgentTmux(t *testing.T) {
 	}
 	for _, l := range []string{
 		"download: https://github.com/mugenkunou/agent-tmux/releases/latest",
-		"or:       go install github.com/mugenkunou/agent-tmux/cmd/agent-tmux@latest",
 	} {
 		if !strings.Contains(errOut.String(), l) {
 			t.Errorf("stderr lacks %q:\n%s", l, errOut.String())
@@ -198,7 +197,7 @@ func TestVersionShowsAgentTmux(t *testing.T) {
 	agenttmuxtest.Missing(t)
 	out.Reset()
 	Execute([]string{"version", "--no-color"}, strings.NewReader(""), &out, &errOut)
-	if !strings.Contains(out.String(), "not installed") || !strings.Contains(out.String(), agenttmux.InstallLines[1]) {
+	if !strings.Contains(out.String(), "not installed") || !strings.Contains(out.String(), agenttmux.InstallLines[0]) {
 		t.Errorf("without agent-tmux:\n%s", out.String())
 	}
 }

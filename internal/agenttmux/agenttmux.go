@@ -21,11 +21,10 @@ import (
 // Bin is the program's name on PATH.
 const Bin = "agent-tmux"
 
-// InstallLines are the two ways to install agent-tmux, as the TUI and the
-// version nudge print them.
+// InstallLines say where to get agent-tmux, as the TUI and the version nudge
+// print them.
 var InstallLines = []string{
 	"download: https://github.com/mugenkunou/agent-tmux/releases/latest",
-	"or:       go install github.com/mugenkunou/agent-tmux/cmd/agent-tmux@latest",
 }
 
 // ErrMissing means agent-tmux is not on PATH.

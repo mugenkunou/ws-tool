@@ -2158,7 +2158,6 @@ Without agent-tmux on PATH, `ws session` prints how to install it and exits 127:
 
 ```text
 download: https://github.com/mugenkunou/agent-tmux/releases/latest
-or:       go install github.com/mugenkunou/agent-tmux/cmd/agent-tmux@latest
 ```
 
 Completion of `ws session <words>` is `agent-tmux __complete <words>`, so it offers exactly
@@ -4906,8 +4905,8 @@ make fmt && make build         # binary: ./ws
 
 To install: `make install` copies the binary to `~/.local/bin` (override with
 `make install PREFIX=/usr/local`), or copy it yourself: `sudo cp ./ws /usr/local/bin/ws`.
-Without a checkout, `go install github.com/mugenkunou/ws-tool@latest` builds it, and the
-binary is named `ws-tool`: rename it to `ws`.
+Without a checkout, download the binary from the
+[releases page](https://github.com/mugenkunou/ws-tool/releases/latest) and put it on your `PATH` as `ws`.
 
 If your machine mounts `/tmp` with `noexec`, Go cannot run its temporary build artifacts
 there. The Makefile therefore sets `TMPDIR`, `GOCACHE` and `GOTMPDIR` to `~/tmp`,
