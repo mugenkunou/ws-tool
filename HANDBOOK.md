@@ -2157,14 +2157,20 @@ ws session show web              page the recording
 Without agent-tmux on PATH, `ws session` prints how to install it and exits 127:
 
 ```text
-download: https://github.com/mugenkunou/agent-tmux/releases/latest
+install (linux amd64):
+  curl -fLO https://github.com/mugenkunou/agent-tmux/releases/latest/download/agent-tmux-linux-amd64
+  chmod +x agent-tmux-linux-amd64
+  mv agent-tmux-linux-amd64 /home/user/.local/bin/agent-tmux
 ```
+
+The destination is the copy on `PATH` when there is one (so a broken or old file is replaced), else
+`~/.local/bin/agent-tmux`. Other systems get the releases page instead of the commands.
 
 Completion of `ws session <words>` is `agent-tmux __complete <words>`, so it offers exactly
 what agent-tmux would (§4.8). Without agent-tmux it offers nothing.
 
 **Version nudge.** `ws version` and the TUI (the Sessions screen, and a Dashboard row) say
-`agent-tmux <tag> is available`, with the two install lines, when GitHub's latest
+`agent-tmux <tag> is available`, with the install commands, when GitHub's latest
 agent-tmux release (`api.github.com/repos/mugenkunou/agent-tmux/releases/latest`,
 `tag_name`) is newer than `agent-tmux version --json`. Versions compare as semver; a `dev`
 build, or anything else unparseable, never nudges. The answer is cached for 24 hours in
@@ -4109,7 +4115,10 @@ internal flag for the background run: silent, exit 0.
 
 ```text
 ws  v0.20.0  (latest v0.21.0 — update available)
-  download: https://github.com/mugenkunou/ws-tool/releases/latest
+  upgrade (linux amd64):
+    curl -fLO https://github.com/mugenkunou/ws-tool/releases/latest/download/ws-linux-amd64
+    chmod +x ws-linux-amd64
+    mv ws-linux-amd64 /home/user/.local/bin/ws
   ws.json schema     1
   Platform           linux/amd64
   Go version         go1.26.1
@@ -4905,8 +4914,16 @@ make fmt && make build         # binary: ./ws
 
 To install: `make install` copies the binary to `~/.local/bin` (override with
 `make install PREFIX=/usr/local`), or copy it yourself: `sudo cp ./ws /usr/local/bin/ws`.
-Without a checkout, download the binary from the
-[releases page](https://github.com/mugenkunou/ws-tool/releases/latest) and put it on your `PATH` as `ws`.
+Without a checkout, download the release binary (the name has no version, so the URL is stable):
+
+```bash
+curl -fLO https://github.com/mugenkunou/ws-tool/releases/latest/download/ws-linux-amd64
+chmod +x ws-linux-amd64
+mv ws-linux-amd64 ~/.local/bin/ws
+```
+
+Other systems: `ws-linux-arm64`, `ws-darwin-amd64`, `ws-darwin-arm64`. An outdated `ws` prints these
+commands with the path of the running binary; `ws version` does the same for agent-tmux.
 
 If your machine mounts `/tmp` with `noexec`, Go cannot run its temporary build artifacts
 there. The Makefile therefore sets `TMPDIR`, `GOCACHE` and `GOTMPDIR` to `~/tmp`,
@@ -4972,8 +4989,9 @@ git push
 ### 9.5 Release pipeline
 
 Pushing a semver tag (`v*`) triggers `.github/workflows/release.yml`, which runs the tests,
-cross-compiles binaries (linux and darwin, amd64 and arm64), generates SHA-256 checksums and
-creates a GitHub Release with every artifact. Every push and pull request runs
+cross-compiles raw binaries named `ws-<os>-<arch>` (linux and darwin, amd64 and arm64; no version in the
+name, so `releases/latest/download/<name>` is a stable URL), generates SHA-256 checksums and creates a
+GitHub Release with every artifact. Every push and pull request runs
 `.github/workflows/ci.yml`: a `gofmt` check, `go vet`, `go test -race` and a build.
 
 **Secret scanning.** The repo is public, so a pre-push hook runs

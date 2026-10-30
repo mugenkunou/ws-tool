@@ -525,7 +525,7 @@ func (m Model) missingView() string {
 		theme.Muted.Render(theme.Icon(theme.IconTape) + "Sessions are run by agent-tmux, which is not installed."),
 		"",
 	}
-	for _, l := range agenttmux.InstallLines {
+	for _, l := range agenttmux.InstallLines() {
 		lines = append(lines, theme.Muted.Render("  "+l))
 	}
 	lines = append(lines, "", theme.Muted.Render("Then refresh this screen."))

@@ -12,19 +12,32 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mugenkunou/ws-tool/internal/release"
 )
 
 // Bin is the program's name on PATH.
 const Bin = "agent-tmux"
 
-// InstallLines say where to get agent-tmux, as the TUI and the version nudge
-// print them.
-var InstallLines = []string{
-	"download: https://github.com/mugenkunou/agent-tmux/releases/latest",
+// InstallLines are the exact commands that install the latest agent-tmux, as
+// the TUI and the version nudge print them. They replace the copy on PATH, or
+// create ~/.local/bin/agent-tmux when there is none.
+func InstallLines() []string {
+	dest := ""
+	if p, err := Path(); err == nil {
+		dest = p
+	} else if home, err := os.UserHomeDir(); err == nil {
+		dest = filepath.Join(home, ".local", "bin", Bin)
+	} else {
+		dest = "~/.local/bin/" + Bin
+	}
+	return release.InstallCommands("install", "mugenkunou/agent-tmux", Bin, dest)
 }
 
 // ErrMissing means agent-tmux is not on PATH.

@@ -15,7 +15,6 @@ import (
 
 	"github.com/mugenkunou/ws-tool/internal/agenttmux"
 	"github.com/mugenkunou/ws-tool/internal/agenttmux/agenttmuxtest"
-	"github.com/mugenkunou/ws-tool/internal/release"
 	"github.com/mugenkunou/ws-tool/internal/versions"
 )
 
@@ -115,12 +114,12 @@ func TestVersionCheckAgentTmux(t *testing.T) {
 		installed  string // what `agent-tmux version --json` says; default v0.1.0
 	}{
 		{"current", `{"version":"v0.1.0","latest":"v0.1.0","status":"current"}`, nil, []string{"v0.1.0  (up to date)"}, nil, ""},
-		{"outdated", `{"version":"v0.1.0","latest":"v0.2.0","status":"outdated"}`, nil, []string{"(latest v0.2.0 \u2014 update available)", agenttmux.InstallLines[0]}, nil, ""},
+		{"outdated", `{"version":"v0.1.0","latest":"v0.2.0","status":"outdated"}`, nil, []string{"(latest v0.2.0 \u2014 update available)", "mugenkunou/agent-tmux/releases/latest"}, nil, ""},
 		{"dev", `{"version":"dev","latest":"v0.2.0","status":"dev"}`, nil, []string{"local build is a dev build; upstream release is v0.2.0"}, []string{"update available"}, "dev"},
 		{"unknown", `{"version":"v0.1.0","latest":"","status":"unknown","error":"timeout"}`, nil, []string{"release check failed: timeout"}, []string{"update available"}, ""},
-		{"too old (fails)", ``, errors.New("unknown flag: --check"), []string{"too old to check \u2014 upgrade", agenttmux.InstallLines[0]}, []string{"update available"}, "v0.0.9"},
+		{"too old (fails)", ``, errors.New("unknown flag: --check"), []string{"too old to check \u2014 upgrade", "mugenkunou/agent-tmux/releases/latest"}, []string{"update available"}, "v0.0.9"},
 		{"too old (not json)", `v0.0.9`, nil, []string{"too old to check \u2014 upgrade"}, nil, "v0.0.9"},
-		{"missing", ``, agenttmux.ErrMissing, []string{"not installed", agenttmux.InstallLines[0]}, []string{"update available"}, ""},
+		{"missing", ``, agenttmux.ErrMissing, []string{"not installed", "mugenkunou/agent-tmux/releases/latest"}, []string{"update available"}, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -266,11 +265,11 @@ func TestVersionWSUpgradeHint(t *testing.T) {
 
 	current := `{"version":"v0.1.0","latest":"v0.1.0","status":"current"}`
 	setupCheck(t, "v0.3.0", "v0.4.0", 200, current, nil)
-	if out := runVersionCmd(t, "--check"); !strings.Contains(out, "download: "+release.WSReleasesPage) {
+	if out := runVersionCmd(t, "--check"); !strings.Contains(out, "releases/latest/download/ws-linux-amd64") {
 		t.Errorf("release copy lacks the release page:\n%s", out)
 	}
 	// From the cache too.
-	if out := runVersionCmd(t); !strings.Contains(out, "download: "+release.WSReleasesPage) {
+	if out := runVersionCmd(t); !strings.Contains(out, "releases/latest/download/ws-linux-amd64") {
 		t.Errorf("cached run lacks the release page:\n%s", out)
 	}
 

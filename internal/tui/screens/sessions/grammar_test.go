@@ -215,7 +215,7 @@ func TestMissingAgentTmuxGreysOut(t *testing.T) {
 	c, _ := New(env.Env{}).Update(nav.ResizeMsg{Width: 120, Height: 20})
 	c, _ = c.Update(msg)
 	v := plain(c)
-	for _, l := range agenttmux.InstallLines {
+	for _, l := range agenttmux.InstallLines() {
 		if !strings.Contains(v, l) {
 			t.Errorf("greyed screen lacks %q:\n%s", l, v)
 		}
@@ -395,7 +395,7 @@ func TestFailedRmShowsAgentTmuxsMessage(t *testing.T) {
 func TestNudgeStandsAboveTheList(t *testing.T) {
 	c, _ := screen(t, fixtureRows()).Update(NudgeMsg{Nudge: agenttmux.Nudge{Installed: "v0.1.0", Latest: "v0.2.0"}})
 	v := plain(c)
-	for _, want := range append([]string{"agent-tmux v0.2.0 is available"}, agenttmux.InstallLines...) {
+	for _, want := range append([]string{"agent-tmux v0.2.0 is available"}, agenttmux.InstallLines()...) {
 		if !strings.Contains(v, want) {
 			t.Errorf("view lacks %q:\n%s", want, v)
 		}

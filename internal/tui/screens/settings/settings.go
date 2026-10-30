@@ -258,7 +258,7 @@ func (m LoadedMsg) rows() []Row {
 	add(groupVersions, m.versionRow(m.Report.AgentTmux, ""))
 	switch m.Report.AgentTmux.State {
 	case versions.StateOutdated, versions.StateNotInstalled, versions.StateTooOld:
-		add(groupVersions, hints("agent-tmux", true, agenttmux.InstallLines)...)
+		add(groupVersions, hints("agent-tmux", true, agenttmux.InstallLines())...)
 	}
 	check := Row{Kind: kindCheck, Name: "check for updates now", Note: "asks GitHub for the latest ws and agent-tmux releases"}
 	switch {

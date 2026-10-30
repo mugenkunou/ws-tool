@@ -17,8 +17,10 @@ CLI for scripts, full-screen TUI (`ws tui`) for humans.
 ## ⚡ 60-second start
 
 ```bash
-# download the binary for your CPU from https://github.com/mugenkunou/ws-tool/releases/latest
-sudo install -m 755 ws /usr/local/bin/ws             # or: git clone, then make install
+mkdir -p ~/.local/bin
+curl -fLO https://github.com/mugenkunou/ws-tool/releases/latest/download/ws-linux-amd64
+chmod +x ws-linux-amd64
+mv ws-linux-amd64 ~/.local/bin/ws                    # other systems: github.com/mugenkunou/ws-tool/releases
 
 ws init                    # 🏗️  layout + ws.json + sync rules; offers the built-in skills
 ws symlink add ~/.gitconfig  # 🔗 move a file into the workspace, link it back

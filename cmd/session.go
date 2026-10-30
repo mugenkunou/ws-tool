@@ -45,7 +45,7 @@ func runSessionPassthrough(args []string, stderr io.Writer) int {
 	bin, err := agenttmux.Path()
 	if err != nil {
 		fmt.Fprintln(stderr, "ws session runs agent-tmux, which is not installed. Install it:")
-		for _, l := range agenttmux.InstallLines {
+		for _, l := range agenttmux.InstallLines() {
 			fmt.Fprintln(stderr, "  "+l)
 		}
 		return 127

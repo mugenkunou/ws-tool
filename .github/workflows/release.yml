@@ -37,7 +37,8 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           VERSION="${GITHUB_REF_NAME}"
-          OUTNAME="ws-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          # No version in the file name, so releases/latest/download/<name> is a stable URL.
+          OUTNAME="ws-${{ matrix.goos }}-${{ matrix.goarch }}"
           go build -ldflags "-s -w -X github.com/mugenkunou/ws-tool/cmd.appVersion=${VERSION}" -o "${OUTNAME}" .
 
       - name: Upload artifact

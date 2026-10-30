@@ -59,7 +59,7 @@ type Nudge struct {
 
 // Lines are what the TUI and `ws version` print.
 func (n Nudge) Lines() []string {
-	return append([]string{"agent-tmux " + n.Latest + " is available"}, InstallLines...)
+	return append([]string{"agent-tmux " + n.Latest + " is available"}, InstallLines()...)
 }
 
 // CheckNudge compares the installed agent-tmux with the newest release. ok is

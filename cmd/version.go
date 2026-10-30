@@ -171,7 +171,7 @@ func runVersion(args []string, globals globalFlags, stdout, stderr io.Writer) in
 	}
 	switch at.State {
 	case versions.StateNotInstalled, versions.StateTooOld, versions.StateOutdated:
-		for _, l := range agenttmux.InstallLines {
+		for _, l := range agenttmux.InstallLines() {
 			fmt.Fprintln(out, "  "+l)
 		}
 	}
