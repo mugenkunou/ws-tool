@@ -185,9 +185,6 @@ func (m Model) Init() tea.Cmd { return tea.Batch(Load(), checkNudge()) }
 // Declared lists the screen's actions and their scopes.
 func (m Model) Declared() []reslist.Decl { return m.list.Declared() }
 
-// Commands implements nav.Commander: the `:` commands (spec §6.5).
-func (m Model) Commands() []nav.CommandInfo { return reslist.CommandInfos(commands) }
-
 // CapturesKeys implements nav.Component.
 func (m Model) CapturesKeys() bool {
 	return m.modal.Open() || m.list.Editing() || (m.level == levelMatches && m.matches.Editing())
@@ -239,12 +236,6 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		return m, nil
 	case nav.RefreshMsg:
 		return m.reload()
-	case nav.CommandMsg:
-		if m.modal.Open() {
-			return m, nil
-		}
-		next, cmd, _ := reslist.RunCommand(m, m.list, commands, msg)
-		return next, cmd
 	case LoadedMsg:
 		m.missing = msg.Missing
 		if msg.Err != nil {
@@ -309,12 +300,6 @@ var actions = func() []reslist.Action[Model, agenttmux.Session] {
 		{Key: k.Delete, Scope: reslist.Selected, Do: Model.delete},
 	}
 }()
-
-// commands is every `:` command: agent-tmux's own words.
-var commands = []reslist.Command[Model, agenttmux.Session]{
-	{Name: "grep", Args: "<text>", Scope: reslist.Global,
-		Help: "search every recording and list the matching lines; enter shows one", Do: Model.grepCommand},
-}
 
 func (m Model) updateList(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 	if l, cmd, ok := m.list.HandleKey(k); ok {
@@ -424,11 +409,6 @@ func (m Model) promptGrep(_ []agenttmux.Session) (Model, tea.Cmd) {
 	m.modal, cmd = m.modal.Prompt(stepGrep, prompt.New("Grep every recording",
 		prompt.WithHint("Text to find, in any case. The matching lines are listed; enter shows one.")))
 	return m, cmd
-}
-
-// grepCommand is `:grep <text>`.
-func (m Model) grepCommand(_ []agenttmux.Session, args []string) (Model, tea.Cmd) {
-	return m.startGrep(strings.Join(args, " "))
 }
 
 func (m Model) startGrep(text string) (Model, tea.Cmd) {
@@ -585,5 +565,3 @@ func (m Model) KeyMap() help.KeyMap {
 	}
 	return m.list.Help(m.keys)
 }
-
-var _ nav.Commander = Model{}

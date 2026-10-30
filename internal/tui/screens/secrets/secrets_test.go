@@ -3,6 +3,7 @@ package secrets
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -120,27 +121,106 @@ func TestOldKeysAreGone(t *testing.T) {
 	}
 }
 
+// menuPick opens the `.` menu, presses letter, and feeds the command's result
+// back into the screen, to the end.
+func menuPick(t *testing.T, m Model, letter string) Model {
+	t.Helper()
+	m, _ = menuPickNotices(t, m, letter)
+	return m
+}
+
+// menuPickNotices is menuPick that also returns the notice texts the command
+// produced.
+func menuPickNotices(t *testing.T, m Model, letter string) (Model, []string) {
+	t.Helper()
+	m, _ = send(m, nav.MenuMsg{})
+	m, cmd := send(m, kp(letter))
+	return settle(t, m, cmd)
+}
+
+// settle runs cmd and feeds every message it yields back into m, to the end,
+// and returns the notice texts it produced.
+func settle(t *testing.T, m Model, cmd tea.Cmd) (Model, []string) {
+	t.Helper()
+	var notices []string
+	queue := []tea.Cmd{cmd}
+	for steps := 0; len(queue) > 0; steps++ {
+		if steps > 100 {
+			t.Fatal("settle: too many steps")
+		}
+		c := queue[0]
+		queue = queue[1:]
+		if c == nil {
+			continue
+		}
+		switch msg := c().(type) {
+		case nil:
+		case tea.BatchMsg:
+			queue = append(queue, msg...)
+		case nav.NoticeMsg:
+			notices = append(notices, msg.Text)
+		default:
+			var next tea.Cmd
+			m, next = send(m, msg)
+			queue = append(queue, next)
+		}
+	}
+	return m, notices
+}
+
+// newModelIn is newModel over a real workspace on disk whose ws.json holds
+// skip_dirs (workspace-relative, stored absolute as the CLI writes them), so
+// unskip can read them.
+func newModelIn(t *testing.T, skipDirs []string) Model {
+	t.Helper()
+	root := filepath.Join(t.TempDir(), "Workspace")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := wsconfig.Default()
+	for _, d := range skipDirs {
+		cfg.Secret.SkipDirs = append(cfg.Secret.SkipDirs, filepath.Join(root, d))
+	}
+	cfgPath := wsconfig.ConfigPath(root)
+	if err := wsconfig.Save(cfgPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	e := env.Env{Paths: workspace.Paths{Workspace: root, Config: cfgPath}, Config: cfg}
+	var c nav.Component = New(e)
+	c, _ = c.Update(nav.ResizeMsg{Width: 100, Height: 30})
+	c, _ = c.Update(LoadedMsg{Violations: findings})
+	return c.(Model)
+}
+
 func TestCommands(t *testing.T) {
 	m := newModel(t)
 	want := []string{"skip", "unskip"}
-	var got []string
+	wantLetters := []string{"s", "u"}
+	var got, letters []string
 	for _, c := range m.Commands() {
 		got = append(got, c.Name)
+		letters = append(letters, c.Menu)
 	}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("commands:\n got %v\nwant %v", got, want)
+	if strings.Join(got, ",") != strings.Join(want, ",") || strings.Join(letters, ",") != strings.Join(wantLetters, ",") {
+		t.Fatalf("commands:\n got %v %v\nwant %v %v", got, letters, want, wantLetters)
 	}
 
-	run := func(line string) (Model, tea.Cmd) {
-		return send(m, nav.CommandMsg{Words: strings.Fields(line), Line: line})
-	}
 	// skip with no directory prompts for one.
-	if after, _ := run("skip"); !after.modal.Open() {
+	if after := menuPick(t, newModel(t), "s"); !after.modal.Open() {
 		t.Error("skip without a directory should prompt for one")
 	}
-	// unskip needs a directory.
-	if _, cmd := run("unskip"); cmd == nil {
-		t.Error("unskip without a directory should say so")
+	// unskip with nothing skipped says so, and opens no checklist.
+	after, notices := menuPickNotices(t, newModelIn(t, nil), "u")
+	if len(notices) != 1 || notices[0] != "No directories are skipped." || after.CapturesKeys() {
+		t.Fatalf("unskip with nothing skipped: notices %q, captures keys %v", notices, after.CapturesKeys())
+	}
+	// unskip with a skipped directory opens the checklist, nothing pre-checked.
+	after = menuPick(t, newModelIn(t, []string{"Projects/old"}), "u")
+	if !after.CapturesKeys() {
+		t.Fatal("unskip with skipped directories opens a checklist")
+	}
+	if got := view(after); !strings.Contains(got, "Projects/old") || !strings.Contains(got, "[ ]") || strings.Contains(got, "[x]") {
+		t.Fatalf("checklist should list the skipped directory, unchecked:\n%s", got)
 	}
 }
 

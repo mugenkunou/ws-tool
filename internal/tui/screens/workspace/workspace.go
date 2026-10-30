@@ -167,7 +167,14 @@ func firstLine(s string) string {
 
 type step int
 
-const stepCompletion step = iota
+const (
+	stepCompletion step = iota
+	stepMenu            // the `.` menu
+)
+
+// SelectMsg asks the screen to select a row by name (sent by the Dashboard's
+// advice row, so enter there lands on the completion row to flip).
+type SelectMsg struct{ Name string }
 
 // Model is the screen state.
 type Model struct {
@@ -232,8 +239,12 @@ type configDone struct{}
 
 // Update implements nav.Component.
 func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
-	if _, ok := m.modal.Match(msg); ok {
+	if st, ok := m.modal.Match(msg); ok {
 		m.modal = m.modal.Close()
+		if st == stepMenu {
+			next, cmd := reslist.MenuPick(m, m.list, commands, msg)
+			return next, cmd
+		}
 		done := msg.(confirm.DoneMsg)
 		if done.Result.Aborted {
 			return m, nil
@@ -258,6 +269,9 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		return m, nil
 	case nav.RefreshMsg:
 		return m.reload()
+	case SelectMsg:
+		m.list, _ = m.list.Select(func(r Row) bool { return r.Name == msg.Name })
+		return m, nil
 	case LoadedMsg:
 		if msg.Err != nil {
 			m.list = m.list.SetError(msg.Err)
@@ -276,12 +290,12 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		return m, nil
 	}
 
-	if c, ok := msg.(nav.CommandMsg); ok {
+	if _, ok := msg.(nav.MenuMsg); ok {
 		if m.modal.Open() {
 			return m, nil
 		}
-		next, cmd, _ := reslist.RunCommand(m, m.list, commands, c)
-		return next, cmd
+		m.modal = m.modal.Choose(stepMenu, reslist.MenuChooser("Workspace actions", commands))
+		return m, nil
 	}
 
 	if m.modal.Open() {
@@ -316,15 +330,15 @@ var actions = func() []reslist.Action[Model, Row] {
 	}
 }()
 
-// commands are the `:` commands, named with the CLI noun they host.
+// commands are the `.` menu, named with the CLI noun they host.
 var commands = []reslist.Command[Model, Row]{
-	{Name: "config show", Help: "the resolved ws.json (paged)", Scope: reslist.Global,
+	{Name: "config show", Menu: "s", Help: "the resolved ws.json (paged)", Scope: reslist.Global,
 		Do: func(m Model, _ []Row, _ []string) (Model, tea.Cmd) { return m, m.configShow() }},
-	{Name: "config edit", Help: "edit ws.json (hands over to your editor)", Scope: reslist.Global,
+	{Name: "config edit", Menu: "e", Help: "edit ws.json (hands over to your editor)", Scope: reslist.Global,
 		Do: func(m Model, _ []Row, _ []string) (Model, tea.Cmd) { return m, m.configEdit() }},
-	{Name: "completion enable", Args: "[--shell bash|zsh|fish]", Help: "load ws completion from the shell's rc file", Scope: reslist.Selected,
+	{Name: "completion enable", Menu: "n", Args: "[--shell bash|zsh|fish]", Help: "load ws completion from the shell's rc file", Scope: reslist.Selected,
 		Do: func(m Model, rows []Row, args []string) (Model, tea.Cmd) { return m.completion(true, rows, args) }},
-	{Name: "completion disable", Args: "[--shell bash|zsh|fish]", Help: "remove ws completion from the shell's rc file", Scope: reslist.Selected,
+	{Name: "completion disable", Menu: "d", Args: "[--shell bash|zsh|fish]", Help: "remove ws completion from the shell's rc file", Scope: reslist.Selected,
 		Do: func(m Model, rows []Row, args []string) (Model, tea.Cmd) { return m.completion(false, rows, args) }},
 }
 
@@ -339,11 +353,17 @@ func (m Model) configEdit() tea.Cmd {
 	return handover.Run(handover.WS(m.env.Paths, "config", "edit"), configDone{})
 }
 
-// open is enter: the ws.json row opens in your editor. The other rows change
-// through commands.
+// open is enter: the ws.json row opens in your editor, and a completion row
+// flips: the enable checklist when it is off, the disable one when it is on.
 func (m Model) open(rows []Row) (Model, tea.Cmd) {
-	if len(rows) == 1 && rows[0].Kind == kindConfig {
+	if len(rows) != 1 {
+		return m, nil
+	}
+	switch r := rows[0]; r.Kind {
+	case kindConfig:
 		return m, m.configEdit()
+	case kindCompletion:
+		return m.completion(r.State != stateOn, rows, nil)
 	}
 	return m, nil
 }

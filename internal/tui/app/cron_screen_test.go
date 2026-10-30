@@ -9,7 +9,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/tuitest"
 )
 
-// TestCronCommands: the `:` commands are the spec's §6.5 list.
+// TestCronCommands: the `.` menu is the spec's §6.5 list.
 func TestCronCommands(t *testing.T) {
 	want := []string{"apply"}
 	if got := commandNames(loaded(t, 100, 30), nav.ScreenCron); !slices.Equal(got, want) {

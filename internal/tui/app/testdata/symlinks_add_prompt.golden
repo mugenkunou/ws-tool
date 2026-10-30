@@ -1,7 +1,7 @@
 ws  🏠   📦   🔗 Symlinks   🧪   📼   🧹   🔄   🔐   🔒   🔑   ⏰   🚮   🧩   🔧
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 Add a path to the workspace
-A file or folder on this machine. :add <path> [<ws-path>] [--dir] takes more.
+A file or folder on this machine. `ws symlink add` takes a workspace path and --dir.
 
 › ~/
 

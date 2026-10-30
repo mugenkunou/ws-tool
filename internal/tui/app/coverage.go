@@ -8,11 +8,11 @@ import (
 )
 
 // Reason says how the TUI covers a CLI subcommand that it does not reach with
-// a key or a `:` command.
+// a key or a `.` menu command.
 type Reason int
 
 const (
-	// Reached: a key or a `:` command runs it.
+	// Reached: a key or a `.` menu command runs it.
 	Reached Reason = iota
 	// List: the screen's list is the command (ls, scan, status): the same
 	// records, fields, filter and sort.
@@ -31,16 +31,16 @@ const (
 // Coverage records how the TUI covers one CLI subcommand. cmd's
 // TestCLICoverage fails when a CLI subcommand has no entry here, so adding a
 // command forces a TUI decision; TestCoverageKeysExist and
-// TestCoverageCommandsExist fail when an entry names a key or `:` command its
-// screen does not offer, and TestCoverageReasons when an entry with neither
+// TestCoverageCommandsExist fail when an entry names a key or `.` menu command
+// its screen does not offer, and TestCoverageReasons when an entry with neither
 // gives no reason. See HANDBOOK.md §6.9 and §9.10.
 type Coverage struct {
 	CLI    string     // "symlink add"
 	Screen nav.Screen // where it lives: the screen of its noun (nav.ForNoun)
 	Key    key.Binding
-	// Cmd is the `:` command (the CLI's words after the noun, as the screen's
-	// Commands() names them) that runs it. A command may stand beside a key
-	// (both run one function), or alone.
+	// Cmd is the `.` menu command (the CLI's words after the noun, as the
+	// screen's Commands() names them, each with a Menu letter) that runs it. A
+	// command may stand beside a key (both run one function), or alone.
 	Cmd  string
 	Why  Reason
 	Note string
@@ -82,21 +82,21 @@ var CLICoverage = func() []Coverage {
 		{CLI: "cron apply", Screen: nav.ScreenCron, Cmd: "apply"},
 
 		{CLI: "symlink ls", Screen: nav.ScreenSymlinks, Why: List},
-		{CLI: "symlink add", Screen: nav.ScreenSymlinks, Key: df.Add, Cmd: "add"},
-		{CLI: "symlink link", Screen: nav.ScreenSymlinks, Key: df.Link, Cmd: "link"},
+		{CLI: "symlink add", Screen: nav.ScreenSymlinks, Key: df.Add},
+		{CLI: "symlink link", Screen: nav.ScreenSymlinks, Key: df.Link},
 		{CLI: "symlink unlink", Screen: nav.ScreenSymlinks, Key: df.Unlink, Cmd: "unlink --all"},
 
 		{CLI: "skill scan", Screen: nav.ScreenSkills, Why: List}, // every skill and the tools that have it
-		{CLI: "skill install", Screen: nav.ScreenSkills, Key: sk.Install, Cmd: "install"},
-		{CLI: "skill uninstall", Screen: nav.ScreenSkills, Key: sk.Uninstall, Cmd: "uninstall"},
+		{CLI: "skill install", Screen: nav.ScreenSkills, Key: sk.Install},
+		{CLI: "skill uninstall", Screen: nav.ScreenSkills, Key: sk.Uninstall},
 		{CLI: "skill show", Screen: nav.ScreenSkills, Why: List, Note: "the list's shelf, note, tools and path columns; --path is for scripts"},
 		{CLI: "skill eject", Screen: nav.ScreenSkills, Why: CLIOnly, Note: "a one-off that hands a built-in over to you"},
 		{CLI: "skill check", Screen: nav.ScreenSkills, Why: CLIOnly, Note: "a report for a terminal or CI"},
 
 		{CLI: "ignore ls", Screen: nav.ScreenIgnore, Key: ig.NextView}, // the Muted and Ignored views
-		{CLI: "ignore lint", Screen: nav.ScreenIgnore, Cmd: "lint"},    // the Warnings view; :lint <path>
+		{CLI: "ignore lint", Screen: nav.ScreenIgnore, Why: List},      // the Warnings view, the default
 		{CLI: "ignore add", Screen: nav.ScreenIgnore, Key: ig.Ignore},  // Warnings, Muted
-		{CLI: "ignore rm", Screen: nav.ScreenIgnore, Key: ig.StopIgnoring, Cmd: "rm"},
+		{CLI: "ignore rm", Screen: nav.ScreenIgnore, Key: ig.StopIgnoring},
 		{CLI: "ignore mute", Screen: nav.ScreenIgnore, Key: ig.Mute},
 		{CLI: "ignore unmute", Screen: nav.ScreenIgnore, Key: ig.Unmute},
 		{CLI: "ignore check", Screen: nav.ScreenIgnore, Cmd: "check"},
@@ -109,9 +109,9 @@ var CLICoverage = func() []Coverage {
 
 		{CLI: "repo ls", Screen: nav.ScreenRepos, Why: List},
 		{CLI: "repo show", Screen: nav.ScreenRepos, Key: rp.Open},
-		{CLI: "repo git", Screen: nav.ScreenRepos, Key: rp.Git, Cmd: "git"},
-		{CLI: "repo run", Screen: nav.ScreenRepos, Key: rp.Git, Cmd: "run"}, // ! with `git ` erased
-		{CLI: "repo configure", Screen: nav.ScreenRepos, Key: rp.Configure, Cmd: "configure"},
+		{CLI: "repo git", Screen: nav.ScreenRepos, Key: rp.Git},
+		{CLI: "repo run", Screen: nav.ScreenRepos, Key: rp.Git}, // ! with `git ` erased
+		{CLI: "repo configure", Screen: nav.ScreenRepos, Key: rp.Configure},
 		{CLI: "repo root add", Screen: nav.ScreenRepos, Cmd: "root add"},
 		{CLI: "repo root ls", Screen: nav.ScreenRepos, Cmd: "root ls"}, // a read-only view
 		{CLI: "repo root rm", Screen: nav.ScreenRepos, Cmd: "root rm"}, // through the checklist
@@ -154,6 +154,6 @@ var CLICoverage = func() []Coverage {
 		{CLI: "trash prune", Screen: nav.ScreenTrash, Key: tr.Prune},
 		{CLI: "trash enable", Screen: nav.ScreenTrash, Cmd: "enable"},
 		{CLI: "trash disable", Screen: nav.ScreenTrash, Cmd: "disable"},
-		{CLI: "trash status", Screen: nav.ScreenTrash, Cmd: "status"},
+		{CLI: "trash status", Screen: nav.ScreenTrash, Why: List}, // the header shows the integrations and size,
 	}
 }()

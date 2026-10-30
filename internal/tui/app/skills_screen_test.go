@@ -13,11 +13,10 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/tuitest"
 )
 
-// TestSkillsCommands: the `:` commands are the CLI's verbs; scan is the list.
-func TestSkillsCommands(t *testing.T) {
-	want := []string{"install", "uninstall"}
-	if got := commandNames(loaded(t, 100, 30), nav.ScreenSkills); !slices.Equal(got, want) {
-		t.Errorf("skills commands = %v, want %v", got, want)
+// TestSkillsHasNoMenu: install and uninstall are keys; scan is the list.
+func TestSkillsHasNoMenu(t *testing.T) {
+	if got := commandNames(loaded(t, 100, 30), nav.ScreenSkills); len(got) != 0 {
+		t.Errorf("skills menu = %v, want none", got)
 	}
 }
 
@@ -87,22 +86,5 @@ func TestSkillsInstallThroughTheChooser(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(home, ".claude", "skills", "review-pr")); err == nil {
 		t.Fatal("the chooser alone must not link anything")
-	}
-}
-
-// TestSkillsInstallCommandTakesTheTool: `:install claude` skips the chooser, and
-// an unknown tool is a notice, not a dialog.
-func TestSkillsInstallCommandTakesTheTool(t *testing.T) {
-	m, _, _ := skillsMachine(t)
-	m = loadSkills(t, m)
-	m = send(m, press("0"))
-	m = runLineKeys(t, m, "install claude")
-	if v := tuitest.Plain(view(m)); !strings.Contains(v, "Link review-pr → ~/.claude/skills/review-pr") {
-		t.Fatalf("`:install claude` shows no checklist:\n%s", v)
-	}
-	m = send(loaded(t, 100, 30), press("0"))
-	m = runLineKeys(t, m, "install nosuchtool")
-	if v := tuitest.Plain(view(m)); strings.Contains(v, "Install into which tool?") {
-		t.Fatalf("an unknown tool opened the chooser:\n%s", v)
 	}
 }

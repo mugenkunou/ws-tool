@@ -1,7 +1,7 @@
 // Package sync is the Sync screen: the one-way mirror of the workspace into a
 // folder a sync client watches. Its header is `ws sync status` (mirror, last
 // push, stamp, pending totals) and its list is what the next push would copy
-// or delete. `:push` is `ws sync push` as a checklist; `ws sync restore` stays
+// or delete. `.` then `p` is `ws sync push` as a checklist; `ws sync restore` stays
 // on the CLI, because it runs on a fresh machine before there is a workspace.
 package sync
 
@@ -48,7 +48,10 @@ type LoadedMsg struct {
 // step identifies the one dialog this screen opens.
 type step int
 
-const stepPush step = iota
+const (
+	stepPush step = iota
+	stepMenu      // the `.` menu
+)
 
 // pushID is the checklist action that runs the push.
 const pushID = "sync-push"
@@ -120,7 +123,7 @@ func Load(e env.Env) tea.Cmd {
 func (m Model) Init() tea.Cmd { return Load(m.env) }
 
 // Declared lists the screen's actions and their scopes: none, since pushing is
-// a `:` command.
+// in the `.` menu.
 func (m Model) Declared() []reslist.Decl { return m.list.Declared() }
 
 // CapturesKeys implements nav.Component.
@@ -133,8 +136,12 @@ func (m Model) reload() (Model, tea.Cmd) {
 
 // Update implements nav.Component.
 func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
-	if _, ok := m.modal.Match(msg); ok {
+	if st, ok := m.modal.Match(msg); ok {
 		m.modal = m.modal.Close()
+		if st == stepMenu {
+			next, cmd := reslist.MenuPick(m, m.list, commands, msg)
+			return next, cmd
+		}
 		done := msg.(confirm.DoneMsg)
 		if done.Result.Aborted {
 			return m, nil
@@ -168,12 +175,12 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		return m, nil
 	}
 
-	if c, ok := msg.(nav.CommandMsg); ok {
+	if _, ok := msg.(nav.MenuMsg); ok {
 		if m.modal.Open() {
 			return m, nil
 		}
-		next, cmd, _ := reslist.RunCommand(m, m.list, commands, c)
-		return next, cmd
+		m.modal = m.modal.Choose(stepMenu, reslist.MenuChooser("Sync actions", commands))
+		return m, nil
 	}
 
 	if m.modal.Open() {
@@ -198,13 +205,13 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 }
 
 // actions is every Sync key and the rows it acts on: none. The screen has no
-// verb keys; `:push` is the CLI's push.
+// verb keys; push is in the `.` menu.
 var actions []reslist.Action[Model, Change]
 
-// commands are the `:` commands: the CLI's words after `sync`. restore is not
-// here: it runs on a fresh machine, before the TUI has a workspace.
+// commands are the `.` menu: the CLI's words after `sync`. restore is not here:
+// it runs on a fresh machine, before the TUI has a workspace.
 var commands = []reslist.Command[Model, Change]{
-	{Name: "push", Help: "mirror the workspace into the target", Scope: reslist.Global,
+	{Name: "push", Menu: "p", Help: "mirror the workspace into the target", Scope: reslist.Global,
 		Do: func(m Model, _ []Change, _ []string) (Model, tea.Cmd) { return m.push() }},
 }
 
@@ -263,7 +270,7 @@ func (m Model) push() (Model, tea.Cmd) {
 func (m Model) setupHint() string {
 	g := keys.Global(len(nav.Screens()))
 	return "Set sync.mirror.target in ws.json to a folder your sync client watches (" +
-		g.Command.Help().Key + "config edit), then " + g.Refresh.Help().Desc + " (" + g.Refresh.Help().Key + ")."
+		"`ws config edit`), then " + g.Refresh.Help().Desc + " (" + g.Refresh.Help().Key + ")."
 }
 
 // header is the status block, the facts of `ws sync status`. It is always

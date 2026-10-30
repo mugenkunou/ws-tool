@@ -16,6 +16,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/sessions"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/symlinks"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/workspace"
 )
 
 func model(areas map[nav.Screen]area) Model {
@@ -58,11 +59,10 @@ func enter(m Model) (Model, []tea.Msg) {
 
 var passAdvice = nav.Issue{
 	Sev: nav.SevInfo, Screen: nav.ScreenSecrets, Advice: true,
-	Text:    "Your pass store syncs only through its own git remote. A copy in the workspace would sync with MEGA too.",
-	Prefill: "symlink add ~/.password-store --dir",
+	Text: "Your pass store syncs only through its own git remote. A copy in the workspace would sync with MEGA too.",
 }
 
-func TestAdviceIsListedLastAndOpensTheCommandBar(t *testing.T) {
+func TestAdviceIsListedLastAndOpensItsScreen(t *testing.T) {
 	m := model(map[nav.Screen]area{
 		nav.ScreenSecrets: {loaded: true, issues: []nav.Issue{passAdvice, {Sev: nav.SevWarn, Screen: nav.ScreenSecrets, Text: "Pass store has no git remote"}}},
 		nav.ScreenRepos:   {loaded: true, issues: []nav.Issue{{Sev: nav.SevInfo, Screen: nav.ScreenRepos, Text: "1 hygiene finding in 1 repo"}}},
@@ -77,9 +77,27 @@ func TestAdviceIsListedLastAndOpensTheCommandBar(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("messages: %v", msgs)
 	}
-	open, ok := msgs[0].(nav.OpenCommandBarMsg)
-	if !ok || open.Prefill != "symlink add ~/.password-store --dir" {
+	if g, ok := msgs[0].(nav.GotoMsg); !ok || g.Screen != nav.ScreenSecrets {
 		t.Fatalf("enter on Advice: %#v", msgs[0])
+	}
+
+	// Advice with a Focus opens its screen and selects the row.
+	focus := nav.Issue{Sev: nav.SevInfo, Screen: nav.ScreenWorkspace, Advice: true,
+		Text: "Shell completion is off", Focus: workspace.SelectMsg{Name: "completion zsh"}}
+	m = model(map[nav.Screen]area{nav.ScreenWorkspace: {loaded: true, issues: []nav.Issue{focus}}})
+	m.section, m.att = sectionAttention, 0
+	_, msgs = enter(m)
+	var gotoOK, focusOK bool
+	for _, msg := range msgs {
+		switch v := msg.(type) {
+		case nav.GotoMsg:
+			gotoOK = v.Screen == nav.ScreenWorkspace
+		case workspace.SelectMsg:
+			focusOK = v.Name == "completion zsh"
+		}
+	}
+	if !gotoOK || !focusOK {
+		t.Fatalf("advice with a Focus: goto %v, focus %v, messages %v", gotoOK, focusOK, msgs)
 	}
 }
 

@@ -115,6 +115,7 @@ const (
 	stepAddRootPath
 	stepAddRoot
 	stepRmRoot
+	stepMenu // the `.` menu
 )
 
 // handoverConfigure tags the hand-over of `ws repo configure`.
@@ -194,7 +195,7 @@ func New(e env.Env) Model {
 			{Key: "behind", Min: 3, Style: countCell},
 			{Key: "issues", Min: 6, Style: func(_ Entry, t string) string { return theme.Warn.Render(t) }},
 			{Key: "branch", Min: 10, Weight: 1},
-		}, theme.Icon("📦")+"No git repositories found. Type :root add <dir> to add a repo root.").
+		}, theme.Icon("📦")+"No git repositories found. Press . then a to add a repo root.").
 			Declare(reslist.Decls(actions)),
 	}
 	if e.HistoryFile != "" {
@@ -245,35 +246,19 @@ var actions = func() []reslist.Action[Model, Entry] {
 	}
 }()
 
-// commands is the screen's `:` commands (spec §6.5), the CLI's words after
-// `repo`. `git` and `run` with words run them; bare, they open the prompt.
+// commands is the screen's `.` menu (spec §6.5), the CLI's words after `repo`.
+// git, run and configure have keys; the discovery roots are only here.
 var commands = []reslist.Command[Model, Entry]{
-	{Name: "git", Args: "<args…>", Help: "run a git command in the shown or marked repos", Scope: reslist.All,
-		Do: func(m Model, rows []Entry, args []string) (Model, tea.Cmd) {
-			if len(args) == 0 {
-				return m.promptCommand(rows)
-			}
-			return m.start("git "+strings.Join(args, " "), rows)
-		}},
-	{Name: "run", Args: "<cmd…>", Help: "run any command in the shown or marked repos", Scope: reslist.All,
-		Do: func(m Model, rows []Entry, args []string) (Model, tea.Cmd) {
-			if len(args) == 0 {
-				return m.promptLine(rows, "")
-			}
-			return m.start(strings.Join(args, " "), rows)
-		}},
-	{Name: "configure", Help: "fix the hygiene findings of the marked repos, else the cursor repo", Scope: reslist.Selected,
-		Do: func(m Model, rows []Entry, _ []string) (Model, tea.Cmd) { return m.configure(rows) }},
-	{Name: "root add", Args: "<dir>", Help: "add a discovery root", Scope: reslist.Global,
+	{Name: "root add", Menu: "a", Args: "<dir>", Help: "add a discovery root", Scope: reslist.Global,
 		Do: func(m Model, _ []Entry, args []string) (Model, tea.Cmd) {
 			if len(args) == 0 {
 				return m.promptAddRoot()
 			}
 			return m.openAddRoot(args[0])
 		}},
-	{Name: "root ls", Help: "list the discovery roots", Scope: reslist.Global,
+	{Name: "root ls", Menu: "l", Help: "list the discovery roots", Scope: reslist.Global,
 		Do: func(m Model, _ []Entry, _ []string) (Model, tea.Cmd) { return m.showRoots() }},
-	{Name: "root rm", Args: "<dir>", Help: "remove a discovery root", Scope: reslist.Global,
+	{Name: "root rm", Menu: "r", Args: "<dir>", Help: "remove a discovery root", Scope: reslist.Global,
 		Do: func(m Model, _ []Entry, args []string) (Model, tea.Cmd) { return m.removeRoot(args) }},
 }
 
@@ -325,6 +310,10 @@ func (m Model) entry(path string) (Entry, bool) {
 func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	if st, ok := m.modal.Match(msg); ok {
 		m.modal = m.modal.Close()
+		if st == stepMenu {
+			next, cmd := reslist.MenuPick(m, m.list, commands, msg)
+			return next, cmd
+		}
 		return m.dialogResult(st.(step), msg)
 	}
 
@@ -342,13 +331,12 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		m.list = m.list.SetFilter(msg.Filter)
 		m.level = levelList
 		return m, nil
-	case nav.CommandMsg:
-		if m.modal.Open() {
+	case nav.MenuMsg:
+		if m.modal.Open() || m.level != levelList {
 			return m, nil
 		}
-		m.level = levelList
-		next, cmd, _ := reslist.RunCommand(m, m.list, commands, msg)
-		return next, cmd
+		m.modal = m.modal.Choose(stepMenu, reslist.MenuChooser("Repos actions", commands))
+		return m, nil
 	case LoadedMsg:
 		if msg.gen != m.gen {
 			return m, nil

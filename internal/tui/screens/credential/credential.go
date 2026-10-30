@@ -20,6 +20,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/handover"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
+	"github.com/mugenkunou/ws-tool/internal/tui/modal"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/reslist"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
@@ -50,6 +51,7 @@ type Model struct {
 	env    env.Env
 	keys   keys.CredentialMap
 	list   reslist.Model[fact]
+	modal  modal.Model
 	state  LoadedMsg
 	loaded bool
 	width  int
@@ -107,7 +109,7 @@ func (m LoadedMsg) facts() []fact {
 	if m.Connected {
 		out = append(out, fact{Label: "credential helper", OK: true, Value: m.Helper})
 	} else {
-		out = append(out, fact{Label: "credential helper", Warn: true, Value: "not connected: run :enable"})
+		out = append(out, fact{Label: "credential helper", Warn: true, Value: "not connected: press . then e (enable)"})
 	}
 	return out
 }
@@ -123,11 +125,11 @@ func (m Model) wizard(args ...string) tea.Cmd {
 }
 
 var commands = []reslist.Command[Model, fact]{
-	{Name: "enable", Help: "set up the git credential helper (hands over to the CLI)", Scope: reslist.Global,
+	{Name: "enable", Menu: "e", Help: "set up the git credential helper (hands over to the CLI)", Scope: reslist.Global,
 		Do: func(m Model, _ []fact, _ []string) (Model, tea.Cmd) { return m, m.wizard("credential", "enable") }},
-	{Name: "disable", Help: "remove the git credential helper (hands over to the CLI)", Scope: reslist.Global,
+	{Name: "disable", Menu: "d", Help: "remove the git credential helper (hands over to the CLI)", Scope: reslist.Global,
 		Do: func(m Model, _ []fact, _ []string) (Model, tea.Cmd) { return m, m.wizard("credential", "disable") }},
-	{Name: "status", Help: "credential helper per remote (paged)", Scope: reslist.Global,
+	{Name: "status", Menu: "s", Help: "credential helper per remote (paged)", Scope: reslist.Global,
 		Do: func(m Model, _ []fact, _ []string) (Model, tea.Cmd) {
 			return m, handover.Run(handover.Paged(handover.WS(m.env.Paths, "credential", "status")), handoverWizard{})
 		}},
@@ -143,14 +145,20 @@ func (m Model) Init() tea.Cmd { return Load(m.env) }
 func (m Model) Declared() []reslist.Decl { return m.list.Declared() }
 
 // CapturesKeys implements nav.Component.
-func (m Model) CapturesKeys() bool { return m.list.Editing() }
+func (m Model) CapturesKeys() bool { return m.modal.Open() || m.list.Editing() }
 
 // Update implements nav.Component.
 func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
+	if _, ok := m.modal.Match(msg); ok {
+		m.modal = m.modal.Close()
+		next, cmd := reslist.MenuPick(m, m.list, commands, msg)
+		return next, cmd
+	}
 	switch msg := msg.(type) {
 	case nav.ResizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.list = m.list.SetSize(msg.Width, msg.Height)
+		m.modal = m.modal.SetSize(msg.Width, msg.Height)
 		return m, nil
 	case nav.RefreshMsg:
 		return m.reload()
@@ -162,9 +170,12 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		}
 		m.list = m.list.SetItems(msg.facts())
 		return m, nil
-	case nav.CommandMsg:
-		next, cmd, _ := reslist.RunCommand(m, m.list, commands, msg)
-		return next, cmd
+	case nav.MenuMsg:
+		if m.modal.Open() {
+			return m, nil
+		}
+		m.modal = m.modal.Choose("menu", reslist.MenuChooser("Credentials actions", commands))
+		return m, nil
 	case handover.DoneMsg:
 		if _, ok := msg.Tag.(handoverWizard); ok {
 			if msg.Err != nil {
@@ -175,6 +186,11 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.modal.Open() {
+		var cmd tea.Cmd
+		m.modal, cmd = m.modal.Update(msg)
+		return m, cmd
+	}
 	if m.list.Editing() {
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
@@ -197,7 +213,17 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 }
 
 // View implements nav.Component.
-func (m Model) View() string { return m.list.View() }
+func (m Model) View() string {
+	if m.modal.Open() {
+		return m.modal.View()
+	}
+	return m.list.View()
+}
 
 // KeyMap implements nav.Component.
-func (m Model) KeyMap() help.KeyMap { return m.list.Help(m.keys) }
+func (m Model) KeyMap() help.KeyMap {
+	if m.modal.Open() {
+		return m.modal.KeyMap()
+	}
+	return m.list.Help(m.keys)
+}

@@ -245,9 +245,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m, cmd := m.updateCurrent(msg, false)
 		return m, tea.Batch(resizeCmd, cmd)
 
-	case nav.OpenCommandBarMsg:
-		return m.openBar(msg.Prefill).resize()
-
 	case cmdbar.ResultMsg:
 		if m.bar == nil || m.bar.ID() != msg.ID {
 			return m, nil
@@ -329,6 +326,8 @@ func (m Model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, m.keys.Command):
 			return m.openBar("").resize()
+		case key.Matches(msg, m.globalKeys().Menu):
+			return m.updateCurrent(nav.MenuMsg{}, hadNotice)
 		case key.Matches(msg, m.keys.Refresh):
 			return m.refreshActive(hadNotice)
 		case key.Matches(msg, m.keys.NextTab):
@@ -340,6 +339,20 @@ func (m Model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m.updateCurrent(msg, hadNotice)
+}
+
+// globalKeys are the global bindings with `.` enabled only on a screen that has
+// a menu, so the footer and help offer it where it does something.
+func (m Model) globalKeys() keys.GlobalMap {
+	g := m.keys
+	has := false
+	if m.screens != nil {
+		for _, c := range commander(m.current()) {
+			has = has || c.Menu != ""
+		}
+	}
+	g.Menu.SetEnabled(has)
+	return g
 }
 
 // refreshActive is ctrl+r: on the Dashboard it refreshes every screen, since
@@ -593,7 +606,7 @@ func (m Model) footer() string {
 		return m.withToast(clip.Render(m.help.ShortHelpView([]key.Binding{m.keys.Quit})))
 	}
 	h := m.help
-	var km help.KeyMap = combinedKeys{cur.KeyMap(), m.keys}
+	var km help.KeyMap = combinedKeys{cur.KeyMap(), m.globalKeys()}
 	if m.setup != nil {
 		km = combinedKeys{cur.KeyMap(), setupGlobals{m.keys}} // no screens to switch between
 	}

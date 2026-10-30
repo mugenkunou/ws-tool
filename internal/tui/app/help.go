@@ -31,13 +31,13 @@ func rowsOf(bs ...key.Binding) [][2]string {
 }
 
 // helpColumns are the four columns of the full help (spec §6.3): this screen's
-// keys, the list keys, the general keys, and the `:` commands.
+// keys, the list keys, the general keys, and the `.` menu.
 func (m Model) helpColumns() []helpColumn {
-	g, l, t := m.keys, keys.List(), keys.Table()
+	g, l, t := m.globalKeys(), keys.List(), keys.Table()
 
 	listKeys := rowsOf(t.LineUp, t.LineDown, t.GotoTop, t.GotoBottom, t.PageUp, t.PageDown)
 	listKeys = append(listKeys, rowsOf(l.Bindings()...)...)
-	general := rowsOf(g.NextTab, g.PrevTab, g.Refresh, g.Command, g.Help, g.Quit)
+	general := rowsOf(g.NextTab, g.PrevTab, g.Refresh, g.Command, g.Menu, g.Help, g.Quit)
 	general = append(general, [2]string{"esc", "back"})
 
 	known := map[string]bool{}
@@ -65,18 +65,17 @@ func (m Model) helpColumns() []helpColumn {
 		{title: "General", rows: general},
 	}
 	if cur := m.current(); cur != nil {
-		var cmds [][2]string
+		var acts [][2]string
 		for _, c := range commander(cur) {
-			name := ":" + c.Name
-			if c.Args != "" {
-				name += " " + c.Args
+			if c.Menu == "" {
+				continue
 			}
-			cmds = append(cmds, [2]string{name, c.Help})
+			label := strings.TrimSpace(c.Name + " " + c.Args)
+			acts = append(acts, [2]string{"." + c.Menu, label + ": " + c.Help})
 		}
-		if m.screens != nil {
-			cmds = append(cmds, [2]string{":config show", "print the config"}, [2]string{":config edit", "edit ws.json"}, [2]string{":help  :q", "this help; quit"})
+		if len(acts) > 0 {
+			cols = append(cols, helpColumn{title: "Actions (.)", rows: acts})
 		}
-		cols = append(cols, helpColumn{title: "Commands", rows: cmds})
 	}
 	return cols
 }

@@ -9,9 +9,10 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/tuitest"
 )
 
-// TestIgnoreCommands: the `:` commands are the spec's §6.5 list.
+// TestIgnoreCommands: the `.` menu is the spec's §6.5 list; lint, rm and the
+// rest are views and keys.
 func TestIgnoreCommands(t *testing.T) {
-	want := []string{"check", "lint", "rm", "tree"}
+	want := []string{"check", "tree"}
 	if got := commandNames(loaded(t, 100, 30), nav.ScreenIgnore); !slices.Equal(got, want) {
 		t.Errorf("ignore commands = %v, want %v", got, want)
 	}

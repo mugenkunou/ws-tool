@@ -4,16 +4,16 @@ ws  🏠   📦 Repos   🔗   🧪   📼   🧹   🔄   🔐   🔒   🔑   
  Repo                                           State        ↑    ↓    Issues  Branch
  Projects/api                                   ✔ clean      ·    ·            main
  ╭────────────────────────────────────────────────────────────────────────────────────────────────╮
- │  This screen    Lists                     General                 Commands                     │
- │  !      git     ↑/k         up            tab        next screen  :git <args…>     run a g…    │
- │  c      config  ↓/j         down          shift+tab  prev screen  :run <cmd…>      run any…    │
- │  enter  show    g           top           ctrl+r     refresh      :configure       fix the…    │
- │                 G           bottom        :          command      :root add <dir>  add a d…    │
- │                 pgup        page up       ?          help         :root ls         list th…    │
- │                 pgdn        page down     q          quit         :root rm <dir>   remove …    │
- │                 /           filter        esc        back         :config show     print t…    │
- │                 >           sort by nex…                          :config edit     edit ws…    │
- │                 <           reverse sort                          :help  :q        this he…    │
+ │  This screen    Lists                     General                 Actions (.)                  │
+ │  !      git     ↑/k         up            tab        next screen  .a  root add <dir>: add …    │
+ │  c      config  ↓/j         down          shift+tab  prev screen  .l  root ls: list the di…    │
+ │  enter  show    g           top           ctrl+r     refresh      .r  root rm <dir>: remov…    │
+ │                 G           bottom        :          command                                   │
+ │                 pgup        page up       .          actions                                   │
+ │                 pgdn        page down     ?          help                                      │
+ │                 /           filter        q          quit                                      │
+ │                 >           sort by nex…  esc        back                                      │
+ │                 <           reverse sort                                                       │
  │                 d           describe                                                           │
  │                 y           json                                                               │
  │                 space       mark                                                               │

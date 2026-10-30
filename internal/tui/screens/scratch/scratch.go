@@ -16,6 +16,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/plan"
 	wsscratch "github.com/mugenkunou/ws-tool/internal/scratch"
 	"github.com/mugenkunou/ws-tool/internal/style"
+	"github.com/mugenkunou/ws-tool/internal/tui/complete"
 	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/format"
@@ -59,6 +60,8 @@ const (
 	stepTag
 	stepDelete
 	stepAdd
+	stepAddPath
+	stepMenu // the `.` menu
 )
 
 type handoverTag int
@@ -128,6 +131,10 @@ func (m Model) reload() (Model, tea.Cmd) {
 func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	if st, ok := m.modal.Match(msg); ok {
 		m.modal = m.modal.Close()
+		if st == stepMenu {
+			next, cmd := reslist.MenuPick(m, m.list, commands, msg)
+			return next, cmd
+		}
 		return m.dialogResult(st.(step), msg)
 	}
 
@@ -142,12 +149,12 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		return m, nil
 	case nav.RefreshMsg:
 		return m.reload()
-	case nav.CommandMsg:
+	case nav.MenuMsg:
 		if m.modal.Open() {
 			return m, nil
 		}
-		next, cmd, _ := reslist.RunCommand(m, m.list, commands, msg)
-		return next, cmd
+		m.modal = m.modal.Choose(stepMenu, reslist.MenuChooser("Scratch actions", commands))
+		return m, nil
 	case LoadedMsg:
 		if msg.Err != nil {
 			m.list = m.list.SetError(msg.Err)
@@ -197,9 +204,9 @@ var actions = func() []reslist.Action[Model, wsscratch.Entry] {
 	}
 }()
 
-// commands is every `:` command: the CLI's words after `scratch`.
+// commands is the `.` menu: the CLI's words after `scratch`.
 var commands = []reslist.Command[Model, wsscratch.Entry]{
-	{Name: "add", Args: "<path…>", Scope: reslist.Global,
+	{Name: "add", Menu: "a", Args: "<path…>", Scope: reslist.Global,
 		Help: "move files or directories into scratch", Do: Model.addCommand},
 }
 
@@ -372,11 +379,16 @@ func (m Model) delete(targets []wsscratch.Entry) (Model, tea.Cmd) {
 
 // ── add ────────────────────────────────────────────────────────────
 
-// addCommand is `:add <path…>`: move paths into scratch, as `ws scratch add`.
-// Every path is checked before anything moves.
+// addCommand is `scratch add <path…>`: move paths into scratch. Every path is
+// checked before anything moves. With no paths it asks for one.
 func (m Model) addCommand(_ []wsscratch.Entry, args []string) (Model, tea.Cmd) {
 	if len(args) == 0 {
-		return m, nav.Notify(nav.LevelWarn, "usage: add <path…>")
+		var cmd tea.Cmd
+		m.modal, cmd = m.modal.Prompt(stepAddPath, prompt.New("Move into scratch",
+			prompt.WithHint("A file or folder on this machine; it moves into scratch and a symlink replaces it."),
+			prompt.WithValue("~/"),
+			prompt.WithCompleter(complete.Paths)))
+		return m, cmd
 	}
 	var paths []string
 	for _, raw := range args {
@@ -408,6 +420,12 @@ func (m Model) addCommand(_ []wsscratch.Entry, args []string) (Model, tea.Cmd) {
 
 func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
 	switch st {
+	case stepAddPath:
+		r := msg.(prompt.ResultMsg)
+		if v := strings.TrimSpace(r.Value); !r.Cancelled && v != "" && v != "~/" {
+			return m.addCommand(nil, []string{v})
+		}
+		return m, nil
 	case stepNewName:
 		r := msg.(prompt.ResultMsg)
 		if r.Cancelled {

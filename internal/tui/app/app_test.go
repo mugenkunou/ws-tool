@@ -371,9 +371,9 @@ func TestSnapshotWorkspace(t *testing.T) {
 	m := send(loaded(t, 100, 30), jump(nav.ScreenWorkspace))
 	tuitest.Golden(t, "workspace", view(m))
 
-	// The checklist `completion enable` opens, for the shell named (not
+	// The checklist enter opens on an off completion row, for zsh (not
 	// $SHELL), so the snapshot does not depend on the machine.
-	m = runLineKeys(t, m, "completion enable --shell zsh")
+	m = send(m, workspacescreen.SelectMsg{Name: "completion zsh"}, press("enter"))
 	tuitest.Golden(t, "workspace_completion_checklist", view(m))
 }
 
@@ -511,7 +511,7 @@ func TestGlobalKeysLeavePageKeysAlone(t *testing.T) {
 		"enter": true, "esc": true, "space": true,
 	}
 	g := newApp(t, nil).keys
-	all := append([]key.Binding{g.Quit, g.ForceQuit, g.Help, g.NextTab, g.PrevTab}, nil...)
+	all := append([]key.Binding{g.Quit, g.ForceQuit, g.Help, g.Menu, g.NextTab, g.PrevTab}, nil...)
 	for _, b := range all {
 		for _, k := range b.Keys() {
 			if reserved[k] {

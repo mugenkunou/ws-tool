@@ -63,7 +63,10 @@ const (
 
 type step int
 
-const stepFix step = iota
+const (
+	stepFix  step = iota
+	stepMenu      // the `.` menu
+)
 
 // handoverWizard tags the handover of a pass wizard, so a refresh follows.
 type handoverWizard struct{}
@@ -244,37 +247,33 @@ func (m Model) push() (Model, tea.Cmd) {
 	}
 	h := m.state.Pass
 	if !h.GitBacked || !h.GitRemote {
-		return m, nav.Notify(nav.LevelWarn, "Pass backup is not enabled: run :backup enable")
+		return m, nav.Notify(nav.LevelWarn, "Pass backup is not enabled: press . then e (backup enable)")
 	}
 	return m.confirm("pass.backup.push", "Push the pass store",
 		"Commit pending changes and push the pass store to "+m.state.RemoteURL,
 		"pass", "backup", "push"), nil
 }
 
+// commands are the `.` menu: the CLI's words after `pass`.
 var commands = []reslist.Command[Model, fact]{
-	{Name: "init", Help: "set up the pass store (hands over to the CLI)", Scope: reslist.Global,
+	{Name: "init", Menu: "i", Help: "set up the pass store (hands over to the CLI)", Scope: reslist.Global,
 		Do: func(m Model, _ []fact, _ []string) (Model, tea.Cmd) { return m, m.wizard("pass", "init") }},
-	{Name: "status", Help: "pass store health", Scope: reslist.Global,
-		Do: func(m Model, _ []fact, _ []string) (Model, tea.Cmd) {
-			m.level = levelDetail
-			return m.openDetail("Pass status", viewCLI("Pass status", "pass", "status")(&m))
-		}},
-	{Name: "audit", Help: "check the pass store for weak spots", Scope: reslist.Global,
+	{Name: "audit", Menu: "a", Help: "check the pass store for weak spots", Scope: reslist.Global,
 		Do: func(m Model, _ []fact, _ []string) (Model, tea.Cmd) {
 			return m.openDetail("Pass store audit", m.audit())
 		}},
-	{Name: "backup enable", Help: "back the pass store up to a git remote (hands over to the CLI)", Scope: reslist.Global,
+	{Name: "backup enable", Menu: "e", Help: "back the pass store up to a git remote (hands over to the CLI)", Scope: reslist.Global,
 		Do: func(m Model, _ []fact, _ []string) (Model, tea.Cmd) { return m, m.wizard("pass", "backup", "enable") }},
-	{Name: "backup disable", Help: "stop backing the pass store up", Scope: reslist.Global,
+	{Name: "backup disable", Menu: "d", Help: "stop backing the pass store up", Scope: reslist.Global,
 		Do: func(m Model, _ []fact, _ []string) (Model, tea.Cmd) {
 			return m.confirm("pass.backup.disable", "Disable the pass backup",
 				"Remove the pass backup remote and its cron job", "pass", "backup", "disable"), nil
 		}},
-	{Name: "backup status", Help: "remote, ahead/behind, recent commits", Scope: reslist.Global,
+	{Name: "backup status", Menu: "s", Help: "remote, ahead/behind, recent commits", Scope: reslist.Global,
 		Do: func(m Model, _ []fact, _ []string) (Model, tea.Cmd) {
 			return m.openDetail("Pass backup", viewCLI("Pass backup", "pass", "backup", "status")(&m))
 		}},
-	{Name: "backup push", Help: "commit and push the pass store", Scope: reslist.Global,
+	{Name: "backup push", Menu: "p", Help: "commit and push the pass store", Scope: reslist.Global,
 		Do: func(m Model, _ []fact, _ []string) (Model, tea.Cmd) { return m.push() }},
 }
 
@@ -291,8 +290,12 @@ func (m Model) openDetail(title string, cmd tea.Cmd) (Model, tea.Cmd) {
 
 // Update implements nav.Component.
 func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
-	if _, ok := m.modal.Match(msg); ok {
+	if st, ok := m.modal.Match(msg); ok {
 		m.modal = m.modal.Close()
+		if st == stepMenu {
+			next, cmd := reslist.MenuPick(m, m.list, commands, msg)
+			return next, cmd
+		}
 		done := msg.(confirm.DoneMsg)
 		if done.Result.Aborted {
 			return m, nil
@@ -323,10 +326,12 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		}
 		m.list = m.list.SetItems(msg.facts())
 		return m, nil
-	case nav.CommandMsg:
-		m.level = levelList
-		next, cmd, _ := reslist.RunCommand(m, m.list, commands, msg)
-		return next, cmd
+	case nav.MenuMsg:
+		if m.modal.Open() || m.level != levelList {
+			return m, nil
+		}
+		m.modal = m.modal.Choose(stepMenu, reslist.MenuChooser("Pass actions", commands))
+		return m, nil
 	case detailMsg:
 		m.detailTitle = msg.title
 		m.detail.SetContent(msg.text)

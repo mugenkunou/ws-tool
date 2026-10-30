@@ -48,6 +48,7 @@ const (
 	stepDeleteItem
 	stepPurgeDays
 	stepPurge
+	stepMenu // the `.` menu
 )
 
 // Model is the trash screen state.
@@ -114,6 +115,10 @@ func (m Model) reload() (Model, tea.Cmd) {
 func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	if st, ok := m.modal.Match(msg); ok {
 		m.modal = m.modal.Close()
+		if st == stepMenu {
+			next, cmd := reslist.MenuPick(m, m.list, commands, msg)
+			return next, cmd
+		}
 		if st == stepPurgeDays {
 			return m.purgeDays(msg.(prompt.ResultMsg))
 		}
@@ -153,12 +158,12 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		return m, nil
 	}
 
-	if c, ok := msg.(nav.CommandMsg); ok {
+	if _, ok := msg.(nav.MenuMsg); ok {
 		if m.modal.Open() {
 			return m, nil
 		}
-		next, cmd, _ := reslist.RunCommand(m, m.list, commands, c)
-		return next, cmd
+		m.modal = m.modal.Choose(stepMenu, reslist.MenuChooser("Trash actions", commands))
+		return m, nil
 	}
 
 	if m.modal.Open() {
@@ -196,45 +201,19 @@ var actions = func() []reslist.Action[Model, Item] {
 	}
 }()
 
-// commands are the `:` commands: the CLI's words after `trash`. Each runs the
-// function its key or the CLI's plan uses.
+// commands are the `.` menu: the CLI's words after `trash`. Each runs the
+// function its key or the CLI's plan uses. `trash status` is the header.
 var commands = []reslist.Command[Model, Item]{
-	{Name: "empty", Help: "permanently delete everything", Scope: reslist.Global,
+	{Name: "empty", Menu: "e", Help: "permanently delete everything", Scope: reslist.Global,
 		Do: func(m Model, _ []Item, _ []string) (Model, tea.Cmd) { return m.openEmpty(), nil }},
-	{Name: "enable", Help: "route deletes to the trash", Scope: reslist.Global,
+	{Name: "enable", Menu: "n", Help: "route deletes to the trash", Scope: reslist.Global,
 		Do: func(m Model, _ []Item, _ []string) (Model, tea.Cmd) { return m.openEnable(), nil }},
-	{Name: "disable", Help: "stop routing deletes to the trash", Scope: reslist.Global,
+	{Name: "disable", Menu: "d", Help: "stop routing deletes to the trash", Scope: reslist.Global,
 		Do: func(m Model, _ []Item, _ []string) (Model, tea.Cmd) { return m.openDisable(), nil }},
-	{Name: "status", Help: "integrations and size", Scope: reslist.Global,
-		Do: func(m Model, _ []Item, _ []string) (Model, tea.Cmd) { return m, statusNotice(m.env) }},
 }
 
 // Commands implements nav.Commander.
 func (m Model) Commands() []nav.CommandInfo { return reslist.CommandInfos(commands) }
-
-// statusNotice reads `trash status` and says it in one line.
-func statusNotice(e env.Env) tea.Cmd {
-	return func() tea.Msg {
-		st, err := wstrash.GetStatus(wstrash.WarnBytes(e.Config.Trash.WarnSizeMB))
-		if err != nil {
-			return nav.NoticeMsg{Text: err.Error(), Level: nav.LevelError}
-		}
-		var parts []string
-		for _, in := range st.Integrations {
-			mark := "✘"
-			if in.Enabled {
-				mark = "✔"
-			}
-			parts = append(parts, mark+" "+in.Name)
-		}
-		text := strings.Join(parts, " · ") + fmt.Sprintf(" — %s, %s in %s", format.Plural(st.Items, "item"), style.HumanBytes(st.SizeBytes), st.Root)
-		level := nav.LevelInfo
-		if st.OverLimit {
-			level, text = nav.LevelWarn, text+" (over the limit)"
-		}
-		return nav.NoticeMsg{Text: text, Level: level}
-	}
-}
 
 // names is rows as a name set, or nil when rows is every item.
 func (m Model) names(rows []Item) map[string]bool {

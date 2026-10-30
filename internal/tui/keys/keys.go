@@ -4,7 +4,9 @@
 //   - enter           open the row: drill in, view, or launch
 //   - esc             one level up: closes a dialog, clears the filter, clears
 //     the marks, leaves a detail view, goes to the Dashboard
-//   - :               the command bar, which takes the CLI's own words
+//   - :               the command bar: switch screen (:repo, :dash), :help, :q
+//   - .               the action menu: the screen's verbs that have no key, each
+//     with a menu-local letter and its name spelled out
 //   - /               filter the list (the CLI's --filter expressions)
 //   - ?               full help · q quit (ctrl+c always quits)
 //   - tab shift+tab ] [   next / previous screen (:<screen> jumps to one)
@@ -42,7 +44,8 @@ type GlobalMap struct {
 	Quit      key.Binding
 	ForceQuit key.Binding
 	Help      key.Binding
-	Command   key.Binding // opens the command bar
+	Command   key.Binding // opens the command bar, which switches screens
+	Menu      key.Binding // opens the screen's action menu
 	Refresh   key.Binding // refresh the active screen
 	NextTab   key.Binding
 	PrevTab   key.Binding
@@ -56,6 +59,7 @@ func Global(n int) GlobalMap {
 		ForceQuit: key.NewBinding(key.WithKeys("ctrl+c")),
 		Help:      key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Command:   key.NewBinding(key.WithKeys(":"), key.WithHelp(":", "command")),
+		Menu:      key.NewBinding(key.WithKeys("."), key.WithHelp(".", "actions")),
 		Refresh:   key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "refresh")),
 		NextTab:   key.NewBinding(key.WithKeys("tab", "]"), key.WithHelp("tab", "next screen")),
 		PrevTab:   key.NewBinding(key.WithKeys("shift+tab", "["), key.WithHelp("shift+tab", "prev screen")),
@@ -70,7 +74,7 @@ func (k GlobalMap) ShortHelp() []key.Binding {
 
 // FullHelp implements help.KeyMap.
 func (k GlobalMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.NextTab, k.PrevTab, k.Refresh}, {k.Command, k.Help, k.Quit}}
+	return [][]key.Binding{{k.NextTab, k.PrevTab, k.Refresh}, {k.Command, k.Menu, k.Help, k.Quit}}
 }
 
 // Table returns the movement bindings shared by every list screen. They are
@@ -332,7 +336,7 @@ func (k SessionMatchesMap) FullHelp() [][]key.Binding {
 type IgnoreView int
 
 const (
-	IgnoreWarnings IgnoreView = iota // `ignore lint`: where the screen opens
+	IgnoreWarnings IgnoreView = iota // `ignore lint`: the view the screen opens on
 	IgnoreMuted                      // `ignore ls --muted`
 	IgnoreIgnored                    // `ignore ls`
 )
@@ -451,7 +455,7 @@ func (k SecretsMap) FullHelp() [][]key.Binding {
 
 // PassMap is the binding set for the Pass screen: pass store health and the
 // operations that keep it healthy. It has no verb keys of its own: init,
-// audit and the backup life cycle are `:` commands (handovers and views).
+// audit and the backup life cycle are `.` menu commands (handovers and views).
 type PassMap struct {
 	Back key.Binding
 }
@@ -466,7 +470,7 @@ func (k PassMap) ShortHelp() []key.Binding { return nil }
 func (k PassMap) FullHelp() [][]key.Binding { return [][]key.Binding{{k.Back}} }
 
 // CredentialMap is the binding set for the Credential screen: git credential
-// helper status and setup. enable, disable and status are `:` commands.
+// helper status and setup. enable, disable and status are `.` menu commands.
 type CredentialMap struct {
 	Back key.Binding
 }
@@ -821,7 +825,7 @@ func back() key.Binding {
 }
 
 // SyncMap is the binding set for the Sync screen. It has no verb keys of its
-// own: pushing is the `:push` command, and the list's keys are the shared ones.
+// own: pushing is in the `.` menu, and the list's keys are the shared ones.
 type SyncMap struct {
 	Table table.KeyMap
 	Back  key.Binding
@@ -838,9 +842,9 @@ func (k SyncMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom}}
 }
 
-// WorkspaceMap is the binding set for the Workspace screen. The settings change
-// through `:` commands (`completion enable`, `config edit`), so its one key
-// opens the ws.json row.
+// WorkspaceMap is the binding set for the Workspace screen. Its one key acts on
+// the cursor row: enter edits ws.json and flips a shell's completion. The rest
+// (`config show`, `config edit`, …) are in the `.` menu.
 type WorkspaceMap struct {
 	Table table.KeyMap
 	Open  key.Binding
@@ -851,7 +855,7 @@ type WorkspaceMap struct {
 func Workspace() WorkspaceMap {
 	return WorkspaceMap{
 		Table: Table(),
-		Open:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "edit ws.json")),
+		Open:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "edit / toggle")),
 		Back:  back(),
 	}
 }

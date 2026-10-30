@@ -42,7 +42,7 @@ func TestCoverageKeysExist(t *testing.T) {
 	}
 }
 
-// TestCoverageCommandsExist: a coverage entry's `:` command is one its screen
+// TestCoverageCommandsExist: a coverage entry's menu command is one its screen
 // declares.
 func TestCoverageCommandsExist(t *testing.T) {
 	m := loaded(t, 100, 30)
@@ -52,7 +52,7 @@ func TestCoverageCommandsExist(t *testing.T) {
 		}
 		known := commander(m.screens[c.Screen])
 		if !slices.ContainsFunc(known, func(i nav.CommandInfo) bool { return i.Name == c.Cmd }) {
-			t.Errorf("%s: screen %v has no `:` command %q", c.CLI, c.Screen, c.Cmd)
+			t.Errorf("%s: screen %v has no `.` menu command %q", c.CLI, c.Screen, c.Cmd)
 		}
 	}
 }

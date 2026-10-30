@@ -21,6 +21,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/plan"
 	"github.com/mugenkunou/ws-tool/internal/secret"
 	"github.com/mugenkunou/ws-tool/internal/style"
+	"github.com/mugenkunou/ws-tool/internal/tui/complete"
 	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/format"
@@ -56,6 +57,7 @@ type step int
 const (
 	stepFix step = iota
 	stepSkipDirInput
+	stepMenu // the `.` menu
 )
 
 // Model is the secrets screen state.
@@ -162,6 +164,10 @@ func (m Model) rescan() (Model, tea.Cmd) {
 func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	if st, ok := m.modal.Match(msg); ok {
 		m.modal = m.modal.Close()
+		if st == stepMenu {
+			next, cmd := reslist.MenuPick(m, m.list, commands, msg)
+			return next, cmd
+		}
 		return m.dialogResult(st.(step), msg)
 	}
 
@@ -186,10 +192,12 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	case nav.FilterMsg:
 		m.list = m.list.SetFilter(msg.Filter)
 		return m, nil
-	case nav.CommandMsg:
-		m.level = levelList
-		next, cmd, _ := reslist.RunCommand(m, m.list, commands, msg)
-		return next, cmd
+	case nav.MenuMsg:
+		if m.modal.Open() || m.level != levelList {
+			return m, nil
+		}
+		m.modal = m.modal.Choose(stepMenu, reslist.MenuChooser("Secrets actions", commands))
+		return m, nil
 	case detailMsg:
 		m.detailTitle = msg.title
 		m.detail.SetContent(msg.text)
@@ -282,15 +290,20 @@ var actions = func() []reslist.Action[Model, secret.Violation] {
 }()
 
 // skip asks which directory to stop scanning entirely: `skip <dir>` (or a
-// prompt, pre-filled with the cursor finding's directory, when no args).
+// prompt, pre-filled with the cursor finding's directory when there is one, when
+// no args).
 func (m Model) skip(rows []secret.Violation, args []string) (Model, tea.Cmd) {
 	if len(args) > 0 {
 		return m.skipDir(args[0])
 	}
+	start := m.env.Paths.Workspace + "/"
+	if len(rows) > 0 {
+		start = filepath.Dir(m.abs(rows[0]))
+	}
 	var cmd tea.Cmd
 	m.modal, cmd = m.modal.Prompt(stepSkipDirInput, prompt.New("Skip a directory in secret scans",
 		prompt.WithHint("Saved to secret.skip_dirs in config. Nothing under it is scanned again."),
-		prompt.WithValue(filepath.Dir(m.abs(rows[0])))))
+		prompt.WithValue(start), prompt.WithCompleter(complete.Dirs)))
 	return m, cmd
 }
 
@@ -303,15 +316,29 @@ func (m Model) skipDir(raw string) (Model, tea.Cmd) {
 		[]plan.Action{secret.SkipAction(m.env.Paths.Config, m.env.Paths.Workspace, rel)}), nil
 }
 
-// unskip scans directories again: `unskip <dir>`. A directory skipped by a
-// parent is refused, as the CLI does.
+// unskip scans directories again: `unskip <dir>`. With no directory it lists
+// the skipped ones in a checklist, nothing pre-checked. A directory skipped by
+// a parent is refused, as the CLI does.
 func (m Model) unskip(_ []secret.Violation, args []string) (Model, tea.Cmd) {
-	if len(args) == 0 {
-		return m, nav.Notify(nav.LevelWarn, "usage: unskip <dir>")
-	}
 	cfg, err := wsconfig.Load(m.env.Paths.Config)
 	if err != nil {
 		return m, nav.Notify(nav.LevelError, err.Error())
+	}
+	if len(args) == 0 {
+		var acts []plan.Action
+		for _, d := range cfg.Secret.SkipDirs {
+			rel, err := secret.WorkspaceRelDir(m.env.Paths.Workspace, d)
+			if err != nil {
+				continue
+			}
+			acts = append(acts, secret.UnskipAction(m.env.Paths.Config, m.env.Paths.Workspace, rel))
+		}
+		if len(acts) == 0 {
+			return m, nav.Notify(nav.LevelInfo, "No directories are skipped.")
+		}
+		m.modal = m.modal.Confirm(stepFix, confirm.New("Unskip", plan.Plan{Command: "secret.unskip", Actions: acts}).
+			WithChecked(func(int, plan.Action) bool { return false }))
+		return m, nil
 	}
 	var acts []plan.Action
 	seen := map[string]bool{}
@@ -336,10 +363,13 @@ func (m Model) unskip(_ []secret.Violation, args []string) (Model, tea.Cmd) {
 	return m.confirmActions("secret.unskip", "Unskip", acts), nil
 }
 
-// commands are the screen's `:` commands (spec §6.5): the CLI's words.
+// commands are the screen's `.` menu (spec §6.5): the CLI's words.
 var commands = []reslist.Command[Model, secret.Violation]{
-	{Name: "skip", Args: "[dir]", Help: "stop scanning a directory entirely", Scope: reslist.Cursor, Do: Model.skip},
-	{Name: "unskip", Args: "<dir>", Help: "scan a skipped directory again", Scope: reslist.Global, Do: Model.unskip},
+	{Name: "skip", Menu: "s", Args: "[dir]", Help: "stop scanning a directory entirely", Scope: reslist.Global,
+		Do: func(m Model, _ []secret.Violation, args []string) (Model, tea.Cmd) {
+			return m.skip(m.list.Rows(reslist.Cursor), args)
+		}},
+	{Name: "unskip", Menu: "u", Args: "<dir>", Help: "scan a skipped directory again", Scope: reslist.Global, Do: Model.unskip},
 }
 
 // Commands implements nav.Commander.

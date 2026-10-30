@@ -316,17 +316,17 @@ func TestGrepListsMatchesAndEnterShowsOne(t *testing.T) {
 	}
 }
 
-// TestGrepCommandAndNoMatches: `:grep` runs the same search; no match is a
-// notice, and the list stays.
-func TestGrepCommandAndNoMatches(t *testing.T) {
+// TestGrepNoMatchesKeepsTheList: s with text that matches nothing is a notice,
+// and the sessions list stays.
+func TestGrepNoMatchesKeepsTheList(t *testing.T) {
 	agenttmuxtest.Fake(t, `echo '{"matches":[],"truncated":false}'`)
-	c, cmd := screen(t, fixtureRows()).Update(nav.CommandMsg{Words: []string{"grep", "nothing"}, Line: "grep nothing"})
-	c, notices := drive(c, cmd)
+	c := press(screen(t, fixtureRows()), "s")
+	if !c.CapturesKeys() {
+		t.Fatalf("s should prompt:\n%s", plain(c))
+	}
+	c, notices := hit(typeText(c, "nothing"), "enter")
 	if len(notices) != 1 || notices[0] != "No matches for nothing" || !strings.Contains(plain(c), "legacy") {
 		t.Errorf("notices %q:\n%s", notices, plain(c))
-	}
-	if _, cmd := screen(t, fixtureRows()).Update(nav.CommandMsg{Words: []string{"grep"}, Line: "grep"}); cmd == nil {
-		t.Error("`grep` with no text should say how to use it")
 	}
 }
 

@@ -54,9 +54,9 @@ func assertNoHardcodedKeyNames(t *testing.T, file string) {
 	}
 }
 
-// TestTrashCommands: the `:` commands are the spec's §6.5 list.
+// TestTrashCommands: the `.` menu is the spec's §6.5 list; status is the header.
 func TestTrashCommands(t *testing.T) {
-	want := []string{"disable", "empty", "enable", "status"}
+	want := []string{"disable", "empty", "enable"}
 	if got := commandNames(loaded(t, 100, 30), nav.ScreenTrash); !slices.Equal(got, want) {
 		t.Errorf("trash commands = %v, want %v", got, want)
 	}
@@ -70,11 +70,11 @@ func TestTrashScopes(t *testing.T) {
 	}
 }
 
-// TestTrashEmptyIsACommandAndStartsUnchecked: `:empty` opens the checklist for
+// TestTrashEmptyIsACommandAndStartsUnchecked: the menu's `e` opens the checklist for
 // the whole trash with its one action unchecked (spec §6.7), and no key empties.
 func TestTrashEmptyIsACommandAndStartsUnchecked(t *testing.T) {
 	m := send(loaded(t, 100, 30), press("9"))
-	m = runLineKeys(t, m, "empty")
+	m = menuKeys(t, m, "e")
 	v := tuitest.Plain(view(m))
 	if !strings.Contains(v, "[ ] Permanently delete 2 items") {
 		t.Fatalf("empty checklist is not unchecked:\n%s", v)
@@ -82,9 +82,9 @@ func TestTrashEmptyIsACommandAndStartsUnchecked(t *testing.T) {
 	tuitest.Golden(t, "trash_empty_checklist", view(m))
 	// Marks do not narrow it: it is `trash empty`, which takes no targets.
 	m = send(loaded(t, 100, 30), press("9"), press("space"))
-	m = runLineKeys(t, m, "empty")
+	m = menuKeys(t, m, "e")
 	if v := tuitest.Plain(view(m)); !strings.Contains(v, "Permanently delete 2 items") {
-		t.Fatalf("marks narrowed :empty:\n%s", v)
+		t.Fatalf("marks narrowed the menu's empty:\n%s", v)
 	}
 }
 

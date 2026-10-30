@@ -1,6 +1,7 @@
 package app
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -12,18 +13,18 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/tuitest"
 )
 
-// fake is a screen with `:` commands that records what it is sent.
+// fake is a screen with `.` menu commands that records what it is sent.
 type fake struct {
 	screen nav.Screen
 	cmds   []nav.CommandInfo
-	got    *[]nav.CommandMsg
+	got    *[]nav.MenuMsg
 	keys   *[]string
 }
 
 func (f fake) Init() tea.Cmd { return nil }
 func (f fake) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	switch msg := msg.(type) {
-	case nav.CommandMsg:
+	case nav.MenuMsg:
 		*f.got = append(*f.got, msg)
 	case tea.KeyPressMsg:
 		*f.keys = append(*f.keys, msg.String())
@@ -41,17 +42,18 @@ func (fakeKeys) ShortHelp() []key.Binding  { return nil }
 func (fakeKeys) FullHelp() [][]key.Binding { return nil }
 
 var screenCommands = map[nav.Screen][]nav.CommandInfo{
-	nav.ScreenRepos:      {{Name: "git", Args: "<args…>", Help: "git"}, {Name: "root ls"}, {Name: "root rm", Args: "<dir>"}},
-	nav.ScreenSymlinks:   {{Name: "add", Args: "<path…>"}, {Name: "backup enable"}, {Name: "backup push"}, {Name: "backup status"}},
-	nav.ScreenPass:       {{Name: "audit"}, {Name: "init"}, {Name: "backup enable"}, {Name: "backup disable"}, {Name: "backup push"}},
-	nav.ScreenCredential: {{Name: "enable"}, {Name: "disable"}, {Name: "status"}},
+	nav.ScreenRepos:      {{Name: "root ls", Menu: "l"}, {Name: "root rm", Args: "<dir>", Menu: "r"}},
+	nav.ScreenSymlinks:   {{Name: "unlink --all", Menu: "u"}},
+	nav.ScreenPass:       {{Name: "audit", Menu: "a"}, {Name: "init", Menu: "i"}},
+	nav.ScreenCredential: {{Name: "enable", Menu: "e"}, {Name: "disable", Menu: "d"}},
 }
 
-// withCommands gives some screens `:` commands, recording what they receive.
-func withCommands(t *testing.T) (Model, *[]nav.CommandMsg, *[]string) {
+// withCommands gives some screens `.` menu commands, recording the MenuMsg
+// they receive.
+func withCommands(t *testing.T) (Model, *[]nav.MenuMsg, *[]string) {
 	t.Helper()
 	m := loaded(t, 100, 30)
-	var got []nav.CommandMsg
+	var got []nav.MenuMsg
 	var keys []string
 	for s, cmds := range screenCommands {
 		m.screens[s] = fake{screen: s, cmds: cmds, got: &got, keys: &keys}
@@ -70,6 +72,18 @@ func runLineKeys(t *testing.T, m Model, line string) Model {
 	t.Helper()
 	m = typeLine(m, line)
 	m, cmd := sendRun(m, press("enter"))
+	return pump(t, m, cmd)
+}
+
+// menuKeys opens the active screen's `.` menu, picks letter, and runs what
+// comes back, so the command's dialog is open when it returns.
+func menuKeys(t *testing.T, m Model, letter string) Model {
+	t.Helper()
+	m = send(m, press("."))
+	if !m.current().CapturesKeys() {
+		t.Fatalf("`.` opened no menu on %s", m.active.Title())
+	}
+	m, cmd := sendRun(m, press(letter))
 	return pump(t, m, cmd)
 }
 
@@ -146,39 +160,6 @@ func TestCommandBarRoutes(t *testing.T) {
 			t.Fatalf("active %v notice %q", m.active.Title(), lastNotice(m))
 		}
 	})
-	t.Run("the active screen's command", func(t *testing.T) {
-		m, got, _ := withCommands(t)
-		m = send(m, press("3")) // Symlinks
-		m = runLineKeys(t, m, "backup push")
-		if m.active != nav.ScreenSymlinks || len(*got) != 1 || strings.Join((*got)[0].Words, " ") != "backup push" {
-			t.Fatalf("active %v got %+v", m.active.Title(), *got)
-		}
-	})
-	t.Run("noun and command", func(t *testing.T) {
-		m, got, _ := withCommands(t)
-		m = runLineKeys(t, m, "pass audit")
-		if m.active != nav.ScreenPass || len(*got) != 1 || strings.Join((*got)[0].Words, " ") != "audit" {
-			t.Fatalf("active %v got %+v", m.active.Title(), *got)
-		}
-		m, got, _ = withCommands(t)
-		m = runLineKeys(t, m, "credential enable")
-		if m.active != nav.ScreenCredential || len(*got) != 1 || strings.Join((*got)[0].Words, " ") != "enable" {
-			t.Fatalf("active %v got %+v", m.active.Title(), *got)
-		}
-		m, got, _ = withCommands(t)
-		m = runLineKeys(t, m, "symlink add ~/.bashrc --dir")
-		if m.active != nav.ScreenSymlinks || len(*got) != 1 || strings.Join((*got)[0].Words, " ") != "add ~/.bashrc --dir" {
-			t.Fatalf("active %v got %+v", m.active.Title(), *got)
-		}
-	})
-	t.Run("an active command beats a screen of the same prefix", func(t *testing.T) {
-		m, got, _ := withCommands(t)
-		m = send(m, press("2")) // Repos has `git`
-		m = runLineKeys(t, m, "git")
-		if m.active != nav.ScreenRepos || len(*got) != 1 {
-			t.Fatalf("active %v got %+v", m.active.Title(), *got)
-		}
-	})
 	t.Run("quit and help", func(t *testing.T) {
 		m, _, _ := withCommands(t)
 		m = typeLine(m, "q")
@@ -199,59 +180,114 @@ func TestCommandBarRoutes(t *testing.T) {
 			t.Fatal(":help opens full help")
 		}
 	})
-	t.Run("config show and edit hand over", func(t *testing.T) {
-		for _, line := range []string{"config show", "config edit"} {
-			m, _, _ := withCommands(t)
-			m = typeLine(m, line)
-			_, cmd := sendRun(m, press("enter"))
-			if cmd == nil {
-				t.Fatalf(":%s returned no command", line)
+	t.Run("verbs are not typed here", func(t *testing.T) {
+		for _, line := range []string{"backup push", "pass audit", "repo root ls", "config edit", "symlink add ~/.bashrc"} {
+			m, got, _ := withCommands(t)
+			m = send(m, press("3"))
+			m = runLineKeys(t, m, line)
+			if len(*got) != 0 || m.active != nav.ScreenSymlinks || !strings.Contains(lastNotice(m), "Unknown command: "+line) {
+				t.Errorf(":%s: active %v got %+v notice %q", line, m.active.Title(), *got, lastNotice(m))
 			}
 		}
 	})
 	t.Run("unknown", func(t *testing.T) {
-		m, got, _ := withCommands(t)
-		m = send(m, press("3"))
-		m = runLineKeys(t, m, "backup pussh")
-		if len(*got) != 0 || !strings.Contains(lastNotice(m), "Unknown command: backup pussh") {
-			t.Fatalf("got %+v notice %q", *got, lastNotice(m))
-		}
-		m, _, _ = withCommands(t)
+		m, _, _ := withCommands(t)
 		m = send(m, press("3"))
 		m = runLineKeys(t, m, "symlnk")
 		if !strings.Contains(lastNotice(m), "did you mean") {
 			t.Fatalf("notice %q", lastNotice(m))
 		}
 	})
-	t.Run("a prefilled advice command runs as typed", func(t *testing.T) {
-		m, got, _ := withCommands(t)
-		m = send(m, nav.OpenCommandBarMsg{Prefill: "symlink add ~/.password-store --dir"})
-		if m.bar == nil || !strings.HasPrefix(m.bar.Value(), "symlink add") {
-			t.Fatal("the bar opens prefilled")
+}
+
+// TestMenuKey: `.` sends the active screen a MenuMsg, only where the screen has
+// a menu, and the footer and help offer it only there.
+func TestMenuKey(t *testing.T) {
+	m, got, _ := withCommands(t)
+	m = send(m, press("3")) // Symlinks has a menu
+	m = send(m, press("."))
+	if len(*got) != 1 {
+		t.Fatalf("`.` sent %d MenuMsg, want 1", len(*got))
+	}
+
+	m, got, _ = withCommands(t)
+	m = send(m, press("5")) // Sessions has no menu
+	m = send(m, press("."))
+	if m.current().CapturesKeys() || len(*got) != 0 {
+		t.Error("a screen without a menu ignores `.`")
+	}
+	m = send(loaded(t, 100, 30), press("."))
+	if m.bar != nil {
+		t.Error("`.` is not the command bar")
+	}
+	_ = got
+}
+
+// TestMenuLettersAreSafe: on every real screen, menu letters are unique, are
+// not the chooser's j and k, and every command with one has help text.
+func TestMenuLettersAreSafe(t *testing.T) {
+	m := loaded(t, 100, 30)
+	for _, s := range nav.Screens() {
+		seen := map[string]string{}
+		for _, c := range commander(m.screens[s]) {
+			if c.Menu == "" {
+				t.Errorf("%s: command %q has no menu letter", s.Title(), c.Name)
+				continue
+			}
+			if len([]rune(c.Menu)) != 1 || c.Menu == "j" || c.Menu == "k" {
+				t.Errorf("%s: %q has menu letter %q: one letter, never j or k", s.Title(), c.Name, c.Menu)
+			}
+			if prev, dup := seen[c.Menu]; dup {
+				t.Errorf("%s: %q and %q share menu letter %q", s.Title(), prev, c.Name, c.Menu)
+			}
+			seen[c.Menu] = c.Name
+			if c.Help == "" {
+				t.Errorf("%s: %q has no help", s.Title(), c.Name)
+			}
 		}
-		m, cmd := sendRun(m, press("enter"))
-		m = pump(t, m, cmd)
-		if m.active != nav.ScreenSymlinks || len(*got) != 1 || (*got)[0].Words[0] != "add" {
-			t.Fatalf("active %v got %+v", m.active.Title(), *got)
+	}
+}
+
+// TestEveryMenuEntryOpensItsDialog: `.` then each letter, on each real screen,
+// runs the command: it opens a dialog, hands over, or says why not. With no
+// argument it never does nothing.
+func TestEveryMenuEntryOpensItsDialog(t *testing.T) {
+	for _, s := range nav.Screens() {
+		m := loaded(t, 100, 30)
+		cmds := commander(m.screens[s])
+		for _, c := range cmds {
+			m := send(loaded(t, 100, 30), jump(s))
+			m = send(m, press("."))
+			if !m.current().CapturesKeys() {
+				t.Fatalf("%s: `.` opened no menu", s.Title())
+			}
+			before := view(m)
+			m, cmd := sendRun(m, press(c.Menu))
+			if cmd == nil {
+				t.Errorf("%s: menu letter %q (%s) did nothing", s.Title(), c.Menu, c.Name)
+				continue
+			}
+			m, next := sendRun(m, cmd()) // the chooser's result
+			if next == nil && !m.current().CapturesKeys() && m.notice == nil && view(m) == before {
+				t.Errorf("%s: menu letter %q (%s) opened no dialog, notice or handover", s.Title(), c.Menu, c.Name)
+			}
 		}
-	})
+	}
 }
 
 func TestCandidates(t *testing.T) {
 	m, _, _ := withCommands(t)
 	m = send(m, press("3"))
 	c := m.candidates()
-	for _, want := range []string{"symlink", "symlinks", "dashboard", "sessions", "session", "repo git", "pass audit", "config show", "config edit", "help", "q", "quit"} {
-		found := false
-		for _, x := range c {
-			found = found || x == want
-		}
-		if !found {
+	for _, want := range []string{"symlink", "symlinks", "dashboard", "sessions", "session", "help", "q", "quit"} {
+		if !slices.Contains(c, want) {
 			t.Errorf("candidates lack %q: %v", want, c)
 		}
 	}
-	if c[0] != "add" {
-		t.Errorf("the active screen's commands come first: %v", c[:4])
+	for _, x := range c {
+		if strings.Contains(x, " ") {
+			t.Errorf("candidate %q has a verb: the bar only switches screens", x)
+		}
 	}
 }
 
@@ -288,14 +324,14 @@ func TestFullHelpHasFourTitledColumns(t *testing.T) {
 }
 
 // TestFullHelpKeepsTheScreensColumnsWhenNarrow: at 80 columns the four columns do
-// not fit; the screen's own keys and its `:` commands stay, and the general keys
+// not fit; the screen's own keys and its `.` menu stay, and the general keys
 // go first.
 func TestFullHelpKeepsTheScreensColumnsWhenNarrow(t *testing.T) {
 	m, _, _ := withCommands(t)
 	m = send(m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = send(m, press("3"), press("?"))
 	v := tuitest.Plain(view(m))
-	for _, want := range []string{"This screen", "Commands", ":backup push"} {
+	for _, want := range []string{"This screen", "Actions (.)", ".u"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("80 columns: help lacks %q:\n%s", want, v)
 		}

@@ -2,8 +2,8 @@ ws  🏠   📦   🔗   🧪   📼   🧹   🔄 Sync   🔐   🔒   🔑   �
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 🔄 Sync is not set up.
 
-Set sync.mirror.target in ws.json to a folder your sync client watches (:config edit), then refresh
-(ctrl+r).
+Set sync.mirror.target in ws.json to a folder your sync client watches (`ws config edit`), then
+refresh (ctrl+r).
 
 
 

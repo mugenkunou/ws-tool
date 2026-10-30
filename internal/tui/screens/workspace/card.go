@@ -33,8 +33,8 @@ func (m LoadedMsg) Card() (nav.Screen, nav.Card, bool) {
 	for _, s := range m.Completion {
 		if s.Current && !s.Enabled {
 			c.Issues = append(c.Issues, nav.Issue{Sev: nav.SevInfo, Screen: nav.ScreenWorkspace, Advice: true,
-				Text:    "Shell completion is off in " + s.Shell + ", the shell you use. Tab would complete ws commands, workspace paths and names.",
-				Prefill: "completion enable"})
+				Text:  "Shell completion is off in " + s.Shell + ", the shell you use. Tab would complete ws commands, workspace paths and names.",
+				Focus: SelectMsg{Name: "completion " + s.Shell}})
 		}
 	}
 	return nav.ScreenWorkspace, c, true

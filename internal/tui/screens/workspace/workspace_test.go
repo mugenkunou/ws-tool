@@ -66,8 +66,16 @@ func send(m Model, msgs ...tea.Msg) (Model, tea.Cmd) {
 
 func enter() tea.KeyPressMsg { return tea.KeyPressMsg{Code: tea.KeyEnter} }
 
-func command(m Model, words ...string) (Model, tea.Cmd) {
-	return send(m, nav.CommandMsg{Words: words, Line: strings.Join(words, " ")})
+// menu drives the `.` menu: it opens, letter picks the command, and the
+// chooser's result is fed back so the command runs. It returns what the
+// command's Do returned.
+func menu(m Model, letter string) (Model, tea.Cmd) {
+	m, _ = send(m, nav.MenuMsg{})
+	m, cmd := send(m, tea.KeyPressMsg{Code: []rune(letter)[0], Text: letter})
+	if cmd == nil {
+		return m, nil
+	}
+	return send(m, cmd())
 }
 
 // settle runs cmd and feeds every message it yields back into m, to the end.
@@ -150,8 +158,11 @@ func TestCardSaysVersionConfigAndCompletion(t *testing.T) {
 	if !ok || !strings.Contains(card.Lines[0], "ws v1.2.3") || !strings.Contains(card.Lines[0], "ws.json ok") {
 		t.Fatalf("card lines: %q", card.Lines)
 	}
-	if len(card.Issues) != 1 || !card.Issues[0].Advice || card.Issues[0].Prefill != "completion enable" {
+	if len(card.Issues) != 1 || !card.Issues[0].Advice {
 		t.Fatalf("completion off in the shell in use is advice: %+v", card.Issues)
+	}
+	if sel, ok := card.Issues[0].Focus.(SelectMsg); !ok || sel.Name != "completion zsh" {
+		t.Fatalf("the advice focuses the zsh completion row: %#v", card.Issues[0].Focus)
 	}
 
 	// Enabled in the shell in use: no advice, and the card names the shell.
@@ -168,7 +179,7 @@ func TestCompletionEnableDefaultsToTheShellInUse(t *testing.T) {
 	home, e := hermetic(t, "/usr/bin/zsh")
 	m := load(t, New(e))
 	// The cursor is on the version row: not a completion row, so $SHELL.
-	m, _ = command(m, "completion", "enable")
+	m, _ = menu(m, "n")
 	if !m.CapturesKeys() {
 		t.Fatal("the plan opens a checklist")
 	}
@@ -204,7 +215,7 @@ func TestCompletionActsOnMarkedRowsElseTheCursorRow(t *testing.T) {
 
 	// Rows: version, ws.json, bash, zsh, fish. Mark bash and zsh.
 	m = typed(m, "down", "down", "space", "down", "space")
-	m, _ = command(m, "completion", "enable")
+	m, _ = menu(m, "n")
 	got := view(m)
 	for _, rc := range rcs {
 		if !strings.Contains(got, "Load ws completion from "+rc) {
@@ -218,7 +229,7 @@ func TestCompletionActsOnMarkedRowsElseTheCursorRow(t *testing.T) {
 	// No marks: the completion row under the cursor wins over $SHELL (bash).
 	m = load(t, New(e))
 	m = typed(m, "down", "down", "down", "down") // fish
-	m, _ = command(m, "completion", "enable")
+	m, _ = menu(m, "n")
 	got = view(m)
 	if !strings.Contains(got, "/fish/") || strings.Contains(got, ".bashrc") {
 		t.Fatalf("the cursor row is the target:\n%s", got)
@@ -228,14 +239,14 @@ func TestCompletionActsOnMarkedRowsElseTheCursorRow(t *testing.T) {
 func TestCompletionShellFlagAndErrors(t *testing.T) {
 	_, e := hermetic(t, "/bin/bash")
 	m := load(t, New(e))
-	m, _ = command(m, "completion", "enable", "--shell", "fish")
+	m, _ = m.completion(true, nil, []string{"--shell", "fish"})
 	if got := view(m); !strings.Contains(got, "/fish/") || strings.Contains(got, ".bashrc") {
 		t.Fatalf("--shell names the target:\n%s", got)
 	}
 
 	for _, args := range [][]string{{"--shell", "powershell"}, {"bash"}} {
 		m := load(t, New(e))
-		m, cmd := command(m, append([]string{"completion", "enable"}, args...)...)
+		m, cmd := m.completion(true, nil, args)
 		if m.CapturesKeys() || cmd == nil {
 			t.Fatalf("%v should notify, not open a checklist", args)
 		}
@@ -247,7 +258,7 @@ func TestCompletionShellFlagAndErrors(t *testing.T) {
 	// A shell ws does not complete cannot be the default.
 	t.Setenv("SHELL", "/bin/sh")
 	m = load(t, New(e))
-	m, cmd := command(m, "completion", "enable")
+	m, cmd := m.completion(true, nil, nil)
 	if m.CapturesKeys() || cmd == nil {
 		t.Fatal("an unsupported $SHELL notifies")
 	}
@@ -257,7 +268,7 @@ func TestCompletionDisableAndNothingToDo(t *testing.T) {
 	home, e := hermetic(t, "/bin/bash")
 	m := load(t, New(e))
 
-	m, cmd := command(m, "completion", "disable")
+	m, cmd := menu(m, "d")
 	if m.CapturesKeys() {
 		t.Fatal("nothing to disable opens no checklist")
 	}
@@ -270,7 +281,7 @@ func TestCompletionDisableAndNothingToDo(t *testing.T) {
 		t.Fatal(err)
 	}
 	m = load(t, m)
-	m, _ = command(m, "completion", "disable")
+	m, _ = menu(m, "d")
 	if got := view(m); !strings.Contains(got, "Remove ws completion from "+rc) {
 		t.Fatalf("checklist:\n%s", got)
 	}
@@ -281,7 +292,7 @@ func TestCompletionDisableAndNothingToDo(t *testing.T) {
 		t.Fatalf("rc file after disable: %q", b)
 	}
 
-	m, _ = command(m, "completion", "enable")
+	m, _ = menu(m, "n")
 	m, cmd = send(m, tea.KeyPressMsg{Code: tea.KeyEscape}) // cancel
 	m = settle(t, m, cmd)
 	if m.CapturesKeys() {
@@ -330,11 +341,48 @@ func TestConfigHandoverRefreshesEveryScreen(t *testing.T) {
 	if _, cmd := send(m, handover.DoneMsg{Tag: configDone{}, Err: errors.New("boom")}); cmd().(nav.NoticeMsg).Level != nav.LevelError {
 		t.Fatal("a failed handover is an error notice")
 	}
-	var names []string
+	var names, letters []string
 	for _, c := range m.Commands() {
 		names = append(names, c.Name)
+		letters = append(letters, c.Menu)
 	}
 	if strings.Join(names, ",") != "config show,config edit,completion enable,completion disable" {
 		t.Fatalf("commands: %v", names)
+	}
+	if strings.Join(letters, ",") != "s,e,n,d" {
+		t.Fatalf("menu letters: %v", letters)
+	}
+}
+
+// TestEnterOnACompletionRowOpensItsChecklist: enter on an off row enables it,
+// on an on row disables it.
+func TestEnterOnACompletionRowOpensItsChecklist(t *testing.T) {
+	home, e := hermetic(t, "/bin/bash")
+	// Rows: version, ws.json, bash, zsh, fish. zsh is the third completion row.
+	m := typed(load(t, New(e)), "down", "down", "down")
+	m, _ = send(m, enter())
+	if got := view(m); !strings.Contains(got, "Enable shell completion") {
+		t.Fatalf("enter on an off completion row opens the enable checklist:\n%s", got)
+	}
+
+	rc := filepath.Join(home, ".zshrc")
+	if err := os.WriteFile(rc, []byte(shellcomp.Block(`eval "$(ws completion zsh)"`)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m = typed(load(t, New(e)), "down", "down", "down")
+	m, _ = send(m, enter())
+	if got := view(m); !strings.Contains(got, "Disable shell completion") {
+		t.Fatalf("enter on an on completion row opens the disable checklist:\n%s", got)
+	}
+}
+
+// TestSelectMsgMovesTheCursorToTheNamedRow: the Dashboard's advice focuses a
+// completion row by name; enter then acts on that row (fish's rc here).
+func TestSelectMsgMovesTheCursorToTheNamedRow(t *testing.T) {
+	_, e := hermetic(t, "/bin/bash")
+	m, _ := send(load(t, New(e)), SelectMsg{Name: "completion fish"})
+	m, _ = send(m, enter())
+	if got := view(m); !strings.Contains(got, "/fish/") || strings.Contains(got, ".bashrc") {
+		t.Fatalf("SelectMsg should move the cursor to the fish row:\n%s", got)
 	}
 }

@@ -16,7 +16,7 @@ func (m LoadedMsg) Card() (nav.Screen, nav.Card, bool) {
 	} else {
 		c.Lines = []string{theme.Warn.Render("helper not connected")}
 		c.Issues = append(c.Issues, nav.Issue{Sev: nav.SevWarn, Screen: nav.ScreenCredential,
-			Text: "The git credential helper is not set up: run :enable"})
+			Text: "The git credential helper is not set up: press . then e"})
 	}
 	return nav.ScreenCredential, c, true
 }

@@ -1,6 +1,6 @@
 // Package cron is the managed-cron-jobs screen: every built-in job and
 // preset with its install state and last run, plus add, remove, run now, the
-// per-job output, and `:apply` (spec §6.5).
+// per-job output, and `.` then `a` to apply (spec §6.5).
 //
 // Navigation levels: list → job log. esc returns to the list; esc in the
 // list asks the app to go up.
@@ -88,7 +88,10 @@ const (
 
 type step int
 
-const stepChange step = iota
+const (
+	stepChange step = iota
+	stepMenu        // the `.` menu
+)
 
 // Model is the cron screen state.
 type Model struct {
@@ -192,8 +195,12 @@ func (m Model) reload() (Model, tea.Cmd) {
 
 // Update implements nav.Component.
 func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
-	if _, ok := m.modal.Match(msg); ok {
+	if st, ok := m.modal.Match(msg); ok {
 		m.modal = m.modal.Close()
+		if st == stepMenu {
+			next, cmd := reslist.MenuPick(m, m.list, commands, msg)
+			return next, cmd
+		}
 		done := msg.(confirm.DoneMsg)
 		if done.Result.Aborted {
 			return m, nil
@@ -245,12 +252,12 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 			return m.openApply()
 		}
 		return m.openChange(msg.jobs, msg.remove)
-	case nav.CommandMsg:
+	case nav.MenuMsg:
 		if m.modal.Open() || m.level != levelList {
 			return m, nil
 		}
-		next, cmd, _ := reslist.RunCommand(m, m.list, commands, msg)
-		return next, cmd
+		m.modal = m.modal.Choose(stepMenu, reslist.MenuChooser("Cron actions", commands))
+		return m, nil
 	}
 
 	if m.modal.Open() {
@@ -310,9 +317,9 @@ var actions = func() []reslist.Action[Model, Job] {
 	}
 }()
 
-// commands are the `:` commands: the CLI's words after `cron`.
+// commands are the `.` menu: the CLI's words after `cron`.
 var commands = []reslist.Command[Model, Job]{
-	{Name: "apply", Help: "make the crontab match configs/crontab", Scope: reslist.Global,
+	{Name: "apply", Menu: "a", Help: "make the crontab match configs/crontab", Scope: reslist.Global,
 		Do: func(m Model, _ []Job, _ []string) (Model, tea.Cmd) { return m, preflightApply() }},
 }
 

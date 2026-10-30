@@ -49,6 +49,8 @@ func keyMsg(k string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyEscape}
 	case "enter":
 		return tea.KeyPressMsg{Code: tea.KeyEnter}
+	case "backspace":
+		return tea.KeyPressMsg{Code: tea.KeyBackspace}
 	case "ctrl+d":
 		return tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl}
 	}
@@ -64,10 +66,25 @@ func press(c nav.Component, ks ...string) nav.Component {
 
 func pressRun(c nav.Component, k string) (nav.Component, tea.Cmd) { return c.Update(keyMsg(k)) }
 
+func typeText(c nav.Component, s string) nav.Component {
+	for _, r := range s {
+		c = press(c, string(r))
+	}
+	return c
+}
+
 func plain(c nav.Component) string { return ansi.Strip(c.View()) }
 
-func command(c nav.Component, line string) (nav.Component, tea.Cmd) {
-	return c.Update(nav.CommandMsg{Words: strings.Fields(line), Line: line})
+// pickMenu opens the `.` menu, presses letter, and delivers the chooser's
+// result back to the screen. It returns the screen and the command the pick
+// produced (nil when the pick opened a dialog or did nothing).
+func pickMenu(c nav.Component, letter string) (nav.Component, tea.Cmd) {
+	c, _ = c.Update(nav.MenuMsg{})
+	c, cmd := c.Update(keyMsg(letter))
+	if cmd == nil {
+		return c, nil
+	}
+	return c.Update(cmd())
 }
 
 // TestKeysAreTheSpecTable: the footer is the spec's keys, letters and labels,
@@ -126,21 +143,6 @@ func TestAddWithNothingMarkedAsksForAPath(t *testing.T) {
 	}
 	if v := plain(c); !strings.Contains(v, "Add a path to the workspace") {
 		t.Errorf("prompt:\n%s", v)
-	}
-}
-
-// TestAddCommandTakesTwoPaths: `:add <host> [<ws>] [--dir]`.
-func TestAddCommandTakesTwoPaths(t *testing.T) {
-	c, cmd := command(screen(t, fixtureRows()), "add ~/a agent/a extra")
-	if c.(Model).preparing || cmd == nil {
-		t.Fatal("three words is a usage notice")
-	}
-	if msg := cmd().(nav.NoticeMsg); !strings.Contains(msg.Text, "usage: add <host-path> [<ws-path>] [--dir]") {
-		t.Errorf("notice = %q", msg.Text)
-	}
-	c, cmd = command(screen(t, fixtureRows()), "add ~/a agent/a")
-	if !c.(Model).preparing || cmd == nil {
-		t.Fatal("two words start the scan")
 	}
 }
 
@@ -255,10 +257,11 @@ func TestSudoEntriesRunInTheTerminal(t *testing.T) {
 	}
 }
 
-// TestUnlinkAllStartsUnchecked: `:unlink --all` lists every symlink with
-// nothing checked (spec §6.7).
-func TestUnlinkAllStartsUnchecked(t *testing.T) {
-	c, _ := command(screen(t, fixtureRows()[:3]), "unlink --all")
+// TestMenuUnlinkAllStartsUnchecked: the `.` menu's `u` (unlink --all) lists
+// every symlink with nothing checked (spec §6.7). A bare `u` outside the menu
+// does nothing.
+func TestMenuUnlinkAllStartsUnchecked(t *testing.T) {
+	c, _ := pickMenu(screen(t, fixtureRows()[:3]), "u")
 	v := plain(c)
 	for _, want := range []string{"/h/.ok", "/h/.broken", "/h/.over"} {
 		if !strings.Contains(v, want) {
@@ -268,41 +271,36 @@ func TestUnlinkAllStartsUnchecked(t *testing.T) {
 	if strings.Contains(v, "[x]") || !strings.Contains(v, "[ ]") {
 		t.Errorf("nothing is pre-checked:\n%s", v)
 	}
-	c, cmd := command(screen(t, fixtureRows()[:3]), "unlink")
-	if c.CapturesKeys() || cmd != nil {
-		t.Errorf("`unlink` alone is not a command")
+	if c, cmd := screen(t, fixtureRows()[:3]).Update(keyMsg("u")); c.CapturesKeys() || cmd != nil {
+		t.Error("u outside the menu does nothing")
 	}
 }
 
-// TestCommandsAreTheSpecList: the `:` commands are spec §6.5's, and
-// nothing else: backup, edit and --to are gone (plan 0003).
+// TestCommandsAreTheSpecList: the menu holds unlink --all and nothing else;
+// add and link are keys (a, l), not commands.
 func TestCommandsAreTheSpecList(t *testing.T) {
 	var names []string
 	for _, c := range New(env.Env{}).Commands() {
 		names = append(names, c.Name)
 	}
-	want := []string{"add", "link", "unlink --all"}
+	want := []string{"unlink --all"}
 	if strings.Join(names, "|") != strings.Join(want, "|") {
 		t.Errorf("commands = %v, want %v", names, want)
 	}
 }
 
-// TestCommandsRouteThroughCommandMsg: a command reaches the same function its
-// key does.
-func TestCommandsRouteThroughCommandMsg(t *testing.T) {
-	// `add` alone is the key: the path prompt.
-	c, _ := command(screen(t, fixtureRows()), "add")
-	if !c.CapturesKeys() {
-		t.Error(":add without paths should open the path prompt, as the key does")
+// TestAddKeyPromptTakesAPath: a with no marks asks for a path; typing one and
+// pressing enter starts the scan, as the menu-less add always did.
+func TestAddKeyPromptTakesAPath(t *testing.T) {
+	c := press(screen(t, fixtureRows()), "a", "backspace", "backspace") // clear the ~/ default
+	c = typeText(c, "/h/.x")
+	c, cmd := c.Update(keyMsg("enter"))
+	if cmd == nil {
+		t.Fatal("enter should submit the prompt")
 	}
-	// `add` with paths scans them.
-	c, cmd := command(screen(t, fixtureRows()), "add /h/.x")
-	if cmd == nil || !c.(Model).preparing {
-		t.Error(":add <path> should scan the path")
-	}
-	// `link` alone is the key: repairs the shown rows.
-	c, _ = command(screen(t, fixtureRows()[:3]), "link")
-	if v := plain(c); !strings.Contains(v, "Link symlinks") {
-		t.Errorf(":link should open the link checklist:\n%s", v)
+	// Deliver the prompt's result; the scan itself is not run.
+	c, _ = c.Update(cmd())
+	if !c.(Model).preparing {
+		t.Error("a typed path should start the scan")
 	}
 }

@@ -96,8 +96,16 @@ func submit(c nav.Component) nav.Component {
 
 func plain(c nav.Component) string { return ansi.Strip(c.View()) }
 
-func command(c nav.Component, line string) (nav.Component, tea.Cmd) {
-	return c.Update(nav.CommandMsg{Words: strings.Fields(line), Line: line})
+// pickMenu opens the `.` menu, presses letter, and delivers the chooser's
+// result back to the screen. It returns the screen and the command the pick
+// produced (nil when the pick opened a dialog or did nothing).
+func pickMenu(c nav.Component, letter string) (nav.Component, tea.Cmd) {
+	c, _ = c.Update(nav.MenuMsg{})
+	c, cmd := c.Update(keyMsg(letter))
+	if cmd == nil {
+		return c, nil
+	}
+	return c.Update(cmd())
 }
 
 // TestKeysAreTheSpecTable: the footer is the spec's keys, letters and labels,
@@ -258,10 +266,10 @@ func TestCommandsAreTheSpecList(t *testing.T) {
 	}
 }
 
-// TestAddCommandRoutesAndPlans: `:add <path>` reaches the screen as a
-// nav.CommandMsg, checks every path, and opens the checklist with where each
-// goes.
-func TestAddCommandRoutesAndPlans(t *testing.T) {
+// TestAddRoutesAndPlans: the menu's `a` (add) asks for a path; the typed path
+// is checked and opens the checklist with where it goes. Adding paths with a
+// bad one stops the whole command.
+func TestAddRoutesAndPlans(t *testing.T) {
 	root := t.TempDir()
 	scratchDir := filepath.Join(root, "Scratch")
 	wsDir := filepath.Join(root, "Workspace")
@@ -277,7 +285,13 @@ func TestAddCommandRoutesAndPlans(t *testing.T) {
 	e := env.Env{ScratchDir: scratchDir, Paths: workspace.Paths{Workspace: wsDir, Config: wsconfig.ConfigPath(wsDir)}, Config: wsconfig.Default()}
 
 	wide, _ := screenIn(t, e, nil).Update(nav.ResizeMsg{Width: 400, Height: 20})
-	c, _ := command(wide, "add "+capture)
+	c, _ := pickMenu(wide, "a") // the path prompt opens
+	if !c.CapturesKeys() {
+		t.Fatal("menu add should open the path prompt")
+	}
+	// Replace the ~/ default with the capture path, then enter.
+	c = press(c, "backspace", "backspace")
+	c = submit(typeText(c, capture))
 	v := plain(c)
 	want := "Move " + capture + " → " + filepath.Join(scratchDir, "capture", "capture.pcap")
 	if !c.CapturesKeys() || !strings.Contains(v, want) {
@@ -285,9 +299,13 @@ func TestAddCommandRoutesAndPlans(t *testing.T) {
 	}
 
 	// A path that cannot move stops the whole command: a notice, no dialog.
-	c, cmd := command(screenIn(t, e, nil), "add "+capture+" "+filepath.Join(root, "missing"))
-	if c.CapturesKeys() {
+	// The multi-path form is the screen's addCommand with args.
+	bad, cmd := screenIn(t, e, nil).(Model).addCommand(nil, []string{capture, filepath.Join(root, "missing")})
+	if bad.CapturesKeys() {
 		t.Error("one bad path must stop the command")
+	}
+	if cmd == nil {
+		t.Fatal("a bad path should yield a notice")
 	}
 	if n, ok := cmd().(nav.NoticeMsg); !ok || !strings.Contains(n.Text, "path not found") {
 		t.Errorf("notice = %#v", cmd())

@@ -1,12 +1,12 @@
 package reslist
 
 import (
-	"slices"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/mugenkunou/ws-tool/internal/tui/choose"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 )
 
@@ -124,50 +124,63 @@ func (m Model[T]) scopedKeys(scopes ...Scope) []string {
 	return out
 }
 
-// Command is a `:` command of a screen (spec §6.6): the CLI's words after the
-// noun. A key and a command for one verb share a function: the Do of the Action
-// and of the Command are the same function, and Scope picks the rows as it does
-// for a key.
+// Command is a screen verb that has no key of its own. The `.` menu offers it
+// (spec §6.6): the CLI's words after the noun, picked by Menu's letter. A key
+// and a command for one verb share a function, so a verb with a key is not a
+// Command. Scope picks the rows as it does for a key.
 type Command[M, T any] struct {
 	Name  string // the words after the noun, e.g. "push" or "backup status"
 	Args  string // their placeholder, e.g. "<dir>"; empty when none
 	Help  string
+	Menu  string // the letter that picks it in the `.` menu; never j or k, which move
 	Scope Scope
-	Do    func(m M, rows []T, args []string) (M, tea.Cmd)
+	// Do runs the command. The menu calls it with no args, so a command that
+	// needs one opens a dialog to ask for it.
+	Do func(m M, rows []T, args []string) (M, tea.Cmd)
 }
 
-// CommandInfos describes commands for completion and help.
+// CommandInfos describes commands for help.
 func CommandInfos[M, T any](commands []Command[M, T]) []nav.CommandInfo {
 	out := make([]nav.CommandInfo, len(commands))
 	for i, c := range commands {
-		out[i] = nav.CommandInfo{Name: c.Name, Args: c.Args, Help: c.Help}
+		out[i] = nav.CommandInfo{Name: c.Name, Args: c.Args, Help: c.Help, Menu: c.Menu}
 	}
 	return out
 }
 
-// RunCommand handles msg when it starts with one of commands' names: it calls
-// Do with the rows the command's scope covers and the words after the name, and
-// reports true. The longest matching name wins, so `backup status` beats a
-// `backup`. A command that needs rows does nothing when there are none.
-func RunCommand[M, T any](m M, l Model[T], commands []Command[M, T], msg nav.CommandMsg) (M, tea.Cmd, bool) {
-	best := -1
-	for i, c := range commands {
-		name := strings.Fields(c.Name)
-		if len(msg.Words) < len(name) || !slices.Equal(msg.Words[:len(name)], name) {
+// MenuChooser is the `.` menu: a chooser of the commands that have a Menu
+// letter, each shown as `[a] name`.
+func MenuChooser[M, T any](title string, commands []Command[M, T]) choose.Model {
+	var opts []choose.Option
+	for _, c := range commands {
+		if c.Menu != "" {
+			opts = append(opts, choose.Option{Label: c.Name, Detail: c.Help, Key: c.Menu})
+		}
+	}
+	return choose.New(title, "", opts)
+}
+
+// MenuPick runs the command the menu's chooser picked (msg is its
+// choose.ResultMsg): it calls Do with the rows the command's scope covers and
+// no args. A command that needs rows says so when there are none.
+func MenuPick[M, T any](m M, l Model[T], commands []Command[M, T], msg tea.Msg) (M, tea.Cmd) {
+	res, ok := msg.(choose.ResultMsg)
+	if !ok || res.Cancelled {
+		return m, nil
+	}
+	n := 0
+	for _, c := range commands {
+		if c.Menu == "" {
 			continue
 		}
-		if best < 0 || len(name) > len(strings.Fields(commands[best].Name)) {
-			best = i
+		if n == res.Index {
+			rows := l.Rows(c.Scope)
+			if c.Scope != Global && c.Scope != Marked && len(rows) == 0 {
+				return m, nav.Notify(nav.LevelWarn, c.Name+": no row to act on")
+			}
+			return c.Do(m, rows, nil)
 		}
+		n++
 	}
-	if best < 0 {
-		return m, nil, false
-	}
-	c := commands[best]
-	rows := l.Rows(c.Scope)
-	if c.Scope != Global && c.Scope != Marked && len(rows) == 0 {
-		return m, nil, true
-	}
-	next, cmd := c.Do(m, rows, msg.Words[len(strings.Fields(c.Name)):])
-	return next, cmd, true
+	return m, nil
 }

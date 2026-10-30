@@ -214,21 +214,27 @@ func TestIgnoredStopIgnoringIsRm(t *testing.T) {
 	f.expect(t, []string{"Sync again: " + f.abs("Projects/big.bin")})
 }
 
-// TestCommandsShareTheKeysFunctions: `:rm` builds the plan the Ignored view's
-// ctrl+d does, and `:lint` narrows the Warnings view.
+// TestCommands: the `.` menu offers check (c) and tree (t). rm and lint have
+// keys or are the views now, so they are not menu entries. c with no path
+// opens the path prompt.
 func TestCommands(t *testing.T) {
 	f := newFixture(t)
-	f.c, _ = f.c.Update(nav.CommandMsg{Words: []string{"rm", f.abs("Projects/big.bin")}})
-	f.expect(t, []string{"Sync again: " + f.abs("Projects/big.bin")})
-
-	f = newFixture(t)
-	if err := os.MkdirAll(f.abs("Other"), 0o755); err != nil {
-		t.Fatal(err)
+	var names, letters []string
+	for _, c := range f.c.(nav.Commander).Commands() {
+		names = append(names, c.Name)
+		letters = append(letters, c.Menu)
 	}
-	f.c, _ = f.c.Update(nav.CommandMsg{Words: []string{"lint", f.abs("Other")}})
-	f.expect(t, []string{"Warnings 0 · Muted 0 · Ignored 0", "under"}, "a.dat")
-	f.press("esc")
-	f.expect(t, []string{"Warnings 2"}, "under")
+	if strings.Join(names, ",") != "check,tree" || strings.Join(letters, ",") != "c,t" {
+		t.Fatalf("commands: %v %v", names, letters)
+	}
+
+	f.c, _ = f.c.Update(nav.MenuMsg{})
+	var cmd tea.Cmd
+	f.c, cmd = f.c.Update(press("c")) // the chooser answers with its result
+	f.run(cmd)                        // which MenuPick runs
+	if !f.c.CapturesKeys() {
+		t.Error("c in the menu opens the path prompt")
+	}
 }
 
 // TestAWarningIsNeverActedOnWithoutAChecklist: no key changes anything

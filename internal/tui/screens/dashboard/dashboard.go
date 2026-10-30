@@ -177,13 +177,10 @@ func (m Model) updateKey(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 	return m, nil
 }
 
-// open is enter on an attention row: advice opens the command bar with the
-// suggested command; a problem opens its screen, filtered to the affected rows
-// or with the problem selected.
+// open is enter on an attention row: it opens the row's screen, filtered to the
+// affected rows or with the problem (or the advice's row) selected.
 func open(is *nav.Issue) tea.Cmd {
 	switch {
-	case is.Advice:
-		return send(nav.OpenCommandBarMsg{Prefill: is.Prefill})
 	case is.Filter != "":
 		return tea.Batch(nav.Goto(is.Screen), send(nav.FilterMsg{Screen: is.Screen, Filter: is.Filter}))
 	case is.Focus != nil:

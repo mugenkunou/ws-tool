@@ -121,6 +121,7 @@ type step int
 const (
 	stepAdd step = iota
 	stepAddPath
+	stepMenu // the `.` menu
 	stepUnlink
 	stepLink
 )
@@ -277,7 +278,7 @@ func (m Model) Init() tea.Cmd { return Load(m.env) }
 // Declared lists the screen's actions and their scopes.
 func (m Model) Declared() []reslist.Decl { return m.list.Declared() }
 
-// Commands implements nav.Commander: the `:` commands (spec §6.5).
+// Commands implements nav.Commander: the `.` menu (spec §6.5).
 func (m Model) Commands() []nav.CommandInfo { return reslist.CommandInfos(commands) }
 
 // CapturesKeys implements nav.Component.
@@ -287,6 +288,10 @@ func (m Model) CapturesKeys() bool { return m.modal.Open() || m.list.Editing() }
 func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	if st, ok := m.modal.Match(msg); ok {
 		m.modal = m.modal.Close()
+		if st == stepMenu {
+			next, cmd := reslist.MenuPick(m, m.list, commands, msg)
+			return next, cmd
+		}
 		return m.dialogResult(st.(step), msg)
 	}
 
@@ -302,12 +307,12 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	case nav.RefreshMsg:
 		m.list = m.list.SetLoading()
 		return m, Load(m.env)
-	case nav.CommandMsg:
+	case nav.MenuMsg:
 		if m.modal.Open() {
 			return m, nil
 		}
-		next, cmd, _ := reslist.RunCommand(m, m.list, commands, msg)
-		return next, cmd
+		m.modal = m.modal.Choose(stepMenu, reslist.MenuChooser("Symlinks actions", commands))
+		return m, nil
 	case LoadedMsg:
 		if msg.Err != nil {
 			m.list = m.list.SetError(msg.Err)
@@ -358,14 +363,10 @@ var actions = func() []reslist.Action[Model, Entry] {
 	}
 }()
 
-// commands is every `:` command: the CLI's words after `symlink`. A key and its
-// command share one function.
+// commands is the `.` menu: the CLI's words after `symlink`. add and link have
+// keys; unlinking everything, which nothing pre-checks, is only here.
 var commands = []reslist.Command[Model, Entry]{
-	{Name: "add", Args: "[<host> [<ws>]] [--dir]", Scope: reslist.Marked,
-		Help: "take a path into the workspace; alone: asks for the path", Do: Model.addCommand},
-	{Name: "link", Args: "[<path>…]", Scope: reslist.Global,
-		Help: "repair the shown links, or the named ones", Do: Model.linkCommand},
-	{Name: "unlink --all", Scope: reslist.Global,
+	{Name: "unlink --all", Menu: "u", Scope: reslist.Global,
 		Help: "unlink every symlink (nothing is pre-checked)", Do: Model.unlinkAllCommand},
 }
 
@@ -414,42 +415,10 @@ func (m Model) add(marked []Entry) (Model, tea.Cmd) {
 func (m Model) promptPath() (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.modal, cmd = m.modal.Prompt(stepAddPath, prompt.New("Add a path to the workspace",
-		prompt.WithHint("A file or folder on this machine. :add <path> [<ws-path>] [--dir] takes more."),
+		prompt.WithHint("A file or folder on this machine. `ws symlink add` takes a workspace path and --dir."),
 		prompt.WithValue("~/"),
 		prompt.WithCompleter(complete.Dirs)))
 	return m, cmd
-}
-
-// addCommand is `:add`: `add <host> [<ws-path>] [--dir]`; alone, the same as the key.
-func (m Model) addCommand(marked []Entry, args []string) (Model, tea.Cmd) {
-	if len(args) == 0 {
-		return m.add(marked)
-	}
-	const usage = "usage: add <host-path> [<ws-path>] [--dir]"
-	var req addRequest
-	var words []string
-	for _, a := range args {
-		switch {
-		case a == "--dir":
-			req.whole = true
-		case strings.HasPrefix(a, "-"):
-			return m, nav.Notify(nav.LevelWarn, "Unknown flag "+a+"; "+usage)
-		default:
-			words = append(words, a)
-		}
-	}
-	if len(words) == 0 || len(words) > 2 {
-		return m, nav.Notify(nav.LevelWarn, usage)
-	}
-	req.paths = words[:1]
-	if len(words) == 2 {
-		req.to = words[1]
-	}
-	if m.preparing {
-		return m, nil
-	}
-	m.preparing = true
-	return m, prepareAdd(m.env, req)
 }
 
 // prepared opens the add checklist, or hands a sudo add to the terminal.
@@ -515,11 +484,8 @@ func (m Model) openAdd(msg addPreparedMsg) Model {
 // unlink is ctrl+d: restore each row's file to its system path and forget it.
 func (m Model) unlink(rows []Entry) (Model, tea.Cmd) { return m.openUnlink(rows, false) }
 
-// unlinkAllCommand is `:unlink --all`.
-func (m Model) unlinkAllCommand(_ []Entry, args []string) (Model, tea.Cmd) {
-	if len(args) != 0 {
-		return m, nav.Notify(nav.LevelWarn, "usage: unlink --all")
-	}
+// unlinkAllCommand is `unlink --all`.
+func (m Model) unlinkAllCommand(_ []Entry, _ []string) (Model, tea.Cmd) {
 	if len(m.list.Items()) == 0 {
 		return m, nav.Notify(nav.LevelInfo, "No managed symlinks.")
 	}
@@ -617,34 +583,6 @@ func (m Model) link(rows []Entry) (Model, tea.Cmd) {
 	}
 	m.modal = m.modal.Confirm(stepLink, confirm.New("Link symlinks", pl))
 	return m, nil
-}
-
-// linkCommand is `:link`. With paths it repairs those entries; with nothing it
-// is the key.
-func (m Model) linkCommand(_ []Entry, args []string) (Model, tea.Cmd) {
-	var paths []string
-	for _, a := range args {
-		if strings.HasPrefix(a, "-") {
-			return m, nav.Notify(nav.LevelWarn, "Unknown flag "+a+"; usage: link [<path>…]")
-		}
-		paths = append(paths, a)
-	}
-	if len(paths) == 0 {
-		return m.link(m.list.Rows(reslist.All))
-	}
-	var rows []Entry
-	for _, raw := range paths {
-		abs, err := wsconfig.ExpandUserPath(raw)
-		if err != nil {
-			return m, nav.Notify(nav.LevelWarn, err.Error())
-		}
-		i := slices.IndexFunc(m.list.Items(), func(e Entry) bool { return e.System == abs })
-		if i < 0 {
-			return m, nav.Notify(nav.LevelWarn, "Not a managed symlink: "+abs)
-		}
-		rows = append(rows, m.list.Items()[i])
-	}
-	return m.link(rows)
 }
 
 // ── terminal ───────────────────────────────────────────────────────

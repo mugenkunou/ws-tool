@@ -23,7 +23,7 @@ func (m LoadedMsg) Card() (nav.Screen, nav.Card, bool) {
 		c.Issues = append(c.Issues, nav.Issue{Sev: nav.SevWarn, Screen: nav.ScreenPass, Text: "pass is not installed"})
 	case !h.Initialized:
 		c.Lines = []string{theme.Warn.Render("store not initialized")}
-		c.Issues = append(c.Issues, nav.Issue{Sev: nav.SevWarn, Screen: nav.ScreenPass, Text: "The pass store is not initialized: run :init"})
+		c.Issues = append(c.Issues, nav.Issue{Sev: nav.SevWarn, Screen: nav.ScreenPass, Text: "The pass store is not initialized: press . then i"})
 	default:
 		c.Lines = []string{theme.OK.Render(format.Plural(h.EntryCount, "entry"))}
 	}

@@ -61,6 +61,7 @@ Section numbers are stable: code comments cite them as `spec §x.y`.
   - [6.4 Lists](#64-lists)
   - [6.5 Screen keys](#65-screen-keys)
   - [6.6 Command bar](#66-command-bar)
+  - [6.6a Action menu](#66a-action-menu)
   - [6.7 Dialogs](#67-dialogs)
   - [6.8 Handing over the terminal](#68-handing-over-the-terminal)
   - [6.9 Parity](#69-parity)
@@ -107,8 +108,8 @@ Section numbers are stable: code comments cite them as `spec §x.y`.
 - **Offload, don't reimplement.** `git`, `pass`, `crontab`, agent-tmux and the coreutils do
   the work. ws orchestrates them, keeps state, and reports.
 - **One grammar.** Every command is `ws <noun> <verb>`, and every verb means one thing
-  (Part 3). The TUI uses the same nouns as screens and the same verbs as keys and `:`
-  commands (§7.6).
+  (Part 3). The TUI uses the same nouns as screens and the same verbs as keys and action-menu
+  entries (§7.6).
 - **One description per list.** Each list is described once (its fields), and the CLI
   `ls`, its `--json`, and its TUI screen are all rendered from that description (§7.5).
 - **JSON everywhere.** Every command supports `--json` with a versioned envelope (§4.4).
@@ -604,8 +605,8 @@ such as `rclone bisync`.
 | `cron` | ws-managed cron jobs | Cron |
 | `sync` | the one-way mirror of the workspace for folder-sync clients (`sync.mirror.target`) | Sync |
 | `trash` | the XDG trash and the soft-delete integrations | Trash |
-| `config` | `ws.json` | Workspace (row, `:config …`) |
-| `completion` | shell completion | Workspace (rows, `:completion …`) |
+| `config` | `ws.json` | Workspace (row, action menu) |
+| `completion` | shell completion | Workspace (rows, action menu) |
 
 Workspace commands without a noun: `ws init`, `ws layout`, `ws env`, `ws tui`, `ws version`, `ws help`. The
 Workspace screen hosts them, and every noun above has exactly one screen (`TestEveryNounHasATUIHome`). Bare `ws`
@@ -1017,12 +1018,12 @@ TUI's prompt history, not through dedicated verbs or keys).
 | --- | --- | --- | --- |
 | `ws repo ls [repo…]` | RO | List status and hygiene findings | screen |
 | `ws repo show <repo>` | RO | Show one repo in full: status, upstream, every finding | `enter` |
-| `ws repo git [repo…] -- <git args…>` | RW | Run a git command in each repo | `!`, `:git` |
-| `ws repo run [repo…] -- <cmd…>` | RW | Run any command in each repo | `!` with `git` erased, `:run` |
-| `ws repo configure [repo…]` | RW | Ask for whatever a repo's git setup is missing (identity, upstream, default branch, credentials) and set it | `c`, `:configure` |
-| `ws repo root add <dir>` | RW | Add a discovery root | `:root add` |
-| `ws repo root ls` | RO | List the discovery roots | `:root ls` |
-| `ws repo root rm <dir>` | RW | Remove a discovery root | `:root rm` |
+| `ws repo git [repo…] -- <git args…>` | RW | Run a git command in each repo | `!` |
+| `ws repo run [repo…] -- <cmd…>` | RW | Run any command in each repo | `!` with `git` erased |
+| `ws repo configure [repo…]` | RW | Ask for whatever a repo's git setup is missing (identity, upstream, default branch, credentials) and set it | `c` |
+| `ws repo root add <dir>` | RW | Add a discovery root | `.` `a` |
+| `ws repo root ls` | RO | List the discovery roots | `.` `l` |
+| `ws repo root rm <dir>` | RW | Remove a discovery root | `.` `r` |
 
 #### Selecting repos
 
@@ -1245,8 +1246,7 @@ $ ws repo git --dirty -y status --short
 Exit: `0`, `1` (every action failed, or a bad flag or target), or `3` (some failed).
 
 TUI: `!` opens the command prompt pre-filled with `git `, for the marked repos, else every
-repo the filter shows; in a repo's detail, for that repo. `:git <args…>` runs without the
-prompt. The prompt:
+repo the filter shows; in a repo's detail, for that repo. The prompt:
 
 - `↑` and `↓` step through the lines run from the screen before, the most recent first.
 - Its suggestions start with the lines run before that begin with what is typed, the
@@ -1273,8 +1273,7 @@ This is `ws repo git` for any command: the same arguments, rules and output, wit
 pipes. Without a command, ws prints `usage: ws repo run [repo…] -- <cmd…>` and exits 1. In
 `--json` the command is `repo.run`.
 
-TUI: erase the `git ` in the `!` prompt, or type `:run <cmd…>` (bare `:run` opens the
-prompt empty).
+TUI: erase the `git ` in the `!` prompt.
 
 #### `ws repo root add`
 
@@ -1294,7 +1293,7 @@ Output: the prompt line. `--dry-run` prints the action. In `--json` the command 
 
 Exit: `0`. `1` on a missing, non-directory, outside or duplicate path, or a failed write.
 
-TUI: `:root add <dir>` opens the one-action checklist. Bare `:root add` asks for a directory,
+TUI: the Repos `.` `a` (root add) asks for a directory, then opens the one-action checklist,
 with directory completion and a hint listing the current roots. Afterwards the list is
 read again over the new roots.
 
@@ -1313,7 +1312,7 @@ and `data` is `{"roots": ["<abs path>"…]}`.
 
 Exit: `0`. `1` when `ws.json` cannot be read.
 
-TUI: `:root ls` shows the roots in a read-only view. `esc` goes back.
+TUI: the Repos `.` `l` (root ls) shows the roots in a read-only view. `esc` goes back.
 
 #### `ws repo root rm`
 
@@ -1335,8 +1334,7 @@ Output: the prompt line. `--dry-run` prints the action. In `--json` the command 
 
 Exit: `0`. `1` on an unknown root, the last root, or a failed write.
 
-TUI: `:root rm <dir>` opens a one-action checklist. `:root rm` with no directory opens a
-checklist of every root with none ticked (decision).
+TUI: the Repos `.` `r` (root rm) opens a checklist of every root with none ticked (decision): tick the one to remove.
 
 ---
 
@@ -1360,10 +1358,10 @@ one wins:
 | Command | RO/RW | Does | TUI |
 | --- | --- | --- | --- |
 | `ws symlink ls` | RO | managed symlinks and problems | screen |
-| `ws symlink add <host-path> [<ws-path>]` | RW | move into the workspace and link back; `<ws-path>` picks where | `a`, `:add` |
-| `ws symlink add <folder> [--dir\|--files]` | RW | a folder as one entry, or one entry per file | `:add … --dir` |
-| `ws symlink link [<host-path>…]` | RW | make or repair links from the workspace copies | `l`, `:link` |
-| `ws symlink unlink <host-path…> \| --all` | RW | put the real content back, stop managing it | `ctrl+d`, `:unlink --all` |
+| `ws symlink add <host-path> [<ws-path>]` | RW | move into the workspace and link back; `<ws-path>` picks where | `a` |
+| `ws symlink add <folder> [--dir\|--files]` | RW | a folder as one entry, or one entry per file | — |
+| `ws symlink link [<host-path>…]` | RW | make or repair links from the workspace copies | `l` |
+| `ws symlink unlink <host-path…> \| --all` | RW | put the real content back, stop managing it | `ctrl+d`, `.` `u` |
 
 #### Terms
 
@@ -1564,7 +1562,7 @@ TUI: `a`.
   untracked ones. The others are listed in a note.
 - **Without marks**, it asks for a host path, then shows the add checklist for it. Sudo
   paths are handed to the CLI.
-- `:add <host-path> [<ws-path>] [--dir]` is the two-path form.
+- The `a` key takes one host path. The `<ws-path>` and `--dir` forms are CLI only.
 
 #### `ws symlink link`
 
@@ -1616,7 +1614,7 @@ status `failed`.
 Exit: 0, 1 or 3.
 
 TUI: `l` repairs the missing and broken rows and registers orphans among the shown rows (the
-marked rows, else every row the filter shows). A drifted row is left for `a`. `:link [<path>…]`.
+marked rows, else every row the filter shows). A drifted row is left for `a`.
 
 #### `ws symlink unlink`
 
@@ -1644,7 +1642,7 @@ Each entry is one action:
 4. The entry is removed from `symlinks[]`.
 
 The CLI asks per action as usual. In the TUI, `ctrl+d` pre-checks the rows you chose, and
-`:unlink --all` starts with every action unchecked (§4.7). A failed entry stays registered.
+`unlink --all` starts with every action unchecked (§4.7). A failed entry stays registered.
 
 Output:
 
@@ -1664,7 +1662,7 @@ restore)`.
 
 Exit: 0, 1 or 3.
 
-TUI: `ctrl+d` (selected rows), `:unlink --all`.
+TUI: `ctrl+d` (selected rows), and `.` `u` (unlink --all).
 
 #### Removed and renamed
 
@@ -1723,8 +1721,8 @@ ws does not track that. `scan` reports each tool's folder and nothing else, and 
 | --- | --- | --- | --- |
 | `ws skill scan [--tool <name>]` | RO | a grid of both shelves against every known tool | screen |
 | `ws skill show <skill> [--path]` | RO | one skill: shelf, version, folder, tools | the screen's row |
-| `ws skill install [<skill>…] [--tool <name>] [--dev[=<dir>] \| --providers]` | RW | link skills into one tool; `--providers` copies the skills tool binaries ship | `i`, `:install` |
-| `ws skill uninstall [<skill>…] [--tool <name>]` | RW | remove the links ws made in one tool | `u`, `:uninstall` |
+| `ws skill install [<skill>…] [--tool <name>] [--dev[=<dir>] \| --providers]` | RW | link skills into one tool; `--providers` copies the skills tool binaries ship | `i` |
+| `ws skill uninstall [<skill>…] [--tool <name>]` | RW | remove the links ws made in one tool | `u` |
 | `ws skill eject <skill>` | RW | copy a built-in into `agent/skills/`; it is yours from then on | — |
 | `ws skill check` | RO | skills and scripts that drifted from this ws | — |
 
@@ -1930,7 +1928,7 @@ a missing name is a usage error (exit 1). Ctrl-C at the prompt exits 130.
 | --- | --- | --- | --- |
 | `ws scratch ls` | RO | list scratch directories | screen |
 | `ws scratch new [name]` | RW | create a directory and open it in the editor | `a` |
-| `ws scratch add <path…>` | RW | move existing files or directories into scratch | `:add` (and `s` on Ignore) |
+| `ws scratch add <path…>` | RW | move existing files or directories into scratch | `.` `a` (and `s` on Ignore) |
 | `ws scratch open <name>` | RO | open a directory in your editor | `enter` |
 | `ws scratch tag <name> [tag…]` | RW | add or remove tags | `t` |
 | `ws scratch rm <name…>` | RW | soft-delete directories to the trash | `ctrl+d` |
@@ -2047,7 +2045,7 @@ JSON: `scratch.add`, with `moved` (`source`, `path` per executed move) and `acti
 
 Exit: 0, 1, or 3.
 
-TUI: `:add <path…>` on Scratch, with path completion. On the Ignore screen, `s` runs the
+TUI: the Scratch `.` `a` (add) takes paths, with path completion. On the Ignore screen, `s` runs the
 same move for the selected warnings.
 
 #### `ws scratch open`
@@ -2198,11 +2196,11 @@ The Ignore screen has three views: Warnings (`lint`, where it opens), Muted and 
 | `ws ignore ls --muted` | RO | the muted warnings | Muted view |
 | `ws ignore lint [path…]` | RO | check synced files and warn about the unhygienic ones | Warnings view (the default) |
 | `ws ignore add <path…>` | RW | stop syncing paths | `i` |
-| `ws ignore rm <path…>` | RW | sync paths again | `:rm` |
+| `ws ignore rm <path…>` | RW | sync paths again | `ctrl+d` (Ignored view) |
 | `ws ignore mute <path…>` | RW | hide a path's warnings; it keeps syncing | `m` |
 | `ws ignore unmute <path…> \| --stale` | RW | show its warnings again; `--stale`: drop muted paths that no longer exist | `u` (muted view) |
-| `ws ignore check <path>` | RO | will this path sync, and which rule decides | `:check` |
-| `ws ignore tree [dir] [-L n]` | RO | the tree with sync status | `:tree` |
+| `ws ignore check <path>` | RO | will this path sync, and which rule decides | `.` `c` |
+| `ws ignore tree [dir] [-L n]` | RO | the tree with sync status | `.` `t` |
 | `ws ignore edit` | RW | edit the rules in `$EDITOR` | `e` |
 | `ws scratch add <path…>` | RW | move a path out of the workspace into scratch (see `ws scratch`) | `s` |
 | shell `rm <path>` | — | delete a path (it goes to the trash once `ws trash enable` has run) | `ctrl+d` (to the trash) |
@@ -2384,7 +2382,7 @@ JSON: `ignore.rm`, `data.actions`.
 
 Exit: 0, 1 (including a path that cannot be un-ignored this way), 3.
 
-TUI: `ctrl+d` in the Ignored view, on the selected paths, and `:rm <path>` from any view.
+TUI: `ctrl+d` in the Ignored view, on the selected paths.
 
 #### `ws ignore mute`
 
@@ -2480,7 +2478,7 @@ JSON: `ignore.check`. Keys: `path`, `included`, `rule` (`<default>` when no rule
 
 Exit: 0 whether the path syncs or not; 1 when the path is missing or outside the workspace.
 
-TUI: `:check <path>` answers in a notice.
+TUI: the Ignore `.` `c` (check) answers in a notice.
 
 #### `ws ignore tree`
 
@@ -2503,7 +2501,7 @@ JSON: `ignore.tree`. One record per entry within the depth: `path`, `status` (`s
 
 Exit: 0; 1 when `dir` is missing or outside the workspace.
 
-TUI: `:tree [dir]`, paged.
+TUI: the Ignore `.` `t` (tree) is paged.
 
 #### `ws ignore edit`
 
@@ -2556,8 +2554,8 @@ them. Pass and credential health have their own screens, Pass and Credentials.
 | `ws ignore add <file…>` | RW | stop syncing the file (see `ws ignore`) | `i` |
 | `ws secret mute <file:line…>` | RW | hide a finding's severity; it keeps appearing | `m` |
 | `ws secret unmute <file:line…>` | RW | show it at full severity again | `m` (toggles) |
-| `ws secret skip <dir…>` | RW | stop scanning a directory entirely | `:skip` |
-| `ws secret unskip <dir…>` | RW | scan it again | `:unskip` |
+| `ws secret skip <dir…>` | RW | stop scanning a directory entirely | `.` `s` |
+| `ws secret unskip <dir…>` | RW | scan it again | `.` `u` |
 
 #### Findings and anchors
 
@@ -2732,7 +2730,7 @@ JSON: `secret.skip`, `data.actions`.
 
 Exit: 0, 1, 3.
 
-TUI: `:skip` prompts for a directory, pre-filled with the cursor finding's directory; `:skip <dir>` skips it directly.
+TUI: the Secrets `.` `s` (skip) prompts for a directory, pre-filled with the cursor finding's directory.
 
 #### `ws secret unskip`
 
@@ -2750,7 +2748,7 @@ JSON: `secret.unskip`, `data.actions`.
 
 Exit: 0, 1, 3.
 
-TUI: `:unskip <dir>`.
+TUI: the Secrets `.` `u` (unskip) takes a directory.
 
 ---
 
@@ -2758,20 +2756,20 @@ TUI: `:unskip <dir>`.
 
 `pass` is the pass(1) password store on this machine (`$PASSWORD_STORE_DIR`, else
 `~/.password-store`). It holds the git tokens that `ws credential` serves and whatever else you keep in it
-(`pass insert <entry>`). The Pass screen lists its health, one fact per row, and `:` runs its
+(`pass insert <entry>`). The Pass screen lists its health, one fact per row, and its action menu (`.`) runs its
 commands there. ws runs `pass` and `gpg` to do the work.
 The `pass` commands work without an initialized workspace (decision), because the store
 belongs to the machine.
 
 | Command | RO/RW | Does | TUI |
 | --- | --- | --- | --- |
-| `ws pass init` | RW | create the store with a GPG key, and turn on git versioning | `:init` |
-| `ws pass status` | RO | gpg, pass, store, git, remote, credential helper | Pass screen, `:status` |
-| `ws pass audit` | RO | problems with the store and its entries | `:audit` |
-| `ws pass backup enable [--remote <url>]` | RW | set up the private git backup | `:backup enable` |
-| `ws pass backup disable` | RW | stop backing up | `:backup disable` |
-| `ws pass backup status` | RO | remote, ahead/behind, recent commits | `:backup status` |
-| `ws pass backup push` | RW | commit anything pending and push | `:backup push` |
+| `ws pass init` | RW | create the store with a GPG key, and turn on git versioning | `.` `i` |
+| `ws pass status` | RO | gpg, pass, store, git, remote, credential helper | Pass screen |
+| `ws pass audit` | RO | problems with the store and its entries | `.` `a` |
+| `ws pass backup enable [--remote <url>]` | RW | set up the private git backup | `.` `e` |
+| `ws pass backup disable` | RW | stop backing up | `.` `d` |
+| `ws pass backup status` | RO | remote, ahead/behind, recent commits | `.` `s` |
+| `ws pass backup push` | RW | commit anything pending and push | `.` `p` |
 
 #### `ws pass init`
 
@@ -2796,7 +2794,7 @@ JSON: `pass.init`. `data.actions`, and `data.pass` (the `pass status` keys).
 
 Exit: 0, 1, 3.
 
-TUI: `:pass init` hands over the terminal.
+TUI: `.` `i` (pass init) hands over the terminal.
 
 Compatibility: `--git-remote <url>` still works, hidden, and adds the
 `pass backup enable` action.
@@ -2832,7 +2830,7 @@ JSON: `pass.status`. Keys: `gpg_available`, `pass_installed`, `initialized`, `st
 Exit: 0. A missing piece is reported, not an error.
 
 TUI: the Pass screen lists it, one row per fact (gpg, pass, store, git, remote, workspace
-copy). `:status` opens the full report as a view.
+copy).
 
 #### `ws pass audit`
 
@@ -2855,7 +2853,7 @@ findings).
 
 Exit: 0 with or without findings.
 
-TUI: `:audit` opens the findings as a view; `esc` returns.
+TUI: `.` `a` (audit) opens the findings as a view; `esc` returns.
 
 #### `ws pass backup`
 
@@ -2914,7 +2912,7 @@ JSON: `pass.backup.enable`, with `data.actions`, `data.remote_url`, and `data.vi
 
 Exit: 0, 1, 3.
 
-TUI: `:pass backup enable [--remote <url>]` hands over the terminal (it may prompt).
+TUI: the Pass `.` `e` (backup enable) takes `--remote <url>` in its wizard and hands over the terminal (it may prompt).
 
 ##### `ws pass backup disable`
 
@@ -2937,7 +2935,7 @@ JSON: `pass.backup.disable`, `data.actions`.
 
 Exit: 0, 1, 3.
 
-TUI: `:pass backup disable` opens the checklist.
+TUI: the Pass `.` `d` (backup disable) opens the checklist.
 
 ##### `ws pass backup status`
 
@@ -2975,7 +2973,7 @@ JSON: `pass.backup.status`. `data` has `enabled`, `initialized`, `repo_path`, `e
 
 Exit: 0, whatever the state.
 
-TUI: `:pass backup status` opens a scrolling view; `esc` returns.
+TUI: the Pass `.` `s` (backup status) opens a scrolling view; `esc` returns.
 
 ##### `ws pass backup push`
 
@@ -2998,7 +2996,7 @@ JSON: `pass.backup.push`, with `data.actions`, `data.committed`, `data.pushed`,
 
 Exit: 0. 1 when backup is not enabled, the remote is refused, or the commit or push fails.
 
-TUI: `:pass backup push` opens the checklist.
+TUI: the Pass `.` `p` (backup push) opens the checklist.
 
 Cron: the `pass-backup` job runs `ws pass backup push --quiet` every 30 minutes.
 
@@ -3024,7 +3022,7 @@ ws suggests this gently, and only where you'd look anyway:
 - `pass init` and `pass backup enable` end with the same one-line tip.
 - The Pass screen ends with a `workspace copy` row, empty when there is none.
 - The Dashboard lists it as advice: last, at info level, never as a warning (§6.5). `enter`
-  pre-fills the command in the command bar.
+  goes to the Pass screen's `workspace copy` row.
 
 It is never an error or a warning, it never changes an exit code, and `pass audit` doesn't
 report it. (decision, by the user: advise without shouting.)
@@ -3034,15 +3032,15 @@ report it. (decision, by the user: advise without shouting.)
 ### `ws credential`
 
 `credential` is ws acting as git's credential helper: when git needs HTTPS credentials, it
-asks ws, and ws answers from pass. The Credentials screen lists its health (gpg, pass, store, helper), and `:` runs its
-commands there. It works without a workspace.
+asks ws, and ws answers from pass. The Credentials screen lists its health (gpg, pass, store, helper), and its action menu (`.`)
+runs its commands there. It works without a workspace.
 In a workspace, `enable` and `status` also look at the remotes of the workspace repos.
 
 | Command | RO/RW | Does | TUI |
 | --- | --- | --- | --- |
-| `ws credential enable` | RW | make git use ws (pass) for credentials | `:enable` |
-| `ws credential disable` | RW | stop it | `:disable` |
-| `ws credential status` | RO | helper config, pass entries, remote coverage | Credentials screen, `:status` |
+| `ws credential enable` | RW | make git use ws (pass) for credentials | `.` `e` |
+| `ws credential disable` | RW | stop it | `.` `d` |
+| `ws credential status` | RO | helper config, pass entries, remote coverage | Credentials screen |
 
 #### Lookup
 
@@ -3085,7 +3083,7 @@ JSON: `credential.enable`, `data.actions`.
 
 Exit: 0, 1, 3.
 
-TUI: `:credential enable` hands over the terminal.
+TUI: `.` `e` (credential enable) hands over the terminal.
 
 #### `ws credential disable`
 
@@ -3108,7 +3106,7 @@ JSON: `credential.disable`, `data.actions`.
 
 Exit: 0, 1, 3.
 
-TUI: `:credential disable` hands over the terminal.
+TUI: `.` `d` (credential disable) hands over the terminal.
 
 #### `ws credential status`
 
@@ -3129,7 +3127,7 @@ JSON: `credential.status`. Keys: `connected`, `helper`, `pass` (the `pass status
 
 Exit: 0.
 
-TUI: the Credentials screen shows `credential helper` connected or not. `:status` shows
+TUI: the Credentials screen shows `credential helper` connected or not. `.` `s` shows
 the full report, paged.
 
 #### Plumbing: `ws git-credential-helper get|store|erase`
@@ -3157,7 +3155,7 @@ the live user crontab (`crontab -l`), the declared crontab `<workspace>/configs/
 | `ws cron rm <job…>` | RW | remove from the live crontab and from `configs/crontab` | `ctrl+d` |
 | `ws cron run <job>` | RW | run the job now and record the result | `r` |
 | `ws cron log [job…] [--lines n]` | RO | recent lines of the cron log | enter |
-| `ws cron apply` | RW | make the live crontab match `configs/crontab` | `:apply` |
+| `ws cron apply` | RW | make the live crontab match `configs/crontab` | `.` `a` |
 
 **Jobs.** Each job runs one command in the workspace. `<ws>` is the absolute path of the ws
 binary and `<W>` the absolute workspace path.
@@ -3419,7 +3417,7 @@ prints "The crontab already matches /home/user/Workspace/configs/crontab."
 Exit: 0, 1, 3. A missing `configs/crontab` exits 1:
 "/home/user/Workspace/configs/crontab not found; ws cron add <job> creates it".
 
-TUI: `:apply` opens the same checklist.
+TUI: `.` `a` (apply) opens the same checklist.
 
 ### `ws trash`
 
@@ -3448,10 +3446,10 @@ None of these commands needs an initialized workspace (decision).
 | `ws trash ls` | RO | trashed items, newest first | screen |
 | `ws trash restore <item…>` | RW | move items back to their original paths | `r` |
 | `ws trash rm <item…>` | RW | delete items forever | `ctrl+d` |
-| `ws trash empty` | RW | delete every item forever | `:empty` |
+| `ws trash empty` | RW | delete every item forever | `.` `e` |
 | `ws trash prune --older-than <age>` | RW | delete forever the items trashed before the age | `p` |
-| `ws trash enable [--no-shell-rm] [--no-vscode] [--no-file-explorer]` | RW | turn on soft-delete integrations | `:enable` |
-| `ws trash disable` | RW | turn off the shell `rm` integration | `:disable` |
+| `ws trash enable [--no-shell-rm] [--no-vscode] [--no-file-explorer]` | RW | turn on soft-delete integrations | `.` `n` |
+| `ws trash disable` | RW | turn off the shell `rm` integration | `.` `d` |
 | `ws trash status` | RO | integrations, trash location and totals | screen header |
 
 `status` reports the machine: which integrations route deletes into the trash, where the trash
@@ -3577,7 +3575,7 @@ An empty trash gets no action: "Trash is empty."
 
 Exit: 0, 1.
 
-TUI: `:empty` always covers the whole trash and ignores marks and the filter (decision). To delete
+TUI: `.` `e` (empty) always covers the whole trash and ignores marks and the filter (decision). To delete
 only some rows, use `ctrl+d`.
 
 #### `ws trash prune`
@@ -3635,7 +3633,7 @@ working on a machine whose rc file arrived through sync but which has no `ws-tra
 
 Exit: 0, 1, 3.
 
-TUI: `:enable` opens the checklist with every integration that is off. Unticking one replaces the
+TUI: `.` `n` (enable) opens the checklist with every integration that is off. Unticking one replaces the
 `--no-…` flags.
 
 #### `ws trash disable`
@@ -3661,7 +3659,7 @@ legacy state file. Both are pre-checked.
 
 Exit: 0, 1, 3.
 
-TUI: `:disable`.
+TUI: `.` `d` (disable).
 
 #### `ws trash status`
 
@@ -3699,7 +3697,7 @@ OneDrive, a USB stick). `ws sync push` copies the workspace into `sync.mirror.ta
 folder the client watches, and the client uploads it (Factor XII). The mirror is ws's: you
 never edit it. MEGA does not need this noun (§2.6).
 
-TUI: the Sync screen (§6.5) is `ws sync status` and runs `:push`; `restore` is CLI only, since
+TUI: the Sync screen (§6.5) is `ws sync status`, and its `.` `p` is push; `restore` is CLI only, since
 it runs once on a fresh machine. Every command needs `rsync` on `PATH`.
 
 | Command | RO/RW | Does |
@@ -3778,7 +3776,7 @@ Exit: 0, including a busy lock. 1 on a failed check, a refusal, or an rsync erro
 Cron: the `sync-push` job runs `ws sync push --quiet` every 30 minutes. It is not installed
 by default: `ws cron add sync-push`.
 
-TUI: `:push` on the Sync screen opens a one-action checklist ("Push to <target>: N to copy, M
+TUI: `.` `p` (push) on the Sync screen opens a one-action checklist ("Push to <target>: N to copy, M
 to delete"), built from the same questions the CLI asks. Where the CLI would ask first (a
 foreign stamp, or deletions over `sync.max_delete_pct`), the action starts unchecked with the
 question in the note, and ticking it is the answer.
@@ -3821,8 +3819,8 @@ Exit: 0, 1.
 ### Workspace commands
 
 Commands about the workspace itself and the ws binary. The Workspace screen hosts them (§6.5):
-its rows are `version`, `ws.json`, the completion state of each shell and `layout`, and its `:`
-commands are `config show|edit` and `completion enable|disable`, from any screen. The setup
+its rows are `version`, `ws.json`, the completion state of each shell and `layout`, and its action
+menu (`.`) has `config show|edit` and `completion enable|disable`, on that screen. The setup
 screen covers `init`.
 
 | Command | RO/RW | Does | TUI |
@@ -3830,11 +3828,11 @@ screen covers `init`.
 | `ws init` | RW | create the workspace layout, `ws.json` and `.megaignore` | setup screen `enter` |
 | `ws layout` | RO | print the workspace folders and the homes outside it, with their purpose | Workspace rows |
 | `ws env` | RO | print the paths scripts use, as shell `export` lines | — (for scripts) |
-| `ws config show [--defaults]` | RO | print the resolved `ws.json`, or the built-in defaults | `:config show` |
-| `ws config edit` | RW | open `ws.json` in `$EDITOR`, validate, save | `:config edit` |
+| `ws config show [--defaults]` | RO | print the resolved `ws.json`, or the built-in defaults | `.` `s` |
+| `ws config edit` | RW | open `ws.json` in `$EDITOR`, validate, save | `.` `e` |
 | `ws completion bash\|zsh\|fish` | RO | print the completion script | — (for shells) |
-| `ws completion enable [--shell s]` | RW | add completion to the shell rc file | `:completion enable` |
-| `ws completion disable [--shell s]` | RW | remove it | `:completion disable` |
+| `ws completion enable [--shell s]` | RW | add completion to the shell rc file | `.` `n` |
+| `ws completion disable [--shell s]` | RW | remove it | `.` `d` |
 | `ws tui` | RO | open the terminal UI | — |
 | `ws version [--short]` | RO | print version information | Workspace row |
 | `ws help [noun [verb…]]` | RO | print help | `?` |
@@ -3999,7 +3997,7 @@ $ ws config show
 
 Exit: 0. 1 when the workspace is not initialized or `ws.json` is invalid.
 
-TUI: `:config show`, from any screen, shows it in the pager.
+TUI: the Workspace `.` `s` (config show) shows it in the pager.
 
 #### `ws config edit`
 
@@ -4028,7 +4026,7 @@ command reports "No changes."
 
 Exit: 0. 1 for an invalid edit, a concurrent change, or an editor failure.
 
-TUI: `:config edit`, from any screen, hands the terminal to `ws config edit`.
+TUI: the Workspace `.` `e` (config edit) hands the terminal to `ws config edit`.
 
 #### `ws completion`
 
@@ -4167,8 +4165,8 @@ TUI: `?` on every screen.
 
 `ws tui` is a full-screen interface over the same `internal/` packages as the CLI. It
 follows k9s's conventions: one screen per noun, a few global keys that mean the same
-thing everywhere, screen keys named after their verbs, marks for acting on many rows, and
-a `:` command bar that takes the CLI's own words.
+thing everywhere, screen keys named after their verbs, marks for acting on many rows, a
+`:` command bar that switches screens, and a `.` action menu for the rare verbs that have no key.
 
 ### 6.1 Frame
 
@@ -4189,7 +4187,7 @@ a add • ctrl+d unlink • l link • space mark … • tab screens • : comm
   replaces the footer line while it is open. Toasts ("📋 Copied …") draw over the footer's
   last line.
 - **Footer.** The screen's own keys come first. The global part (`tab screens`, `: command`,
-  `? help`, `q quit`) is always shown in full. If the screen's part does not fit, it ends in
+  `? help`, `q quit`) is always shown in full, (the `.` menu is listed in `?` help, where there is one). If the screen's part does not fit, it ends in
   `…`, and `?` shows everything. Each screen's keys are chosen so the footer fits at 100
   columns.
 - **Sizes.** Every screen fits any size down to 20×6. Below that, the TUI shows "Terminal
@@ -4216,9 +4214,10 @@ These mean the same on every screen. No screen binds them to anything else.
 | --- | --- |
 | `enter` | open the row: drill in, view, or launch (each screen says what) |
 | `esc` | one level up: close a dialog, then clear the filter, then clear the marks, then leave a detail view, then go to the Dashboard. Does nothing at the Dashboard. |
-| `:` | the command bar (§6.6) |
+| `:` | the command bar (§6.6): `:<screen>`, `:help`, `:q` |
+| `.` | the action menu of this screen (§6.6a): its verbs that have no key here. Screens with no menu ignore it |
 | `/` | filter the list (same expressions as `--filter`) |
-| `?` | full help in a centered popup, grouped: this screen, lists, general, `:` commands; `esc` or `?` closes it |
+| `?` | full help in a centered popup, grouped: this screen, lists, general, and an Actions (`.`) column; `esc` or `?` closes it |
 | `q`, `ctrl+c` | quit (`ctrl+c` always works, even inside a dialog) |
 | `tab` / `shift+tab`, `]` / `[` | next / previous screen |
 | `ctrl+r` | refresh this screen |
@@ -4272,8 +4271,8 @@ Each key is shown with its label, never as a bare letter.
 Screen keys are lowercase and mnemonic: usually the first letter of the verb the footer
 shows (`i` ignore, `b` back up, `m` mute, `l` link). A letter keeps one meaning on a screen,
 but may mean different verbs on different screens (`r` runs on Cron
-and restores on Trash), as in k9s. Global keys never change meaning. The `:`
-commands are listed with each screen. They are the CLI's words after the noun.
+and restores on Trash), as in k9s. Global keys never change meaning. Each screen's
+verbs that have no key are in its action menu (`.`, §6.6a), under their letters.
 
 **Dashboard.** The workspace's home: a greeting, **Needs attention** (errors, then
 warnings, then info), and an overview grid with one card per screen. Each screen derives its
@@ -4286,11 +4285,8 @@ card reads `N symlinks managed`. A problem line names the broken, missing or dri
 Dashboard does not run the `$HOME` walk for untracked links). The Dashboard has no actions of its own.
 
 Some rows are advice, not problems. They are listed last, at info level, never in red or
-yellow, and they never count towards the card's status. `enter` on such a row opens the
-command bar pre-filled with the suggested command, which you can run, edit or dismiss with
-`esc`. One example is a pass store outside the workspace: "Your pass store syncs only
-through its own git remote. A copy in the workspace would sync with the sync client too." `enter` then
-pre-fills `:symlink add ~/.password-store --dir`.
+yellow, and they never count towards the card's status. `enter` on such a row goes to the place its Focus names, as for any attention row (for shell completion, the Workspace screen with that row selected). The fix is a key or a menu entry there. One example is a pass store outside the workspace: "Your pass store syncs only
+through its own git remote. A copy in the workspace would sync with the sync client too." The fix is `a` on Symlinks, with `~/.password-store`.
 
 **Repos**
 
@@ -4303,8 +4299,7 @@ pre-fills `:symlink add ~/.password-store --dir`.
 There is no key per git verb (decision, by the user): `git pull`, `git push`, `git fetch`
 are a line in the prompt, and the history puts the ones you run most first.
 
-`:` commands: `git <args…>`, `run <cmd…>` (bare, either opens the prompt), `configure`,
-`root add [<dir>]`, `root ls`, `root rm [<dir>]`.
+Action menu (`.`): `a` root add, `l` root ls, `r` root rm. `git` and `run` are the `!` prompt, and `configure` is `c`.
 
 **Symlinks**
 
@@ -4317,7 +4312,7 @@ are a line in the prompt, and the history puts the ones you run most first.
 The rows are exactly those of `ws symlink ls`. Sudo rows are handed to the CLI in the terminal. (decision: unlink is `ctrl+d` like every other
 destructive verb, §6.3, not `u`, which is already `unmute` on Ignore.)
 
-`:` commands: `add <host-path> [<ws-path>] [--dir]`, `link [<path>…]`, `unlink --all`.
+Action menu (`.`): `u` unlink --all.
 
 **Scratch**
 
@@ -4328,7 +4323,7 @@ destructive verb, §6.3, not `u`, which is already `unmute` on Ignore.)
 | `t` | tag: prompt for tags, comma-separated; `-tag` removes one; `tab` completes tags used before | selected |
 | `ctrl+d` | delete (to trash) | selected |
 
-`:` commands: `add <path>`.
+Action menu (`.`): `a` add, which takes paths, with path completion.
 
 **Sessions**
 
@@ -4348,8 +4343,6 @@ lines stand above the list (the version nudge, §5 `ws session`).
 | `s` | grep: prompt for text, then list the matching lines (`agent-tmux grep --json`); `enter` shows one, `esc` returns | none |
 | `x` | kill the live sessions, through a checklist; their recordings stay | selected |
 | `ctrl+d` | delete: move ended recordings to the trash (`agent-tmux rm`), through a checklist; live ones are left out | selected |
-
-`:` commands: `grep <text>` (the same as `s`).
 
 The Dashboard card counts live and ended sessions. A live session whose recorder stopped is
 a problem there (it opens the screen filtered to `recorder=stopped`), and the version nudge
@@ -4373,7 +4366,7 @@ view and the counts: `Warnings 12 · Muted 47 · Ignored 3,210`.
 `ctrl+d` always removes the row from its view, and the checklist names exactly what happens
 ("Delete … (to trash)", or "Sync again: …").
 
-`:` commands: `rm <path>`, `check <path>`, `tree [dir]` (paged), `lint <path>`.
+Action menu (`.`): `c` check, `t` tree (paged).
 
 **Secrets.** The findings, and nothing else: pass and credential health are on their own screens.
 
@@ -4384,16 +4377,15 @@ view and the counts: `Warnings 12 · Muted 47 · Ignored 3,210`.
 | `i` | ignore the file (stop syncing it) | selected |
 | `m` | mute, toggling: an unmuted row mutes, a muted row unmutes | selected |
 
-`:` commands: `skip [dir]` (prompts when no directory is given, pre-filled with the cursor
-finding's directory), `unskip <dir>`.
+Action menu (`.`): `s` skip (prompts for a directory, pre-filled with the cursor finding's directory), `u` unskip.
 
 **Pass.** One row per fact about the store: gpg, pass, store, git, remote, workspace copy.
-Rows are not acted on; the screen is its `:` commands: `init`, `status`, `audit`,
-`backup enable`, `backup disable`, `backup status`, `backup push`. `init` and
+Rows are not acted on. Action menu (`.`): `i` init, `a` audit, `e` backup enable, `d` backup disable,
+`s` backup status, `p` backup push. `init` and
 `backup enable` hand the terminal to the CLI wizard.
 
 **Credentials.** One row per fact about the helper: gpg, pass, store, credential helper.
-`:` commands: `enable`, `disable` (wizards) and `status` (paged).
+Action menu (`.`): `e` enable, `d` disable (wizards), `s` status (paged).
 
 Here `a` means allow, because Secrets has nothing to add. It's the one screen where a
 global letter takes the screen's own verb, and the footer says "a allow".
@@ -4407,7 +4399,7 @@ global letter takes the screen's own verb, and the footer says "a allow".
 | `ctrl+d` | remove (uninstall) | selected |
 | `r` | run now | selected |
 
-`:` commands: `apply`.
+Action menu (`.`): `a` apply.
 
 **Trash.** The header shows integration status and trash size.
 
@@ -4417,7 +4409,7 @@ global letter takes the screen's own verb, and the footer says "a allow".
 | `ctrl+d` | delete forever | selected |
 | `p` | prune: prompt for an age, then a checklist | all rows |
 
-`:` commands: `empty`, `enable`, `disable`, `status`.
+Action menu (`.`): `e` empty, `n` enable, `d` disable.
 
 **Skills.** The header shows the skills folder, how many skills it holds, and which tools are
 detected (`●`) and how many are not (`○`). A row is a skill of either shelf: its name, its
@@ -4430,8 +4422,7 @@ gone is listed and cannot be installed.
 | `i` | install: choose one tool (detected first), then a checklist of links | selected |
 | `u` | uninstall: choose one of the tools that hold ws's links, then a checklist | selected |
 
-`:` commands: `install [<tool>]`, `uninstall [<tool>]`. A tool named in the command skips the
-chooser. A row the CLI would skip (already installed, broken, or a link that is not ws's) is
+A row the CLI would skip (already installed, broken, or a link that is not ws's) is
 named in the checklist's note.
 
 The Dashboard card counts the skills and those installed somewhere. A broken link and a skill
@@ -4442,10 +4433,10 @@ rows.
 totals, and a notice for skipped symlinks. The list is what the next push would copy or delete
 (action, path). The load is `ws sync`'s rsync dry run, and it re-reads `ws.json`, so a new
 target takes effect on refresh. With no `sync.mirror.target` the screen says how to set it
-(`:config edit`, then refresh). A missing rsync or a bad target is the screen's error. There
+(config edit on the Workspace screen, then refresh). A missing rsync or a bad target is the screen's error. There
 are no keys beyond the list's.
 
-`:` commands: `push` (§5, `ws sync push`).
+Action menu (`.`): `p` push (§5, `ws sync push`).
 
 The Dashboard card shows the last push's age and the pending count. A wiped stamp, a foreign
 stamp and a tripped delete guard are warnings. None is an error, since a push still works in
@@ -4456,36 +4447,34 @@ each case. A workspace with no target gets a muted line and no attention row.
 with the load error as the note, never a crash); `completion bash|zsh|fish` (on or off, with
 the rc file; the `$SHELL` row says "your shell"); `layout <folder>`, one per `ws layout`
 folder with its purpose; and `home <name>` for the temp, cache, session and scratch homes with
-their `WS_*` variable. `enter` on the `ws.json` row hands over `config edit`.
+their `WS_*` variable. `enter` on the `ws.json` row hands over `config edit`, and `enter` on a completion row opens its enable or disable checklist.
 
-`:` commands, from any screen (hosted nouns, §6.6): `config show` (paged), `config edit`
-(editor; every screen reloads on return), `completion enable [--shell s]` and `completion
-disable [--shell s]`. The completion commands act on the marked completion rows, else the
+Action menu (`.`), on this screen (hosted nouns, §6.6a): `s` config show (paged), `e` config edit
+(editor; every screen reloads on return), `n` completion enable [--shell s] and `d` completion
+disable [--shell s]. The completion actions act on the marked completion rows, else the
 completion row under the cursor, else `$SHELL`, and show the CLI's plan, one action per
 shell, pre-checked.
 
 The Dashboard card reads "ws vX · ws.json ok" and which shells have completion. A `ws.json`
-that fails to load is an error. Completion off in `$SHELL` is advice: `enter` pre-fills
-`:completion enable`.
+that fails to load is an error. Completion off in `$SHELL` is advice: `enter` goes to that completion row, selected.
 
 ### 6.6 Command bar
 
-`:` opens a one-line command bar in place of the footer. It takes the CLI's words:
+`:` opens a one-line command bar in place of the footer. It switches screens and quits. It does not run verbs.
 
 | Typed | Runs |
 | --- | --- |
 | `:<screen>` | switch screen. Any unique prefix of the noun or title works: `:rep`, `:dot`, `:sess`, `:dash` |
-| `:<verb> [args]` | the active screen's command, the CLI words after the noun: `:link` on Symlinks is `ws symlink link` |
-| `:<noun> <verb> [args]` | switch to the noun's screen and run it there: `:repo git status` |
-| `:<hosted noun> <verb> [args]` | the same, on the screen that hosts the noun: `:config edit` (Workspace) |
-| `:help`, `:q` | full help; quit |
+| `:help` | full help |
+| `:q`, `:quit` | quit |
 
-While typing, the bar shows the matching completions after the cursor, dimmed. `tab`
-completes the first one, `enter` runs, `esc` cancels. An unknown command shows a notice
-with the closest match. Full help (`?`) lists every `:` command of the active screen.
+While typing, the bar shows the matching completions after the cursor, dimmed: the screen names, `help` and `q`. `tab` completes the first one, `enter` runs, `esc` cancels. An unknown word shows `Unknown command` with the closest match. Verbs such as `:push` are not typed here; they are in the action menu (§6.6a).
 
-A command runs the way its TUI counterpart does: natively (a prompt, the checklist, or a
-view) when the screen has one, otherwise handed to the CLI (§6.8).
+### 6.6a Action menu
+
+`.` opens the action menu of the active screen: a chooser (§6.7) listing the verbs that screen has no key for. Each entry shows `[letter] name  detail`. Press its letter, or `enter` on the highlighted row, to run it; `esc` cancels. Letters are local to each menu, so the same letter can mean different verbs on different screens. They are never `j` or `k`, which move. A verb that needs an argument opens a prompt, chooser or checklist to ask for it.
+
+Screens with no menu ignore `.`, and full help shows the `. actions` key only where there is one. Skills and Sessions have none. Full help (`?`) lists the same entries in its Actions (`.`) column, as `.a  name args help`. Each screen's entries are listed in §6.5.
 
 ### 6.7 Dialogs
 
@@ -4514,7 +4503,7 @@ runs them, and resumes and refreshes the screen when they exit.
 - **Interactive programs:** agent-tmux's `open`, `create` and `show` (the Sessions screen), and terminal editors for
   `e` and the `edit` commands, `config edit` included (your editor, §4.10, default `vim`).
   GUI editors (for example `code`) are launched without suspending.
-- **A command line in one repo:** the Repos `!` prompt (or `:git`, `:run`) for one repo runs
+- **A command line in one repo:** the Repos `!` prompt for one repo runs
   on the terminal, so git's pager, editor and prompts work. The terminal waits for `enter`
   before the TUI redraws.
 - **CLI wizards:** `init` (the setup screen), `repo configure`,
@@ -4527,7 +4516,7 @@ Everything else is native.
 
 ### 6.9 Parity
 
-Every CLI command is reachable in the TUI as a key, a `:` command, or the screen's list, on
+Every CLI command is reachable in the TUI as a key, an action-menu entry (§6.6a), or the screen's list, on
 the screen that owns its noun. The exceptions each carry a stated reason: plumbing
 (`git-credential-helper get|store|erase`), shell output (`completion bash|zsh|fish`, `env`),
 what the TUI covers outside a screen (`init` is the setup screen, `help` is `?`, `tui` is the
@@ -4674,8 +4663,8 @@ too rigid, not a reason to force the screen into it.
 - **Old names stay as hidden aliases** (§3.5). They print a one-line rename hint when a person
   types them, and stay silent when crontab, git or a shell hook calls them.
 - **TUI keys follow k9s:** global keys that never change meaning, lowercase screen keys named
-  after their verbs, no shift+letter actions, and rare actions in a `:` command bar that takes
-  the CLI's own words (§6).
+  after their verbs, no shift+letter actions, and rare actions in the `.` action menu
+  (§6.6a).
 - **Layout never shifts.** The list status line (filter, sort, marks) is reserved at the
   bottom, and the command bar replaces the footer.
 
@@ -4722,7 +4711,7 @@ for run, record and restore).
 - The editor is one setting (§4.10), and `ws.json` always holds every key (§2.3).
 - Tests enforce the grammar (§9.7): help and completion list only documented commands, every
   verb is in the glossary, no screen rebinds a global key or uses a shift+letter action,
-  every CLI command has a TUI key or `:` command, and marking a row moves no row.
+  every CLI command has a TUI key or action-menu entry, and marking a row moves no row.
 
 ### 7.7 Sync clients
 
@@ -4966,7 +4955,7 @@ add or rename one:
    alias is absent from help and completion, prints the rename hint on stderr when a person
    types it, and stays silent when called as plumbing.
 6. **Give the command a TUI home in the same change**, on the screen that owns its noun
-   (§6.2): a screen key named after the verb, or a `:` command (§6.5), plus its entry in
+   (§6.2): a screen key named after the verb, or an action-menu entry (§6.6a), plus its entry in
    `internal/tui/app/coverage.go`, and a line per flag in `internal/tui/app/flags.go`. A new
    noun needs a screen or a host (§9.10, "Adding a screen"). The tests below fail until
    each step is done, and their messages name the file to edit.
@@ -5117,16 +5106,16 @@ plan types in `internal/plan`). The TUI is built on Charm v2: `charm.land/bubble
 | Package | Role |
 | --- | --- |
 | `internal/tui/app` | Root model. Owns the screens (built from `registry.go`), routes messages, handles global keys, lays out header, body, notice and footer, and shows the setup screen when the workspace is not initialized. `coverage.go` and `flags.go` record how the TUI covers each CLI command and flag. |
-| `internal/tui/nav` | The contract between app and screens: the `Screen` enum and its `specs` (icon, title, noun, hosted nouns), the `Component` interface, the Dashboard's `Summary`/`Card`/`Issue`, `ResizeMsg`, `UpMsg`, `GotoMsg`, `RefreshMsg`, `ReloadEnvMsg`, `NoticeMsg`, `CommandMsg`. |
+| `internal/tui/nav` | The contract between app and screens: the `Screen` enum and its `specs` (icon, title, noun, hosted nouns), the `Component` interface, the Dashboard's `Summary`/`Card`/`Issue`, `ResizeMsg`, `UpMsg`, `GotoMsg`, `RefreshMsg`, `ReloadEnvMsg`, `NoticeMsg`, `MenuMsg`. |
 | `internal/tui/keys` | **Every key binding** (`keys.go`). The app handles `Global`, and each screen and dialog handles its own map. |
 | `internal/tui/screens/<name>` | One package per screen: dashboard, repos, symlinks, scratch, sessions, ignore, sync, secrets, pass, credential, cron, trash, skills, workspace, setup. State is unexported, and outputs are exported `LoadedMsg` types; `card.go` turns a `LoadedMsg` into the screen's Dashboard card. |
-| `internal/tui/cmdbar` | The `:` command bar: a one-line input drawn in place of the footer, with inline completion from the active screen's commands, the screen names and the global commands. It emits `nav.CommandMsg`. |
+| `internal/tui/cmdbar` | The `:` command bar: a one-line input drawn in place of the footer, with inline completion from the screen names, `help` and `q`. It switches screens and quits; verbs are in the action menu (`reslist.MenuChooser`). |
 | `internal/tui/confirm` | The action-plan checklist: review (toggle), running (one `tea.Cmd` per action), done. Emits `DoneMsg{Result}`. |
 | `internal/tui/prompt`, `choose` | Text input with ghost-panel suggestions (fixed list or async `Completer`), and a single-choice list. |
 | `internal/tui/modal` | Holds a screen's one open dialog, tagged with a typed step. `Match` routes the dialog's result back. |
 | `internal/tui/handover` | Suspends the TUI to give a program the terminal (`Run`), launches GUI programs (`Launch`), runs CLI wizards (`WS` with `Pause` or `Paged`), and opens editors (`Editor`). |
 | `internal/tui/selection`, `clip` | Mouse drag selection over the rendered frame, and clipboard copy (OSC 52 plus a native tool). |
-| `internal/tui/reslist` | The list every list screen is: a `listview` over typed items described by a `resource.Schema`, with filter, sort, marks, describe, JSON and the reserved status line built in. Screens declare their actions with a scope, and their `:` commands. `reslist.Run` hands each one its rows. |
+| `internal/tui/reslist` | The list every list screen is: a `listview` over typed items described by a `resource.Schema`, with filter, sort, marks, describe, JSON and the reserved status line built in. Screens declare their actions with a scope, and their menu commands (with a `Menu` letter). `reslist.Run` hands each one its rows. |
 | `internal/tui/listview`, `layout`, `theme`, `format`, `complete` | The load-state-aware table, column sizing from width, lipgloss styles (16-colour, matching `internal/style`), cell formatting, and path completion. |
 | `internal/tui/env` | Workspace context resolved at startup (paths, config, dirs), reloaded with `nav.ReloadEnvMsg` after init. |
 | `internal/tui/tuitest` | Snapshot (golden file) and fits-in-terminal assertions. |
@@ -5143,23 +5132,20 @@ the rows the scope covers. The scopes are in §6.4. In code they are `Global`, `
 `Selected` and `All`, and a screen never picks its own rows. An `All` action that receives
 every row may use the whole-subsystem operation (`trash.Empty`), and otherwise acts on just the rows.
 
-**`:` commands are actions too.** Each screen declares its `commands` (the CLI words after the
-noun, such as `backup push` or `root rm`), each with a scope and a `Do` that also receives the
-typed arguments. The command bar completes from them, and `?` lists them. A key and a command
-for the same verb share one `Do`.
+**Menu commands are actions too.** Each screen declares its `commands` (`reslist.Command`: the CLI words after the noun, such as `backup push` or `root rm`, with its args, help, scope, `Do` and a `Menu` letter). `reslist.MenuChooser` builds the action menu from them, and `reslist.MenuPick` runs the pick. A key and a menu entry for the same verb share one `Do`.
 
 **Parity is tested, not reviewed.**
 
 - `cmd` `TestCLICoverage`: every CLI subcommand (read from its help) has an entry in
-  `internal/tui/app/coverage.go`: a screen key, a `:` command, or a `Reason` (`List`,
+  `internal/tui/app/coverage.go`: a screen key, a menu command, or a `Reason` (`List`,
   `Elsewhere`, `Plumbing`, `Shell`, `CLIOnly` with a note). A new command fails until that is
   decided.
 - `cmd` `TestFlagCoverage`: every flag of every command has a line in
   `internal/tui/app/flags.go` saying where the TUI offers it or why it does not.
 - `cmd` `TestEveryNounHasATUIHome`: every CLI noun is a screen's noun or hosted by one.
 - `cmd` `TestDispatchOnlyRunsTableCommands`: only table commands (and plumbing) run.
-- `app` `TestCoverageKeysExist`, `TestCoverageCommandsExist`: each entry's key or `:` command
-  is one its screen offers.
+- `app` `TestCoverageKeysExist`: each entry's key is one its screen offers.
+- `app` `TestCoverageCommandsExist`: each entry's `Cmd` is a menu command its screen declares. `TestMenuLettersAreSafe`: menu letters are unique per screen and never `j` or `k`. `TestEveryMenuEntryOpensItsDialog`: every letter does something.
 - `app` `TestCoverageReasons`: an entry with neither key nor command gives a reason; none is
   parked on the Dashboard (`TestNoCoverageOnTheDashboard`), and each is on the screen that owns
   its noun.
@@ -5168,7 +5154,7 @@ for the same verb share one `Do`.
 - `app` `TestDashboardHasACardForEveryScreen`: every screen's load result gives the
   Dashboard a card.
 - `app` `TestListScreensShareListKeys`: every list screen is a `reslist`, and none binds a
-  global key (`enter esc : / ? q ctrl+r d y e a ctrl+d space ctrl+space ctrl+\ ctrl+a > <` and
+  global key (`enter esc : . / ? q ctrl+r d y e a ctrl+d space ctrl+space ctrl+\ ctrl+a > <` and
   movement) to another verb. Secrets' `a` (allow) is the one listed exception.
 - `app` `TestNoShiftLetterActions`: no binding uses an uppercase letter, except `G` for
   movement.
@@ -5233,10 +5219,10 @@ for the same verb share one `Do`.
 - **Navigation.** Screens are `nav.Screen` constants, never strings. `esc` always moves one
   level up (§6.3). A screen with nested levels (repos list, then detail) handles `esc` itself,
   and at its top level returns `nav.Up`.
-- **Command bar.** `:` is a global key handled by the app. It resolves `:<screen>`, then
-  `:<noun> <verb…>` (switch, then run), then `:<verb…>` (the active screen's command), and sends
-  the screen a `nav.CommandMsg{Words, Args}`. The screen runs the matching command through
-  `reslist.Run`, so its rows and scope rules are the same as for keys.
+- **Command bar.** `:` is a global key handled by the app. It resolves `:<screen>`, `:help` and
+  `:q`/`:quit`, and nothing else. `.` is a global key too: the app sends the active screen a
+  `nav.MenuMsg{}`, the screen opens `reslist.MenuChooser`, and `reslist.MenuPick` runs the pick
+  through `reslist.Run`, so its rows and scope rules are the same as for keys.
 - **Layout.** No absolute coordinates. The app sends each screen a `nav.ResizeMsg` with the
   body's size on every resize, and screens and dialogs derive everything from it. The frame is
   clipped to the terminal.

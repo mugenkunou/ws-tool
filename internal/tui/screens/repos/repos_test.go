@@ -121,6 +121,16 @@ func pump(t *testing.T, m Model, cmd tea.Cmd) Model {
 
 func view(m Model) string { return tuitest.Plain(m.View()) }
 
+// menuPick opens the `.` menu and presses letter in its chooser, then pumps
+// the chooser's result and whatever the command returns.
+func menuPick(t *testing.T, m Model, letter string) Model {
+	t.Helper()
+	m = update(t, m, nav.MenuMsg{})
+	var cmd tea.Cmd
+	m, cmd = updateRun(m, press(letter))
+	return pump(t, m, cmd)
+}
+
 func TestActionScopes(t *testing.T) {
 	want := map[string]reslist.Scope{"enter": reslist.Cursor, "!": reslist.All, "c": reslist.Selected}
 	got := map[string]reslist.Scope{}
@@ -193,12 +203,17 @@ func TestRefreshRereads(t *testing.T) {
 }
 
 func TestCommands(t *testing.T) {
-	var names []string
+	var got []string
+	seen := map[string]bool{}
 	for _, c := range New(testEnv(t)).Commands() {
-		names = append(names, c.Name)
+		got = append(got, c.Name+"="+c.Menu)
+		if c.Menu == "" || c.Menu == "j" || c.Menu == "k" || seen[c.Menu] {
+			t.Errorf("%s: menu letter %q must be set, unique, and not j or k", c.Name, c.Menu)
+		}
+		seen[c.Menu] = true
 	}
-	if strings.Join(names, ",") != "git,run,configure,root add,root ls,root rm" {
-		t.Errorf("commands = %v", names)
+	if strings.Join(got, ",") != "root add=a,root ls=l,root rm=r" {
+		t.Errorf("commands = %v", got)
 	}
 }
 
@@ -206,7 +221,7 @@ func TestOneRepoGetsTheTerminal(t *testing.T) {
 	e := testEnv(t)
 	m := newModel(t, e, st(e, "a", nil), st(e, "b", nil))
 	m = pressAll(t, m, "down", "space") // mark b
-	m, cmd := updateRun(m, nav.CommandMsg{Words: []string{"git", "log", "-p"}})
+	m, cmd := m.start("git log -p", m.list.Rows(reslist.Selected))
 	if cmd == nil || m.modal.Open() {
 		t.Fatal("one repo hands the terminal over: no checklist")
 	}
@@ -224,7 +239,7 @@ func TestManyReposGoThroughTheChecklistAndJoinTheHistory(t *testing.T) {
 	e := testEnv(t)
 	e.HistoryFile = filepath.Join(e.Paths.Workspace, "state", "repo-history.json")
 	m := newModel(t, e, st(e, "a", nil), st(e, "b", nil))
-	m, cmd := updateRun(m, nav.CommandMsg{Words: []string{"git", "status", "-s"}})
+	m, cmd := m.start("git status -s", m.list.Rows(reslist.All))
 	if got := view(m); !strings.Contains(got, "Run `git status -s`") || !strings.Contains(got, "Run in a") || !strings.Contains(got, "Run in b") {
 		t.Fatalf("checklist:\n%s", got)
 	}
@@ -293,7 +308,7 @@ func TestRunShowsOutputPerRepo(t *testing.T) {
 		}
 	}
 	m := newModel(t, e, st(e, "a", nil), st(e, "b", nil))
-	m, cmd := updateRun(m, nav.CommandMsg{Words: []string{"run"}}) // bare: the prompt, empty
+	m, cmd := m.promptLine(m.list.Rows(reslist.All), "") // bare: the prompt, empty
 	m = pump(t, m, cmd)
 	if got := promptTitle(m); got != "Run in 2 repos" {
 		t.Fatalf("prompt:\n%s", view(m))
@@ -355,7 +370,7 @@ func rootsInConfig(t *testing.T, e env.Env) []string {
 func TestRootRmOneRootThroughTheChecklist(t *testing.T) {
 	e := withRoots(t, testEnv(t), "a", "b")
 	m := newModel(t, e)
-	m, _ = updateRun(m, nav.CommandMsg{Words: []string{"root", "rm", filepath.Join(e.Paths.Workspace, "a")}})
+	m, _ = m.removeRoot([]string{filepath.Join(e.Paths.Workspace, "a")})
 	got := view(m)
 	if !strings.Contains(got, "Remove 1 repo root") || !strings.Contains(got, "Remove repo root ") { // the path itself is cut to the view width
 		t.Fatalf("checklist:\n%s", got)
@@ -378,7 +393,7 @@ func TestRootRmOneRootThroughTheChecklist(t *testing.T) {
 func TestBareRootRmListsEveryRootUnticked(t *testing.T) {
 	e := withRoots(t, testEnv(t), "a", "b")
 	m := newModel(t, e)
-	m, _ = updateRun(m, nav.CommandMsg{Words: []string{"root", "rm"}})
+	m = menuPick(t, m, "r")
 	got := view(m)
 	if !strings.Contains(got, "Remove 2 repo roots") || strings.Count(got, "[ ]") != 2 || strings.Contains(got, "[x]") {
 		t.Errorf("bare :root rm should list both roots, none ticked:\n%s", got)
@@ -388,7 +403,7 @@ func TestBareRootRmListsEveryRootUnticked(t *testing.T) {
 func TestRootRmRefusesTheLastRoot(t *testing.T) {
 	e := withRoots(t, testEnv(t), "a")
 	m := newModel(t, e)
-	m, cmd := updateRun(m, nav.CommandMsg{Words: []string{"root", "rm", filepath.Join(e.Paths.Workspace, "a")}})
+	m, cmd := m.removeRoot([]string{filepath.Join(e.Paths.Workspace, "a")})
 	if m.modal.Open() {
 		t.Fatal("the last root must not get a checklist")
 	}
@@ -401,7 +416,7 @@ func TestRootRmRefusesTheLastRoot(t *testing.T) {
 func TestRootLsIsAReadOnlyView(t *testing.T) {
 	e := withRoots(t, testEnv(t), "a", "b")
 	m := newModel(t, e)
-	m, _ = updateRun(m, nav.CommandMsg{Words: []string{"root", "ls"}})
+	m = menuPick(t, m, "l")
 	got := view(m)
 	for _, r := range []string{"a", "b"} {
 		if !strings.Contains(got, filepath.Join(e.Paths.Workspace, r)) {
@@ -419,8 +434,7 @@ func TestAddRootPromptShowsRootsAndAddsThroughChecklist(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := newModel(t, e)
-	m, cmd := updateRun(m, nav.CommandMsg{Words: []string{"root", "add"}}) // bare: the prompt
-	m = pump(t, m, cmd)
+	m = menuPick(t, m, "a") // bare: the prompt
 	if got := view(m); !strings.Contains(got, "Current roots: a") {
 		t.Fatalf("prompt hint:\n%s", got)
 	}
@@ -429,7 +443,7 @@ func TestAddRootPromptShowsRootsAndAddsThroughChecklist(t *testing.T) {
 	if got := view(m); !strings.Contains(got, "Add repo root") {
 		t.Fatalf("one-action checklist missing:\n%s", got)
 	}
-	m, cmd = updateRun(m, press("enter"))
+	m, cmd := updateRun(m, press("enter"))
 	m = pump(t, m, cmd)
 	_, cmd = updateRun(m, press("enter"))
 	pump(t, m, cmd)

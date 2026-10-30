@@ -71,6 +71,7 @@ type step int
 const (
 	stepPlan step = iota
 	stepCheckPath
+	stepMenu // the `.` menu
 )
 
 type handoverTag int
@@ -89,7 +90,6 @@ type Model struct {
 	stale    []wsignore.Violation
 	allPaths []wsignore.IgnoredPath
 	view     keys.IgnoreView
-	under    []string // absolute paths `:lint <path>` narrowed the views to
 	scanning bool
 	width    int
 	height   int
@@ -249,24 +249,13 @@ func (m Model) rescan() (Model, tea.Cmd) {
 	return m, Load(m.env)
 }
 
-// within reports whether abs is at or under one of m.under, or m.under is empty.
-func (m Model) within(abs string) bool {
-	if len(m.under) == 0 {
-		return true
-	}
-	return slices.ContainsFunc(m.under, func(d string) bool { return repo.IsWithin(abs, d) })
-}
-
 // split puts the live warnings in Warnings, the muted ones in Muted, and the
-// paths that do not sync in Ignored; `:lint <path>` keeps what is under it.
+// paths that do not sync in Ignored.
 // In Muted the stale entries come last, so the live ones are never buried
 // under rows whose path is gone.
 func (m Model) split() Model {
 	var live, muted, stale []wsignore.Violation
 	for _, v := range append(slices.Clone(m.all), m.stale...) {
-		if !m.within(m.abs(v.Path)) {
-			continue
-		}
 		switch {
 		case v.Type == wsignore.StaleType:
 			stale = append(stale, v)
@@ -279,9 +268,7 @@ func (m Model) split() Model {
 	muted = append(muted, stale...)
 	var ignored []wsignore.IgnoredPath
 	for _, p := range m.allPaths {
-		if m.within(m.abs(p.Path)) {
-			ignored = append(ignored, p)
-		}
+		ignored = append(ignored, p)
 	}
 	m.warn = m.warn.SetItems(live)
 	m.muted = m.muted.SetItems(muted)
@@ -293,6 +280,10 @@ func (m Model) split() Model {
 func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	if st, ok := m.modal.Match(msg); ok {
 		m.modal = m.modal.Close()
+		if st == stepMenu {
+			next, cmd := reslist.MenuPick(m, m.warn, commands, msg)
+			return next, cmd
+		}
 		return m.dialogResult(st.(step), msg)
 	}
 
@@ -331,12 +322,12 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 			return m.rescan()
 		}
 		return m, nil
-	case nav.CommandMsg:
+	case nav.MenuMsg:
 		if m.modal.Open() {
 			return m, nil
 		}
-		next, cmd, _ := reslist.RunCommand(m, m.warn, commands, msg)
-		return next, cmd
+		m.modal = m.modal.Choose(stepMenu, reslist.MenuChooser("Ignore actions", commands))
+		return m, nil
 	}
 
 	if m.modal.Open() {
@@ -381,10 +372,6 @@ func (m Model) handleKey(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 		}
 	}
 	if key.Matches(k, m.keys.Back) {
-		if len(m.under) > 0 { // leave the `:lint <path>` narrowing
-			m.under = nil
-			return m.split(), nil
-		}
 		return m, nav.Up
 	}
 	var cmd tea.Cmd
@@ -471,17 +458,10 @@ var ignoredActions = func() []reslist.Action[Model, wsignore.IgnoredPath] {
 	}, common[wsignore.IgnoredPath]()...)
 }()
 
-// commands are the `:` commands: the CLI's words after `ignore`. rm shares
-// rmPaths with the Ignored view's stop-ignoring key.
+// commands are the `.` menu: the CLI's words after `ignore`. rm, mute, lint and
+// the rest have keys or are the views; check and tree are only here.
 var commands = []reslist.Command[Model, wsignore.Violation]{
-	{Name: "rm", Args: "<path…>", Help: "stop ignoring paths: sync them again", Scope: reslist.Global,
-		Do: func(m Model, _ []wsignore.Violation, args []string) (Model, tea.Cmd) {
-			if len(args) == 0 {
-				return m, nav.Notify(nav.LevelWarn, "usage: rm <path…>")
-			}
-			return m.rmPaths(args)
-		}},
-	{Name: "check", Args: "<path>", Help: "will this path sync?", Scope: reslist.Global,
+	{Name: "check", Menu: "c", Args: "<path>", Help: "will this path sync?", Scope: reslist.Global,
 		Do: func(m Model, _ []wsignore.Violation, args []string) (Model, tea.Cmd) {
 			if len(args) == 0 {
 				var cmd tea.Cmd
@@ -491,38 +471,15 @@ var commands = []reslist.Command[Model, wsignore.Violation]{
 			}
 			return m, check(m.env, args[0])
 		}},
-	{Name: "tree", Args: "[dir]", Help: "what syncs, as a tree (paged)", Scope: reslist.Global,
+	{Name: "tree", Menu: "t", Args: "[dir]", Help: "what syncs, as a tree (paged)", Scope: reslist.Global,
 		Do: func(m Model, _ []wsignore.Violation, args []string) (Model, tea.Cmd) {
 			argv := append([]string{"ignore", "tree"}, args...)
 			return m, handover.Run(handover.Paged(handover.WS(m.env.Paths, argv...)), handoverRules)
 		}},
-	{Name: "lint", Args: "<path>", Help: "warnings under a path", Scope: reslist.Global,
-		Do: func(m Model, _ []wsignore.Violation, args []string) (Model, tea.Cmd) { return m.lint(args) }},
 }
 
 // Commands implements nav.Commander.
 func (m Model) Commands() []nav.CommandInfo { return reslist.CommandInfos(commands) }
-
-// lint is `ignore lint <path…>`: the Warnings view, narrowed to what is under
-// the paths (none: everything). esc leaves the narrowing.
-func (m Model) lint(args []string) (Model, tea.Cmd) {
-	var under []string
-	for _, raw := range args {
-		abs, err := wsconfig.ExpandUserPath(raw)
-		if err != nil {
-			return m, nav.Notify(nav.LevelError, fmt.Sprintf("invalid path %q: %s", raw, err))
-		}
-		if !repo.IsWithin(abs, m.env.Paths.Workspace) {
-			return m, nav.Notify(nav.LevelError, fmt.Sprintf("path is outside the workspace %s: %s", m.env.Paths.Workspace, abs))
-		}
-		if _, err := os.Stat(abs); err != nil {
-			return m, nav.Notify(nav.LevelError, "path does not exist: "+abs)
-		}
-		under = append(under, abs)
-	}
-	m.under, m.view = under, keys.IgnoreWarnings
-	return m.split(), nil
-}
 
 // ── plans: the CLI's, as checklists ───────────────────────────────
 
@@ -883,13 +840,6 @@ func (m Model) header() string {
 		tab(keys.IgnoreIgnored, "Ignored", len(m.ignored.Items())),
 	}
 	line := strings.Join(parts, theme.Muted.Render(" · "))
-	if len(m.under) > 0 {
-		var rel []string
-		for _, u := range m.under {
-			rel = append(rel, m.env.Rel(u))
-		}
-		line += theme.Muted.Render("  under " + strings.Join(rel, ", ") + " — " + m.keys.Back.Help().Key + " clears")
-	}
 	return lipgloss.NewStyle().MaxWidth(m.width).Render(line)
 }
 

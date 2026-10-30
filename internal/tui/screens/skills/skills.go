@@ -164,14 +164,6 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		return m, nil
 	}
 
-	if c, ok := msg.(nav.CommandMsg); ok {
-		if m.modal.Open() {
-			return m, nil
-		}
-		next, cmd, _ := reslist.RunCommand(m, m.list, commands, c)
-		return next, cmd
-	}
-
 	if m.modal.Open() {
 		var cmd tea.Cmd
 		m.modal, cmd = m.modal.Update(msg)
@@ -196,9 +188,8 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 	return m, cmd
 }
 
-// actions is every skills key and the rows it acts on (spec §6.5). A key and
-// its `:` command share one function, so the key asks for the tool and the
-// command takes it as an argument.
+// actions is every skills key and the rows it acts on (spec §6.5). The key
+// asks for the tool in a chooser.
 var actions = func() []reslist.Action[Model, Entry] {
 	k := keys.Skills()
 	return []reslist.Action[Model, Entry]{
@@ -206,16 +197,6 @@ var actions = func() []reslist.Action[Model, Entry] {
 		{Key: k.Uninstall, Scope: reslist.Selected, Do: func(m Model, rows []Entry) (Model, tea.Cmd) { return m.uninstall(rows, nil) }},
 	}
 }()
-
-// commands are the `:` commands: the CLI's words after `skill`. scan is the list
-// itself, so it has no command.
-var commands = []reslist.Command[Model, Entry]{
-	{Name: "install", Args: "[<tool>]", Help: "link the selected skills into a tool", Scope: reslist.Selected, Do: Model.install},
-	{Name: "uninstall", Args: "[<tool>]", Help: "remove the selected skills' links from a tool", Scope: reslist.Selected, Do: Model.uninstall},
-}
-
-// Commands implements nav.Commander.
-func (m Model) Commands() []nav.CommandInfo { return reslist.CommandInfos(commands) }
 
 // install is `skill install` for rows: into the tool args names, else into the
 // one the chooser picks.

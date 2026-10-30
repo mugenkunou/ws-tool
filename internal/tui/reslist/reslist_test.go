@@ -9,7 +9,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/mugenkunou/ws-tool/internal/resource"
-	"github.com/mugenkunou/ws-tool/internal/tui/nav"
+	"github.com/mugenkunou/ws-tool/internal/tui/choose"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 )
 
@@ -431,7 +431,7 @@ func TestSetFilter(t *testing.T) {
 	}
 }
 
-func TestRunCommand(t *testing.T) {
+func TestMenu(t *testing.T) {
 	type model struct{ ran []string }
 	do := func(name string) func(model, []fruit, []string) (model, tea.Cmd) {
 		return func(m model, rows []fruit, args []string) (model, tea.Cmd) {
@@ -440,37 +440,35 @@ func TestRunCommand(t *testing.T) {
 		}
 	}
 	cmds := []Command[model, fruit]{
-		{Name: "backup", Scope: Global, Do: do("backup")},
-		{Name: "backup status", Scope: Global, Do: do("status")},
-		{Name: "fetch", Scope: All, Do: do("fetch")},
-		{Name: "rm", Args: "<name>", Scope: Selected, Do: do("rm")},
+		{Name: "backup push", Menu: "p", Scope: Global, Do: do("push")},
+		{Name: "hidden", Scope: Global, Do: do("hidden")}, // no letter: not in the menu
+		{Name: "fetch", Menu: "f", Scope: All, Do: do("fetch")},
+		{Name: "rm", Menu: "r", Args: "<name>", Scope: Selected, Do: do("rm")},
 	}
 	l := press(newList(), "space", "down") // pear marked, cursor on apple
-	run := func(words ...string) (model, bool) {
-		m, _, ok := RunCommand(model{}, l, cmds, nav.CommandMsg{Words: words})
-		return m, ok
+	pick := func(i int) (model, tea.Cmd) {
+		return MenuPick(model{}, l, cmds, choose.ResultMsg{Index: i})
 	}
-	if m, ok := run("backup", "push"); !ok || m.ran[0] != "backup::push" {
-		t.Errorf("backup push: %v %v", m.ran, ok)
+	// The chooser lists only the commands with a letter, and the index counts those.
+	if m, _ := pick(0); m.ran[0] != "push::" {
+		t.Errorf("push: %v", m.ran)
 	}
-	if m, ok := run("backup", "status"); !ok || m.ran[0] != "status::" {
-		t.Errorf("the longest name wins: %v %v", m.ran, ok)
+	if m, _ := pick(1); m.ran[0] != "fetch:pear:" {
+		t.Errorf("scope All covers the marked rows, args are empty: %v", m.ran)
 	}
-	if m, ok := run("fetch"); !ok || m.ran[0] != "fetch:pear:" {
-		t.Errorf("scope All covers the marked rows: %v %v", m.ran, ok)
+	if m, _ := pick(2); m.ran[0] != "rm:pear:" {
+		t.Errorf("scope Selected: %v", m.ran)
 	}
-	if m, ok := run("rm", "x"); !ok || m.ran[0] != "rm:pear:x" {
-		t.Errorf("scope Selected: %v %v", m.ran, ok)
+	if m, cmd := MenuPick(model{}, l, cmds, choose.ResultMsg{Cancelled: true}); len(m.ran) != 0 || cmd != nil {
+		t.Errorf("cancelled: %v", m.ran)
 	}
-	if _, ok := run("nope"); ok {
-		t.Error("an unknown command is not handled")
-	}
-	if got := CommandInfos(cmds); len(got) != 4 || got[3].Args != "<name>" {
+	if got := CommandInfos(cmds); len(got) != 4 || got[3].Args != "<name>" || got[0].Menu != "p" {
 		t.Errorf("CommandInfos = %v", got)
 	}
-	// A command that needs rows does nothing when there are none.
+	// A command that needs rows says so when there are none.
 	empty := New(schema, []Col[fruit]{{Key: "name", Min: 10}, {Key: "price", Min: 5}}, "none").SetSize(40, 10).SetItems(nil)
-	if m, _, ok := RunCommand(model{}, empty, cmds, nav.CommandMsg{Words: []string{"rm"}}); !ok || len(m.ran) != 0 {
-		t.Errorf("no rows: %v %v", m.ran, ok)
+	m, cmd := MenuPick(model{}, empty, cmds, choose.ResultMsg{Index: 2})
+	if len(m.ran) != 0 || cmd == nil {
+		t.Errorf("no rows: %v", m.ran)
 	}
 }

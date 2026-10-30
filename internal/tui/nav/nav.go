@@ -43,9 +43,9 @@ type Spec struct {
 	// Noun is the CLI noun the screen is named after: what `:` takes to
 	// switch to it (spec §6.6). The Dashboard and Workspace have none.
 	Noun string
-	// Hosts are CLI nouns with no screen of their own whose `:` commands this
-	// screen runs (`git-credential-helper` on Credentials). The screen's Commands() name them
-	// with the noun (`pass audit`), and they work from any screen.
+	// Hosts are CLI nouns with no screen of their own that this screen covers
+	// (`config` on Workspace, `git-credential-helper` on Credentials): the
+	// noun-to-screen map the parity tests use.
 	Hosts []string
 }
 
@@ -187,23 +187,22 @@ func Up() tea.Msg { return UpMsg{} }
 // Goto returns a command that emits GotoMsg for s.
 func Goto(s Screen) tea.Cmd { return func() tea.Msg { return GotoMsg{Screen: s} } }
 
-// CommandMsg carries a `:` command to a screen: the CLI words after the noun
-// (`backup push` for `:backup push` on Symlinks) and the same line as typed.
-type CommandMsg struct {
-	Words []string
-	Line  string
-}
+// MenuMsg is the `.` key: it asks the active screen to open its action menu,
+// the chooser of the verbs it has no key for. A screen with none ignores it.
+type MenuMsg struct{}
 
-// CommandInfo describes one `:` command of a screen, for completion and help.
-// Name is the words after the noun, Args their placeholder (`<dir>`).
+// CommandInfo describes one menu command of a screen, for help. Name is the
+// words after the noun, Args their placeholder (`<dir>`), Menu the letter that
+// picks it in the `.` menu.
 type CommandInfo struct {
 	Name string
 	Args string
 	Help string
+	Menu string
 }
 
-// Commander is implemented by screens that have `:` commands. The app asks
-// it to complete the command bar and to list the commands in help.
+// Commander is implemented by screens that have a `.` menu. The app asks it
+// whether to offer the key, and to list the entries in help.
 type Commander interface {
 	Commands() []CommandInfo
 }
@@ -215,10 +214,6 @@ type FilterMsg struct {
 	Screen Screen
 	Filter string
 }
-
-// OpenCommandBarMsg asks the app to open the command bar with text typed in,
-// for the Dashboard's advice rows.
-type OpenCommandBarMsg struct{ Prefill string }
 
 // Severity is how urgent a Dashboard issue is.
 type Severity int
@@ -240,9 +235,9 @@ type Issue struct {
 	// its own keys act on exactly the affected rows.
 	Filter string
 	// Advice rows are not problems: they are listed last at info level, never
-	// count towards a card's status, and open the command bar with Prefill.
-	Advice  bool
-	Prefill string
+	// count towards a card's status, and open the screen on the row to act on
+	// (Focus).
+	Advice bool
 }
 
 // Card is a screen's Dashboard card: its body (the Dashboard shows the first

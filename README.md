@@ -221,7 +221,8 @@ ws itself (version, `ws.json`, shell completion, layout). k9s-style keys:
 | Key | Does |
 | --- | --- |
 | `enter` / `esc` | open / back |
-| `:` | command bar, same words as the CLI (`:sym` jumps to Symlinks) |
+| `:` | command bar: `:sym` jumps to Symlinks, `:help`, `:q` |
+| `.` | action menu: the screen's verbs that have no key there |
 | `/` | filter (`status=broken`) |
 | `space` | mark rows. Actions hit the marks. |
 | `a` `e` `ctrl+d` | add · edit · delete (always shows a checklist first; `e` only where a screen has it) |
