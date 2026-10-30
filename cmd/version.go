@@ -95,7 +95,8 @@ func versionRow(nc bool, name string, it versions.Item) string {
 }
 
 // printSteps writes a suggestion block: a blank line, a title, then the lines
-// greyed, commands behind a "$ " prompt. Lines that are not commands (the
+// greyed, one per line with no prompt so they paste straight into a shell.
+// Lines that are not commands (the
 // make install alternative) are passed with a leading "#".
 func printSteps(out io.Writer, nc bool, title string, steps []string) {
 	fmt.Fprintln(out)
@@ -105,7 +106,7 @@ func printSteps(out io.Writer, nc bool, title string, steps []string) {
 			fmt.Fprintln(out, "  "+style.Mutedf(nc, "%s", strings.TrimSpace(rest)))
 			continue
 		}
-		fmt.Fprintln(out, "  "+style.Mutedf(nc, "$ %s", l))
+		fmt.Fprintln(out, "  "+style.Mutedf(nc, "%s", l))
 	}
 }
 

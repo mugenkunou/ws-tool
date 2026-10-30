@@ -176,7 +176,7 @@ func TestVersionShowsAgentTmux(t *testing.T) {
 	if code := Execute([]string{"version", "--no-color"}, strings.NewReader(""), &out, &errOut); code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
-	for _, want := range []string{"v0.1.0", "\u2192 v0.2.0 available", "upgrade agent-tmux", "$ curl -fL -o agent-tmux.download", "releases/latest/download/agent-tmux-$(uname -s", "$ chmod +x agent-tmux.download"} {
+	for _, want := range []string{"v0.1.0", "\u2192 v0.2.0 available", "upgrade agent-tmux", "  curl -fL -o agent-tmux.download", "releases/latest/download/agent-tmux-$(uname -s", "  chmod +x agent-tmux.download"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("version lacks %q:\n%s", want, out.String())
 		}

@@ -9,7 +9,6 @@ import (
 
 	"github.com/mugenkunou/ws-tool/internal/skill"
 	"github.com/mugenkunou/ws-tool/internal/style"
-	"github.com/mugenkunou/ws-tool/internal/tui"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
 )
 
@@ -88,7 +87,7 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		}
 		fmt.Fprintln(textOut(globals, stdout), "Workspace already initialized: "+workspacePath)
 		if homeErr == nil {
-			offerBuiltinSkills(globals, stdin, stdout, home, workspacePath)
+			hintBuiltinSkills(globals, stdout, home)
 		}
 		return 0
 	}
@@ -101,23 +100,15 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 		fmt.Fprintln(textOut(globals, stdout), style.ResultSuccess(globals.noColor, "Workspace initialized: %s", workspacePath))
 	}
 	if homeErr == nil && res.ExitCode() == 0 {
-		offerBuiltinSkills(globals, stdin, stdout, home, workspacePath)
+		hintBuiltinSkills(globals, stdout, home)
 	}
 	return res.ExitCode()
 }
 
-// initStdinIsTerminal reports whether init's stdin is a terminal (not
-// /dev/null, which is a character device too). Only then does init ask; a
-// test's reader never is. It is a variable so tests can stand in.
-var initStdinIsTerminal = func(stdin io.Reader) bool {
-	f, ok := stdin.(*os.File)
-	return ok && tui.IsTTY(f.Fd())
-}
-
-// offerBuiltinSkills ends `ws init`: in a terminal it offers to link the
-// built-in skills into the detected tools (y/N, default no); otherwise it
-// prints a one-line hint. It says nothing when every one is already there.
-func offerBuiltinSkills(globals globalFlags, stdin io.Reader, stdout io.Writer, home, workspacePath string) {
+// hintBuiltinSkills ends `ws init` with a one-line hint about `ws skill
+// install`. It never asks. It says nothing when every built-in is already in
+// every detected tool.
+func hintBuiltinSkills(globals globalFlags, stdout io.Writer, home string) {
 	if globals.json || globals.quiet || globals.dryRun {
 		return
 	}
@@ -130,14 +121,12 @@ func offerBuiltinSkills(globals globalFlags, stdin io.Reader, stdout io.Writer, 
 		}
 	}
 	var tools []skill.Tool
-	var toolNames []string
 	missing := 0
 	for _, t := range skill.Tools {
 		if !t.Detected(home) {
 			continue
 		}
 		tools = append(tools, t)
-		toolNames = append(toolNames, t.Name)
 		for _, s := range builtins {
 			if !skill.Installed(home, t, s.Name) {
 				missing++
@@ -147,31 +136,7 @@ func offerBuiltinSkills(globals globalFlags, stdin io.Reader, stdout io.Writer, 
 	if len(builtins) == 0 || (len(tools) > 0 && missing == 0) {
 		return
 	}
-	nc := globals.noColor
-	if len(tools) == 0 || !initStdinIsTerminal(stdin) {
-		fmt.Fprintf(stdout, "Built-in skills (%s): `ws skill install` links them into a coding tool.\n", strings.Join(names, ", "))
-		return
-	}
-	fmt.Fprintf(stdout, "Install the built-in skills (%s) into %s? %s ", strings.Join(names, ", "), strings.Join(toolNames, ", "), style.Mutedf(nc, "[y/N]"))
-	line, err := readLine(stdin)
-	if err != nil {
-		fmt.Fprintln(stdout)
-	}
-	if a := strings.ToLower(strings.TrimSpace(line)); a != "y" && a != "yes" {
-		return
-	}
-	for _, t := range tools {
-		for _, s := range builtins {
-			if skill.Installed(home, t, s.Name) {
-				continue
-			}
-			if err := skill.Install(home, workspacePath, t, s); err != nil {
-				fmt.Fprintf(stdout, "  %s %s → %s/%s: %v\n", style.IconCross(nc), s.Name, t.Dir, s.Name, err)
-				continue
-			}
-			fmt.Fprintf(stdout, "  %s Link %s → %s/%s\n", style.IconCheck(nc), s.Name, t.Dir, s.Name)
-		}
-	}
+	fmt.Fprintf(stdout, "Built-in skills (%s): `ws skill install` links them into a coding tool.\n", strings.Join(names, ", "))
 }
 
 // initData is data for --json: absolute paths created by this run and those

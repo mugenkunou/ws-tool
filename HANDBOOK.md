@@ -3894,11 +3894,9 @@ them in with their defaults and keeps every value already set. An existing `.meg
 `references/RUNBOOKS.md` is left alone, whatever it holds. This covers a workspace that arrived through sync with its `ws.json` but without some directories. Machine setup is separate:
 `ws symlink link`, `ws trash enable`, `ws cron apply`, `ws completion enable`.
 
-Init also refreshes the managed copy of the built-in skills (§`ws skill`). At the end of an
-interactive run (stdin is a terminal, no `--json` or `--quiet`) it offers to link the
-built-ins into the detected tools: `Install the built-in skills (workspace-run,
-workspace-write) into claude, copilot? [y/N]`, default no. Otherwise it prints a one-line hint
-(`ws skill install`). It says nothing when every built-in is already in every detected tool.
+Init also refreshes the managed copy of the built-in skills (§`ws skill`). At the end of a
+run (no `--json` or `--quiet`) it prints a one-line hint (`ws skill install`); it never asks.
+It says nothing when every built-in is already in every detected tool.
 
 Plan: up to four actions, all pre-checked. They are: create the missing directories (one action
 that lists them), write `ws.json` (or `Fill in 7 missing keys in /home/user/Workspace/ws.json;
@@ -4142,14 +4140,14 @@ agent-tmux  v0.1.0  up to date
   Go version         go1.26.1
 
 upgrade ws
-  $ curl -fL -o ws.download "https://github.com/mugenkunou/ws-tool/releases/latest/download/ws-$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
-  $ chmod +x ws.download
-  $ mv ws.download /home/user/.local/bin/ws
+  curl -fL -o ws.download "https://github.com/mugenkunou/ws-tool/releases/latest/download/ws-$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+  chmod +x ws.download
+  mv ws.download /home/user/.local/bin/ws
 ```
 
 One row per binary: name, installed version, then a short status inline. Yellow means there is
-something to do; grey is information; the suggestion blocks below are grey behind a `$ ` prompt, so
-they can be copied as they are.
+something to do; grey is information; the suggestion blocks below are grey, one command per line with no
+prompt, so they can be copied as they are.
 
 - `up to date`; `→ v0.4.0 available`, which adds an `upgrade ws` / `upgrade agent-tmux` block. The
   commands are the same on every distro: the shell works out the asset name, `ws-linux-amd64`,

@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -362,7 +361,7 @@ func TestSkillCheck(t *testing.T) {
 	}
 }
 
-func TestInitOffersBuiltinSkills(t *testing.T) {
+func TestInitHintsBuiltinSkills(t *testing.T) {
 	withBuiltins(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -371,37 +370,20 @@ func TestInitOffersBuiltinSkills(t *testing.T) {
 		t.Fatal(err)
 	}
 	link := filepath.Join(home, ".claude", "skills", "workspace-write")
-	initIn := func(stdin string) string {
-		testSetXDG(t)
-		var out, errOut bytes.Buffer
-		ws := filepath.Join(t.TempDir(), "Workspace")
-		if code := Execute([]string{"--no-color", "init", "--workspace", ws}, strings.NewReader(stdin), &out, &errOut); code != 0 {
-			t.Fatalf("init exit %d: %s", code, errOut.String())
-		}
-		return out.String()
+	testSetXDG(t)
+	var out, errOut bytes.Buffer
+	ws := filepath.Join(t.TempDir(), "Workspace")
+	if code := Execute([]string{"--no-color", "init", "--workspace", ws}, strings.NewReader("y\ny\n"), &out, &errOut); code != 0 {
+		t.Fatalf("init exit %d: %s", code, errOut.String())
 	}
-
-	// No terminal: a hint, nothing linked.
-	if out := initIn("a\ny\n"); !strings.Contains(out, "Built-in skills (workspace-run, workspace-write): `ws skill install`") {
-		t.Errorf("no hint:\n%s", out)
+	// A hint only: init never asks and never links.
+	if !strings.Contains(out.String(), "Built-in skills (workspace-run, workspace-write): `ws skill install`") {
+		t.Errorf("no hint:\n%s", out.String())
 	}
-	if _, err := os.Lstat(link); err == nil {
-		t.Fatal("linked without asking")
-	}
-
-	old := initStdinIsTerminal
-	initStdinIsTerminal = func(io.Reader) bool { return true }
-	t.Cleanup(func() { initStdinIsTerminal = old })
-
-	// Enter is no.
-	if out := initIn("a\n\n"); !strings.Contains(out, "into claude? [y/N]") {
-		t.Errorf("no offer:\n%s", out)
+	if strings.Contains(out.String(), "[y/N]") {
+		t.Errorf("init asked:\n%s", out.String())
 	}
 	if _, err := os.Lstat(link); err == nil {
-		t.Fatal("Enter installed the skills")
-	}
-	initIn("a\ny\n")
-	if target, _ := os.Readlink(link); target != filepath.Join(home, ".local", "share", "ws", "skills", "workspace-write") {
-		t.Fatalf("link = %q", target)
+		t.Fatal("init linked the skills")
 	}
 }
