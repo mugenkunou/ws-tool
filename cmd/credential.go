@@ -742,9 +742,7 @@ func discoverLocalHelperOverrides(workspacePath string) []localHelperOverride {
 
 // isWsHelper reports whether a credential.helper value points at ws, either
 // directly ("ws git-credential-helper") or via the installed wrapper script.
-func isWsHelper(v string) bool {
-	return strings.Contains(v, "ws git-credential-helper") || strings.Contains(v, "ws-credential-helper")
-}
+func isWsHelper(v string) bool { return credential.IsWsHelper(v) }
 
 // helperPathStatus checks the configured helper value and returns a status
 // string and whether the helper is functional.
@@ -762,30 +760,7 @@ func helperPathStatus(helperValue string, nc bool) (string, string, bool) {
 // missing or written in an old broken form) or "disconnected" (empty, or not
 // ws). detail says why when it is not connected.
 func helperCheck(helperValue string) (state, detail string) {
-	if helperValue == "" {
-		return "disconnected", ""
-	}
-	if !isWsHelper(helperValue) {
-		return "disconnected", "(not a ws helper)"
-	}
-
-	// Extract binary/script path from "!<path>" or "!<path> git-credential-helper"
-	binPath := strings.TrimPrefix(helperValue, "!")
-	if idx := strings.Index(binPath, " git-credential-helper"); idx >= 0 {
-		binPath = binPath[:idx]
-	}
-
-	// Older setups wrote "!<wrapper> git-credential-helper"; the wrapper then
-	// passed the subcommand twice and every lookup failed.
-	if strings.HasSuffix(binPath, "ws-credential-helper") && binPath != helperValue[1:] {
-		return "stale", "wrapper called with a duplicate subcommand"
-	}
-
-	if _, err := os.Stat(binPath); err != nil {
-		return "stale", fmt.Sprintf("binary not found: %s", binPath)
-	}
-
-	return "connected", ""
+	return credential.HelperCheck(helperValue)
 }
 
 // runPassInsertInteractive runs `pass insert <entry>` with the terminal

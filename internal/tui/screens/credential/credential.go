@@ -15,6 +15,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/mugenkunou/ws-tool/internal/credential"
 	"github.com/mugenkunou/ws-tool/internal/pass"
 	"github.com/mugenkunou/ws-tool/internal/resource"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
@@ -29,7 +30,11 @@ import (
 // LoadedMsg carries the git credential helper's state. Other components (the
 // Dashboard) may observe it.
 type LoadedMsg struct {
+	// Connected is true only for a ws helper that works (the CLI's check): a
+	// foreign helper, or a ws one whose wrapper is gone, is not connected.
 	Connected bool
+	State     string // credential.HelperConnected, HelperStale or HelperDisconnected
+	Detail    string // why it is not connected, when it says
 	Helper    string
 	Pass      pass.PassHealth
 	Err       error
@@ -90,8 +95,9 @@ func Load(e env.Env) tea.Cmd {
 		m := LoadedMsg{Pass: pass.CheckPass()}
 		if out, err := exec.Command("git", "config", "--global", "credential.helper").Output(); err == nil {
 			m.Helper = strings.TrimSpace(string(out))
-			m.Connected = m.Helper != ""
 		}
+		m.State, m.Detail = credential.HelperCheck(m.Helper)
+		m.Connected = m.State == credential.HelperConnected
 		return m
 	}
 }
@@ -106,12 +112,23 @@ func (m LoadedMsg) facts() []fact {
 	} else {
 		out = append(out, fact{Label: "store initialized"})
 	}
-	if m.Connected {
-		out = append(out, fact{Label: "credential helper", OK: true, Value: m.Helper})
-	} else {
-		out = append(out, fact{Label: "credential helper", Warn: true, Value: "not connected: press . then e (enable)"})
-	}
+	out = append(out, m.helperFact())
 	return out
+}
+
+// helperFact is the credential helper row: connected, stale, set to another
+// helper (which enable would replace), or not set.
+func (m LoadedMsg) helperFact() fact {
+	const fix = "press . then e (enable)"
+	switch {
+	case m.Connected:
+		return fact{Label: "credential helper", OK: true, Value: m.Helper}
+	case m.State == credential.HelperStale:
+		return fact{Label: "credential helper", Warn: true, Value: "stale, " + m.Detail + ": " + fix}
+	case m.Helper != "":
+		return fact{Label: "credential helper", Warn: true, Value: "set to " + m.Helper + ", not ws: " + fix}
+	}
+	return fact{Label: "credential helper", Warn: true, Value: "not connected: " + fix}
 }
 
 func (m Model) reload() (Model, tea.Cmd) {

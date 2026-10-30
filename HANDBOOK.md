@@ -3129,7 +3129,7 @@ JSON: `credential.status`. Keys: `connected`, `helper`, `pass` (the `pass status
 
 Exit: 0.
 
-TUI: the Credentials screen shows `credential helper` connected or not. `.` `s` shows
+TUI: the Credentials screen shows `credential helper` connected, stale, or set to another helper. `.` `s` shows
 the full report, paged.
 
 #### Plumbing: `ws git-credential-helper get|store|erase`
@@ -4407,7 +4407,9 @@ Rows are not acted on. Action menu (`.`): `i` init, `a` audit, `e` backup enable
 `backup enable` hand the terminal to the CLI wizard.
 
 **Credentials.** One row per fact about the helper: gpg, pass, store, credential helper.
-Action menu (`.`): `e` enable, `d` disable (wizards), `s` status (paged).
+The helper row is `connected` only for ws's own working helper (the check `ws credential
+status` uses). Another helper reads `set to <helper>, not ws`, and a ws helper whose wrapper
+is gone reads `stale`. Action menu (`.`): `e` enable, `d` disable (wizards), `s` status (paged).
 
 Here `a` means allow, because Secrets has nothing to add. It's the one screen where a
 global letter takes the screen's own verb, and the footer says "a allow".
