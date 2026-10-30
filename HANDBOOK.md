@@ -605,8 +605,8 @@ such as `rclone bisync`.
 | `cron` | ws-managed cron jobs | Cron |
 | `sync` | the one-way mirror of the workspace for folder-sync clients (`sync.mirror.target`) | Sync |
 | `trash` | the XDG trash and the soft-delete integrations | Trash |
-| `config` | `ws.json` | Workspace (row, action menu) |
-| `completion` | shell completion | Workspace (rows, action menu) |
+| `config` | `ws.json` | Settings (row, action menu) |
+| `completion` | shell completion | Settings (rows, action menu) |
 
 Workspace commands without a noun: `ws init`, `ws layout`, `ws env`, `ws tui`, `ws version`, `ws help`. The
 Workspace screen hosts them, and every noun above has exactly one screen (`TestEveryNounHasATUIHome`). Bare `ws`
@@ -747,7 +747,7 @@ ws init                                   RW  create the workspace layout
 ws layout                                 RO  workspace folders and the homes outside it, with their purpose
 ws env                                    RO  export lines for WS_ROOT, WS_TMP, WS_CACHE, WS_RUN, WS_SCRATCH
 ws tui                                    RO  the full-screen interface
-ws version [--short] [--check]            RO  version, schema and platform; --check asks GitHub for newer releases
+ws version [--short] [--check]            RO  version, schema and platform; latest releases from the cache, --check looks them up now
 ws help [noun [verb…]]                    RO  help
 ```
 
@@ -969,7 +969,7 @@ only. Without agent-tmux there are none.
 | `PASSWORD_STORE_DIR` | pass store location |
 | `XDG_STATE_HOME`, `XDG_DATA_HOME` | machine-local state and trash locations |
 | `TMPDIR`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR` | `ws env` and `ws layout`: the temp, cache and session homes; `XDG_CACHE_HOME`: the agent-tmux release cache |
-| `WS_NO_VERSION_CHECK` | `1`: no agent-tmux version nudge (the TUI and `ws version` never ask GitHub). `ws version --check` is an explicit request and ignores it |
+| `WS_NO_VERSION_CHECK` | `1`: no background version refresh and no agent-tmux nudge (ws never asks GitHub on its own). `ws version --check` is an explicit request and ignores it |
 | `WS_NO_MOUSE` | TUI: leave the mouse to the terminal |
 | `WS_NO_EMOJI` | TUI: no emoji |
 | `WS_CRONTAB_FILE` | tests: a file that stands in for the user's crontab |
@@ -2173,9 +2173,8 @@ build, or anything else unparseable, never nudges. The answer is cached for 24 h
 "etag", "tag_name"}`. After that the check sends `If-None-Match` with the cached ETag, and
 a `304` keeps the cached tag for another day. The TUI checks in the background; every
 check gives up after 3 seconds and fails silently. `WS_NO_VERSION_CHECK=1` turns it off.
-`ws session` never checks. `ws version --check` is the explicit form: it skips the cache and
-`WS_NO_VERSION_CHECK`, and takes agent-tmux's answer from `agent-tmux version --check --json`
-instead of querying GitHub for it (the `ws version` reference).
+`ws session` never checks. The `ws version` reference describes the newer combined
+cache (`versions.json`) that `ws version` itself reads; the nudge above is the TUI Sessions screen's.
 
 TUI: the Sessions screen (§6.5).
 
@@ -3820,7 +3819,7 @@ Exit: 0, 1.
 
 ### Workspace commands
 
-Commands about the workspace itself and the ws binary. The Workspace screen hosts them (§6.5):
+Commands about the workspace itself and the ws binary. The Settings screen hosts them (§6.5):
 its rows are `version`, `ws.json`, the completion state of each shell and `layout`, and its action
 menu (`.`) has `config show|edit` and `completion enable|disable`, on that screen. The setup
 screen covers `init`.
@@ -3836,7 +3835,7 @@ screen covers `init`.
 | `ws completion enable [--shell s]` | RW | add completion to the shell rc file | `.` `n` |
 | `ws completion disable [--shell s]` | RW | remove it | `.` `d` |
 | `ws tui` | RO | open the terminal UI | — |
-| `ws version [--short] [--check]` | RO | print version information; `--check` looks up newer ws and agent-tmux releases | Workspace row |
+| `ws version [--short] [--check]` | RO | print version information and the cached latest releases; `--check` looks them up now | Workspace row |
 | `ws help [noun [verb…]]` | RO | print help | `?` |
 
 Global flags, accepted before or after the command:
@@ -4077,7 +4076,7 @@ ws tui
 ```
 
 Opens the interactive terminal UI on the Dashboard. The screens are Dashboard, Repos, Symlinks,
-Scratch, Sessions, Ignore, Sync, Secrets, Pass, Credentials, Cron, Trash, Skills and Workspace, reached with tab,
+Scratch, Sessions, Ignore, Sync, Secrets, Pass, Credentials, Cron, Trash, Skills and Settings, reached with tab,
 shift+tab and `:<screen>`. It honours
 `--workspace`. If the workspace is not initialized, it opens the setup screen. stdin
 and stdout must be a terminal.
@@ -4091,41 +4090,56 @@ terminal.") or the UI fails.
 ws version [--short] [--check] [--json]
 ```
 
-Prints the ws version, the `ws.json` schema this build writes, the platform and the Go version.
-`--short` prints only the version. It needs no workspace.
+Prints the ws version, the `ws.json` schema this build writes, the platform, the Go version and
+agent-tmux's version. `--short` prints only the ws version. It needs no workspace.
 
-`--check` asks for the latest release of both binaries and prints each, always bypassing the 24-hour
-cache. It is an explicit request, so it ignores `WS_NO_VERSION_CHECK`. ws itself comes from
-`api.github.com/repos/mugenkunou/ws-tool/releases/latest` (`tag_name`, 3 second timeout). agent-tmux is
-not queried from here: ws runs `agent-tmux version --check --json` and shows its answer (`version`,
-`latest`, `status` of `current`, `outdated`, `dev` or `unknown`, and `error` with `unknown`). Per binary:
+Plain `ws version` never waits for the network. The latest releases of ws
+(`api.github.com/repos/mugenkunou/ws-tool/releases/latest`, `tag_name`) and agent-tmux come from
+`$XDG_CACHE_HOME/ws/versions.json` (default `~/.cache/ws/`): per binary `latest`, `state` and `error`,
+plus `checked_at` (the last successful lookup) and `attempted_at` (the last try, failed or not). The
+cache is the one source for the CLI and the TUI (`internal/versions`: `Cached`, `Stale`, `Refresh`,
+`SpawnRefresh`). When it is missing or older than 24 hours, and nothing was tried in the last hour,
+`ws version` starts a detached `ws version --refresh-cache` (its own session, no output, not waited
+for) after it prints, so the next run knows. A failed lookup keeps the previous answer and backs off an
+hour. `WS_NO_VERSION_CHECK=1` turns the background refresh off.
 
-- current: `v0.3.0 (latest v0.3.0)`; outdated: `update available: v0.4.0`. An outdated ws adds how to
-  upgrade: `git pull && make install` when a `.ws-source` file beside the running binary shows `make
-  install` put it there, otherwise the release page. ws never replaces its own binary.
-- a `dev` or otherwise unparseable installed version never says "update available": it warns that the
-  local binary is a dev build and, when the lookup worked, names the upstream release.
-- a failed lookup says `release check failed: <reason>`.
-- agent-tmux not installed: `not installed` and the install lines. An agent-tmux too old to know
-  `--check` (it fails, or prints no JSON): its installed version, `installed agent-tmux is too old to
-  check; upgrade`, and the install lines.
+`--check` is how to force it: it looks both up now (3 second timeout each), writes the cache and prints
+the same layout. It ignores the cache and `WS_NO_VERSION_CHECK`. agent-tmux is not queried from here: ws
+runs `agent-tmux version --check --json` and uses its answer. `--refresh-cache` is the hidden
+internal flag for the background run: silent, exit 0.
+
+```text
+ws  v0.20.0  (latest v0.21.0 — update available)
+  download: https://github.com/mugenkunou/ws-tool/releases/latest
+  ws.json schema     1
+  Platform           linux/amd64
+  Go version         go1.26.1
+  agent-tmux         v0.1.0  (up to date)
+```
+
+Per binary, after the version:
+
+- `(up to date)`; `(latest v0.4.0 — update available)`, which adds how to upgrade: for ws,
+  `git pull && make install` when a `.ws-source` file beside the running binary shows `make install`
+  put it there, otherwise the release page (ws never replaces its own binary); for agent-tmux, the
+  install lines. An installed version newer than the latest is up to date.
+- a `dev` or otherwise unparseable installed version is never outdated: `(local build is a dev build;
+  upstream release is v0.4.0)`, the upstream part when the latest is known.
+- nothing when the latest is not known yet, or `(release check failed: <reason>)` when the last lookup
+  failed. While the cache is empty or stale the output ends with `latest versions unknown yet — run
+  'ws version --check' to look them up now`.
+- agent-tmux not installed: `not installed` and the install lines. Too old to know `--check` (it
+  fails, or prints no JSON): its version, `(too old to check — upgrade)` and the install lines.
 
 The exit code is 0 for every outcome.
 
-```text
-$ ws version
-ws v0.15.0
-  ws.json schema  1
-  Platform        linux/amd64
-  Go version      go1.26.1
-```
-
 `--json`: command `version`; data `version`, `config_schema`, `platform`, `go_version` (decision:
-named `config_schema` so it is not confused with the envelope's `schema`), `agent_tmux` and
-`agent_tmux_latest`. With `--check` it adds ws's own `latest`, `status` and `error` (omitted unless
-the lookup failed), and `agent_tmux_check`: agent-tmux's `version`, `latest`, `status` and `error`,
-with two statuses of ws's own, `not_installed` and `too_old`. `agent_tmux_latest` is set when
-agent-tmux is `outdated`.
+named `config_schema` so it is not confused with the envelope's `schema`), `agent_tmux` (installed),
+`agent_tmux_latest` (set when agent-tmux is `outdated`), ws's own `latest`, `status` (`current`,
+`outdated`, `dev` or `unknown`) and `error` (omitted unless the lookup failed), `checked_at` (omitted
+when never checked) and `agent_tmux_check`: agent-tmux's `version`, `latest`, `status` and `error`,
+with two statuses of ws's own, `not_installed` and `too_old`. Plain `--json` reads the cache; `--check
+--json` refreshes it first.
 
 Exit: 0.
 
@@ -4203,7 +4217,7 @@ ws  🏠   📦   🔗 Symlinks   🧪   📼   🧹   🔄   🔐   ⏰   🚮 
  …
 2 marked — l link · a add · ctrl+d unlink act on them · esc clears                         status line
 ✔ 2 done                                                                                    notice (until the next key)
-a add • ctrl+d unlink • l link • space mark … • tab screens • : command • ? help • q quit   footer
+a add • ctrl+d unlink • l link • space mark … • tab screens • : command • ? help • q quit   ws v0.21.0 · agent-tmux v0.20.0 ⚠   footer
 ```
 
 - **Nothing moves.** A list keeps its status line reserved at the bottom of its area, even
@@ -4214,20 +4228,27 @@ a add • ctrl+d unlink • l link • space mark … • tab screens • : comm
   `? help`, `q quit`) is always shown in full, (the `.` menu is listed in `?` help, where there is one). If the screen's part does not fit, it ends in
   `…`, and `?` shows everything. Each screen's keys are chosen so the footer fits at 100
   columns.
+- **Versions.** The footer is one row in two columns. The help takes all the width on the
+  left. A small muted cell at the right end names the `ws` and `agent-tmux` versions in use
+  (`ws v0.21.0 · agent-tmux v0.20.0`, shortened to `tmux` when tight, `dev` as is, a tool that
+  is not installed left out). A yellow `⚠` follows it when a newer release exists. The app
+  reads the cache of `ws version --check` at start (no network), and refreshes it in the
+  background when it is stale. A terminal where the help would get fewer than 60 columns drops
+  the cell, never the help. A toast covers the whole row, cell included.
 - **Sizes.** Every screen fits any size down to 20×6. Below that, the TUI shows "Terminal
   too small".
 
 ### 6.2 Screens
 
 Tab order: Dashboard, Repos, Symlinks, Scratch, Sessions, Ignore, Sync, Secrets, Pass,
-Credentials, Cron, Trash, Skills, Workspace. Every screen except the Dashboard is the list of its noun's rows, the same
-rows as `ws <noun> ls`. Workspace is ws's own settings: the commands without a noun
+Credentials, Cron, Trash, Skills, Settings. Every screen except the Dashboard is the list of its noun's rows, the same
+rows as `ws <noun> ls`. Settings is ws's own settings, grouped: the commands without a noun
 (`version`, `layout`, `config`, `completion`). `tab` and `shift+tab` switch screens; the
 active tab is a reversed block. When the titles do not fit, the tabs drop to icons and the
 active tab keeps its title.
 
 Each screen is named after a CLI noun or hosts nouns that have no screen: Credentials hosts
-`git-credential-helper`, Workspace hosts `config`, `completion`, `version` and `layout`.
+`git-credential-helper`, Settings hosts `config`, `completion`, `version` and `layout`.
 Every CLI noun has exactly one such home (§9.10).
 
 ### 6.3 Global keys
@@ -4318,7 +4339,7 @@ card reads `N symlinks managed`. A problem line names the broken, missing or dri
 Dashboard does not run the `$HOME` walk for untracked links). The Dashboard has no actions of its own.
 
 Some rows are advice, not problems. They are listed last, at info level, never in red or
-yellow, and they never count towards the card's status. `enter` on such a row goes to the place its Focus names, as for any attention row (for shell completion, the Workspace screen with that row selected). The fix is a key or a menu entry there. One example is a pass store outside the workspace: "Your pass store syncs only
+yellow, and they never count towards the card's status. `enter` on such a row goes to the place its Focus names, as for any attention row (for shell completion, the Settings screen with that row selected). The fix is a key or a menu entry there. One example is a pass store outside the workspace: "Your pass store syncs only
 through its own git remote. A copy in the workspace would sync with the sync client too." The fix is `a` on Symlinks, with `~/.password-store`.
 
 **Repos**
@@ -4468,7 +4489,7 @@ rows.
 totals, and a notice for skipped symlinks. The list is what the next push would copy or delete
 (action, path). The load is `ws sync`'s rsync dry run, and it re-reads `ws.json`, so a new
 target takes effect on refresh. With no `sync.mirror.target` the screen says how to set it
-(config edit on the Workspace screen, then refresh). A missing rsync or a bad target is the screen's error. There
+(config edit on the Settings screen, then refresh). A missing rsync or a bad target is the screen's error. There
 are no keys beyond the list's; with changes to push, a pinned row above the list offers the push (§6.4).
 
 Action menu (`.`): `p` push (§5, `ws sync push`).
@@ -4477,21 +4498,44 @@ The Dashboard card shows the last push's age and the pending count. A wiped stam
 stamp and a tripped delete guard are warnings. None is an error, since a push still works in
 each case. A workspace with no target gets a muted line and no attention row.
 
-**Workspace.** ws's own settings, one row per setting (setting, state, value, note):
-`version` (ws version, config schema, platform, Go version); `ws.json` (ok, invalid or missing,
-with the load error as the note, never a crash); `completion bash|zsh|fish` (on or off, with
-the rc file; the `$SHELL` row says "your shell"); `layout <folder>`, one per `ws layout`
-folder with its purpose; and `home <name>` for the temp, cache, session and scratch homes with
-their `WS_*` variable. `enter` on the `ws.json` row hands over `config edit`, and `enter` on a completion row opens its enable or disable checklist.
+**Settings.** ws's own settings, in groups; a group's name is on its first row. Columns: group,
+setting, state, value, note. It is a grouped list, not a dump: the per-folder layout and the
+homes are one row each.
+
+- **Configuration.** `ws.json` (ok, invalid or missing, with the load error as the note, never a
+  crash; ok shows a one-line summary), `edit ws.json` and `view ws.json`. Editing hands over to
+  `ws config edit` (your `$VISUAL`/`$EDITOR`; the CLI reports an invalid ws.json when you close
+  it, and every screen reloads); viewing pages `ws config show`.
+- **Workspace.** `root`; `layout` (one row: the folder count and their names, `missing` when
+  `ws init` has folders to create); `homes` (temp, cache, session, scratch: what `ws env` exports).
+- **Completion.** `completion bash|zsh|fish` (on or off, with the rc file; the `$SHELL` row says
+  "your shell").
+- **Versions.** `ws` and `agent-tmux`: installed version, state and note. `current` shows the latest;
+  `outdated` is amber with a `⚠` and `update available: <latest>`; `dev` says the local build is a dev
+  build and names the upstream release, and is never "update available"; `not installed` and `too old`
+  (agent-tmux) are amber. An outdated ws, and an agent-tmux that is outdated, missing or too old,
+  add `upgrade` rows with the CLI's lines (`git pull && make install` or the release page for ws; the
+  agent-tmux install lines). `check for updates now` runs the same lookup as `ws version --check` off
+  the UI thread and toasts the outcome. The screen reads the cache on load and takes every
+  `nav.VersionsMsg` the app broadcasts (the background lookup, the footer's), so it never waits on
+  the network.
+- **About.** `build`: platform, Go version and the `ws.json` schema this build writes.
+
+`enter` runs the row under the cursor: `ws.json` and `edit ws.json` edit, `view ws.json` pages,
+a completion row opens its enable or disable checklist, `check for updates now` looks up releases.
+Other rows do nothing.
 
 Action menu (`.`), on this screen (hosted nouns, §6.6a): `s` config show (paged), `e` config edit
-(editor; every screen reloads on return), `n` completion enable [--shell s] and `d` completion
-disable [--shell s]. The completion actions act on the marked completion rows, else the
-completion row under the cursor, else `$SHELL`, and show the CLI's plan, one action per
-shell, pre-checked.
+(editor; every screen reloads on return), `u` version check (a forced lookup), `n` completion
+enable [--shell s] and `d` completion disable [--shell s]. The completion actions act on the
+marked completion rows, else the completion row under the cursor, else `$SHELL`, and show the
+CLI's plan, one action per shell, pre-checked. `ws layout` stays CLI-only (its per-folder listing
+is for scripts and skills; the TUI shows the summary row), and `ws env` is shell output.
 
-The Dashboard card reads "ws vX · ws.json ok" and which shells have completion. A `ws.json`
-that fails to load is an error. Completion off in `$SHELL` is advice: `enter` goes to that completion row, selected.
+The Dashboard card reads "ws vX · ws.json ok", which shells have completion, and `⚠ updates
+available: ws, agent-tmux` when a newer release is out. A `ws.json` that fails to load is an error.
+Completion off in `$SHELL` and an available update are advice: `enter` goes to that row, selected.
+`:settings` switches here (`:workspace`, the old name, still works).
 
 ### 6.6 Command bar
 
@@ -5143,7 +5187,7 @@ plan types in `internal/plan`). The TUI is built on Charm v2: `charm.land/bubble
 | `internal/tui/app` | Root model. Owns the screens (built from `registry.go`), routes messages, handles global keys, lays out header, body, notice and footer, and shows the setup screen when the workspace is not initialized. `coverage.go` and `flags.go` record how the TUI covers each CLI command and flag. |
 | `internal/tui/nav` | The contract between app and screens: the `Screen` enum and its `specs` (icon, title, noun, hosted nouns), the `Component` interface, the Dashboard's `Summary`/`Card`/`Issue`, `ResizeMsg`, `UpMsg`, `GotoMsg`, `RefreshMsg`, `ReloadEnvMsg`, `NoticeMsg`, `MenuMsg`. |
 | `internal/tui/keys` | **Every key binding** (`keys.go`). The app handles `Global`, and each screen and dialog handles its own map. |
-| `internal/tui/screens/<name>` | One package per screen: dashboard, repos, symlinks, scratch, sessions, ignore, sync, secrets, pass, credential, cron, trash, skills, workspace, setup. State is unexported, and outputs are exported `LoadedMsg` types; `card.go` turns a `LoadedMsg` into the screen's Dashboard card. |
+| `internal/tui/screens/<name>` | One package per screen: dashboard, repos, symlinks, scratch, sessions, ignore, sync, secrets, pass, credential, cron, trash, skills, settings, setup. State is unexported, and outputs are exported `LoadedMsg` types; `card.go` turns a `LoadedMsg` into the screen's Dashboard card. |
 | `internal/tui/cmdbar` | The `:` command bar: a one-line input drawn in place of the footer, with inline completion from the screen names, `help` and `q`. It switches screens and quits; verbs are in the action menu (`reslist.MenuChooser`). |
 | `internal/tui/confirm` | The action-plan checklist: review (toggle), running (one `tea.Cmd` per action), done. Emits `DoneMsg{Result}`. |
 | `internal/tui/prompt`, `choose` | Text input with ghost-panel suggestions (fixed list or async `Completer`), and a single-choice list. |

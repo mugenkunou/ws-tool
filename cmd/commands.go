@@ -252,7 +252,7 @@ var commands = []command{
 	{Path: []string{"version"}, Summary: "version, schema and platform", RO: true,
 		Flags: []flagDoc{
 			{Name: "--short", Desc: "print only the version"},
-			{Name: "--check", Desc: "check GitHub for newer ws and agent-tmux releases"},
+			{Name: "--check", Desc: "look up the newest ws and agent-tmux releases now"},
 		}},
 	{Path: []string{"help"}, Args: "[noun [verb…]]", Summary: "help", RO: true},
 }

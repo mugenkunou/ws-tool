@@ -2,16 +2,17 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/mugenkunou/ws-tool/internal/agenttmux"
 	"github.com/mugenkunou/ws-tool/internal/buildinfo"
 	"github.com/mugenkunou/ws-tool/internal/release"
 	"github.com/mugenkunou/ws-tool/internal/style"
+	"github.com/mugenkunou/ws-tool/internal/versions"
 )
 
 // appVersion is set at build time via ldflags:
@@ -26,18 +27,18 @@ type versionData struct {
 	AgentTmux       string `json:"agent_tmux"`
 	AgentTmuxLatest string `json:"agent_tmux_latest"`
 
-	// With --check only. Latest, Status and Error are ws's own release check
-	// (Status: current, outdated, dev or unknown; Error when the lookup
-	// failed). AgentTmuxCheck is agent-tmux's answer.
+	// Latest, Status and Error are ws's own release state (Status: current,
+	// outdated, dev or unknown; Error when the last lookup failed).
+	// AgentTmuxCheck is the same for agent-tmux, with the extra statuses
+	// not_installed and too_old. CheckedAt is when the cache was last filled
+	// by a successful lookup; absent when never.
 	Latest         string          `json:"latest,omitempty"`
-	Status         string          `json:"status,omitempty"`
+	Status         string          `json:"status"`
 	Error          string          `json:"error,omitempty"`
-	AgentTmuxCheck *agentTmuxCheck `json:"agent_tmux_check,omitempty"`
+	AgentTmuxCheck *agentTmuxCheck `json:"agent_tmux_check"`
+	CheckedAt      *time.Time      `json:"checked_at,omitempty"`
 }
 
-// agentTmuxCheck mirrors `agent-tmux version --check --json`. ws adds two
-// statuses of its own: "not_installed" and "too_old" (the installed agent-tmux
-// does not know --check; Version is then read the old way).
 type agentTmuxCheck struct {
 	Version string `json:"version"`
 	Latest  string `json:"latest"`
@@ -45,79 +46,49 @@ type agentTmuxCheck struct {
 	Error   string `json:"error,omitempty"`
 }
 
-// wsReleaseURL is GitHub's latest-release API for ws. Tests point it at an
-// httptest server.
-var wsReleaseURL = "https://api.github.com/repos/mugenkunou/ws-tool/releases/latest"
-
 // executablePath is the running ws binary; tests replace it.
 var executablePath = os.Executable
 
-// checkWS compares installed with the newest ws release, always asking GitHub
-// (no cache). A dev or unparseable build is never outdated; latest is still
-// reported when the lookup worked.
-func checkWS(ctx context.Context, installed string) (latest, status, errMsg string) {
-	latest, err := release.Fetch(ctx, wsReleaseURL)
-	if err != nil {
-		errMsg = err.Error()
-		if !release.Parseable(installed) {
-			return "", agenttmux.StatusDev, errMsg
+// itemNote is the parenthetical after an item's version, "" when there is
+// nothing to say (never checked).
+func itemNote(it versions.Item) string {
+	switch it.State {
+	case versions.StateCurrent:
+		return "up to date"
+	case versions.StateOutdated:
+		return "latest " + it.Latest + " \u2014 update available"
+	case versions.StateDev:
+		msg := "local build is a dev build"
+		if it.Latest != "" {
+			msg += "; upstream release is " + it.Latest
 		}
-		return "", agenttmux.StatusUnknown, errMsg
+		return msg
+	case versions.StateTooOld:
+		return "too old to check \u2014 upgrade"
+	case versions.StateUnknown:
+		if it.Error != "" {
+			return "release check failed: " + it.Error
+		}
 	}
-	switch {
-	case !release.Parseable(installed):
-		return latest, agenttmux.StatusDev, ""
-	case !release.Parseable(latest):
-		return latest, agenttmux.StatusUnknown, "release tag " + latest + " is not a version"
-	case release.Older(installed, latest):
-		return latest, agenttmux.StatusOutdated, ""
-	}
-	return latest, agenttmux.StatusCurrent, ""
+	return ""
 }
 
-// checkAgentTmux runs agent-tmux's own check and maps every outcome to one
-// agentTmuxCheck.
-func checkAgentTmux(ctx context.Context) agentTmuxCheck {
-	r, err := agenttmux.RunCheck(ctx)
-	switch {
-	case errors.Is(err, agenttmux.ErrMissing):
-		return agentTmuxCheck{Status: "not_installed"}
-	case err != nil:
-		return agentTmuxCheck{Version: r.Version, Status: "too_old", Error: err.Error()}
+// versionValue is "<installed>  (<note>)".
+func versionValue(nc bool, installed string, it versions.Item) string {
+	if installed == "" {
+		installed = "unknown version"
 	}
-	return agentTmuxCheck(r)
-}
-
-// printCheck prints one binary's check: a row, and a warning line when the
-// build is a dev build or the lookup failed.
-func printCheck(out io.Writer, nc bool, name, installed, latest, status, errMsg string) {
-	switch status {
-	case agenttmux.StatusCurrent:
-		style.KV(out, name, fmt.Sprintf("%s (latest %s)", installed, latest), nc)
-	case agenttmux.StatusOutdated:
-		style.KV(out, name, installed, nc)
-		fmt.Fprintln(out, style.ResultWarning(nc, "update available: %s", latest))
-	case agenttmux.StatusDev:
-		style.KV(out, name, installed, nc)
-		msg := "local binary is a dev build"
-		if latest != "" {
-			msg += ", upstream release is " + latest
-		}
-		if errMsg != "" {
-			msg += " (release check failed: " + errMsg + ")"
-		}
-		fmt.Fprintln(out, style.ResultWarning(nc, "%s", msg))
-	default:
-		style.KV(out, name, installed, nc)
-		fmt.Fprintln(out, style.ResultWarning(nc, "release check failed: %s", errMsg))
+	if note := itemNote(it); note != "" {
+		installed += "  " + style.Mutedf(nc, "(%s)", note)
 	}
+	return installed
 }
 
 var versionHelp = cmdHelp{
 	Usage: "ws version [--short] [--check]",
 	Flags: []string{
 		"      --short   Print only semantic version (default: false)",
-		"      --check   Check GitHub for newer ws and agent-tmux releases, ignoring the cache and WS_NO_VERSION_CHECK (default: false)",
+		"      --check   Look up the latest ws and agent-tmux releases now, ignoring the cache and WS_NO_VERSION_CHECK (default: false)",
 	},
 }
 
@@ -130,7 +101,8 @@ func runVersion(args []string, globals globalFlags, stdout, stderr io.Writer) in
 	fs.SetOutput(io.Discard)
 
 	short := fs.Bool("short", false, "print only semver")
-	check := fs.Bool("check", false, "check for newer releases")
+	check := fs.Bool("check", false, "look up the latest releases now")
+	refresh := fs.Bool("refresh-cache", false, "refresh the version cache silently (internal)")
 
 	registerGlobalFlags(fs, &globals)
 	if err := parseInterspersed(fs, args); err != nil {
@@ -138,35 +110,39 @@ func runVersion(args []string, globals globalFlags, stdout, stderr io.Writer) in
 		return 1
 	}
 
+	ctx := context.Background()
+	if *refresh {
+		versions.Refresh(ctx, appVersion)
+		return 0
+	}
 	if *short {
 		fmt.Fprintln(stdout, appVersion)
 		return 0
 	}
 
-	data := versionData{Info: buildinfo.New(appVersion)}
-	ctx := context.Background()
-	if !*check { // --check reads the version from agent-tmux's own answer
-		if v, err := agenttmux.Version(ctx); err == nil {
-			data.AgentTmux = v
-		}
-	}
-	var nudge agenttmux.Nudge
-	var newer bool
+	// Plain `ws version` reads the cache and never waits for the network;
+	// --check asks now.
+	var rep versions.Report
 	if *check {
-		data.Latest, data.Status, data.Error = checkWS(ctx, appVersion)
-		c := checkAgentTmux(ctx)
-		data.AgentTmuxCheck = &c
-		if c.Version != "" {
-			data.AgentTmux = c.Version
-		}
-		if c.Status == agenttmux.StatusOutdated {
-			data.AgentTmuxLatest = c.Latest
-		}
+		rep = versions.Refresh(ctx, appVersion)
 	} else {
-		nudge, newer = agenttmux.NudgeFor(ctx, data.AgentTmux)
-		if newer {
-			data.AgentTmuxLatest = nudge.Latest
-		}
+		rep = versions.Cached(ctx, appVersion)
+		defer versions.SpawnRefresh()
+	}
+
+	data := versionData{Info: buildinfo.New(appVersion)}
+	data.AgentTmux = rep.AgentTmux.Installed
+	if rep.AgentTmux.State == versions.StateOutdated {
+		data.AgentTmuxLatest = rep.AgentTmux.Latest
+	}
+	data.Latest, data.Status, data.Error = rep.WS.Latest, string(rep.WS.State), rep.WS.Error
+	data.AgentTmuxCheck = &agentTmuxCheck{
+		Version: rep.AgentTmux.Installed, Latest: rep.AgentTmux.Latest,
+		Status: string(rep.AgentTmux.State), Error: rep.AgentTmux.Error,
+	}
+	if rep.Known() {
+		t := rep.CheckedAt
+		data.CheckedAt = &t
 	}
 
 	if globals.json {
@@ -175,62 +151,34 @@ func runVersion(args []string, globals globalFlags, stdout, stderr io.Writer) in
 
 	out := textOut(globals, stdout)
 	nc := globals.noColor
-	fmt.Fprintf(out, "%s %s\n", style.Boldf(nc, "ws"), style.Accentf(nc, "%s", data.Version))
+	fmt.Fprintf(out, "%s  %s\n", style.Boldf(nc, "ws"), versionValue(nc, style.Accentf(nc, "%s", rep.WS.Installed), rep.WS))
+	if rep.WS.State == versions.StateOutdated {
+		if exe, err := executablePath(); err == nil {
+			for _, l := range release.WSUpgradeLines(exe) {
+				fmt.Fprintln(out, "  "+l)
+			}
+		}
+	}
 	style.KV(out, "ws.json schema", fmt.Sprintf("%d", data.ConfigSchema), nc)
 	style.KV(out, "Platform", data.Platform, nc)
 	style.KV(out, "Go version", data.GoVersion, nc)
 
-	if *check {
-		printCheck(out, nc, "ws release", data.Version, data.Latest, data.Status, data.Error)
-		if data.Status == agenttmux.StatusOutdated {
-			if exe, err := executablePath(); err == nil {
-				for _, l := range release.WSUpgradeLines(exe) {
-					fmt.Fprintln(out, "  "+l)
-				}
-			}
-		}
-		c := data.AgentTmuxCheck
-		switch c.Status {
-		case "not_installed":
-			style.KV(out, "agent-tmux", style.Mutedf(nc, "not installed"), nc)
-			for _, l := range agenttmux.InstallLines {
-				fmt.Fprintln(out, "  "+l)
-			}
-		case "too_old":
-			ver := c.Version
-			if ver == "" {
-				ver = "unknown version"
-			}
-			style.KV(out, "agent-tmux", ver, nc)
-			fmt.Fprintln(out, style.ResultWarning(nc, "%s", agenttmux.ErrTooOld.Error()))
-			for _, l := range agenttmux.InstallLines {
-				fmt.Fprintln(out, "  "+l)
-			}
-		default:
-			printCheck(out, nc, "agent-tmux", c.Version, c.Latest, c.Status, c.Error)
-		}
-		return 0
-	}
-
-	// ws session runs agent-tmux; say which, and whether a newer one is out.
-	switch {
-	case data.AgentTmux == "":
+	at := rep.AgentTmux
+	if at.State == versions.StateNotInstalled {
 		style.KV(out, "agent-tmux", style.Mutedf(nc, "not installed"), nc)
+	} else {
+		style.KV(out, "agent-tmux", versionValue(nc, at.Installed, at), nc)
+	}
+	switch at.State {
+	case versions.StateNotInstalled, versions.StateTooOld, versions.StateOutdated:
 		for _, l := range agenttmux.InstallLines {
 			fmt.Fprintln(out, "  "+l)
 		}
-	case newer:
-		style.KV(out, "agent-tmux", data.AgentTmux, nc)
+	}
+
+	if !*check && (!rep.Known() || versions.Stale()) {
 		fmt.Fprintln(out)
-		for i, l := range nudge.Lines() {
-			if i == 0 {
-				fmt.Fprintln(out, style.ResultWarning(nc, "%s", l))
-				continue
-			}
-			fmt.Fprintln(out, "  "+l)
-		}
-	default:
-		style.KV(out, "agent-tmux", data.AgentTmux, nc)
+		fmt.Fprintln(out, style.Mutedf(nc, "latest versions unknown yet \u2014 run 'ws version --check' to look them up now"))
 	}
 	return 0
 }

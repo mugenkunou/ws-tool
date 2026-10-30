@@ -23,7 +23,7 @@ sudo mv "$(go env GOPATH)/bin/ws-tool" /usr/local/bin/ws
 ws init                    # 🏗️  layout + ws.json + sync rules; offers the built-in skills
 ws symlink add ~/.gitconfig  # 🔗 move a file into the workspace, link it back
 ws tui                     # 🖥️  look around
-ws version --check          # ⬆️  is a newer ws or agent-tmux out?
+ws version                 # ⬆️  your versions, and whether a newer ws or agent-tmux is out (--check looks now)
 ```
 
 That's it. `~/.gitconfig` (and the rest you ticked) now lives in `~/Workspace/symlinks/home/`, at the same path it had on your machine, and syncs with everything else. To add one yourself: `ws symlink add ~/.bashrc`.
@@ -216,8 +216,8 @@ Your SSH config, shell setup and editor settings are back. Go make tea. 🍵
 
 ## 🖥️ The TUI
 
-`ws tui`: one screen per noun, a dashboard of what needs attention, and a Workspace tab for
-ws itself (version, `ws.json`, shell completion, layout). k9s-style keys:
+`ws tui`: one screen per noun, a dashboard of what needs attention, and a Settings tab for
+ws itself (`ws.json` to view or edit, versions and update check, shell completion). k9s-style keys:
 
 | Key | Does |
 | --- | --- |

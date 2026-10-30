@@ -152,18 +152,20 @@ func TestCompleteSessionWithoutAgentTmux(t *testing.T) {
 	}
 }
 
-// TestVersionNudgesAgentTmux: `ws version` names the installed agent-tmux and,
-// when the release cache knows a newer one, says so with the install lines.
-// The cache is fresh, so nothing asks GitHub.
-func TestVersionNudgesAgentTmux(t *testing.T) {
+// TestVersionShowsAgentTmux: `ws version` names the installed agent-tmux and,
+// when the version cache knows a newer one, says so with the install lines.
+// The cache is fresh, so nothing is spawned or asked.
+func TestVersionShowsAgentTmux(t *testing.T) {
 	cache := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cache)
 	t.Setenv(agenttmux.NoCheckEnv, "")
+	spawns := noSpawn(t)
 	if err := os.MkdirAll(filepath.Join(cache, "ws"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	fresh := `{"checked_at":"` + time.Now().UTC().Format(time.RFC3339) + `","etag":"\"x\"","tag_name":"v0.2.0"}`
-	if err := os.WriteFile(filepath.Join(cache, "ws", "agent-tmux-release.json"), []byte(fresh), 0o644); err != nil {
+	now := time.Now().UTC().Format(time.RFC3339)
+	fresh := `{"ws":{"latest":"v0.1.0"},"agent_tmux":{"latest":"v0.2.0"},"checked_at":"` + now + `","attempted_at":"` + now + `"}`
+	if err := os.WriteFile(filepath.Join(cache, "ws", "versions.json"), []byte(fresh), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	agenttmuxtest.Fake(t, `echo '{"version":"v0.1.0","commit":"abc1234","date":""}'`)
@@ -172,10 +174,13 @@ func TestVersionNudgesAgentTmux(t *testing.T) {
 	if code := Execute([]string{"version", "--no-color"}, strings.NewReader(""), &out, &errOut); code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
-	for _, want := range append([]string{"v0.1.0", "agent-tmux v0.2.0 is available"}, agenttmux.InstallLines...) {
+	for _, want := range append([]string{"v0.1.0", "(latest v0.2.0 \u2014 update available)"}, agenttmux.InstallLines...) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("version lacks %q:\n%s", want, out.String())
 		}
+	}
+	if spawns.Load() != 0 {
+		t.Error("a fresh cache spawned a refresh")
 	}
 
 	out.Reset()
@@ -187,14 +192,6 @@ func TestVersionNudgesAgentTmux(t *testing.T) {
 	}
 	if err := json.Unmarshal(out.Bytes(), &env); err != nil || env.Data.AgentTmux != "v0.1.0" || env.Data.AgentTmuxLatest != "v0.2.0" {
 		t.Errorf("json %+v %v", env.Data, err)
-	}
-
-	// WS_NO_VERSION_CHECK=1: the version, no nudge.
-	t.Setenv(agenttmux.NoCheckEnv, "1")
-	out.Reset()
-	Execute([]string{"version", "--no-color"}, strings.NewReader(""), &out, &errOut)
-	if strings.Contains(out.String(), "is available") || !strings.Contains(out.String(), "v0.1.0") {
-		t.Errorf("with the check off:\n%s", out.String())
 	}
 
 	// No agent-tmux: how to install it.
