@@ -75,5 +75,6 @@ var CLIFlagCoverage = []FlagCoverage{
 	{CLI: "config edit", Flag: "--editor", How: "n/a: the TUI opens the editor set in ws.json"},
 	{CLI: "completion enable", Flag: "--shell", How: "the Workspace screen: one row per shell; enter flips the cursor row, the `.` menu acts on the marked or cursor rows"},
 	{CLI: "completion disable", Flag: "--shell", How: "the Workspace screen: one row per shell; enter flips the cursor row, the `.` menu acts on the marked or cursor rows"},
+	{CLI: "version", Flag: "--check", How: "CLI only: an explicit release lookup; the TUI shows the cached agent-tmux nudge instead"},
 	{CLI: "version", Flag: "--short", How: "CLI only: a script flag (prints a bare version)"},
 }

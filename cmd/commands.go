@@ -250,7 +250,10 @@ var commands = []command{
 		Examples: []string{`eval "$(ws env)"`}},
 	{Path: []string{"tui"}, Summary: "the full-screen interface", RO: true},
 	{Path: []string{"version"}, Summary: "version, schema and platform", RO: true,
-		Flags: []flagDoc{{Name: "--short", Desc: "print only the version"}}},
+		Flags: []flagDoc{
+			{Name: "--short", Desc: "print only the version"},
+			{Name: "--check", Desc: "check GitHub for newer ws and agent-tmux releases"},
+		}},
 	{Path: []string{"help"}, Args: "[noun [verb…]]", Summary: "help", RO: true},
 }
 

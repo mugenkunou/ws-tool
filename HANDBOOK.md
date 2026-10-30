@@ -747,7 +747,7 @@ ws init                                   RW  create the workspace layout
 ws layout                                 RO  workspace folders and the homes outside it, with their purpose
 ws env                                    RO  export lines for WS_ROOT, WS_TMP, WS_CACHE, WS_RUN, WS_SCRATCH
 ws tui                                    RO  the full-screen interface
-ws version                                RO  version, schema and platform
+ws version [--short] [--check]            RO  version, schema and platform; --check asks GitHub for newer releases
 ws help [noun [verb…]]                    RO  help
 ```
 
@@ -969,7 +969,7 @@ only. Without agent-tmux there are none.
 | `PASSWORD_STORE_DIR` | pass store location |
 | `XDG_STATE_HOME`, `XDG_DATA_HOME` | machine-local state and trash locations |
 | `TMPDIR`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR` | `ws env` and `ws layout`: the temp, cache and session homes; `XDG_CACHE_HOME`: the agent-tmux release cache |
-| `WS_NO_VERSION_CHECK` | `1`: no agent-tmux version nudge (the TUI and `ws version` never ask GitHub) |
+| `WS_NO_VERSION_CHECK` | `1`: no agent-tmux version nudge (the TUI and `ws version` never ask GitHub). `ws version --check` is an explicit request and ignores it |
 | `WS_NO_MOUSE` | TUI: leave the mouse to the terminal |
 | `WS_NO_EMOJI` | TUI: no emoji |
 | `WS_CRONTAB_FILE` | tests: a file that stands in for the user's crontab |
@@ -2173,7 +2173,9 @@ build, or anything else unparseable, never nudges. The answer is cached for 24 h
 "etag", "tag_name"}`. After that the check sends `If-None-Match` with the cached ETag, and
 a `304` keeps the cached tag for another day. The TUI checks in the background; every
 check gives up after 3 seconds and fails silently. `WS_NO_VERSION_CHECK=1` turns it off.
-`ws session` never checks.
+`ws session` never checks. `ws version --check` is the explicit form: it skips the cache and
+`WS_NO_VERSION_CHECK`, and takes agent-tmux's answer from `agent-tmux version --check --json`
+instead of querying GitHub for it (the `ws version` reference).
 
 TUI: the Sessions screen (§6.5).
 
@@ -3834,7 +3836,7 @@ screen covers `init`.
 | `ws completion enable [--shell s]` | RW | add completion to the shell rc file | `.` `n` |
 | `ws completion disable [--shell s]` | RW | remove it | `.` `d` |
 | `ws tui` | RO | open the terminal UI | — |
-| `ws version [--short]` | RO | print version information | Workspace row |
+| `ws version [--short] [--check]` | RO | print version information; `--check` looks up newer ws and agent-tmux releases | Workspace row |
 | `ws help [noun [verb…]]` | RO | print help | `?` |
 
 Global flags, accepted before or after the command:
@@ -4086,11 +4088,27 @@ terminal.") or the UI fails.
 #### `ws version`
 
 ```text
-ws version [--short] [--json]
+ws version [--short] [--check] [--json]
 ```
 
 Prints the ws version, the `ws.json` schema this build writes, the platform and the Go version.
 `--short` prints only the version. It needs no workspace.
+
+`--check` asks for the latest release of both binaries and prints each, always bypassing the 24-hour
+cache. It is an explicit request, so it ignores `WS_NO_VERSION_CHECK`. ws itself comes from
+`api.github.com/repos/mugenkunou/ws-tool/releases/latest` (`tag_name`, 3 second timeout). agent-tmux is
+not queried from here: ws runs `agent-tmux version --check --json` and shows its answer (`version`,
+`latest`, `status` of `current`, `outdated`, `dev` or `unknown`, and `error` with `unknown`). Per binary:
+
+- current: `v0.3.0 (latest v0.3.0)`; outdated: `update available: v0.4.0`.
+- a `dev` or otherwise unparseable installed version never says "update available": it warns that the
+  local binary is a dev build and, when the lookup worked, names the upstream release.
+- a failed lookup says `release check failed: <reason>`.
+- agent-tmux not installed: `not installed` and the install lines. An agent-tmux too old to know
+  `--check` (it fails, or prints no JSON): its installed version, `installed agent-tmux is too old to
+  check; upgrade`, and the install lines.
+
+The exit code is 0 for every outcome.
 
 ```text
 $ ws version
@@ -4101,7 +4119,11 @@ ws v0.15.0
 ```
 
 `--json`: command `version`; data `version`, `config_schema`, `platform`, `go_version` (decision:
-named `config_schema` so it is not confused with the envelope's `schema`).
+named `config_schema` so it is not confused with the envelope's `schema`), `agent_tmux` and
+`agent_tmux_latest`. With `--check` it adds ws's own `latest`, `status` and `error` (omitted unless
+the lookup failed), and `agent_tmux_check`: agent-tmux's `version`, `latest`, `status` and `error`,
+with two statuses of ws's own, `not_installed` and `too_old`. `agent_tmux_latest` is set when
+agent-tmux is `outdated`.
 
 Exit: 0.
 
