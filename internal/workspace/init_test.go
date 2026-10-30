@@ -32,6 +32,11 @@ func runPlan(t *testing.T, p InitPlan) {
 			t.Fatal(err)
 		}
 	}
+	if p.RunbooksMissing {
+		if err := p.WriteRunbooks(); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func TestPlanInitOnAnEmptyDirectory(t *testing.T) {
@@ -40,17 +45,22 @@ func TestPlanInitOnAnEmptyDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Empty() || len(p.MissingDirs) != len(Layout) || !p.ConfigMissing || !p.MegaignoreMissing || len(p.Existing) != 0 {
+	if p.Empty() || len(p.MissingDirs) != len(Layout) || !p.ConfigMissing || !p.MegaignoreMissing || !p.RunbooksMissing || len(p.Existing) != 0 {
 		t.Fatalf("%+v", p)
 	}
 	if _, err := os.Stat(root); err == nil {
 		t.Fatal("planning writes nothing")
 	}
 	runPlan(t, p)
-	for _, rel := range []string{"ws.json", ".megaignore", "symlinks", "configs", "agent/skills"} {
+	for _, rel := range []string{"ws.json", ".megaignore", "references/RUNBOOKS.md", "symlinks", "configs", "agent/skills"} {
 		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
 			t.Errorf("%s: %v", rel, err)
 		}
+	}
+	// The runbooks file starts as the purpose and an empty table, ready for runs to fill.
+	rb, _ := os.ReadFile(filepath.Join(root, "references", "RUNBOOKS.md"))
+	if !strings.HasPrefix(string(rb), "# Runbooks") || !strings.Contains(string(rb), "| Task | Words people use | System | Not this |") {
+		t.Errorf("RUNBOOKS.md is not the seed:\n%s", rb)
 	}
 	// ws.json is complete: it lacks no key.
 	content, _ := os.ReadFile(filepath.Join(root, "ws.json"))
@@ -72,11 +82,17 @@ func TestPlanInitFillsKeysAndKeepsValues(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".megaignore"), []byte("mine\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(root, "references"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "references", "RUNBOOKS.md"), []byte("my runbooks\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	p, err := PlanInit(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.ConfigMissing || len(p.MissingKeys) == 0 || p.MegaignoreMissing || !slices.Contains(p.Existing, cfg) {
+	if p.ConfigMissing || len(p.MissingKeys) == 0 || p.MegaignoreMissing || p.RunbooksMissing || !slices.Contains(p.Existing, cfg) {
 		t.Fatalf("%+v", p)
 	}
 	runPlan(t, p)
@@ -95,6 +111,9 @@ func TestPlanInitFillsKeysAndKeepsValues(t *testing.T) {
 	}
 	if mega, _ := os.ReadFile(filepath.Join(root, ".megaignore")); string(mega) != "mine\n" {
 		t.Fatal("an existing .megaignore is left alone")
+	}
+	if rb, _ := os.ReadFile(filepath.Join(root, "references", "RUNBOOKS.md")); string(rb) != "my runbooks\n" {
+		t.Fatal("an existing RUNBOOKS.md is left alone")
 	}
 }
 
@@ -121,6 +140,23 @@ func TestWriteConfigNeverReplaces(t *testing.T) {
 	if err := p.WriteMegaignore(); err == nil {
 		t.Fatal("WriteMegaignore must refuse when .megaignore exists")
 	}
+	if err := p.WriteRunbooks(); err == nil {
+		t.Fatal("WriteRunbooks must refuse when RUNBOOKS.md exists")
+	}
+}
+
+// Skills start from `ws layout`, so the references/ purpose is how a run finds the
+// runbooks table.
+func TestLayoutNamesTheRunbooks(t *testing.T) {
+	for _, d := range Layout {
+		if d.Path == "references" {
+			if !strings.Contains(d.Purpose, "RUNBOOKS.md") || !strings.Contains(d.Purpose, "WISDOM.md") {
+				t.Fatalf("references purpose must name RUNBOOKS.md and WISDOM.md: %q", d.Purpose)
+			}
+			return
+		}
+	}
+	t.Fatal("no references folder in the layout")
 }
 
 func TestConfigExists(t *testing.T) {

@@ -1,6 +1,6 @@
 ---
 name: workspace-run
-description: Do a task on real systems with the blocks in ~/Workspace (scripts, references, configs, WISDOM.md), whether it is to investigate, debug, build, deploy or a chore. Use when the user gives a goal in plain English that touches a system ~/Workspace knows about, such as a DC, a host, a registry, SD, ZDCM or Stratus.
+description: Do a task on real systems with the blocks in ~/Workspace (scripts, references, runbooks, configs, WISDOM.md), whether it is to investigate, debug, build, deploy or a chore. Use when the user gives a goal in plain English that touches a system ~/Workspace knows about, such as a DC, a host, a registry, SD, ZDCM or Stratus.
 ---
 
 # Workspace run
@@ -15,7 +15,9 @@ Quick, read-only and thorough. The goal is to find every question the run will r
 
 Start with `ws layout`: it names what each folder holds and where the homes are on this machine. Read only the folders the goal needs; `artifacts/`, `archive/` and `data/` rarely are. Never run `find` or `ls -R` over ~/Workspace.
 
-For the systems the goal names, read:
+Then read `references/RUNBOOKS.md`, its table first. Match the goal to a row by meaning, not by wording: **Words people use** lists phrases said before, **Not this** rules out near-misses. When a row fits, read its entry in full; its **Route** is the starting plan for the run, and you check it below instead of inventing one. When two rows fit, or none does, say so in the ask.
+
+For the systems the goal names (the matched row names its system), read:
 
 - `references/WISDOM.md`, the sections for those systems and their neighbours: lessons, and decisions the user already made
 - the header comments of `scripts/<system>-*` and `scripts/lib/<system>.*`: what you can do, and what usually comes next
@@ -25,11 +27,11 @@ For the systems the goal names, read:
 
 Listing pass entry names (`pass ls svc/`) is fine; reading their values is not.
 
-Find the system from the filename prefixes. When the goal names no system, grep the script headers and WISDOM.md for the user's words. Grep WISDOM.md for the exact error text when the goal is a symptom.
+Without a matched row, find the system from the filename prefixes. When the goal names no system, grep the script headers and WISDOM.md for the user's words. Grep WISDOM.md for the exact error text when the goal is a symptom.
 
 Then, if a saved session still works (`<system>-login.sh --check`), run the read-only lookups the task needs: targets, ids, current state.
 
-Sketch the run in your head, step by step, and check each step:
+Sketch the run in your head, step by step (from the entry's Route when there is one), and check each step:
 
 - **Words:** does every term the user used map onto the system's units (they say "app group", the API takes a component)? Is the mapping recorded?
 - **Scope:** is an open scope ("all DCs", "all servers") defined by a config or a WISDOM.md decision, with its skips?
@@ -42,7 +44,7 @@ Sketch the run in your head, step by step, and check each step:
 
 Put every open question from the recon in one message, numbered:
 
-- what you understood the goal to be, in one line, with the terms mapped to the system's units
+- what you understood the goal to be, in one line, with the terms mapped to the system's units, and the runbook entry you follow (or that none fits)
 - each question with your proposed answer, so the user can just say yes
 - each change to a real system, with what it will do and on which targets, for one go up front
 - what the user must hand you: a login (the exact command), a capture (how to make it, from workspace-write step 1), a value only they know
@@ -73,10 +75,13 @@ For each answer the user gave, ask yourself: will this question come up again? I
 
 At the end, hand `steps.md` to workspace-write: commands you typed by hand that a later run will need become scripts, surprises become lessons. A run that taught nothing writes nothing. A result of this run that can change later, such as which targets failed, goes in the report and `steps.md` only.
 
-Write without asking what records a fact or an answer: a WISDOM.md bullet, a config value, a script header, a fix or a flag on an existing script, or a new script for a step this run did by hand. Write nothing for a fact an agent can work out from the input on its own. Propose first, and write only after the user's go, anything that changes how the user works or what the agent may touch:
+The runbook is where the route of a task lives. After a run that followed an entry, update it by the format in write-rules.md ("references/RUNBOOKS.md"): the words the user used, when they are new; a step that was wrong or missing; **Last run**. After a run that followed none and went well, add a row and an entry for the task. Neither needs a go.
+
+Write without asking what records a fact or an answer: a WISDOM.md bullet, a config value, a script header, a fix or a flag on an existing script, a new script for a step this run did by hand, or a runbook row, entry or update as above. Write nothing for a fact an agent can work out from the input on its own. Propose first, and write only after the user's go, anything that changes how the user works or what the agent may touch:
 
 - reading credentials or sessions from a new place, such as browser cookies
-- a new kind of file or concept the workspace does not have yet, such as an index or a playbook
+- a new kind of file or concept the workspace does not have yet, such as an index
+- restructuring a runbook entry, or removing its steps
 - a change to a decision already recorded
 - a setting outside ~/Workspace, such as permission rules
 - moving or deleting a file
@@ -88,6 +93,7 @@ The rules of a built-in skill (workspace-write, workspace-run) are read-only her
 - **Outcome**, in one line: done, partly done, or blocked.
 - **Per target:** done, skipped and why, failed.
 - **Decisions:** the ones the user gave in this run, the recorded ones you used (with their date), and the ones you made without asking.
+- **Runbook:** the entry you followed, or the one you added, and what you changed in it.
 - **Know this:** delayed effects, risks, and what was not verified.
 - **Left to do**, and how the user can check that it worked.
 - **Recorded:** what you wrote, by file.

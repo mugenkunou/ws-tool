@@ -86,13 +86,14 @@ func TestInitJSON(t *testing.T) {
 	if env.Command != "init" || env.Data.Workspace != ws || env.Data.Config != cfg {
 		t.Fatalf("%+v", env)
 	}
-	if !slices.Contains(env.Data.Created, cfg) || !slices.Contains(env.Data.Created, filepath.Join(ws, ".megaignore")) {
+	runbooks := filepath.Join(ws, "references", "RUNBOOKS.md")
+	if !slices.Contains(env.Data.Created, cfg) || !slices.Contains(env.Data.Created, filepath.Join(ws, ".megaignore")) || !slices.Contains(env.Data.Created, runbooks) {
 		t.Fatalf("created=%v existing=%v actions=%v", env.Data.Created, env.Data.Existing, env.Data.Actions)
 	}
 	// Initialized, and listing it as existing now.
 	_, out, _ = execArgs(t, "--json", "init", "--workspace", ws)
 	_ = json.Unmarshal([]byte(out), &env)
-	if len(env.Data.Created) != 0 || !slices.Contains(env.Data.Existing, cfg) {
+	if len(env.Data.Created) != 0 || !slices.Contains(env.Data.Existing, cfg) || !slices.Contains(env.Data.Existing, runbooks) {
 		t.Fatalf("second run: created=%v existing=%v", env.Data.Created, env.Data.Existing)
 	}
 }

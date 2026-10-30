@@ -422,6 +422,7 @@ the flag, the environment, or the default.
 ├── experiments/
 ├── artifacts/
 ├── references/
+│   └── RUNBOOKS.md      # how to do a task: a table, then one entry each; seeded by `ws init`
 ├── scripts/
 │   └── lib/
 ├── agent/
@@ -434,7 +435,7 @@ the flag, the environment, or the default.
 └── archive/
 ```
 
-`ws init` is idempotent. It creates what is missing, fills in any keys missing from an
+`ws init` is idempotent. It creates what is missing, including `references/RUNBOOKS.md`, fills in any keys missing from an
 existing `ws.json` (keeping its values), and leaves every other existing file alone. The
 pass store is not part of the layout: it syncs through its own git remote (see
 `ws pass`, "A second copy in the workspace").
@@ -444,6 +445,16 @@ pass store is not part of the layout: it syncs through its own git remote (see
 table that `ws init` creates from, so skills and scripts ask ws instead of copying the list.
 `ws env` prints the homes as `export` lines that `scripts/lib/common.sh` evals (§5 Workspace
 commands).
+
+`references/RUNBOOKS.md` is the one file that turns a request in any words into the route for the task.
+Its table has one row per task (`Task`, `Words people use`, `System`, `Not this`), followed by one
+entry per task: what it means, the input, the numbered route that names the scripts to use, the
+judgment calls, what is not covered, and the last run. It is not a script; the blocks in `scripts/`
+do the work and `WISDOM.md` keeps the lessons. ws only seeds the file (the purpose and an empty
+table, text that ships in the binary) and names it in `ws layout`, which is where the built-in
+skills start. The skills do the rest: `workspace-run` reads the table to find the entry for a goal
+and updates the entry after the run, and `workspace-write` adds or fixes entries when it turns a
+task into blocks. The entry format is in `write-rules.md` of `workspace-write`.
 
 `symlinks/**` is the one built-in included directory (§5 `ws ignore`): the mirrored tree
 keeps host names such as `.gitconfig`, `.ssh/` and `.config/`, and the built-in `-:.*`
@@ -1682,7 +1693,9 @@ folder of each tool that should have them:
   `$XDG_DATA_HOME/ws/skills/<name>/` (default `~/.local/share/ws/skills`), and tool links point
   at that copy. Every `ws skill` command and `ws init` refresh it when the binary's version or
   content differs from what is there, so a new ws updates every tool with no reinstall. Only
-  ws writes them; to change one, `eject` it.
+  ws writes them; to change one, `eject` it. Both work from the workspace's own docs:
+  `workspace-run` finds the route for a goal in `references/RUNBOOKS.md` (§2.2) and updates it
+  after the run; `workspace-write` adds or fixes its entries when it turns a task into blocks.
 - **Managed.** Skills that a tool binary ships (today `agent-tmux`, via `agent-tmux skill`).
   ws copies them into `<workspace>/agent/skills/<name>/` and keeps the copy in step with the
   binary (see `--providers` under `ws skill install`). Before the first copy, `scan`, `show` and
@@ -3832,7 +3845,7 @@ screen covers `init`.
 
 | Command | RO/RW | Does | TUI |
 | --- | --- | --- | --- |
-| `ws init` | RW | create the workspace layout, `ws.json` and `.megaignore` | setup screen `enter` |
+| `ws init` | RW | create the workspace layout, `ws.json`, `.megaignore` and `references/RUNBOOKS.md` | setup screen `enter` |
 | `ws layout` | RO | print the workspace folders and the homes outside it, with their purpose | Workspace rows |
 | `ws env` | RO | print the paths scripts use, as shell `export` lines | — (for scripts) |
 | `ws config show [--defaults]` | RO | print the resolved `ws.json`, or the built-in defaults | `.` `s` |
@@ -3870,11 +3883,12 @@ Makes a directory a ws workspace. The workspace is `--workspace`, else `$WS_WORK
 - `ws.json`, complete: every key, at its default or empty value (`ws config show --defaults`),
   so the file documents every setting (§2.3)
 - `<workspace>/.megaignore`, generated from `ws.json`'s ignore rules
+- `<workspace>/references/RUNBOOKS.md`, the purpose and an empty table (§2.2), so the first run has a file to fill
 
 It is idempotent (decision). On an existing workspace, it creates only what is missing. An
 existing `ws.json` is never replaced. If it lacks keys (written by an older ws), init fills
-them in with their defaults and keeps every value already set. An existing `.megaignore` is
-left alone. This covers a workspace that arrived through sync with its `ws.json` but without some directories. Machine setup is separate:
+them in with their defaults and keeps every value already set. An existing `.megaignore` or
+`references/RUNBOOKS.md` is left alone, whatever it holds. This covers a workspace that arrived through sync with its `ws.json` but without some directories. Machine setup is separate:
 `ws symlink link`, `ws trash enable`, `ws cron apply`, `ws completion enable`.
 
 Init also refreshes the managed copy of the built-in skills (§`ws skill`). At the end of an
@@ -3883,9 +3897,9 @@ built-ins into the detected tools: `Install the built-in skills (workspace-run,
 workspace-write) into claude, copilot? [y/N]`, default no. Otherwise it prints a one-line hint
 (`ws skill install`). It says nothing when every built-in is already in every detected tool.
 
-Plan: up to three actions, all pre-checked. They are: create the missing directories (one action
+Plan: up to four actions, all pre-checked. They are: create the missing directories (one action
 that lists them), write `ws.json` (or `Fill in 7 missing keys in /home/user/Workspace/ws.json;
-values you set are kept`), and write `.megaignore`. When nothing is missing, it prints
+values you set are kept`), write `.megaignore`, and write `references/RUNBOOKS.md`. When nothing is missing, it prints
 "Workspace already initialized: /home/user/Workspace".
 
 | Flag | Default | Meaning |
@@ -3918,6 +3932,8 @@ $ ws layout
 Workspace /home/user/Workspace
   /home/user/Workspace/notes         the user's own notes; agents read them and write elsewhere
   /home/user/Workspace/experiments   code projects (git repos too) and hand-written or multi-step scripts
+  /home/user/Workspace/artifacts     raw blobs: PDFs, slides, images, datasets, tarballs
+  /home/user/Workspace/references    structured docs for agents: API specs, converted docs, WISDOM.md (lessons), RUNBOOKS.md (how to do a task; read its table first)
   …
   /home/user/Workspace/archive       put away for good, at the same relative path
 

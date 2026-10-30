@@ -1,6 +1,6 @@
 ---
 name: workspace-write
-description: Build reusable blocks in ~/Workspace (API reference, scripts, configs, pass entries, WISDOM.md lessons) from a task done once, whether a HAR, curl commands, shell history, a rough script, or a run just improvised. Also use before creating, editing or moving any file in ~/Workspace, and when the user asks where a file belongs.
+description: Build reusable blocks in ~/Workspace (API reference, scripts, configs, pass entries, WISDOM.md lessons, runbook entries) from a task done once, whether a HAR, curl commands, shell history, a rough script, or a run just improvised. Also use before creating, editing or moving any file in ~/Workspace, and when the user asks where a file belongs.
 ---
 
 # Workspace write
@@ -9,13 +9,14 @@ description: Build reusable blocks in ~/Workspace (API reference, scripts, confi
 
 - scripts do one action each and preview every change
 - references say what a system can do (`<system>.openapi.yaml`) and what we learned (`WISDOM.md`)
+- runbooks say how a task is done: which blocks, in what order, and what to decide on the way (`RUNBOOKS.md`)
 - configs say where, and pass says with what authority
 
-This skill turns a task done once into blocks, reusing every block that already exists. It stops at the blocks. Stringing them into a plan for a task is a later skill's job.
+This skill turns a task done once into blocks, reusing every block that already exists. It stops at the blocks and the runbook entry that names them in order. Doing the task is workspace-run's job.
 
 Two references sit beside this file:
 
-- [write-rules.md](write-rules.md): where every file goes, the path and secret rules, and the formats of WISDOM.md and scripts/README.md. Read it before you place any file.
+- [write-rules.md](write-rules.md): where every file goes, the path and secret rules, and the formats of WISDOM.md, RUNBOOKS.md and scripts/README.md. Read it before you place any file.
 - [script-contract.md](script-contract.md): how a script looks and behaves. Read it before you write or change a script.
 
 **Placing one file**, outside a build or when the user asks where something belongs: apply write-rules.md, including its Verify section, and stop there.
@@ -46,6 +47,7 @@ For the system, read whatever exists of:
 
 - the header comments of `scripts/lib/common.sh`, `scripts/lib/<system>.sh` and each `scripts/<system>-*.sh`
 - `references/<system>.openapi.yaml`, and all of `references/WISDOM.md`
+- the table of `references/RUNBOOKS.md`, and the entry for this task when a row matches its goal, whatever its words
 - `configs/<system>-*/`, and `pass ls svc/`
 
 Label every block the task needs as **reused**, **extended** or **new**. A block with no file yet is new.
@@ -110,10 +112,17 @@ Give every surprise from steps 3 to 5 its home by the test under "references/WIS
 
 Done when every surprise has a home or failed the test, and no WISDOM.md bullet repeats another block.
 
-### 8. Report
+### 8. Runbook
+
+Find the task's row in `references/RUNBOOKS.md` by meaning, not by wording. When there is none, add a row and an entry. When there is one, update it: the words people used, the route (new scripts, changed order, steps that turned out wrong), **Last run**. Use the format in write-rules.md under "references/RUNBOOKS.md", and link to a script or a WISDOM.md bullet rather than copy it.
+
+Done when the row and the entry exist and every script the route names exists.
+
+### 9. Report
 
 Tell the user:
 
 - what was reused, extended and built, by file
 - what ran live, and what is still untested (usually the writes)
 - the order you ran the scripts in
+- the runbook entry you added or changed

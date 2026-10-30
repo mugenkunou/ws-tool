@@ -22,7 +22,7 @@ curl -fL -o ws.download "https://github.com/mugenkunou/ws-tool/releases/latest/d
 chmod +x ws.download
 mv ws.download ~/.local/bin/ws
 
-ws init                    # 🏗️  layout + ws.json + sync rules; offers the built-in skills
+ws init                    # 🏗️  layout + ws.json + sync rules + references/RUNBOOKS.md; offers the built-in skills
 ws symlink add ~/.gitconfig  # 🔗 move a file into the workspace, link it back
 ws tui                     # 🖥️  look around
 ws version                 # ⬆️  your versions, and whether a newer ws or agent-tmux is out (--check looks now)
@@ -65,6 +65,8 @@ Stuck? `ws help`, or `ws <noun> --help`.
 ```
 
 `ws layout` prints every folder with what belongs in it, and `ws env` prints the paths scripts use (`eval "$(ws env)"`).
+
+`references/` is what agents read first: API specs, `WISDOM.md` (lessons) and `RUNBOOKS.md`, a table that maps what you ask, in any words, to the route for that task. `ws init` seeds `RUNBOOKS.md`; the built-in skills read it and keep it up to date.
 
 Machine-local bits (cron state, trash hooks) stay **outside**, in `~/.local/state/ws-tool/`. Scratch directories live in `~/Scratch`. None of them sync.
 

@@ -15,7 +15,7 @@ import (
 
 // runInit makes a directory a ws workspace (spec "ws init"). It is idempotent:
 // it creates only what is missing, fills ws.json with any keys an older ws did
-// not write, and never replaces ws.json or .megaignore.
+// not write, and never replaces ws.json, .megaignore or references/RUNBOOKS.md.
 func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -69,6 +69,13 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 			Execute:     p.WriteMegaignore,
 		})
 	}
+	if p.RunbooksMissing {
+		pl.Actions = append(pl.Actions, Action{
+			ID:          "runbooks",
+			Description: "Write " + p.Runbooks,
+			Execute:     p.WriteRunbooks,
+		})
+	}
 
 	home, homeErr := os.UserHomeDir()
 	if homeErr == nil && !globals.dryRun {
@@ -90,7 +97,7 @@ func runInit(args []string, globals globalFlags, stdin io.Reader, stdout, stderr
 	if globals.json {
 		return writeJSONDryRun(stdout, stderr, "init", globals.dryRun, initData(p, &pl, res))
 	}
-	if res.WasExecuted("layout") || res.WasExecuted("ws.json") || res.WasExecuted("megaignore") {
+	if res.WasExecuted("layout") || res.WasExecuted("ws.json") || res.WasExecuted("megaignore") || res.WasExecuted("runbooks") {
 		fmt.Fprintln(textOut(globals, stdout), style.ResultSuccess(globals.noColor, "Workspace initialized: %s", workspacePath))
 	}
 	if homeErr == nil && res.ExitCode() == 0 {
@@ -181,6 +188,9 @@ func initData(p workspace.InitPlan, pl *Plan, res PlanResult) map[string]any {
 	}
 	if p.MegaignoreMissing && done("megaignore") {
 		created = append(created, p.Megaignore)
+	}
+	if p.RunbooksMissing && done("runbooks") {
+		created = append(created, p.Runbooks)
 	}
 	actions := res.Actions
 	if actions == nil {

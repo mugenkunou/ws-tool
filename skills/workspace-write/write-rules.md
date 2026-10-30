@@ -1,6 +1,6 @@
 # Write rules
 
-Where every file in ~/Workspace goes, how scripts handle paths and secrets, the formats of WISDOM.md and scripts/README.md, and how to verify a write.
+Where every file in ~/Workspace goes, how scripts handle paths and secrets, the formats of WISDOM.md, RUNBOOKS.md and scripts/README.md, and how to verify a write.
 
 ## Where a file goes
 
@@ -18,7 +18,7 @@ For settings and state, ask in order and stop at the first yes:
 Everything else:
 
 - Raw blobs (PDF, pptx, images, datasets, tarballs): `artifacts/`.
-- Structured docs for agents (API specs, converted docs, `WISDOM.md`): `references/`.
+- Structured docs for agents (API specs, converted docs, `WISDOM.md`, `RUNBOOKS.md`): `references/`.
 - Small composable blocks: `scripts/`, with shared code in `scripts/lib/`. Hand-written or multi-step scripts: `experiments/`.
 - Code projects, git repos included: `experiments/<name>/`.
 - Throwaway work and captures: `$WS_SCRATCH/<name>.<yyyy-mm>/`, created with `ws scratch new <name> --no-open` when missing (ws adds the `.<yyyy-mm>`).
@@ -52,7 +52,7 @@ Symlinks point into ~/Workspace from system paths. Create none inside it.
 
 ## Secrets
 
-- Secrets live in pass, or in a whole file under `configs/` or `symlinks/` (see above). Scripts, references, WISDOM.md and scripts/README.md hold none.
+- Secrets live in pass, or in a whole file under `configs/` or `symlinks/` (see above). Scripts, references, WISDOM.md, RUNBOOKS.md and scripts/README.md hold none.
 - Hand a secret to a command through a file in `$WS_TMPD`, so it stays out of `ps` and out of URLs: `curl -H @file`, `-F "name=<file"`, `--data-binary @file`.
 - Mask the values of secret-looking keys whenever a script prints values. The system's lib holds the list of key names.
 - When a write must resend a secret, such as a whole-file save, the script reads it from the system and sends it back itself, so the secret never passes through the agent.
@@ -68,7 +68,8 @@ A surprise goes to the first home that can carry it:
 2. It is how an API behaves: the system's spec.
 3. It is a value, or a fact only the user knows: `configs/<system>-<instance>/`.
 4. It is how to run a script: the script's header comment.
-5. A future run would still go wrong or waste time without it: a bullet in WISDOM.md.
+5. It is how the task is done, an order of steps or a call between blocks: the task's entry in RUNBOOKS.md.
+6. A future run would still go wrong or waste time without it: a bullet in WISDOM.md.
 
 A decision that a script enforces lives in the script and its header only, with no WISDOM.md bullet.
 
@@ -80,6 +81,37 @@ Format:
 - One bullet per lesson, with no prefix: the fact, then what to do. As short as it can be without losing information. No story. Add a date only when the fact can expire.
 - A lesson that touches two systems goes under the one you act on, and its text names the other.
 - Read the whole file before adding. Update a bullet that already covers the lesson, and fix or remove one that has gone stale.
+
+## references/RUNBOOKS.md
+
+One file of **routes**: how a task is done here. A route is not a script. It names the blocks and their order, and says what to decide on the way. `ws init` seeds the file with its purpose and an empty table; a run reads the table first and matches the user's goal to a row by meaning, not by wording.
+
+The table has one line per task:
+
+| Task | Words people use | System | Not this |
+| --- | --- | --- | --- |
+| Whitelist domains in the forward proxy | whitelist the domain, allow a domain in the proxy, open a domain for kites | sd | whitelisting an IP |
+
+- **Task**: what is done, as a verb phrase in the system's terms. The entry below has the same heading.
+- **Words people use**: phrases users said or would say, comma separated. Add a phrase when a run was asked in new words.
+- **System**: the prefix of its scripts (`sd`), or `several`.
+- **Not this**: near-misses that belong to another row, or nothing.
+
+An entry is `## <Task>`, then these fields in this order, one to three lines each, and a field with nothing to say is left out:
+
+- **Means**: the task in the system's terms, with its defaults and who decided them, dated ("no product named means KITES_APP, user 2026-10-30").
+- **Input**: what the user gives, in which messy forms, and how to read it.
+- **Route**: numbered steps, each naming the block that does it by its path (`scripts/sd-domain-whitelist.sh`), or "By hand:" where no block exists yet. A script that does the whole task is one step; its header holds the details.
+- **Judgment calls**: what to decide, skip or report on the way, with the default.
+- **Not covered**: what the route does not do or check.
+- **Last run**: the date, the targets, and what went wrong or took longer than it should.
+
+Rules:
+
+- Link, do not copy. A lesson is a WISDOM.md bullet and a rule a script enforces is in its header; the entry names them.
+- After a run that followed an entry, update it: new words, a step that was wrong or missing, **Last run**. After a good run that followed none, add a row and an entry. Neither needs a go. Restructuring an entry or removing its steps does.
+- Every script an entry names exists. Renaming or removing a script includes fixing the entries in the same change: `grep -n 'scripts/<file>' ~/Workspace/references/RUNBOOKS.md`.
+- When the file passes about 400 lines, move the entries to `references/runbooks/<task>.md`, keep the table here, and link each row to its file.
 
 ## scripts/README.md
 
@@ -111,3 +143,4 @@ Shape, shown for an example DNS system:
 - `ws secret ls` shows no new finding in the files you wrote.
 - A file under `symlinks/`: `ws symlink ls` shows it as ok.
 - After changing scripts or skills: `ws skill check` reports no drift.
+- After changing `references/RUNBOOKS.md`, or renaming a script: every script it names exists. From ~/Workspace: `grep -o 'scripts/[A-Za-z0-9_./-]*\.\(sh\|py\)' references/RUNBOOKS.md | sort -u | while read -r f; do [ -e "$f" ] || echo "missing: $f"; done` prints nothing.

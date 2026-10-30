@@ -24,7 +24,7 @@ var Layout = []LayoutDir{
 	{"notes", "the user's own notes; agents read them and write elsewhere"},
 	{"experiments", "code projects (git repos too) and hand-written or multi-step scripts"},
 	{"artifacts", "raw blobs: PDFs, slides, images, datasets, tarballs"},
-	{"references", "structured docs for agents: API specs, converted docs, WISDOM.md"},
+	{"references", "structured docs for agents: API specs, converted docs, WISDOM.md (lessons), RUNBOOKS.md (how to do a task; read its table first)"},
 	{"scripts", "small composable blocks, one action each"},
 	{"scripts/lib", "code the scripts share; common.sh sets the WS_* paths"},
 	{"agent", "what coding agents use"},
@@ -52,18 +52,20 @@ type InitPlan struct {
 	Workspace   string
 	Config      string
 	Megaignore  string
+	Runbooks    string
 	MissingDirs []string
-	Existing    []string // layout directories, ws.json and .megaignore that are already there
+	Existing    []string // layout directories, ws.json, .megaignore and the runbooks file that are already there
 	// ConfigMissing is true when ws.json does not exist. Otherwise MissingKeys
 	// lists the keys an older ws.json lacks.
 	ConfigMissing     bool
 	MissingKeys       []string
 	MegaignoreMissing bool
+	RunbooksMissing   bool
 }
 
 // Empty reports whether the workspace is already fully initialized.
 func (p InitPlan) Empty() bool {
-	return len(p.MissingDirs) == 0 && !p.ConfigMissing && len(p.MissingKeys) == 0 && !p.MegaignoreMissing
+	return len(p.MissingDirs) == 0 && !p.ConfigMissing && len(p.MissingKeys) == 0 && !p.MegaignoreMissing && !p.RunbooksMissing
 }
 
 // PlanInit reads the workspace and reports what is missing. It fails when an
@@ -77,6 +79,7 @@ func PlanInit(workspacePath string) (InitPlan, error) {
 		Workspace:   workspacePath,
 		Config:      configPath,
 		Megaignore:  filepath.Join(workspacePath, ".megaignore"),
+		Runbooks:    filepath.Join(workspacePath, filepath.FromSlash(RunbooksFile)),
 		MissingDirs: []string{},
 		Existing:    []string{},
 		MissingKeys: []string{},
@@ -108,6 +111,11 @@ func PlanInit(workspacePath string) (InitPlan, error) {
 		p.Existing = append(p.Existing, p.Megaignore)
 	} else {
 		p.MegaignoreMissing = true
+	}
+	if _, err := os.Stat(p.Runbooks); err == nil {
+		p.Existing = append(p.Existing, p.Runbooks)
+	} else {
+		p.RunbooksMissing = true
 	}
 	return p, nil
 }
@@ -151,6 +159,26 @@ func (p InitPlan) WriteMegaignore() error {
 		rules = ignore.DefaultUserRules()
 	}
 	return ignore.WriteMegaignore(p.Megaignore, rules)
+}
+
+// WriteRunbooks writes references/RUNBOOKS.md from RunbooksSeed. It never
+// replaces a file.
+func (p InitPlan) WriteRunbooks() error {
+	if err := os.MkdirAll(filepath.Dir(p.Runbooks), 0o755); err != nil {
+		return fmt.Errorf("creating %s: %w", filepath.Dir(p.Runbooks), err)
+	}
+	f, err := os.OpenFile(p.Runbooks, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("%s already exists", p.Runbooks)
+		}
+		return err
+	}
+	if _, err := f.WriteString(RunbooksSeed); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // LayoutFolder is one Layout folder as this workspace has it: one row of
