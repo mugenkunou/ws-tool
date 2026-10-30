@@ -2157,14 +2157,15 @@ ws session show web              page the recording
 Without agent-tmux on PATH, `ws session` prints how to install it and exits 127:
 
 ```text
-install (linux amd64):
-  curl -fLO https://github.com/mugenkunou/agent-tmux/releases/latest/download/agent-tmux-linux-amd64
-  chmod +x agent-tmux-linux-amd64
-  mv agent-tmux-linux-amd64 /home/user/.local/bin/agent-tmux
+install:
+  curl -fL -o agent-tmux.download "https://github.com/mugenkunou/agent-tmux/releases/latest/download/agent-tmux-$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+  chmod +x agent-tmux.download
+  mv agent-tmux.download /home/user/.local/bin/agent-tmux
 ```
 
-The destination is the copy on `PATH` when there is one (so a broken or old file is replaced), else
-`~/.local/bin/agent-tmux`. Other systems get the releases page instead of the commands.
+The shell fills in the platform, so the same lines work on any distro and CPU the release covers
+(agent-tmux publishes linux amd64 and arm64). The destination is the copy on `PATH` when there is
+one (so a broken or old file is replaced), else `~/.local/bin/agent-tmux`.
 
 Completion of `ws session <words>` is `agent-tmux __complete <words>`, so it offers exactly
 what agent-tmux would (§4.8). Without agent-tmux it offers nothing.
@@ -4114,30 +4115,37 @@ runs `agent-tmux version --check --json` and uses its answer. `--refresh-cache` 
 internal flag for the background run: silent, exit 0.
 
 ```text
-ws  v0.20.0  (latest v0.21.0 — update available)
-  upgrade (linux amd64):
-    curl -fLO https://github.com/mugenkunou/ws-tool/releases/latest/download/ws-linux-amd64
-    chmod +x ws-linux-amd64
-    mv ws-linux-amd64 /home/user/.local/bin/ws
+ws          v0.20.0  → v0.21.0 available
+agent-tmux  v0.1.0  up to date
+
   ws.json schema     1
   Platform           linux/amd64
   Go version         go1.26.1
-  agent-tmux         v0.1.0  (up to date)
+
+upgrade ws
+  $ curl -fL -o ws.download "https://github.com/mugenkunou/ws-tool/releases/latest/download/ws-$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+  $ chmod +x ws.download
+  $ mv ws.download /home/user/.local/bin/ws
 ```
 
-Per binary, after the version:
+One row per binary: name, installed version, then a short status inline. Yellow means there is
+something to do; grey is information; the suggestion blocks below are grey behind a `$ ` prompt, so
+they can be copied as they are.
 
-- `(up to date)`; `(latest v0.4.0 — update available)`, which adds how to upgrade: for ws,
-  `git pull && make install` when a `.ws-source` file beside the running binary shows `make install`
-  put it there, otherwise the release page (ws never replaces its own binary); for agent-tmux, the
-  install lines. An installed version newer than the latest is up to date.
-- a `dev` or otherwise unparseable installed version is never outdated: `(local build is a dev build;
-  upstream release is v0.4.0)`, the upstream part when the latest is known.
-- nothing when the latest is not known yet, or `(release check failed: <reason>)` when the last lookup
-  failed. While the cache is empty or stale the output ends with `latest versions unknown yet — run
-  'ws version --check' to look them up now`.
-- agent-tmux not installed: `not installed` and the install lines. Too old to know `--check` (it
-  fails, or prints no JSON): its version, `(too old to check — upgrade)` and the install lines.
+- `up to date`; `→ v0.4.0 available`, which adds an `upgrade ws` / `upgrade agent-tmux` block. The
+  commands are the same on every distro: the shell works out the asset name, `ws-linux-amd64`,
+  `ws-darwin-arm64` and so on, from `uname -s` and `uname -m`, and the destination is the path of
+  the running binary (for agent-tmux the copy on `PATH`, else `~/.local/bin/agent-tmux`). A ws that
+  `make install` put there (a `.ws-source` file beside it) gets one more grey line,
+  `or, from your ws-tool checkout: git pull && make install`. ws never replaces its own binary. An
+  installed version newer than the latest is up to date.
+- a `dev` or otherwise unparseable installed version is never outdated: `dev build · upstream
+  v0.4.0`, the upstream part when the latest is known.
+- `latest not checked yet` when nothing is cached, or `check failed: <reason>` when the last lookup
+  failed. While the cache is empty or stale the output ends with `run 'ws version --check' to look up
+  the latest versions now`.
+- agent-tmux `not installed`, with an `install agent-tmux` block. Too old to know `--check` (it
+  fails, or prints no JSON): `too old to check · upgrade`, with the same block.
 
 The exit code is 0 for every outcome.
 
@@ -4917,13 +4925,15 @@ To install: `make install` copies the binary to `~/.local/bin` (override with
 Without a checkout, download the release binary (the name has no version, so the URL is stable):
 
 ```bash
-curl -fLO https://github.com/mugenkunou/ws-tool/releases/latest/download/ws-linux-amd64
-chmod +x ws-linux-amd64
-mv ws-linux-amd64 ~/.local/bin/ws
+mkdir -p ~/.local/bin
+curl -fL -o ws.download "https://github.com/mugenkunou/ws-tool/releases/latest/download/ws-$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+chmod +x ws.download
+mv ws.download ~/.local/bin/ws
 ```
 
-Other systems: `ws-linux-arm64`, `ws-darwin-amd64`, `ws-darwin-arm64`. An outdated `ws` prints these
-commands with the path of the running binary; `ws version` does the same for agent-tmux.
+The shell picks the asset (`ws-linux-amd64`, `ws-linux-arm64`, `ws-darwin-amd64` or `ws-darwin-arm64`).
+An outdated `ws` prints these commands with the path of the running binary; `ws version` does the
+same for agent-tmux.
 
 If your machine mounts `/tmp` with `noexec`, Go cannot run its temporary build artifacts
 there. The Makefile therefore sets `TMPDIR`, `GOCACHE` and `GOTMPDIR` to `~/tmp`,

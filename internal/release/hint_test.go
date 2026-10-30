@@ -7,33 +7,28 @@ import (
 	"testing"
 )
 
-func target(t *testing.T, goos, goarch string) {
-	t.Helper()
-	oldOS, oldArch := hintOS, hintArch
-	hintOS, hintArch = goos, goarch
-	t.Cleanup(func() { hintOS, hintArch = oldOS, oldArch })
-}
-
-func TestInstallCommands(t *testing.T) {
-	target(t, "linux", "amd64")
-	got := strings.Join(InstallCommands("install", "mugenkunou/agent-tmux", "agent-tmux", "/home/u/.local/bin/agent-tmux"), "\n")
-	want := `install (linux amd64):
-  curl -fLO https://github.com/mugenkunou/agent-tmux/releases/latest/download/agent-tmux-linux-amd64
-  chmod +x agent-tmux-linux-amd64
-  mv agent-tmux-linux-amd64 /home/u/.local/bin/agent-tmux`
+func TestInstallSteps(t *testing.T) {
+	got := strings.Join(InstallSteps("mugenkunou/agent-tmux", "agent-tmux", "/home/u/.local/bin/agent-tmux"), "\n")
+	want := `curl -fL -o agent-tmux.download "https://github.com/mugenkunou/agent-tmux/releases/latest/download/agent-tmux-$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+chmod +x agent-tmux.download
+mv agent-tmux.download /home/u/.local/bin/agent-tmux`
 	if got != want {
-		t.Errorf("commands:\n%s\nwant:\n%s", got, want)
+		t.Errorf("steps:\n%s\nwant:\n%s", got, want)
 	}
 
-	target(t, "darwin", "arm64")
-	got = strings.Join(InstallCommands("install", "mugenkunou/agent-tmux", "agent-tmux", "/x"), "\n")
-	if strings.Contains(got, "curl") || !strings.Contains(got, "github.com/mugenkunou/agent-tmux/releases/latest") {
-		t.Errorf("other systems get the releases page only: %q", got)
+	if got := InstallSteps("o/r", "r", "/opt/my tools/r"); !strings.HasSuffix(got[2], "mv r.download '/opt/my tools/r'") {
+		t.Errorf("a path with a space is quoted: %q", got[2])
 	}
 }
 
-func TestWSUpgradeLines(t *testing.T) {
-	target(t, "linux", "amd64")
+func TestInstallCommandsAreIndentedUnderAHeading(t *testing.T) {
+	lines := InstallCommands("install", "o/r", "r", "/x/r")
+	if lines[0] != "install:" || !strings.HasPrefix(lines[1], "  curl -fL -o r.download ") || lines[3] != "  mv r.download /x/r" {
+		t.Errorf("lines: %q", lines)
+	}
+}
+
+func TestWSUpgradeSteps(t *testing.T) {
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "ws")
 	if err := os.WriteFile(exe, nil, 0o755); err != nil {
@@ -44,11 +39,11 @@ func TestWSUpgradeLines(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := strings.Join(WSUpgradeLines(exe), "\n")
+	got := strings.Join(WSUpgradeSteps(exe), "\n")
 	for _, w := range []string{
-		"curl -fLO https://github.com/mugenkunou/ws-tool/releases/latest/download/ws-linux-amd64",
-		"chmod +x ws-linux-amd64",
-		"mv ws-linux-amd64 " + resolved,
+		"releases/latest/download/ws-$(uname -s",
+		"chmod +x ws.download",
+		"mv ws.download " + resolved,
 	} {
 		if !strings.Contains(got, w) {
 			t.Errorf("release copy lacks %q:\n%s", w, got)
@@ -61,8 +56,8 @@ func TestWSUpgradeLines(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".ws-source"), []byte("make\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got = strings.Join(WSUpgradeLines(exe), "\n")
-	if !strings.Contains(got, "git pull && make install") || !strings.Contains(got, "curl -fLO") {
+	got = strings.Join(WSUpgradeSteps(exe), "\n")
+	if !strings.Contains(got, "# or, from your ws-tool checkout: git pull && make install") || !strings.Contains(got, "curl -fL") {
 		t.Errorf("make install copy offers both:\n%s", got)
 	}
 
@@ -70,7 +65,7 @@ func TestWSUpgradeLines(t *testing.T) {
 	if err := os.Symlink(exe, link); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(WSUpgradeLines(link), "\n"); !strings.Contains(got, "make install") || !strings.Contains(got, "mv ws-linux-amd64 "+resolved) {
+	if got := strings.Join(WSUpgradeSteps(link), "\n"); !strings.Contains(got, "mv ws.download "+resolved) {
 		t.Errorf("a symlink resolves to the real binary:\n%s", got)
 	}
 }

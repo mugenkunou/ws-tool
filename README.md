@@ -18,9 +18,9 @@ CLI for scripts, full-screen TUI (`ws tui`) for humans.
 
 ```bash
 mkdir -p ~/.local/bin
-curl -fLO https://github.com/mugenkunou/ws-tool/releases/latest/download/ws-linux-amd64
-chmod +x ws-linux-amd64
-mv ws-linux-amd64 ~/.local/bin/ws                    # other systems: github.com/mugenkunou/ws-tool/releases
+curl -fL -o ws.download "https://github.com/mugenkunou/ws-tool/releases/latest/download/ws-$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+chmod +x ws.download
+mv ws.download ~/.local/bin/ws
 
 ws init                    # 🏗️  layout + ws.json + sync rules; offers the built-in skills
 ws symlink add ~/.gitconfig  # 🔗 move a file into the workspace, link it back

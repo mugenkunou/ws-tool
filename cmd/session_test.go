@@ -84,9 +84,10 @@ func TestSessionWithoutAgentTmux(t *testing.T) {
 		t.Fatalf("exit %d, want 127", code)
 	}
 	for _, l := range []string{
-		"curl -fLO https://github.com/mugenkunou/agent-tmux/releases/latest/download/agent-tmux-linux-amd64",
-		"chmod +x agent-tmux-linux-amd64",
-		"mv agent-tmux-linux-amd64 ",
+		"curl -fL -o agent-tmux.download",
+		"releases/latest/download/agent-tmux-$(uname -s",
+		"chmod +x agent-tmux.download",
+		"mv agent-tmux.download ",
 	} {
 		if !strings.Contains(errOut.String(), l) {
 			t.Errorf("stderr lacks %q:\n%s", l, errOut.String())
@@ -175,7 +176,7 @@ func TestVersionShowsAgentTmux(t *testing.T) {
 	if code := Execute([]string{"version", "--no-color"}, strings.NewReader(""), &out, &errOut); code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
-	for _, want := range append([]string{"v0.1.0", "(latest v0.2.0 \u2014 update available)"}, agenttmux.InstallLines()...) {
+	for _, want := range []string{"v0.1.0", "\u2192 v0.2.0 available", "upgrade agent-tmux", "$ curl -fL -o agent-tmux.download", "releases/latest/download/agent-tmux-$(uname -s", "$ chmod +x agent-tmux.download"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("version lacks %q:\n%s", want, out.String())
 		}

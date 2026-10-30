@@ -212,7 +212,7 @@ func TestCheckNudge(t *testing.T) {
 		t.Fatalf("nudge = %+v %v", n, ok)
 	}
 	want := append([]string{"agent-tmux v0.2.0 is available"}, agenttmux.InstallLines()...)
-	if !slices.Equal(n.Lines(), want) || !strings.Contains(strings.Join(n.Lines(), "\n"), "releases/latest/download/agent-tmux-linux-amd64") {
+	if !slices.Equal(n.Lines(), want) || !strings.Contains(strings.Join(n.Lines(), "\n"), "releases/latest/download/agent-tmux-$(uname -s") {
 		t.Errorf("lines = %q", n.Lines())
 	}
 

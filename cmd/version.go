@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mugenkunou/ws-tool/internal/agenttmux"
@@ -49,39 +50,63 @@ type agentTmuxCheck struct {
 // executablePath is the running ws binary; tests replace it.
 var executablePath = os.Executable
 
-// itemNote is the parenthetical after an item's version, "" when there is
-// nothing to say (never checked).
-func itemNote(it versions.Item) string {
+// statusCell is the short inline status after an item's version: yellow for
+// something to do, grey for everything else, "" for nothing to say.
+func statusCell(nc bool, it versions.Item) string {
+	warn := func(format string, a ...any) string { return style.Warningf(nc, format, a...) }
+	grey := func(format string, a ...any) string { return style.Mutedf(nc, format, a...) }
 	switch it.State {
 	case versions.StateCurrent:
-		return "up to date"
+		return grey("up to date")
 	case versions.StateOutdated:
-		return "latest " + it.Latest + " \u2014 update available"
+		return warn("\u2192 %s available", it.Latest)
 	case versions.StateDev:
-		msg := "local build is a dev build"
 		if it.Latest != "" {
-			msg += "; upstream release is " + it.Latest
+			return grey("dev build \u00b7 upstream %s", it.Latest)
 		}
-		return msg
+		return grey("dev build")
 	case versions.StateTooOld:
-		return "too old to check \u2014 upgrade"
+		return warn("too old to check \u00b7 upgrade")
+	case versions.StateNotInstalled:
+		return warn("not installed")
 	case versions.StateUnknown:
 		if it.Error != "" {
-			return "release check failed: " + it.Error
+			return grey("check failed: %s", it.Error)
 		}
+		return grey("latest not checked yet")
 	}
 	return ""
 }
 
-// versionValue is "<installed>  (<note>)".
-func versionValue(nc bool, installed string, it versions.Item) string {
-	if installed == "" {
-		installed = "unknown version"
+// versionRow is "<name>  <version>  <status>", the name padded so rows line up.
+func versionRow(nc bool, name string, it versions.Item) string {
+	row := style.Boldf(nc, "%-10s", name)
+	if it.State != versions.StateNotInstalled {
+		v := it.Installed
+		if v == "" {
+			v = "unknown version"
+		}
+		row += "  " + style.Accentf(nc, "%s", v)
 	}
-	if note := itemNote(it); note != "" {
-		installed += "  " + style.Mutedf(nc, "(%s)", note)
+	if cell := statusCell(nc, it); cell != "" {
+		row += "  " + cell
 	}
-	return installed
+	return row
+}
+
+// printSteps writes a suggestion block: a blank line, a title, then the lines
+// greyed, commands behind a "$ " prompt. Lines that are not commands (the
+// make install alternative) are passed with a leading "#".
+func printSteps(out io.Writer, nc bool, title string, steps []string) {
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, style.Boldf(nc, "%s", title))
+	for _, l := range steps {
+		if rest, ok := strings.CutPrefix(l, "#"); ok {
+			fmt.Fprintln(out, "  "+style.Mutedf(nc, "%s", strings.TrimSpace(rest)))
+			continue
+		}
+		fmt.Fprintln(out, "  "+style.Mutedf(nc, "$ %s", l))
+	}
 }
 
 var versionHelp = cmdHelp{
@@ -151,34 +176,30 @@ func runVersion(args []string, globals globalFlags, stdout, stderr io.Writer) in
 
 	out := textOut(globals, stdout)
 	nc := globals.noColor
-	fmt.Fprintf(out, "%s  %s\n", style.Boldf(nc, "ws"), versionValue(nc, style.Accentf(nc, "%s", rep.WS.Installed), rep.WS))
-	if rep.WS.State == versions.StateOutdated {
-		if exe, err := executablePath(); err == nil {
-			for _, l := range release.WSUpgradeLines(exe) {
-				fmt.Fprintln(out, "  "+l)
-			}
-		}
-	}
+	fmt.Fprintln(out, versionRow(nc, "ws", rep.WS))
+	fmt.Fprintln(out, versionRow(nc, "agent-tmux", rep.AgentTmux))
+	fmt.Fprintln(out)
 	style.KV(out, "ws.json schema", fmt.Sprintf("%d", data.ConfigSchema), nc)
 	style.KV(out, "Platform", data.Platform, nc)
 	style.KV(out, "Go version", data.GoVersion, nc)
 
-	at := rep.AgentTmux
-	if at.State == versions.StateNotInstalled {
-		style.KV(out, "agent-tmux", style.Mutedf(nc, "not installed"), nc)
-	} else {
-		style.KV(out, "agent-tmux", versionValue(nc, at.Installed, at), nc)
-	}
-	switch at.State {
-	case versions.StateNotInstalled, versions.StateTooOld, versions.StateOutdated:
-		for _, l := range agenttmux.InstallLines() {
-			fmt.Fprintln(out, "  "+l)
+	if rep.WS.State == versions.StateOutdated {
+		if exe, err := executablePath(); err == nil {
+			printSteps(out, nc, "upgrade ws", release.WSUpgradeSteps(exe))
 		}
+	}
+	switch rep.AgentTmux.State {
+	case versions.StateNotInstalled, versions.StateTooOld, versions.StateOutdated:
+		verb := "install"
+		if rep.AgentTmux.State == versions.StateOutdated {
+			verb = "upgrade"
+		}
+		printSteps(out, nc, verb+" agent-tmux", agenttmux.InstallSteps())
 	}
 
 	if !*check && (!rep.Known() || versions.Stale()) {
 		fmt.Fprintln(out)
-		fmt.Fprintln(out, style.Mutedf(nc, "latest versions unknown yet \u2014 run 'ws version --check' to look them up now"))
+		fmt.Fprintln(out, style.Mutedf(nc, "run 'ws version --check' to look up the latest versions now"))
 	}
 	return 0
 }

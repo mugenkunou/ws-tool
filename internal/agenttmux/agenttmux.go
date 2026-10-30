@@ -25,19 +25,28 @@ import (
 // Bin is the program's name on PATH.
 const Bin = "agent-tmux"
 
-// InstallLines are the exact commands that install the latest agent-tmux, as
-// the TUI and the version nudge print them. They replace the copy on PATH, or
-// create ~/.local/bin/agent-tmux when there is none.
-func InstallLines() []string {
-	dest := ""
+// installDest is where a fresh agent-tmux goes: over the copy on PATH when
+// there is one (so a broken or old file is replaced), else ~/.local/bin.
+func installDest() string {
 	if p, err := Path(); err == nil {
-		dest = p
-	} else if home, err := os.UserHomeDir(); err == nil {
-		dest = filepath.Join(home, ".local", "bin", Bin)
-	} else {
-		dest = "~/.local/bin/" + Bin
+		return p
 	}
-	return release.InstallCommands("install", "mugenkunou/agent-tmux", Bin, dest)
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".local", "bin", Bin)
+	}
+	return "~/.local/bin/" + Bin
+}
+
+// InstallSteps are the exact commands that install the latest agent-tmux (see
+// release.InstallSteps).
+func InstallSteps() []string {
+	return release.InstallSteps("mugenkunou/agent-tmux", Bin, installDest())
+}
+
+// InstallLines are InstallSteps as plain lines, as the session error and the
+// TUI print them.
+func InstallLines() []string {
+	return release.InstallCommands("install", "mugenkunou/agent-tmux", Bin, installDest())
 }
 
 // ErrMissing means agent-tmux is not on PATH.
