@@ -247,3 +247,23 @@ func TestSessionsCard(t *testing.T) {
 		t.Errorf("card without agent-tmux = %q", got)
 	}
 }
+
+func TestVersionFooterIsTheLastRow(t *testing.T) {
+	m := model(map[nav.Screen]area{})
+	m.env.Version = "v0.20.0"
+
+	view := func(m Model) []string { return strings.Split(ansi.Strip(m.View()), "\n") }
+	rows := view(m)
+	if len(rows) != m.height {
+		t.Fatalf("view is %d rows, want %d", len(rows), m.height)
+	}
+	if got := strings.TrimSpace(rows[len(rows)-1]); got != "ws v0.20.0" {
+		t.Errorf("footer = %q, want ws only while agent-tmux's version is unknown", got)
+	}
+
+	next, _ := m.Update(agentTmuxVersionMsg{Version: "v0.19.0"})
+	rows = view(next.(Model))
+	if got := strings.TrimSpace(rows[len(rows)-1]); got != "ws v0.20.0  ·  agent-tmux v0.19.0" {
+		t.Errorf("footer = %q", got)
+	}
+}

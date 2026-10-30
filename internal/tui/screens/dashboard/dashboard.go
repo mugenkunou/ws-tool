@@ -11,19 +11,24 @@
 // problems: enter opens the command bar with the suggested command typed in,
 // to run, edit or dismiss. The dashboard never touches another screen's state.
 //
+// The last row is a muted footer naming the ws and agent-tmux versions in use.
+//
 // This is the top navigation level, so esc does nothing here.
 package dashboard
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/mugenkunou/ws-tool/internal/agenttmux"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
@@ -68,6 +73,7 @@ type Model struct {
 	frame   int
 	hour    int
 	nudge   string // a newer agent-tmux release, e.g. "v0.2.0"
+	atmux   string // the installed agent-tmux's version, "" until known or when missing
 	width   int
 	height  int
 }
@@ -77,8 +83,19 @@ func New(e env.Env) Model {
 	return Model{env: e, keys: keys.Dashboard(), areas: map[nav.Screen]area{}, hour: e.Now().Hour(), section: sectionGrid}
 }
 
-// Init implements nav.Component. The dashboard loads nothing itself.
-func (m Model) Init() tea.Cmd { return nil }
+// agentTmuxVersionMsg carries the installed agent-tmux's version ("" when missing).
+type agentTmuxVersionMsg struct{ Version string }
+
+// Init implements nav.Component. The areas load themselves; the dashboard only
+// reads agent-tmux's version for the footer.
+func (m Model) Init() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		v, _ := agenttmux.Version(ctx)
+		return agentTmuxVersionMsg{Version: v}
+	}
+}
 
 // CapturesKeys implements nav.Component: the dashboard has no dialogs.
 func (m Model) CapturesKeys() bool { return false }
@@ -94,6 +111,8 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		m.hour = m.env.Now().Hour()
 	case nav.RefreshMsg:
 		m.areas = map[nav.Screen]area{}
+	case agentTmuxVersionMsg:
+		m.atmux = msg.Version
 	case sessions.NudgeMsg:
 		m.nudge = msg.Nudge.Latest
 	case tea.KeyPressMsg:
@@ -298,13 +317,33 @@ func (m Model) View() string {
 		focusBottom = focusTop + cardHeight - 1
 	}
 
-	// Scroll so the focused row (or card) stays visible.
-	start := 0
-	if focusBottom >= m.height {
-		start = min(focusTop, focusBottom-m.height+1)
+	// The last row is the version footer; the rest scrolls so the focused row
+	// (or card) stays visible.
+	h := m.height
+	if h > 1 {
+		h--
 	}
-	lines = lines[start:min(start+m.height, len(lines))]
+	start := 0
+	if focusBottom >= h {
+		start = min(focusTop, focusBottom-h+1)
+	}
+	lines = lines[start:min(start+h, len(lines))]
+	if m.height > 1 {
+		for len(lines) < h {
+			lines = append(lines, "")
+		}
+		lines = append(lines, m.versionLine())
+	}
 	return lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(strings.Join(lines, "\n"))
+}
+
+// versionLine is the muted footer naming the ws and agent-tmux versions in use.
+func (m Model) versionLine() string {
+	v := "ws " + m.env.Version
+	if m.atmux != "" {
+		v += "  ·  agent-tmux " + m.atmux
+	}
+	return theme.Muted.Render(v)
 }
 
 func (m Model) grid() string {
