@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/mugenkunou/ws-tool/internal/agenttmux"
 	"github.com/mugenkunou/ws-tool/internal/buildinfo"
@@ -47,6 +48,9 @@ type agentTmuxCheck struct {
 // wsReleaseURL is GitHub's latest-release API for ws. Tests point it at an
 // httptest server.
 var wsReleaseURL = "https://api.github.com/repos/mugenkunou/ws-tool/releases/latest"
+
+// executablePath is the running ws binary; tests replace it.
+var executablePath = os.Executable
 
 // checkWS compares installed with the newest ws release, always asking GitHub
 // (no cache). A dev or unparseable build is never outdated; latest is still
@@ -178,6 +182,13 @@ func runVersion(args []string, globals globalFlags, stdout, stderr io.Writer) in
 
 	if *check {
 		printCheck(out, nc, "ws release", data.Version, data.Latest, data.Status, data.Error)
+		if data.Status == agenttmux.StatusOutdated {
+			if exe, err := executablePath(); err == nil {
+				for _, l := range release.WSUpgradeLines(exe) {
+					fmt.Fprintln(out, "  "+l)
+				}
+			}
+		}
 		c := data.AgentTmuxCheck
 		switch c.Status {
 		case "not_installed":

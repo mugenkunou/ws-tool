@@ -4100,7 +4100,9 @@ cache. It is an explicit request, so it ignores `WS_NO_VERSION_CHECK`. ws itself
 not queried from here: ws runs `agent-tmux version --check --json` and shows its answer (`version`,
 `latest`, `status` of `current`, `outdated`, `dev` or `unknown`, and `error` with `unknown`). Per binary:
 
-- current: `v0.3.0 (latest v0.3.0)`; outdated: `update available: v0.4.0`.
+- current: `v0.3.0 (latest v0.3.0)`; outdated: `update available: v0.4.0`. An outdated ws adds how to
+  upgrade: `git pull && make install` when a `.ws-source` file beside the running binary shows `make
+  install` put it there, otherwise the release page. ws never replaces its own binary.
 - a `dev` or otherwise unparseable installed version never says "update available": it warns that the
   local binary is a dev build and, when the lookup worked, names the upstream release.
 - a failed lookup says `release check failed: <reason>`.

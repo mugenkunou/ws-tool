@@ -7,12 +7,15 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/mugenkunou/ws-tool/internal/agenttmux"
 	"github.com/mugenkunou/ws-tool/internal/agenttmux/agenttmuxtest"
+	"github.com/mugenkunou/ws-tool/internal/release"
 )
 
 // releaseServer answers every request with tag (or status when it is not 200)
@@ -182,5 +185,35 @@ func TestVersionCheckJSON(t *testing.T) {
 	}
 	if hits.Load() != 1 {
 		t.Errorf("plain version asked GitHub")
+	}
+}
+
+func TestVersionCheckWSUpgradeHint(t *testing.T) {
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "ws")
+	if err := os.WriteFile(exe, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := executablePath
+	executablePath = func() (string, error) { return exe, nil }
+	t.Cleanup(func() { executablePath = old })
+
+	current := `{"version":"v0.1.0","latest":"v0.1.0","status":"current"}`
+	setupCheck(t, "v0.3.0", "v0.4.0", 200, current, nil)
+	if out := runVersionCheck(t); !strings.Contains(out, "download: "+release.WSReleasesPage) {
+		t.Errorf("release copy lacks the release page:\n%s", out)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, ".ws-source"), []byte("make\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	setupCheck(t, "v0.3.0", "v0.4.0", 200, current, nil)
+	if out := runVersionCheck(t); !strings.Contains(out, "git pull && make install") {
+		t.Errorf("make install copy lacks the rebuild line:\n%s", out)
+	}
+
+	setupCheck(t, "v0.4.0", "v0.4.0", 200, current, nil)
+	if out := runVersionCheck(t); strings.Contains(out, "make install") || strings.Contains(out, "download:") {
+		t.Errorf("current ws prints an upgrade hint:\n%s", out)
 	}
 }
