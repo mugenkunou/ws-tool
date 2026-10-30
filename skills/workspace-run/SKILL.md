@@ -1,6 +1,6 @@
 ---
 name: workspace-run
-description: Do a task on real systems with the blocks in ~/Workspace (scripts, references, runbooks, configs, WISDOM.md), whether it is to investigate, debug, build, deploy or a chore. Use when the user gives a goal in plain English that touches a system ~/Workspace knows about, such as a DC, a host, a registry, SD, ZDCM or Stratus.
+description: "Do a task on a real system (a server, a service, a cluster, a DC, or this machine) with the blocks in ~/Workspace (runbooks, scripts, references, configs, WISDOM.md): investigate, debug, build, deploy, change a config, or a chore. Use for any such goal in plain English, whether or not it names the system, and whether or not ~/Workspace knows that system yet. Also use it to plan a task without doing it: its first two steps change no real system. Not for changing code in a repo."
 ---
 
 # Workspace run
@@ -15,7 +15,7 @@ Quick, read-only and thorough. The goal is to find every question the run will r
 
 Start with `ws layout`: it names what each folder holds and where the homes are on this machine. Read only the folders the goal needs; `artifacts/`, `archive/` and `data/` rarely are. Never run `find` or `ls -R` over ~/Workspace.
 
-Then read `references/RUNBOOKS.md`, its table first. Match the goal to a row by meaning, not by wording: **Words people use** lists phrases said before, **Not this** rules out near-misses. When a row fits, read its entry in full; its **Route** is the starting plan for the run, and you check it below instead of inventing one. When two rows fit, or none does, say so in the ask.
+Then read `references/RUNBOOKS.md`, its table first. Match the goal to a row by meaning, not by wording: **Words people use** lists phrases said before, **Not this** rules out near-misses. When a row fits, read its entry in full; its **Route** is the starting plan for the run, and you check it below instead of inventing one. Its **Last run** says what went wrong last time: check whether it was fixed since, and when it was not, plan around it and say so in the ask. When two rows fit, or none does, say so in the ask.
 
 For the systems the goal names (the matched row names its system), read:
 
@@ -29,7 +29,7 @@ Listing pass entry names (`pass ls svc/`) is fine; reading their values is not.
 
 Without a matched row, find the system from the filename prefixes. When the goal names no system, grep the script headers and WISDOM.md for the user's words. Grep WISDOM.md for the exact error text when the goal is a symptom.
 
-Then, if a saved session still works (`<system>-login.sh --check`), run the read-only lookups the task needs: targets, ids, current state.
+Then check every session the run will need, in one call: `<system>-login.sh --check` for each system the steps touch, or the script the entry's Route names for it. Run the read-only lookups the task needs (targets, ids, current state) with the sessions that work, and from the cache where a script answers without one. A missing login goes in the ask with its exact command, all of them in the same message, so the user logs in once for the run.
 
 Sketch the run in your head, step by step (from the entry's Route when there is one), and check each step:
 
@@ -62,7 +62,7 @@ When a recorded decision or the workspace answers a question, don't ask it. Buil
 - A step over many targets runs as one call, in the background when it can take minutes. Don't loop over targets one call at a time in the foreground.
 - When a block the task needs does not exist, build it without asking, unless step 4 says to propose it first: follow workspace-write from its step 2, using this run's goal, targets and the user's answers as the intake. Writing blocks changes no real system.
 - You never read a secret value yourself: no pass entries, no cookie files, no token in a command line or a log. An API call that needs a login goes through a script.
-- Keep short notes in `$WS_SCRATCH/<task>.<yyyy-mm>/steps.md` as you go (create the folder with `ws scratch new <task> --no-open` when it is missing): what you ran, what you found, what you chose. No secret values.
+- Keep short notes in `$WS_SCRATCH/<task>.<yyyy-mm>/steps.md` as you go (create the folder with `ws scratch new <task> --no-open` when it is missing): what you ran, what you found, what you chose, and what cost a round trip or a retry: a question the recon missed, a call that was blocked or timed out, a read that found nothing, a call repeated for the same answer. No secret values.
 - Output the user asked to keep, including a "temp file" in their words, goes in `$WS_SCRATCH/<task>.<yyyy-mm>/`, never `$WS_TMPD`, which is removed when the script exits. Don't ask about it.
 
 Stop and ask again only for something the recon could not see: a result that contradicts what is recorded, a change the up-front go did not cover, or a new fork. Anything else, decide yourself and carry on; say what you chose in the report.
@@ -70,6 +70,17 @@ Stop and ask again only for something the recon could not see: a result that con
 A decision to skip what fails means no retry, unless the user asks for one.
 
 ## 4. Keep what you learned
+
+Review the run first. From the costs in `steps.md`, pick the ones a later run of this task would pay again. A cost the entry's **Last run** already named is a repeat, and it comes first. Give each cost one fix, in the first place that can carry it:
+
+- the goal matched no row, or the wrong one: **Words people use** or **Not this**
+- a question the recon missed, or a fork asked mid-run: the entry's **Means** or **Judgment calls**, with the default
+- a step done by hand, in the wrong order, or a read that found nothing: the entry's **Route**, naming the block
+- calls repeated, or a loop over targets: a flag or a batch mode on the script
+- a login that blocked a read-only lookup: a cache fallback in the script
+- a blocked call: a permission rule, which is a setting outside ~/Workspace, so propose it
+
+Without an entry, the home test in write-rules.md decides. Keep the five that save the most. You cannot see token counts, so count calls and round trips instead.
 
 For each answer the user gave, ask yourself: will this question come up again? If yes, give the answer the first home that can carry it, by the test under "references/WISDOM.md" in write-rules.md: a script that enforces it, a config value, or a dated WISDOM.md bullet. When the user asks for a WISDOM.md bullet, write it, even if the test would put the fact elsewhere.
 
@@ -96,7 +107,8 @@ The rules of a built-in skill (workspace-write, workspace-run) are read-only her
 - **Runbook:** the entry you followed, or the one you added, and what you changed in it.
 - **Know this:** delayed effects, risks, and what was not verified.
 - **Left to do**, and how the user can check that it worked.
-- **Recorded:** what you wrote, by file.
-- **For your go:** the proposals, numbered, so the user can reply "go 1,3".
+- **Cost:** the round trips, blocked calls, timeouts and repeated calls in this run, in one line, and which of them repeat **Last run**.
+- **Recorded:** what you wrote, by file, each with the cost it saves the next run.
+- **For your go:** the proposals, numbered, each with the cost it saves the next run, so the user can reply "go 1,3".
 
 Leave out an empty section.

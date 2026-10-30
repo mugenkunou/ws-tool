@@ -104,7 +104,7 @@ An entry is `## <Task>`, then these fields in this order, one to three lines eac
 - **Route**: numbered steps, each naming the block that does it by its path (`scripts/sd-domain-whitelist.sh`), or "By hand:" where no block exists yet. A script that does the whole task is one step; its header holds the details.
 - **Judgment calls**: what to decide, skip or report on the way, with the default.
 - **Not covered**: what the route does not do or check.
-- **Last run**: the date, the targets, and what went wrong or took longer than it should.
+- **Last run**: the date, the targets, and what went wrong or took longer than it should and is not fixed yet, such as a slow step or a block not yet run for real. Not the state of a target: a later run reads that live.
 
 Rules:
 
