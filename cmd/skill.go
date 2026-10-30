@@ -69,6 +69,64 @@ func refreshBuiltins(home string, stderr io.Writer) {
 	}
 }
 
+// skillsSkipped are the commands that never touch the skill folders: they run
+// on every prompt, every completion or every git call, or they own the screen.
+var skillsSkipped = map[string]bool{
+	"__complete":            true,
+	"completion":            true,
+	"git-credential-helper": true,
+	"tui":                   true,
+}
+
+// keepSkillsCurrent runs before every command except the skipped ones. A new
+// ws binary must update the skills without a second step, so it refreshes the
+// built-ins and the stale copies of tool binaries (agent/skills/<name> with a
+// .ws-provider marker). It never adds a copy: `ws skill install --providers`
+// does that. It then tells the user about built-ins that are dev-linked to a
+// checkout, which a refresh leaves alone. --dry-run writes nothing; --json and
+// --quiet print no note.
+func keepSkillsCurrent(command string, globals globalFlags, stderr io.Writer) {
+	if skillsSkipped[command] {
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	if !globals.dryRun {
+		refreshBuiltins(home, stderr)
+		if workspacePath, configPath, err := resolveWorkspacePaths(globals); err == nil && workspace.ConfigExists(configPath) {
+			refreshProviderCopies(workspacePath, globals, stderr)
+		}
+	}
+	if globals.json || globals.quiet {
+		return
+	}
+	for _, name := range skill.BuiltinNames() {
+		if target, dev := skill.DevTarget(home, name); dev {
+			fmt.Fprintf(stderr, "note: %s runs from %s (dev link); `ws skill install %s` returns it to this ws's copy\n", name, target, name)
+		}
+	}
+}
+
+// refreshProviderCopies rewrites each stale provider copy from the binary's
+// current `skill` output. Copies that are new, gone, conflicting or failed are
+// left alone: `ws skill check` reports them.
+func refreshProviderCopies(workspacePath string, globals globalFlags, stderr io.Writer) {
+	for _, st := range skill.InspectProviders(workspacePath, skill.Providers) {
+		if st.State != skill.ProviderStale {
+			continue
+		}
+		if err := skill.WriteProvider(workspacePath, st); err != nil {
+			fmt.Fprintf(stderr, "warning: update %s from %s: %v\n", st.Name, st.Bin, err)
+			continue
+		}
+		if !globals.quiet && !globals.json {
+			fmt.Fprintf(stderr, "updated skill %s from %s\n", st.Name, st.Bin)
+		}
+	}
+}
+
 // toolFlag reads --tool and resolves it. An empty name is not an error.
 func toolFlag(name string) (skill.Tool, bool, error) {
 	if name == "" {

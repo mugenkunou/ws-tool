@@ -67,6 +67,7 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	commandArgs := rest[1:]
 
 	verboseLog(globals, stderr, "command=%s args=%v", command, commandArgs)
+	keepSkillsCurrent(command, globals, stderr)
 
 	switch command {
 	case "version":

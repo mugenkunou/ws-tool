@@ -1691,14 +1691,17 @@ folder of each tool that should have them:
 - **Built-in.** Skills that ship inside the ws binary (today `workspace-write` and
   `workspace-run`). ws extracts them, read-only (files `0444`), to
   `$XDG_DATA_HOME/ws/skills/<name>/` (default `~/.local/share/ws/skills`), and tool links point
-  at that copy. Every `ws skill` command and `ws init` refresh it when the binary's version or
-  content differs from what is there, so a new ws updates every tool with no reinstall. Only
+  at that copy. Every ws command refreshes it when the binary's version or content differs from
+  what is there, so a new ws updates every tool with no reinstall. The refresh is skipped by
+  `__complete`, `completion`, `git-credential-helper` and `tui`, and by `--dry-run`. A built-in
+  dev-linked to a checkout is left alone and gets a stderr note on each run (not with `--json`). Only
   ws writes them; to change one, `eject` it. Both work from the workspace's own docs:
   `workspace-run` finds the route for a goal in `references/RUNBOOKS.md` (§2.2) and updates it
   after the run; `workspace-write` adds or fixes its entries when it turns a task into blocks.
 - **Managed.** Skills that a tool binary ships (today `agent-tmux`, via `agent-tmux skill`).
   ws copies them into `<workspace>/agent/skills/<name>/` and keeps the copy in step with the
-  binary (see `--providers` under `ws skill install`). Before the first copy, `scan`, `show` and
+  binary: every ws command rewrites a stale copy from the binary's `skill` output, and only
+  `ws skill install --providers` adds a new one. Before the first copy, `scan`, `show` and
   the Skills screen list each one greyed: ready to install when the binary is on `PATH`, or
   "install `<bin>` first" when it is not. Installing a ready one copies it, then links it.
 - **Yours.** Your own skills, in `<workspace>/agent/skills/<name>/`. A skill that is a symlink

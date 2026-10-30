@@ -71,8 +71,9 @@ func TestSkillCheckProviderStaleAndGone(t *testing.T) {
 	}
 
 	// The binary now prints a newer skill: stale, with the fix.
+	// --dry-run keeps the run from refreshing the copy first, so check sees it stale.
 	fakeProvider(t, "fake-bin", fakeSkill+"More.\n", false)
-	code, out, _ := e.run("", "skill", "check")
+	code, out, _ := e.run("", "--dry-run", "skill", "check")
 	if code != 0 || !strings.Contains(out, "differs from `fake-bin skill`") || !strings.Contains(out, "ws skill install --providers") {
 		t.Fatalf("stale: %d\n%s", code, out)
 	}
