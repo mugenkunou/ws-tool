@@ -49,7 +49,13 @@ func fakeVersions(t *testing.T, r, forced versions.Report) *int {
 // holding a ws.json.
 func hermetic(t *testing.T, shell string) (home string, e env.Env) {
 	t.Helper()
-	home = t.TempDir()
+	// A short HOME keeps the rc paths inside the 120-column view. t.TempDir() embeds the
+	// test name, so under a long temp root the plan lines are cut and the checks miss them.
+	home, err := os.MkdirTemp("", "ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(home) })
 	fakeVersions(t, report("v1.2.3", "v1.2.3", versions.StateCurrent, "v0.5.0", "v0.5.0", versions.StateCurrent), versions.Report{})
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", "")
