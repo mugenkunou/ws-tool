@@ -15,8 +15,8 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/ignore"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/sessions"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/settings"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/symlinks"
-	"github.com/mugenkunou/ws-tool/internal/tui/screens/workspace"
 )
 
 func model(areas map[nav.Screen]area) Model {
@@ -82,17 +82,17 @@ func TestAdviceIsListedLastAndOpensItsScreen(t *testing.T) {
 	}
 
 	// Advice with a Focus opens its screen and selects the row.
-	focus := nav.Issue{Sev: nav.SevInfo, Screen: nav.ScreenWorkspace, Advice: true,
-		Text: "Shell completion is off", Focus: workspace.SelectMsg{Name: "completion zsh"}}
-	m = model(map[nav.Screen]area{nav.ScreenWorkspace: {loaded: true, issues: []nav.Issue{focus}}})
+	focus := nav.Issue{Sev: nav.SevInfo, Screen: nav.ScreenSettings, Advice: true,
+		Text: "Shell completion is off", Focus: settings.SelectMsg{Name: "completion zsh"}}
+	m = model(map[nav.Screen]area{nav.ScreenSettings: {loaded: true, issues: []nav.Issue{focus}}})
 	m.section, m.att = sectionAttention, 0
 	_, msgs = enter(m)
 	var gotoOK, focusOK bool
 	for _, msg := range msgs {
 		switch v := msg.(type) {
 		case nav.GotoMsg:
-			gotoOK = v.Screen == nav.ScreenWorkspace
-		case workspace.SelectMsg:
+			gotoOK = v.Screen == nav.ScreenSettings
+		case settings.SelectMsg:
 			focusOK = v.Name == "completion zsh"
 		}
 	}
@@ -245,25 +245,5 @@ func TestSessionsCard(t *testing.T) {
 	next, _ = m.Update(sessions.LoadedMsg{Missing: true})
 	if got := ansi.Strip(strings.Join(next.(Model).areas[nav.ScreenSessions].lines, "|")); got != "agent-tmux not installed" {
 		t.Errorf("card without agent-tmux = %q", got)
-	}
-}
-
-func TestVersionFooterIsTheLastRow(t *testing.T) {
-	m := model(map[nav.Screen]area{})
-	m.env.Version = "v0.20.0"
-
-	view := func(m Model) []string { return strings.Split(ansi.Strip(m.View()), "\n") }
-	rows := view(m)
-	if len(rows) != m.height {
-		t.Fatalf("view is %d rows, want %d", len(rows), m.height)
-	}
-	if got := strings.TrimSpace(rows[len(rows)-1]); got != "ws v0.20.0" {
-		t.Errorf("footer = %q, want ws only while agent-tmux's version is unknown", got)
-	}
-
-	next, _ := m.Update(agentTmuxVersionMsg{Version: "v0.19.0"})
-	rows = view(next.(Model))
-	if got := strings.TrimSpace(rows[len(rows)-1]); got != "ws v0.20.0  ·  agent-tmux v0.19.0" {
-		t.Errorf("footer = %q", got)
 	}
 }

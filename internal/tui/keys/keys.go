@@ -842,29 +842,29 @@ func (k SyncMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom}}
 }
 
-// WorkspaceMap is the binding set for the Workspace screen. Its one key acts on
-// the cursor row: enter edits ws.json and flips a shell's completion. The rest
-// (`config show`, `config edit`, …) are in the `.` menu.
-type WorkspaceMap struct {
+// SettingsMap is the binding set for the Settings screen. Its one key acts on
+// the cursor row: enter runs the row's action (edit or view ws.json, flip a
+// shell's completion, check for updates). The same verbs are in the `.` menu.
+type SettingsMap struct {
 	Table table.KeyMap
 	Open  key.Binding
 	Back  key.Binding
 }
 
-// Workspace returns the Workspace screen bindings.
-func Workspace() WorkspaceMap {
-	return WorkspaceMap{
+// Settings returns the Settings screen bindings.
+func Settings() SettingsMap {
+	return SettingsMap{
 		Table: Table(),
-		Open:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "edit / toggle")),
+		Open:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "open / toggle")),
 		Back:  back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
-func (k WorkspaceMap) ShortHelp() []key.Binding { return []key.Binding{k.Open} }
+func (k SettingsMap) ShortHelp() []key.Binding { return []key.Binding{k.Open} }
 
 // FullHelp implements help.KeyMap.
-func (k WorkspaceMap) FullHelp() [][]key.Binding {
+func (k SettingsMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
 		k.ShortHelp(),

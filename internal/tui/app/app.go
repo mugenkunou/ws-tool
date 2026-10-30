@@ -5,7 +5,12 @@
 //	rule                             1 line
 //	body    (active component)       remaining height
 //	notice  (last NoticeMsg)         0 or 1 line
-//	footer  (help, or the command bar) 1 line, or more with full help
+//	footer  (help | versions, or the command bar) 1 line, or more with full help
+//
+// The footer is one row split into columns: the help takes all the width on
+// the left, and a small muted cell on the right names the ws and agent-tmux
+// versions, with a warning mark when a newer release exists. A terminal too
+// narrow for that gives the whole row to the help.
 //
 // Routing: key presses go to the global key map first, then to the active
 // component only. While the command bar is open, or the active component has
@@ -21,6 +26,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -43,8 +49,25 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/setup"
 	"github.com/mugenkunou/ws-tool/internal/tui/selection"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
+	"github.com/mugenkunou/ws-tool/internal/versions"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
 )
+
+// versionsCmd looks up the ws and agent-tmux versions for the footer: the
+// cache first (no network), then a refresh when the cache is stale. Tests
+// set it to nil so no unit test reaches GitHub.
+var versionsCmd = func(wsVersion string) tea.Cmd {
+	cached := func() tea.Msg {
+		return nav.VersionsMsg{Report: versions.Cached(context.Background(), wsVersion)}
+	}
+	refresh := func() tea.Msg {
+		if !versions.Stale() {
+			return nil
+		}
+		return nav.VersionsMsg{Report: versions.Refresh(context.Background(), wsVersion)}
+	}
+	return tea.Sequence(cached, refresh)
+}
 
 const (
 	headerHeight = 2 // tabs + rule
@@ -69,6 +92,7 @@ type Model struct {
 	bar      *cmdbar.Model // the command bar, while it is open
 	notice   *nav.NoticeMsg
 	frame    int
+	versions versions.Report // latest known versions, shown at the footer's right end
 
 	// Mouse selection: drag to select, release to copy (see selection).
 	mouse     bool // capture the mouse (off with WS_NO_MOUSE=1)
@@ -159,7 +183,13 @@ func tick() tea.Cmd {
 }
 
 // Init starts every screen's first load concurrently, and the animation timer.
-func (m Model) Init() tea.Cmd { return tea.Batch(m.loadAll(), tick()) }
+func (m Model) Init() tea.Cmd {
+	cmds := []tea.Cmd{m.loadAll(), tick()}
+	if versionsCmd != nil {
+		cmds = append(cmds, versionsCmd(m.env.Version))
+	}
+	return tea.Batch(cmds...)
+}
 
 // loadAll starts every component's first load.
 func (m Model) loadAll() tea.Cmd {
@@ -231,6 +261,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.frame++
 		m, cmd := m.broadcast(nav.FrameMsg{N: m.frame})
 		return m, tea.Batch(cmd, tick())
+
+	case nav.VersionsMsg:
+		m.versions = msg.Report
+		return m.broadcast(msg)
 
 	case nav.NoticeMsg:
 		m.notice = &msg
@@ -596,16 +630,37 @@ func (m Model) noticeLine() string {
 	return lipgloss.NewStyle().MaxWidth(m.width).Render(theme.Icon(icon) + st.Render(firstLine(m.notice.Text)))
 }
 
+// minHelpWidth is the least width the help keeps; the version cell is dropped
+// rather than squeeze the help below it.
+const minHelpWidth = 60
+
 func (m Model) footer() string {
 	if m.bar != nil {
 		return m.bar.SetWidth(m.width).View() // the command bar replaces the footer
 	}
-	clip := lipgloss.NewStyle().MaxWidth(m.width)
+	// Try each version cell, longest first; the help keeps minHelpWidth at least.
+	for _, cell := range m.versionCells() {
+		helpW := m.width - lipgloss.Width(cell) - 1
+		if helpW < minHelpWidth {
+			continue
+		}
+		if h := m.helpRow(helpW); !strings.Contains(h, "\n") {
+			pad := strings.Repeat(" ", max(helpW-lipgloss.Width(h), 0)+1)
+			return m.withToast(h + pad + cell)
+		}
+	}
+	return m.withToast(m.helpRow(m.width))
+}
+
+// helpRow is the help for the active screen, fitted to width.
+func (m Model) helpRow(width int) string {
+	clip := lipgloss.NewStyle().MaxWidth(width)
 	cur := m.current()
 	if cur == nil {
-		return m.withToast(clip.Render(m.help.ShortHelpView([]key.Binding{m.keys.Quit})))
+		return clip.Render(m.help.ShortHelpView([]key.Binding{m.keys.Quit}))
 	}
 	h := m.help
+	h.SetWidth(width)
 	var km help.KeyMap = combinedKeys{cur.KeyMap(), m.globalKeys()}
 	if m.setup != nil {
 		km = combinedKeys{cur.KeyMap(), setupGlobals{m.keys}} // no screens to switch between
@@ -613,9 +668,52 @@ func (m Model) footer() string {
 	if cur.CapturesKeys() {
 		km = cur.KeyMap() // global keys are inactive while a modal is open
 	} else {
-		return m.withToast(clip.Render(shortFooter(h, cur.KeyMap(), km.(combinedKeys).global, m.width)))
+		return clip.Render(shortFooter(h, cur.KeyMap(), km.(combinedKeys).global, width))
 	}
-	return m.withToast(clip.Render(h.View(km)))
+	return clip.Render(h.View(km))
+}
+
+// versionCells are the candidate right-end cells, longest first: the versions
+// in use (muted) and a warning mark when a newer release exists. Nil when no
+// version is known.
+func (m Model) versionCells() []string {
+	r := m.versions
+	wsV := r.WS.Installed
+	if wsV == "" {
+		wsV = m.env.Version
+	}
+	build := func(atmux string) string {
+		var parts []string
+		if wsV != "" {
+			parts = append(parts, "ws "+versionText(wsV))
+		}
+		if r.AgentTmux.Installed != "" {
+			parts = append(parts, atmux+" "+versionText(r.AgentTmux.Installed))
+		}
+		if len(parts) == 0 {
+			return ""
+		}
+		cell := theme.Muted.Render(strings.Join(parts, " · "))
+		if r.Outdated() {
+			cell += " " + theme.Warn.Render("⚠")
+		}
+		return cell
+	}
+	var cells []string
+	for _, name := range []string{"agent-tmux", "tmux"} {
+		if c := build(name); c != "" && (len(cells) == 0 || c != cells[len(cells)-1]) {
+			cells = append(cells, c)
+		}
+	}
+	return cells
+}
+
+// versionText adds the "v" a bare number lacks; "dev" stays as is.
+func versionText(v string) string {
+	if v != "" && v[0] >= '0' && v[0] <= '9' {
+		return "v" + v
+	}
+	return v
 }
 
 // shortFooter renders the screen's short help, then the global keys. The

@@ -14,6 +14,9 @@ func TestMain(m *testing.M) {
 	skill.BuiltinFS = fstest.MapFS{}
 	skill.Providers = nil
 
+	// The footer's version lookup would reach GitHub; tests never do.
+	versionsCmd = nil
+
 	// The Sessions screen runs agent-tmux; never the one installed here.
 	unhide := agenttmuxtest.Hide()
 

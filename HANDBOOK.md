@@ -609,7 +609,7 @@ such as `rclone bisync`.
 | `completion` | shell completion | Settings (rows, action menu) |
 
 Workspace commands without a noun: `ws init`, `ws layout`, `ws env`, `ws tui`, `ws version`, `ws help`. The
-Workspace screen hosts them, and every noun above has exactly one screen (`TestEveryNounHasATUIHome`). Bare `ws`
+Settings screen hosts them, and every noun above has exactly one screen (`TestEveryNounHasATUIHome`). Bare `ws`
 prints help.
 
 ### 3.3 Verb glossary
@@ -3820,8 +3820,8 @@ Exit: 0, 1.
 ### Workspace commands
 
 Commands about the workspace itself and the ws binary. The Settings screen hosts them (§6.5):
-its rows are `version`, `ws.json`, the completion state of each shell and `layout`, and its action
-menu (`.`) has `config show|edit` and `completion enable|disable`, on that screen. The setup
+its groups are Configuration (`ws.json`: view, edit), Workspace (root, layout, homes), Completion, Versions and About, and its action
+menu (`.`) has `config show|edit`, `version check` and `completion enable|disable`, on that screen. The setup
 screen covers `init`.
 
 | Command | RO/RW | Does | TUI |

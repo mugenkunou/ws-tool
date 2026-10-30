@@ -31,7 +31,7 @@ const (
 	ScreenCron
 	ScreenTrash
 	ScreenSkills
-	ScreenWorkspace
+	ScreenSettings
 
 	screenCount // sentinel; keep last
 )
@@ -41,10 +41,10 @@ type Spec struct {
 	Icon  string // emoji (see theme.Icon for rendering rules)
 	Title string // the tab's label
 	// Noun is the CLI noun the screen is named after: what `:` takes to
-	// switch to it (spec §6.6). The Dashboard and Workspace have none.
+	// switch to it (spec §6.6). The Dashboard and Settings have none.
 	Noun string
 	// Hosts are CLI nouns with no screen of their own that this screen covers
-	// (`config` on Workspace, `git-credential-helper` on Credentials): the
+	// (`config` on Settings, `git-credential-helper` on Credentials): the
 	// noun-to-screen map the parity tests use.
 	Hosts []string
 }
@@ -65,7 +65,7 @@ var specs = [screenCount]Spec{
 	ScreenCron:   {Icon: "⏰", Title: "Cron", Noun: "cron"},
 	ScreenTrash:  {Icon: "🚮", Title: "Trash", Noun: "trash"},
 	ScreenSkills: {Icon: "🧩", Title: "Skills", Noun: "skill"},
-	ScreenWorkspace: {Icon: "🔧", Title: "Workspace",
+	ScreenSettings: {Icon: "🔧", Title: "Settings",
 		Hosts: []string{"config", "completion", "version", "layout", "env", "init", "tui", "help"}},
 }
 

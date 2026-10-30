@@ -54,6 +54,9 @@ func (m Model) openBar(prefill string) Model {
 // returned so the notice can list them.
 func resolveScreen(word string) (nav.Screen, []string, bool) {
 	word = strings.ToLower(word)
+	if word == "workspace" { // the Settings screen's old name keeps working
+		return nav.ScreenSettings, nil, true
+	}
 	var prefixed []nav.Screen
 	for _, s := range nav.Screens() {
 		for _, n := range screenNames(s) {

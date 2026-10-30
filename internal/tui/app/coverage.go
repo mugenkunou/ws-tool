@@ -53,13 +53,13 @@ var CLICoverage = func() []Coverage {
 	sk := keys.Skills()
 	shell := "shell integration; nothing to show in a TUI"
 	git := "git plumbing, called by git itself"
-	ws, sy, sec := nav.ScreenWorkspace, nav.ScreenSync, nav.ScreenSecrets
+	ws, sy, sec := nav.ScreenSettings, nav.ScreenSync, nav.ScreenSecrets
 	pa, crt := nav.ScreenPass, nav.ScreenCredential
 	return []Coverage{
 		{CLI: "init", Screen: ws, Why: Elsewhere, Note: "the TUI shows its setup screen until the workspace is initialized"},
-		{CLI: "version", Screen: ws, Why: List},
-		{CLI: "layout", Screen: ws, Why: List},
-		{CLI: "env", Screen: ws, Why: Shell, Note: "shell lines for scripts to eval"},
+		{CLI: "version", Screen: ws, Why: List, Note: "the Versions group; the `.` menu u looks up releases (--check)"},
+		{CLI: "layout", Screen: ws, Why: CLIOnly, Note: "the Settings screen shows the layout as one summary row; the full per-folder listing is for scripts and skills"},
+		{CLI: "env", Screen: ws, Why: Shell, Note: "shell lines for scripts to eval; the Settings screen's homes row names them"},
 		{CLI: "help", Screen: ws, Why: Elsewhere, Note: "? opens full help"},
 		{CLI: "tui", Screen: ws, Why: Elsewhere, Note: "starts this TUI"},
 		{CLI: "config show", Screen: ws, Cmd: "config show"},

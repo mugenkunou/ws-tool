@@ -33,13 +33,14 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/scratch"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/secrets"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/sessions"
+	settingsscreen "github.com/mugenkunou/ws-tool/internal/tui/screens/settings"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/skills"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/symlinks"
 	syncscreen "github.com/mugenkunou/ws-tool/internal/tui/screens/sync"
 	"github.com/mugenkunou/ws-tool/internal/tui/screens/trash"
-	workspacescreen "github.com/mugenkunou/ws-tool/internal/tui/screens/workspace"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
 	"github.com/mugenkunou/ws-tool/internal/tui/tuitest"
+	"github.com/mugenkunou/ws-tool/internal/versions"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
@@ -161,12 +162,19 @@ func fixtures() []tea.Msg {
 	}
 }
 
-// workspaceFixture is the Workspace screen's settings: completion on in bash
+// workspaceFixture is the Settings screen's settings: completion on in bash
 // (the shell in use), off elsewhere, and a workspace missing one folder.
-func workspaceFixture() workspacescreen.LoadedMsg {
-	m := workspacescreen.LoadedMsg{
+func workspaceFixture() settingsscreen.LoadedMsg {
+	m := settingsscreen.LoadedMsg{
 		Info:       buildinfo.Info{Version: "v0.15.0", ConfigSchema: 1, Platform: "linux/amd64", GoVersion: "go1.26.2"},
 		ConfigPath: ws + "/ws.json",
+		Workspace:  ws,
+		Editor:     "vim",
+		Report: versions.Report{
+			WS:        versions.Item{Name: "ws", Installed: "v0.15.0", Latest: "v0.15.0", State: versions.StateCurrent},
+			AgentTmux: versions.Item{Name: "agent-tmux", Installed: "v0.5.0", Latest: "v0.5.0", State: versions.StateCurrent},
+			CheckedAt: fixedClock(),
+		},
 		Completion: []shellcomp.Status{
 			{Shell: "bash", RC: "/home/tester/.bashrc", Enabled: true, Current: true},
 			{Shell: "zsh", RC: "/home/tester/.zshrc"},
@@ -368,12 +376,12 @@ func TestSnapshots(t *testing.T) {
 // TestSnapshotWorkspace: the Workspace tab has no digit key, so the table above
 // cannot reach it.
 func TestSnapshotWorkspace(t *testing.T) {
-	m := send(loaded(t, 100, 30), jump(nav.ScreenWorkspace))
+	m := send(loaded(t, 100, 30), jump(nav.ScreenSettings))
 	tuitest.Golden(t, "workspace", view(m))
 
 	// The checklist enter opens on an off completion row, for zsh (not
 	// $SHELL), so the snapshot does not depend on the machine.
-	m = send(m, workspacescreen.SelectMsg{Name: "completion zsh"}, press("enter"))
+	m = send(m, settingsscreen.SelectMsg{Name: "completion zsh"}, press("enter"))
 	tuitest.Golden(t, "workspace_completion_checklist", view(m))
 }
 
@@ -639,7 +647,7 @@ func TestDashboardGrid(t *testing.T) {
 	}
 	steps := []struct{ key, want string }{
 		{"right", "Symlinks"}, {"right", "Scratch"}, {"right", "Scratch"}, // edge stops
-		{"down", "Sync"}, {"left", "Ignore"}, {"down", "Pass"}, {"down", "Trash"}, {"down", "Workspace"}, {"down", "Workspace"},
+		{"down", "Sync"}, {"left", "Ignore"}, {"down", "Pass"}, {"down", "Trash"}, {"down", "Settings"}, {"down", "Settings"},
 		{"up", "Cron"}, {"up", "Secrets"}, {"up", "Sessions"}, {"up", "Repos"}, {"left", "Repos"}, {"l", "Symlinks"}, {"h", "Repos"},
 	}
 	for _, st := range steps {

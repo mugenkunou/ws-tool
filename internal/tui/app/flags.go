@@ -73,8 +73,8 @@ var CLIFlagCoverage = []FlagCoverage{
 	{CLI: "trash enable", Flag: "--no-file-explorer", How: "CLI only: the `.` menu `n` turns on every integration; its note points to the CLI for a subset"},
 	{CLI: "config show", Flag: "--defaults", How: "CLI only: the `.` menu `s` prints the resolved ws.json"},
 	{CLI: "config edit", Flag: "--editor", How: "n/a: the TUI opens the editor set in ws.json"},
-	{CLI: "completion enable", Flag: "--shell", How: "the Workspace screen: one row per shell; enter flips the cursor row, the `.` menu acts on the marked or cursor rows"},
-	{CLI: "completion disable", Flag: "--shell", How: "the Workspace screen: one row per shell; enter flips the cursor row, the `.` menu acts on the marked or cursor rows"},
-	{CLI: "version", Flag: "--check", How: "CLI only: an explicit release lookup; the TUI shows the cached agent-tmux nudge instead"},
+	{CLI: "completion enable", Flag: "--shell", How: "the Settings screen: one row per shell; enter flips the cursor row, the `.` menu acts on the marked or cursor rows"},
+	{CLI: "completion disable", Flag: "--shell", How: "the Settings screen: one row per shell; enter flips the cursor row, the `.` menu acts on the marked or cursor rows"},
+	{CLI: "version", Flag: "--check", How: "the Settings screen: the check for updates now row (enter) and the `.` menu u force the lookup; the screen and the footer read the same cache (internal/versions)"},
 	{CLI: "version", Flag: "--short", How: "CLI only: a script flag (prints a bare version)"},
 }

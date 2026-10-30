@@ -1,11 +1,13 @@
-package workspace
+package settings
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -14,9 +16,33 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/handover"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
+	"github.com/mugenkunou/ws-tool/internal/versions"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
+
+// report is a version lookup answered from memory.
+func report(ws, wsLatest string, wsState versions.State, at, atLatest string, atState versions.State) versions.Report {
+	return versions.Report{
+		WS:        versions.Item{Name: "ws", Installed: ws, Latest: wsLatest, State: wsState},
+		AgentTmux: versions.Item{Name: "agent-tmux", Installed: at, Latest: atLatest, State: atState},
+		CheckedAt: time.Date(2026, 10, 30, 9, 0, 0, 0, time.UTC),
+	}
+}
+
+// fakeVersions replaces the screen's seams: the cache says r, a forced check
+// says forced, and the binary is a release download. It returns how many
+// times the network was asked.
+func fakeVersions(t *testing.T, r, forced versions.Report) *int {
+	t.Helper()
+	oldC, oldR, oldE := cachedVersions, refreshVersions, executable
+	calls := new(int)
+	cachedVersions = func(context.Context, string) versions.Report { return r }
+	refreshVersions = func(context.Context, string) versions.Report { *calls++; return forced }
+	executable = func() (string, error) { return filepath.Join(t.TempDir(), "ws"), nil }
+	t.Cleanup(func() { cachedVersions, refreshVersions, executable = oldC, oldR, oldE })
+	return calls
+}
 
 // hermetic points HOME and the shell at a temp dir, so the screen reads and
 // writes rc files there and never the real ones, and returns a workspace
@@ -24,6 +50,7 @@ import (
 func hermetic(t *testing.T, shell string) (home string, e env.Env) {
 	t.Helper()
 	home = t.TempDir()
+	fakeVersions(t, report("v1.2.3", "v1.2.3", versions.StateCurrent, "v0.5.0", "v0.5.0", versions.StateCurrent), versions.Report{})
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("SHELL", shell)
@@ -104,18 +131,218 @@ func settle(t *testing.T, m Model, cmd tea.Cmd) Model {
 	return m
 }
 
-func TestRowsListEverySetting(t *testing.T) {
+func TestRowsAreGroupedNotADump(t *testing.T) {
 	_, e := hermetic(t, "/bin/zsh")
 	m := load(t, New(e))
 	got := view(m)
 	for _, want := range []string{
-		"version", "v1.2.3", "ws.json", "ok",
-		"completion bash", "completion zsh", "completion fish", "your shell",
-		"layout notes", "layout scripts/lib", "missing", "home scratch", "WS_SCRATCH",
+		"Configuration", "ws.json", "edit ws.json", "view ws.json",
+		"Workspace", "root", "layout", "12 folders", "homes",
+		"Completion", "completion bash", "completion zsh", "completion fish", "your shell",
+		"Versions", "v1.2.3", "agent-tmux", "v0.5.0", "check for updates now",
+		"About", "build", "linux", "schema 1",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("view lacks %q:\n%s", want, got)
 		}
+	}
+	// One compact layout row: the per-folder rows are gone.
+	for _, gone := range []string{"layout notes", "layout scripts/lib", "home scratch", "WS_SCRATCH"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("view still lists %q:\n%s", gone, got)
+		}
+	}
+	// Each group's name is on its first row only.
+	if n := strings.Count(got, "Versions"); n != 1 {
+		t.Errorf("group label repeated %d times:\n%s", n, got)
+	}
+}
+
+// run executes cmd and returns every message it yields, expanding batches
+// (tea.Batch of one command is that command itself).
+func run(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	switch msg := cmd().(type) {
+	case tea.BatchMsg:
+		var out []tea.Msg
+		for _, c := range msg {
+			out = append(out, run(c)...)
+		}
+		return out
+	default:
+		return []tea.Msg{msg}
+	}
+}
+
+func rowByName(m LoadedMsg, name string) Row {
+	for _, r := range m.rows() {
+		if r.Name == name {
+			return r
+		}
+	}
+	return Row{}
+}
+
+func TestVersionRowsByState(t *testing.T) {
+	_, e := hermetic(t, "/bin/bash")
+	load := func(r versions.Report) LoadedMsg {
+		fakeVersions(t, r, versions.Report{})
+		return Load(e)().(LoadedMsg)
+	}
+
+	out := load(report("v1.2.3", "v1.3.0", versions.StateOutdated, "v0.5.0", "v0.6.0", versions.StateOutdated))
+	ws := rowByName(out, "ws")
+	if ws.State != stateOutdated || !strings.Contains(ws.Note, "update available: v1.3.0") || !strings.Contains(ws.Note, warnMark) {
+		t.Fatalf("outdated ws: %+v", ws)
+	}
+	var hint []string
+	for _, r := range out.rows() {
+		if r.Kind == kindHint {
+			hint = append(hint, r.Note)
+		}
+	}
+	joined := strings.Join(hint, "\n")
+	if !strings.Contains(joined, "releases") || !strings.Contains(joined, "agent-tmux") && !strings.Contains(joined, "install") {
+		t.Fatalf("outdated items say how to upgrade: %q", joined)
+	}
+	_, card, _ := out.Card()
+	if len(card.Lines) < 3 || !strings.Contains(card.Lines[2], "updates available: ws, agent-tmux") {
+		t.Fatalf("card lines: %q", card.Lines)
+	}
+
+	// A dev build is never "update available".
+	out = load(report("dev", "v1.3.0", versions.StateDev, "v0.5.0", "v0.5.0", versions.StateCurrent))
+	ws = rowByName(out, "ws")
+	if ws.State != stateDev || strings.Contains(ws.Note, "update") || !strings.Contains(ws.Note, "local build is dev") || !strings.Contains(ws.Note, "upstream is v1.3.0") {
+		t.Fatalf("dev ws: %+v", ws)
+	}
+	for _, r := range out.rows() {
+		if r.Kind == kindHint {
+			t.Fatalf("a dev build gets no upgrade lines: %+v", r)
+		}
+	}
+	if _, card, _ := out.Card(); len(card.Lines) != 2 || len(card.Issues) != 1 || !strings.Contains(card.Issues[0].Text, "completion") {
+		t.Fatalf("dev is not an update on the card: %q %+v", card.Lines, card.Issues)
+	}
+
+	// agent-tmux missing and too old both show the install lines.
+	for _, st := range []versions.State{versions.StateNotInstalled, versions.StateTooOld} {
+		out = load(report("v1.2.3", "v1.2.3", versions.StateCurrent, "", "", st))
+		n := 0
+		for _, r := range out.rows() {
+			if r.Kind == kindHint {
+				n++
+			}
+		}
+		if n == 0 {
+			t.Fatalf("%s: no install lines", st)
+		}
+	}
+
+	// Nothing cached yet: unknown, not an error.
+	out = load(versions.Report{WS: versions.Item{Name: "ws", State: versions.StateUnknown}, AgentTmux: versions.Item{Name: "agent-tmux", State: versions.StateUnknown}})
+	if r := rowByName(out, "ws"); r.State != stateUnknown || r.Value != "v1.2.3" || r.Note != "not checked yet" {
+		t.Fatalf("unknown: %+v", r)
+	}
+}
+
+func TestCheckForUpdatesRefreshesOffTheUIThread(t *testing.T) {
+	_, e := hermetic(t, "/bin/bash")
+	forced := report("v1.2.3", "v1.4.0", versions.StateOutdated, "v0.5.0", "v0.5.0", versions.StateCurrent)
+	forced.CheckedAt = forced.CheckedAt.Add(time.Hour)
+	calls := fakeVersions(t, report("v1.2.3", "v1.2.3", versions.StateCurrent, "v0.5.0", "v0.5.0", versions.StateCurrent), forced)
+	m := load(t, New(e))
+	if *calls != 0 {
+		t.Fatal("loading the screen never asks the network")
+	}
+
+	// Walk to the check row: ws.json, edit, view, root, layout, homes, 3 shells, ws, agent-tmux, check.
+	m = typed(m, "down", "down", "down", "down", "down", "down", "down", "down", "down", "down", "down")
+	m, cmd := send(m, enter())
+	if cmd == nil || *calls != 0 {
+		t.Fatalf("enter returns a command and does not block (calls=%d)", *calls)
+	}
+	if !strings.Contains(view(m), "checking…") {
+		t.Fatalf("the row says it is checking:\n%s", view(m))
+	}
+
+	got := run(cmd)
+	if *calls != 1 {
+		t.Fatalf("one refresh, got %d", *calls)
+	}
+	var vm nav.VersionsMsg
+	var notices []nav.NoticeMsg
+	for _, g := range got {
+		switch g := g.(type) {
+		case nav.VersionsMsg:
+			vm = g
+		case nav.NoticeMsg:
+			notices = append(notices, g)
+		}
+	}
+	if vm.Report.WS.Latest != "v1.4.0" || len(notices) != 1 || notices[0].Level != nav.LevelInfo {
+		t.Fatalf("msgs: %#v", got)
+	}
+
+	// The broadcast lands: the row and the card update, and the user is told.
+	m, cmd = send(m, vm)
+	v := view(m)
+	if strings.Contains(v, "checking") || !strings.Contains(v, "update available: v1.4.0") {
+		t.Fatalf("after the check:\n%s", v)
+	}
+	var loaded LoadedMsg
+	var told string
+	for _, msg := range run(cmd) {
+		switch r := msg.(type) {
+		case LoadedMsg:
+			loaded = r
+		case nav.NoticeMsg:
+			told = r.Text
+			if r.Level != nav.LevelWarn {
+				t.Fatalf("an update is a warning: %v", r)
+			}
+		}
+	}
+	if !strings.Contains(told, "ws v1.4.0 is available") {
+		t.Fatalf("notice: %q", told)
+	}
+	if _, card, _ := loaded.Card(); !strings.Contains(strings.Join(card.Lines, "\n"), "updates available: ws") {
+		t.Fatalf("the Dashboard card learns of it: %q", card.Lines)
+	}
+
+	// A reload from the older cache does not bring the old report back.
+	m = load(t, m)
+	if !strings.Contains(view(m), "update available: v1.4.0") {
+		t.Fatalf("a stale cache must not overwrite a newer report:\n%s", view(m))
+	}
+}
+
+func TestVersionsBroadcastWithoutAnAskIsSilent(t *testing.T) {
+	_, e := hermetic(t, "/bin/bash")
+	m := load(t, New(e))
+	m, cmd := send(m, nav.VersionsMsg{Report: report("v1.2.3", "v1.9.0", versions.StateOutdated, "v0.5.0", "v0.5.0", versions.StateCurrent)})
+	if !strings.Contains(view(m), "update available: v1.9.0") {
+		t.Fatalf("the background lookup lands on the screen:\n%s", view(m))
+	}
+	for _, msg := range run(cmd) {
+		if _, ok := msg.(nav.NoticeMsg); ok {
+			t.Fatal("no toast for a lookup the user did not ask for")
+		}
+	}
+}
+
+func TestViewAndEditRows(t *testing.T) {
+	_, e := hermetic(t, "/bin/bash")
+	m := load(t, New(e))
+	m = typed(m, "down") // edit ws.json
+	if _, cmd := send(m, enter()); cmd == nil {
+		t.Fatal("the edit row hands over config edit")
+	}
+	m = typed(m, "down") // view ws.json
+	if _, cmd := send(m, enter()); cmd == nil {
+		t.Fatal("the view row hands over config show")
 	}
 }
 
@@ -178,7 +405,7 @@ func TestCardSaysVersionConfigAndCompletion(t *testing.T) {
 func TestCompletionEnableDefaultsToTheShellInUse(t *testing.T) {
 	home, e := hermetic(t, "/usr/bin/zsh")
 	m := load(t, New(e))
-	// The cursor is on the version row: not a completion row, so $SHELL.
+	// The cursor is on the ws.json row: not a completion row, so $SHELL.
 	m, _ = menu(m, "n")
 	if !m.CapturesKeys() {
 		t.Fatal("the plan opens a checklist")
@@ -213,8 +440,8 @@ func TestCompletionActsOnMarkedRowsElseTheCursorRow(t *testing.T) {
 	m := load(t, New(e))
 	rcs := []string{filepath.Join(home, ".bashrc"), filepath.Join(home, ".zshrc")}
 
-	// Rows: version, ws.json, bash, zsh, fish. Mark bash and zsh.
-	m = typed(m, "down", "down", "space", "down", "space")
+	// Rows: ws.json, edit, view, root, layout, homes, bash, zsh, fish, … Mark bash and zsh.
+	m = typed(m, "down", "down", "down", "down", "down", "down", "space", "down", "space")
 	m, _ = menu(m, "n")
 	got := view(m)
 	for _, rc := range rcs {
@@ -228,7 +455,7 @@ func TestCompletionActsOnMarkedRowsElseTheCursorRow(t *testing.T) {
 
 	// No marks: the completion row under the cursor wins over $SHELL (bash).
 	m = load(t, New(e))
-	m = typed(m, "down", "down", "down", "down") // fish
+	m = typed(m, "down", "down", "down", "down", "down", "down", "down", "down") // fish
 	m, _ = menu(m, "n")
 	got = view(m)
 	if !strings.Contains(got, "/fish/") || strings.Contains(got, ".bashrc") {
@@ -319,15 +546,15 @@ func typed(m Model, keys ...string) Model {
 	return m
 }
 
-func TestEnterEditsConfigOnlyOnTheConfigRow(t *testing.T) {
+func TestEnterOnAFactRowDoesNothing(t *testing.T) {
 	_, e := hermetic(t, "/bin/bash")
 	m := load(t, New(e))
-	if _, cmd := send(m, enter()); cmd != nil {
-		t.Fatal("enter on the version row does nothing")
-	}
-	m = typed(m, "down")
 	if _, cmd := send(m, enter()); cmd == nil {
 		t.Fatal("enter on the ws.json row hands over config edit")
+	}
+	m = typed(m, "down", "down", "down") // root
+	if _, cmd := send(m, enter()); cmd != nil {
+		t.Fatal("enter on the root row does nothing")
 	}
 }
 
@@ -346,10 +573,10 @@ func TestConfigHandoverRefreshesEveryScreen(t *testing.T) {
 		names = append(names, c.Name)
 		letters = append(letters, c.Menu)
 	}
-	if strings.Join(names, ",") != "config show,config edit,completion enable,completion disable" {
+	if strings.Join(names, ",") != "config show,config edit,version check,completion enable,completion disable" {
 		t.Fatalf("commands: %v", names)
 	}
-	if strings.Join(letters, ",") != "s,e,n,d" {
+	if strings.Join(letters, ",") != "s,e,u,n,d" {
 		t.Fatalf("menu letters: %v", letters)
 	}
 }
@@ -358,8 +585,8 @@ func TestConfigHandoverRefreshesEveryScreen(t *testing.T) {
 // on an on row disables it.
 func TestEnterOnACompletionRowOpensItsChecklist(t *testing.T) {
 	home, e := hermetic(t, "/bin/bash")
-	// Rows: version, ws.json, bash, zsh, fish. zsh is the third completion row.
-	m := typed(load(t, New(e)), "down", "down", "down")
+	// zsh is the eighth row.
+	m := typed(load(t, New(e)), "down", "down", "down", "down", "down", "down", "down")
 	m, _ = send(m, enter())
 	if got := view(m); !strings.Contains(got, "Enable shell completion") {
 		t.Fatalf("enter on an off completion row opens the enable checklist:\n%s", got)
@@ -369,7 +596,7 @@ func TestEnterOnACompletionRowOpensItsChecklist(t *testing.T) {
 	if err := os.WriteFile(rc, []byte(shellcomp.Block(`eval "$(ws completion zsh)"`)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	m = typed(load(t, New(e)), "down", "down", "down")
+	m = typed(load(t, New(e)), "down", "down", "down", "down", "down", "down", "down")
 	m, _ = send(m, enter())
 	if got := view(m); !strings.Contains(got, "Disable shell completion") {
 		t.Fatalf("enter on an on completion row opens the disable checklist:\n%s", got)
