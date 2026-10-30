@@ -472,3 +472,78 @@ func TestMenu(t *testing.T) {
 		t.Errorf("no rows: %v", m.ran)
 	}
 }
+
+// TestPinnedRow: the pinned row is not an item. Filters, counts, marks and the
+// rows an action gets ignore it; up from the first row focuses it, down leaves
+// it, and enter on it sends PinnedMsg.
+func TestPinnedRow(t *testing.T) {
+	m := newList().SetPinned("3 changes to push")
+	if v := ansi.Strip(m.View()); !strings.Contains(v, "▸ 3 changes to push") || !strings.HasPrefix(v, "▸") {
+		t.Errorf("the pinned row is the first line:\n%s", v)
+	}
+	if got := len(m.Shown()); got != 3 {
+		t.Errorf("the pinned row is not an item: %d shown", got)
+	}
+	if lines := strings.Count(m.View(), "\n") + 1; lines != 10 {
+		t.Errorf("the view keeps its height with a pinned row: %d lines, want 10", lines)
+	}
+
+	// up on the first row focuses the pinned row: no data row is current.
+	m = press(m, "up")
+	if !m.PinnedFocused() {
+		t.Fatal("up from the first row focuses the pinned row")
+	}
+	if _, ok := m.Current(); ok {
+		t.Error("no row is current while the pinned row has the cursor")
+	}
+	if rows := m.Rows(Selected); len(rows) != 0 {
+		t.Errorf("an action on the pinned row gets no data rows: %v", rows)
+	}
+	if rows := m.Rows(Cursor); len(rows) != 0 {
+		t.Errorf("Cursor scope on the pinned row: %v", rows)
+	}
+	if m = press(m, "up"); !m.PinnedFocused() {
+		t.Error("up at the top stays on the pinned row")
+	}
+
+	// enter on it is PinnedMsg, not an item action.
+	_, cmd, ok := m.HandleKey(kp("enter"))
+	if !ok || cmd == nil {
+		t.Fatal("enter on the pinned row is handled")
+	}
+	if _, isPin := cmd().(PinnedMsg); !isPin {
+		t.Errorf("enter sent %T, want PinnedMsg", cmd())
+	}
+
+	// down leaves it, back on the first data row.
+	m = press(m, "down")
+	if m.PinnedFocused() {
+		t.Error("down leaves the pinned row")
+	}
+	if it, ok := m.Current(); !ok || it.Name != "pear" {
+		t.Errorf("down returns to the first row: %v %v", it, ok)
+	}
+
+	// Filter and marks never touch it, and the count is the data rows'.
+	m = press(m, "/", "n", "a", "m", "e", "=", "f", "i", "g", "enter")
+	if got := names(m.Shown()); got != "fig" {
+		t.Errorf("filter shows %q", got)
+	}
+	if v := ansi.Strip(m.View()); !strings.Contains(v, "▸ 3 changes to push") || !strings.Contains(v, "(1 of 3)") {
+		t.Errorf("the pinned row survives a filter and counts only items:\n%s", v)
+	}
+	m = press(m, "ctrl+a")
+	if got := len(m.Rows(All)); got != 1 {
+		t.Errorf("mark all marks the items only: %d", got)
+	}
+
+	// Empty text removes it and returns the cursor to the list.
+	m = m.SetPinned("")
+	if v := ansi.Strip(m.View()); strings.Contains(v, "▸") || m.PinnedFocused() {
+		t.Errorf("no pinned row:\n%s", v)
+	}
+	// Without a pinned row, up at the top just stays.
+	if m = press(newList(), "up"); m.PinnedFocused() {
+		t.Error("up never focuses a pinned row that is not there")
+	}
+}

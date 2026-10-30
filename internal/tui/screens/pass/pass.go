@@ -17,6 +17,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/mugenkunou/ws-tool/internal/backup"
 	"github.com/mugenkunou/ws-tool/internal/pass"
 	"github.com/mugenkunou/ws-tool/internal/plan"
 	"github.com/mugenkunou/ws-tool/internal/resource"
@@ -36,9 +37,13 @@ import (
 type LoadedMsg struct {
 	Pass      pass.PassHealth
 	RemoteURL string
-	CredOK    bool   // the global git credential helper points at ws and works
-	Copy      string // where the store is linked into the workspace, or ""
-	Err       error
+	CredOK    bool // the global git credential helper points at ws and works
+	// Ahead and Uncommitted are what `pass backup push` would send: commits not
+	// on the remote, and changed files not yet committed. Zero with no remote.
+	Ahead       int
+	Uncommitted int
+	Copy        string // where the store is linked into the workspace, or ""
+	Err         error
 }
 
 // fact is one row of the health list.
@@ -120,6 +125,21 @@ func schema() resource.Schema[fact] {
 	}
 }
 
+// pinned is the row above the list when a backup push has something to send.
+func (m LoadedMsg) pinned() string {
+	if m.Err != nil || m.RemoteURL == "" || m.Ahead+m.Uncommitted == 0 {
+		return ""
+	}
+	var parts []string
+	if m.Uncommitted > 0 {
+		parts = append(parts, format.Plural(m.Uncommitted, "uncommitted change"))
+	}
+	if m.Ahead > 0 {
+		parts = append(parts, format.Plural(m.Ahead, "commit")+" not pushed")
+	}
+	return "Push the pass backup: " + strings.Join(parts, ", ")
+}
+
 // Load reads the pass store's state, as `ws pass status` does.
 func Load(e env.Env) tea.Cmd {
 	return func() tea.Msg {
@@ -127,6 +147,8 @@ func Load(e env.Env) tea.Cmd {
 		m := LoadedMsg{Pass: h}
 		if h.GitBacked && h.GitRemote {
 			m.RemoteURL = pass.GitRemoteURL()
+			st := backup.Inspect(h.StorePath, "", 0) // local git only, no network
+			m.Ahead, m.Uncommitted = st.Ahead, len(st.Uncommitted)
 		}
 		if h.Initialized && h.StorePath != "" {
 			if target, ok := pass.WorkspaceCopy(h.StorePath, e.Paths.Workspace); ok {
@@ -324,8 +346,14 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 			m.list = m.list.SetError(msg.Err)
 			return m, nil
 		}
-		m.list = m.list.SetItems(msg.facts())
+		m.list = m.list.SetItems(msg.facts()).SetPinned(msg.pinned())
 		return m, nil
+	case reslist.PinnedMsg:
+		if m.modal.Open() || m.level != levelList {
+			return m, nil
+		}
+		next, cmd := m.push()
+		return next, cmd
 	case nav.MenuMsg:
 		if m.modal.Open() || m.level != levelList {
 			return m, nil

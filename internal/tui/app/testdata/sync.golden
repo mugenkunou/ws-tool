@@ -6,12 +6,12 @@ ws  🏠   📦   🔗   🧪   📼   🧹   🔄 Sync   🔐   🔒   🔑   �
   Pending     3 to copy · 1 to delete (1210 files, 49.0 MB in all)
   1 symlink skipped: symlinks never sync (ws ignore lint lists them)
 
+▸ Push to the mirror: 3 files to copy, 1 to delete  ↑ enter
  Action    Path
  copy      Notes/2026-10.md
  copy      Projects/api/main.go
  copy      Projects/web/index.html
  delete    Notes/old-draft.md
-
 
 
 

@@ -19,6 +19,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/plan"
 	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
+	"github.com/mugenkunou/ws-tool/internal/tui/format"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
 	"github.com/mugenkunou/ws-tool/internal/tui/modal"
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
@@ -86,6 +87,15 @@ func New(e env.Env) Model {
 			{Key: "path", Min: 20, Weight: 1},
 		}, theme.Icon(theme.IconSparkles)+"The mirror is up to date. Nothing to copy or delete.").Declare(reslist.Decls(actions)),
 	}
+}
+
+// pinned is the row above the list when a push has something to copy or delete.
+func (m LoadedMsg) pinned() string {
+	n := m.Status.PendingChanges + m.Status.PendingDeletes
+	if !m.Configured || m.Err != nil || n == 0 {
+		return ""
+	}
+	return fmt.Sprintf("Push to the mirror: %s to copy, %d to delete", format.Plural(m.Status.PendingChanges, "file"), m.Status.PendingDeletes)
 }
 
 // Load reads ws.json afresh (so a new target takes effect on refresh) and dry-runs
@@ -171,8 +181,14 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 			m.list = m.list.SetError(msg.Err)
 			return m, nil
 		}
-		m.list = m.list.SetItems(msg.Changes)
+		m.list = m.list.SetItems(msg.Changes).SetPinned(msg.pinned())
 		return m, nil
+	case reslist.PinnedMsg:
+		if m.modal.Open() {
+			return m, nil
+		}
+		next, cmd := m.push()
+		return next, cmd
 	}
 
 	if _, ok := msg.(nav.MenuMsg); ok {

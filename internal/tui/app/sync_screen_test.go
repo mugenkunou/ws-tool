@@ -103,3 +103,25 @@ func (e errString) Error() string { return string(e) }
 func TestSyncTextNamesNoKeys(t *testing.T) {
 	assertNoHardcodedKeyNames(t, "sync/sync.go")
 }
+
+// TestSyncPinnedRowOffersThePush: with changes pending, the first row is the push;
+// up from the first change focuses it and enter opens the same checklist as `.`
+// then `p`. With nothing pending there is no row.
+func TestSyncPinnedRowOffersThePush(t *testing.T) {
+	m := syncApp(t, nil)
+	v := tuitest.Plain(view(m))
+	if !strings.Contains(v, "▸ Push to the mirror: 3 files to copy, 1 to delete") {
+		t.Fatalf("no pinned push row:\n%s", v)
+	}
+	m = send(m, press("up"))
+	m, cmd := sendRun(m, press("enter"))
+	m = pump(t, m, cmd)
+	if v := tuitest.Plain(view(m)); !strings.Contains(v, "Push to /home/tester/MEGA/ws-mirror") {
+		t.Errorf("enter on the pinned row opens the push checklist:\n%s", v)
+	}
+
+	current := syncApp(t, syncscreen.LoadedMsg{Configured: true, Options: mirror.Options{Target: "/m"}, Status: mirror.Status{Target: "/m", Stamp: mirror.StampOK}})
+	if v := tuitest.Plain(view(current)); strings.Contains(v, "▸") {
+		t.Errorf("an up-to-date mirror has no pinned row:\n%s", v)
+	}
+}

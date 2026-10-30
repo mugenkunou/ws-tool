@@ -55,6 +55,9 @@ type Model[T any] struct {
 	marks map[string]bool
 	decls []Decl // the screen's actions, for the status line
 
+	pinned   string // the pinned row's text; empty when there is none
+	pinFocus bool   // the cursor is on the pinned row, not on a data row
+
 	filter  string // as typed
 	before  string // filter when editing began; restored on cancel
 	editing bool
@@ -103,10 +106,62 @@ func (m Model[T]) SetSize(width, height int) Model[T] {
 	return m.layout()
 }
 
-// layout gives the list every row but the last, which is the status line.
+// layout gives the list every row but the last, which is the status line, and
+// the first, when there is a pinned row.
 func (m Model[T]) layout() Model[T] {
-	m.list = m.list.SetSize(m.width, max(m.height-1, 0))
+	h := m.height - 1
+	if m.pinned != "" {
+		h--
+	}
+	m.list = m.list.SetSize(m.width, max(h, 0))
 	return m
+}
+
+// PinnedMsg is what enter on the pinned row sends the screen: the one action the
+// row offers. A screen has one pinned row, so it needs no more than this.
+type PinnedMsg struct{}
+
+// SetPinned shows text as a row above the list and outside it: the one thing
+// the screen offers to do now (`▸ 3 changes to push`). It is not an item, so
+// filters, sorts, marks, counts, the describe panes and every action's rows
+// ignore it. up from the first row focuses it, down leaves it, and enter on it
+// sends PinnedMsg. Empty text removes it.
+func (m Model[T]) SetPinned(text string) Model[T] {
+	m.pinned = text
+	if text == "" {
+		m.pinFocus = false
+	}
+	m.list = m.list.SetBlurred(m.pinFocus)
+	return m.layout()
+}
+
+// PinnedFocused reports that the cursor is on the pinned row.
+func (m Model[T]) PinnedFocused() bool { return m.pinFocus }
+
+// pinKey moves the cursor on to or off the pinned row for the movement key k,
+// and reports whether it handled it.
+func (m Model[T]) pinKey(k tea.KeyPressMsg) (Model[T], bool) {
+	if m.pinned == "" {
+		return m, false
+	}
+	tk := keys.Table()
+	switch {
+	case m.pinFocus && key.Matches(k, tk.LineUp):
+		return m, true // already at the top
+	case m.pinFocus && key.Matches(k, tk.LineDown):
+		m.pinFocus = false
+		m.list = m.list.SetBlurred(false).SetCursor(0)
+		return m, true
+	case m.pinFocus && key.Matches(k, tk.GotoTop, tk.GotoBottom, tk.PageUp, tk.PageDown):
+		m.pinFocus = false // the movement itself follows, on the list
+		m.list = m.list.SetBlurred(false)
+		return m, false
+	case !m.pinFocus && key.Matches(k, tk.LineUp) && m.list.Cursor() <= 0:
+		m.pinFocus = true
+		m.list = m.list.SetBlurred(true)
+		return m, true
+	}
+	return m, false
 }
 
 // SetItems replaces the items. Marks on items that are still present are
@@ -145,10 +200,10 @@ func (m Model[T]) Items() []T { return m.all }
 // Shown returns the items on screen, filtered and sorted.
 func (m Model[T]) Shown() []T { return m.shown }
 
-// Current returns the cursor item.
+// Current returns the cursor item, or none while the cursor is on the pinned row.
 func (m Model[T]) Current() (T, bool) {
 	i := m.list.Cursor()
-	if i < 0 || i >= len(m.shown) {
+	if m.pinFocus || i < 0 || i >= len(m.shown) {
 		var zero T
 		return zero, false
 	}
@@ -234,6 +289,9 @@ func (m Model[T]) HandleKey(k tea.KeyPressMsg) (Model[T], tea.Cmd, bool) {
 		var cmd tea.Cmd
 		m.detail, cmd = m.detail.Update(k)
 		return m, cmd, true
+	}
+	if m.pinFocus && k.String() == "enter" {
+		return m, func() tea.Msg { return PinnedMsg{} }, true
 	}
 	switch {
 	case key.Matches(k, m.keys.Filter):
@@ -373,6 +431,12 @@ func (m Model[T]) editKey(k tea.KeyPressMsg) Model[T] {
 
 // Update handles cursor movement.
 func (m Model[T]) Update(msg tea.Msg) (Model[T], tea.Cmd) {
+	if k, ok := msg.(tea.KeyPressMsg); ok {
+		var handled bool
+		if m, handled = m.pinKey(k); handled {
+			return m, nil
+		}
+	}
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
 	return m, cmd
@@ -514,7 +578,20 @@ func (m Model[T]) View() string {
 		return m.list.View()
 	}
 	status := lipgloss.NewStyle().MaxWidth(m.width).Render(m.statusLine())
+	if m.pinned != "" {
+		return lipgloss.JoinVertical(lipgloss.Left, m.pinnedLine(), m.list.View(), status)
+	}
 	return lipgloss.JoinVertical(lipgloss.Left, m.list.View(), status)
+}
+
+// pinnedLine is the pinned row: a warning-coloured line, a cursor bar when the
+// cursor is on it, with the key that runs it.
+func (m Model[T]) pinnedLine() string {
+	line := "▸ " + m.pinned
+	if m.pinFocus {
+		return lipgloss.NewStyle().Bold(true).Reverse(true).Width(m.width).MaxWidth(m.width).Render(line + "  — enter")
+	}
+	return lipgloss.NewStyle().MaxWidth(m.width).Render(theme.Warn.Render(line) + theme.Muted.Render("  ↑ enter"))
 }
 
 // Help merges the shared list bindings into the screen's own help, or

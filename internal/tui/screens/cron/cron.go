@@ -39,6 +39,17 @@ type Job = wscron.Job
 type LoadedMsg struct {
 	Jobs    []Job
 	CronErr error // crontab not readable (preflight failure)
+	// Pending is how many changes `cron apply` would make; 0 when the crontab
+	// matches, cannot be read, or there is no configs/crontab.
+	Pending int
+}
+
+// pinned is the row above the list when `cron apply` has work to do.
+func (m LoadedMsg) pinned() string {
+	if m.Pending == 0 || m.CronErr != nil {
+		return ""
+	}
+	return "Apply to the crontab: " + format.Plural(m.Pending, "change")
 }
 
 // Failing returns installed jobs whose last run exited non-zero.
@@ -148,7 +159,14 @@ func New(e env.Env) Model {
 func Load(e env.Env) tea.Cmd {
 	return func() tea.Msg {
 		jobs, err := wscron.Jobs(e.Paths.Workspace)
-		return LoadedMsg{Jobs: jobs, CronErr: err}
+		msg := LoadedMsg{Jobs: jobs, CronErr: err}
+		if err == nil {
+			// A missing configs/crontab is an error here: nothing to apply.
+			if acts, _, aerr := wscron.ApplyActions(planOptions(e)); aerr == nil {
+				msg.Pending = len(acts)
+			}
+		}
+		return msg
 	}
 }
 
@@ -228,8 +246,13 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		return m.reload()
 	case LoadedMsg:
 		m.loaded, m.state = true, msg
-		m.list = m.list.SetItems(msg.Jobs)
+		m.list = m.list.SetItems(msg.Jobs).SetPinned(msg.pinned())
 		return m, nil
+	case reslist.PinnedMsg:
+		if m.modal.Open() || m.level != levelList {
+			return m, nil
+		}
+		return m, preflightApply()
 	case SelectJobMsg:
 		m.level = levelList
 		return m.selectJob(msg.Name), nil
@@ -328,8 +351,10 @@ func (m Model) Commands() []nav.CommandInfo { return reslist.CommandInfos(comman
 
 // planOptions say where `cron add`, `rm` and `apply` read and write: this
 // binary, this workspace, and its configs/crontab.
-func (m Model) planOptions() wscron.PlanOptions {
-	p := m.env.Paths
+func (m Model) planOptions() wscron.PlanOptions { return planOptions(m.env) }
+
+func planOptions(e env.Env) wscron.PlanOptions {
+	p := e.Paths
 	return wscron.PlanOptions{Bin: wscron.WSBinary(), Workspace: p.Workspace, Display: wscron.DefaultDisplay(), Declared: wscron.DeclaredPath(p.Workspace)}
 }
 

@@ -4288,6 +4288,15 @@ filter status!=ok (2 of 9) — l link acts on these 2 · sort Age ↓           
 
 Each key is shown with its label, never as a bare letter.
 
+**Pinned row.** A screen whose one main action has work waiting shows a row above the
+list: `▸ Push to the mirror: 3 files to copy, 1 to delete`. It is not an item: filters,
+sorts, marks, the counts, `d` and `y`, and every action's rows ignore it. `up` from the first
+row puts the cursor on it, `down` leaves it, and `enter` runs the action through its
+checklist, the same one `.` offers. It is there only while there is work: Sync with
+changes to copy or delete, Cron when `cron apply` has changes to make, Pass when the
+backup has commits not pushed or changes not committed. Trash has none: a full trash is
+the normal state, and emptying it is deliberate.
+
 ### 6.5 Screen keys
 
 Screen keys are lowercase and mnemonic: usually the first letter of the verb the footer
@@ -4423,7 +4432,7 @@ global letter takes the screen's own verb, and the footer says "a allow".
 | `ctrl+d` | remove (uninstall) | selected |
 | `r` | run now | selected |
 
-Action menu (`.`): `a` apply.
+Action menu (`.`): `a` apply. When `apply` has changes to make, a pinned row offers it (§6.4).
 
 **Trash.** The header shows integration status and trash size.
 
@@ -4458,7 +4467,7 @@ totals, and a notice for skipped symlinks. The list is what the next push would 
 (action, path). The load is `ws sync`'s rsync dry run, and it re-reads `ws.json`, so a new
 target takes effect on refresh. With no `sync.mirror.target` the screen says how to set it
 (config edit on the Workspace screen, then refresh). A missing rsync or a bad target is the screen's error. There
-are no keys beyond the list's.
+are no keys beyond the list's; with changes to push, a pinned row above the list offers the push (§6.4).
 
 Action menu (`.`): `p` push (§5, `ws sync push`).
 

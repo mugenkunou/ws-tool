@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/mugenkunou/ws-tool/internal/tui/nav"
+	"github.com/mugenkunou/ws-tool/internal/tui/screens/cron"
 	"github.com/mugenkunou/ws-tool/internal/tui/tuitest"
 )
 
@@ -48,3 +49,27 @@ func TestCronEnterShowsOutputAndEscReturns(t *testing.T) {
 }
 
 func TestCronNoHardcodedKeyNames(t *testing.T) { assertNoHardcodedKeyNames(t, "cron/cron.go") }
+
+// TestCronPinnedRowOffersTheApply: when `cron apply` has changes to make, the
+// first row says so, and enter on it runs the same preflight and plan as `.`
+// then `a`. With nothing to apply (or an unreadable crontab) there is no row.
+func TestCronPinnedRowOffersTheApply(t *testing.T) {
+	m := send(loaded(t, 100, 30), press("8")) // Cron
+	if v := tuitest.Plain(view(m)); strings.Contains(v, "▸") {
+		t.Fatalf("no pending changes, no row:\n%s", v)
+	}
+	jobs := cron.LoadedMsg{Pending: 2, Jobs: []cron.Job{{Name: "mega-sync", Schedule: "*/30 * * * *", State: "not applied", Declared: true, CrontabOK: true}}}
+	m = send(m, jobs)
+	v := tuitest.Plain(view(m))
+	if !strings.Contains(v, "▸ Apply to the crontab: 2 changes") {
+		t.Fatalf("no pinned apply row:\n%s", v)
+	}
+	m = send(m, press("up"))
+	if _, cmd := sendRun(m, press("enter")); cmd == nil {
+		t.Error("enter on the pinned row starts the apply (the crontab preflight)")
+	}
+	m = send(m, cron.LoadedMsg{Pending: 2, CronErr: errString("crontab: command not found")})
+	if v := tuitest.Plain(view(m)); strings.Contains(v, "▸") {
+		t.Errorf("an unreadable crontab has nothing to apply:\n%s", v)
+	}
+}

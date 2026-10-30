@@ -29,6 +29,7 @@ type Model struct {
 	table  table.Model
 	rows   []table.Row // styled rows as given; the cursor row is shown plain
 	marked []bool      // rows drawn as marked (the cursor bar takes the mark colour)
+	blur   bool        // the cursor is elsewhere (a pinned row): no row is highlighted
 	state  state
 	err    error
 	width  int
@@ -101,6 +102,13 @@ func (m Model) plainCursorRow() Model {
 	if c < 0 || c >= len(m.rows) {
 		return m
 	}
+	if m.blur {
+		st := theme.Table()
+		st.Selected = lipgloss.NewStyle()
+		m.table.SetStyles(st)
+		m.table.SetRows(m.rows)
+		return m
+	}
 	st := theme.Table()
 	if c < len(m.marked) && m.marked[c] {
 		st.Selected = theme.SelectedMarked()
@@ -115,6 +123,13 @@ func (m Model) plainCursorRow() Model {
 	shown[c] = plain
 	m.table.SetRows(shown)
 	return m
+}
+
+// SetBlurred hides the cursor bar while the cursor is on something that is not
+// a row of this list (reslist's pinned row). The cursor index is kept.
+func (m Model) SetBlurred(blur bool) Model {
+	m.blur = blur
+	return m.plainCursorRow()
 }
 
 // SetError records a load failure.
