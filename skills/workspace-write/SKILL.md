@@ -56,7 +56,7 @@ Done when every block has a label.
 
 ### 3. Read the capture
 
-- HAR: it is JSON; read it with jq. List the calls, with static files skipped and query strings cut:
+- HAR: first look in `scripts/` for a script that masks a HAR (`har-*`) and use it for every look at request or response values; when none exists, write one before you explore. Your own jq may print key names and counts, never values: form-encoded bodies hold passwords and codes under any name. It is JSON; read it with jq. List the calls, with static files skipped and query strings cut:
   ```bash
   jq -r '.log.entries | to_entries[] | select(.value.request.url | test("\\.(js|css|png|svg|ico|woff2?)([?#]|$)") | not) | [.key, .value.request.method, .value.response.status, (.value.request.url | sub("[?#].*"; ""))] | @tsv' FILE
   ```
