@@ -59,6 +59,7 @@ When a recorded decision or the workspace answers a question, don't ask it. Buil
 
 - Join scripts together: read their output (`--json` when you need values) and decide the next step.
 - When no script exists, use the ordinary tools a human would (`kubectl`, `ssh`, `dig`, `journalctl`, `jq`).
+- Every interactive ssh session a step needs goes through the `agent-tmux` skill, so the user can watch or take over the same terminal and the session is recorded. Use it only when both hold: the `agent-tmux` skill is in your skill list, and `command -v agent-tmux` finds the binary. Check once in the recon, and say in the ask which way the run goes. When either is missing, run plain `ssh` as a human would and carry on; never stop, ask, or install anything for it. A one-shot remote command a script already wraps (`ssh host cmd`, a `<system>-*` script) stays as it is. Name the session after the task and target, and keep its name in `steps.md`.
 - A step over many targets runs as one call, in the background when it can take minutes. Don't loop over targets one call at a time in the foreground.
 - When a block the task needs does not exist, build it without asking, unless step 4 says to propose it first: follow workspace-write from its step 2, using this run's goal, targets and the user's answers as the intake. Writing blocks changes no real system.
 - You never read a secret value yourself: no pass entries, no cookie files, no token in a command line or a log. An API call that needs a login goes through a script.
