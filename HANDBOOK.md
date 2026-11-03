@@ -40,6 +40,7 @@ Section numbers are stable: code comments cite them as `spec §x.y`.
   - [4.8 Completion](#48-completion)
   - [4.9 Environment variables](#49-environment-variables)
   - [4.10 Editor](#410-editor)
+  - [4.11 Scratch shell](#411-scratch-shell)
 - [5. Command reference](#5-command-reference)
   - [`ws repo`](#ws-repo)
   - [`ws symlink`](#ws-symlink)
@@ -490,7 +491,7 @@ valid JSON. `ws config edit` checks before saving.
 
 | Key | Meaning | Written by |
 | --- | --- | --- |
-| `editor` | the editor every `edit` and `open` command uses; empty means `$VISUAL`, then `$EDITOR`, then `vim` (§4.10) | hand |
+| `editor` | the editor every `edit` command uses; empty means `$VISUAL`, then `$EDITOR`, then `vim` (§4.10) | hand |
 | `scratch.root_dir` | where scratch dirs live | hand |
 | `scratch.tags` | tags used so far, offered as completions by `scratch tag` | `scratch tag` |
 | `repo.roots` | directories searched for git repos | `repo root add\|rm` |
@@ -633,7 +634,7 @@ prints help.
 | `new` | create a fresh thing | scratch |
 | `rm` | delete something ws owns, soft-deleting files | scratch, trash, cron, ignore, repo root |
 | `edit` | open a file in your editor (§4.10) | ignore, config |
-| `open` | open a directory in your editor (§4.10) | scratch |
+| `open` | start a shell in a directory (§4.11) | scratch |
 | `enable` / `disable` | switch an integration on or off | trash, credential, completion, pass backup |
 | `status` | the health of an integration (not a list of rows) | trash, credential, pass, backup, sync |
 | `mute` / `unmute` | hide / show a warning or finding at a quieter severity; it still appears, nothing else changes | ignore (a path and everything under it), secret (one finding) |
@@ -689,9 +690,9 @@ ws skill eject <skill>                    RW  copy a built-in into agent/skills/
 ws skill check                            RO  skills and scripts that drifted from this ws
 
 ws scratch ls                             RO  scratch directories
-ws scratch new [name]                     RW  create one and open it
+ws scratch new [name]                     RW  create one and start a shell in it
 ws scratch add <path…>                    RW  move an existing path into scratch
-ws scratch open <name>                    RO  open one in the editor
+ws scratch open <name>                    RO  start a shell in one
 ws scratch tag <name> [tag…] [--rm tag]   RW  label one (tags are for you to read)
 ws scratch rm <name…>                     RW  soft-delete
 
@@ -977,6 +978,8 @@ only. Without agent-tmux there are none.
 | `WS_WORKSPACE` | workspace root (after `--workspace`) |
 | `NO_COLOR` | no colors or icons ([no-color.org](https://no-color.org)) |
 | `VISUAL`, `EDITOR` | your editor, when `ws.json` `editor` is empty (§4.10) |
+| `SHELL` | the shell `scratch new` and `scratch open` start (§4.11); else `bash`, else `sh` |
+| `WS_SCRATCH_SHELL` | set by ws inside a scratch shell, to its directory. Not `WS_SCRATCH`, the scratch root. Show it in your prompt, or test it |
 | `PASSWORD_STORE_DIR` | pass store location |
 | `XDG_STATE_HOME`, `XDG_DATA_HOME` | machine-local state and trash locations |
 | `TMPDIR`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR` | `ws env` and `ws layout`: the temp, cache and session homes; `XDG_CACHE_HOME`: the agent-tmux release cache |
@@ -988,8 +991,8 @@ only. Without agent-tmux there are none.
 
 ### 4.10 Editor
 
-Every command that opens an editor (`ignore edit`, `config edit`,
-`scratch new`, `scratch open`, and `e` in the TUI) uses the same one:
+Every command that opens an editor (`ignore edit`, `config edit`, and `e` in the
+TUI) uses the same one:
 
 1. `ws.json` `editor`, when it is set (it may carry arguments: `code -w`, `nvim -p`);
 2. else `$VISUAL`;
@@ -1001,6 +1004,37 @@ terminal until it exits. In the TUI, the TUI suspends while it runs. Any other e
 GUI such as `code`) is started in the background. When the editor cannot start, ws says
 which one it tried and prints the path. To use a GUI editor, set `editor` (for
 example `"code"`).
+
+### 4.11 Scratch shell
+
+`scratch new` and `scratch open` end by starting a shell inside the directory, so you
+land where the work is and can make files, run `git init` or start your own editor.
+
+```text
+~/Workspace $ ws scratch new foobar
+  ~/Scratch/foobar.2026-11
+  Entering ~/Scratch/foobar.2026-11. Type exit to come back.
+~/Scratch/foobar.2026-11 $ touch notes.md
+~/Scratch/foobar.2026-11 $ exit
+~/Workspace $
+```
+
+- **It is a second shell.** A program cannot change the directory of the shell that
+  started it, so ws starts `$SHELL` (else `bash`, else `sh`) as a child in the directory
+  and waits. `exit` or `ctrl+d` ends the child, and your first shell is where you left it.
+  To move the shell you are in, use `wsopen <name>` (see `scratch open`).
+- **What the child sees.** Your exported environment, plus `WS_SCRATCH_SHELL=<directory>`.
+  Shell variables, options and a virtualenv activated in the parent do not carry over,
+  and your rc file runs again.
+- **Nesting.** Run from inside a scratch shell, ws warns and asks before starting
+  another. The prompt looks the same at every level, so put `WS_SCRATCH_SHELL` in it if
+  you want a marker.
+- **Only on a terminal.** With stdin or stdout not a terminal, with `--json` or
+  `--dry-run`, or with `--no-shell`, ws starts no shell and just prints the path.
+- **Exit status.** The shell's exit status is ignored. `ctrl+d` after a failed command
+  is not a failure of ws.
+- **In the TUI**, the Scratch screen suspends the TUI, runs the shell, and resumes on
+  `exit`.
 
 ---
 
@@ -1943,9 +1977,9 @@ a missing name is a usage error (exit 1). Ctrl-C at the prompt exits 130.
 | Command | RO/RW | Does | TUI |
 | --- | --- | --- | --- |
 | `ws scratch ls` | RO | list scratch directories | screen |
-| `ws scratch new [name]` | RW | create a directory and open it in the editor | `a` |
+| `ws scratch new [name]` | RW | create a directory and start a shell in it | `a` |
 | `ws scratch add <path…>` | RW | move existing files or directories into scratch | `.` `a` (and `s` on Ignore) |
-| `ws scratch open <name>` | RO | open a directory in your editor | `enter` |
+| `ws scratch open <name>` | RO | start a shell in a directory | `enter` |
 | `ws scratch tag <name> [tag…]` | RW | add or remove tags | `t` |
 | `ws scratch rm <name…>` | RW | soft-delete directories to the trash | `ctrl+d` |
 
@@ -1985,10 +2019,10 @@ TUI: the Scratch screen. `/` takes the same filter expressions.
 #### `ws scratch new`
 
 ```text
-ws scratch new [name] [--no-date] [--no-open] [--editor <cmd>] [--dry-run]
+ws scratch new [name] [--no-date] [--no-shell] [--dry-run]
 ```
 
-Creates `<root>/<name>.<YYYY-MM>` and opens it in the editor. The month suffix is
+Creates `<root>/<name>.<YYYY-MM>` and starts a shell in it (§4.11). The month suffix is
 skipped with `--no-date`. If the name is taken, ws appends `-2`, `-3`, and so on. With no
 name on a terminal, ws asks for one and lists the existing names, so you can pick a
 distinct one. `tab` does not complete here. An empty answer, or no name without a
@@ -1997,30 +2031,29 @@ spaces (decision). The new directory gets a `.ws-meta.json` with its creation ti
 tags.
 
 The plan has one action, `Create /home/user/Scratch/<final name>`, pre-checked. After
-it runs, ws opens the directory in your editor (§4.10; default `vim`), or `--editor`. A
-terminal editor runs in the foreground, any other in the background. If the editor cannot
-start, ws prints a warning and the path, and still exits 0.
+it runs, ws prints the path and starts a shell in the directory (§4.11). Type `exit` to
+come back to where you were. Without a terminal, ws only prints the path. If the shell
+cannot start, ws prints a warning and the path, and still exits 0.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--no-date` | off | no `.YYYY-MM` suffix |
-| `--no-open` | off | do not start the editor |
-| `--editor <cmd>` | §4.10 | editor for this run |
+| `--no-shell` | off | create the directory and print its path; start no shell |
 
 ```text
-$ ws scratch new proxy-auth --no-open
+$ ws scratch new proxy-auth --no-shell
 Create /home/user/Scratch/proxy-auth.2026-10 [y/n/a/q] : y
   ✔ Create /home/user/Scratch/proxy-auth.2026-10
   /home/user/Scratch/proxy-auth.2026-10
 ```
 
 JSON: `scratch.new`, with `result` (`path`, `created`, `dry_run`) and `actions`. `--json`
-does not start the editor.
+starts no shell.
 
 Exit: 0 or 1. 130 if the name prompt is cancelled.
 
 TUI: `a` asks for a name (existing names are offered), shows the one-action checklist,
-then opens the editor.
+then suspends the TUI and starts a shell in the directory. `exit` returns to the TUI.
 
 #### `ws scratch add`
 
@@ -2067,28 +2100,29 @@ same move for the selected warnings.
 #### `ws scratch open`
 
 ```text
-ws scratch open <name> [--editor <cmd>] [--print-path]
+ws scratch open <name> [--no-shell] [--print-path]
 ```
 
-Resolves `<name>` (see **Names**) and opens the directory in your editor (§4.10) or
-`--editor`, with the same foreground and background rule as `new`. If the editor cannot
-start, ws prints a warning and the path, and exits 0. `open` changes nothing.
+Resolves `<name>` (see **Names**) and starts a shell in the directory, as `new` does
+(§4.11). Without a terminal, ws only prints the path. If the shell cannot start, ws
+prints a warning and exits 0. `open` changes nothing.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--editor <cmd>` | §4.10 | editor for this run |
+| `--no-shell` | off | print the path; start no shell |
 | `--print-path` | off | print only the resolved path on stdout. Status lines and the name prompt go to stderr. |
 
 `--print-path` exists for the `wsopen` shell function that `ws completion` installs. It
-runs `cd "$(ws scratch open --print-path "$@")"`, so `wsopen dns` opens the directory and
-moves the shell into it.
+runs `cd "$(ws scratch open --print-path "$@")"`, so `wsopen dns` moves your current
+shell into the directory, with no second shell. It starts no shell and no editor.
 
 ```text
 $ ws scratch open dns
-✔ Opening   vim → /home/user/Scratch/dns-debug.2026-09
+  /home/user/Scratch/dns-debug.2026-09
+  Entering /home/user/Scratch/dns-debug.2026-09. Type exit to come back.
 ```
 
-JSON: `scratch.open`, with `name` and `path`. `--json` does not start the editor.
+JSON: `scratch.open`, with `name` and `path`. `--json` starts no shell.
 
 Exit: 0, or 1 when the name resolves to no directory or to several. 130 if the prompt is
 cancelled.
@@ -4848,9 +4882,9 @@ and matching. It runs these programs:
 | `agent-tmux` | [agent-tmux](https://github.com/mugenkunou/agent-tmux) | `ws session …` (exec), the Sessions screen, `ws session` completion | for sessions |
 | `pass`, `gpg` | pass, gnupg | `pass …`, `credential …`, backup tokens | for those commands |
 | `crontab` | cron | `cron …` | for cron |
-| `sh`, `bash` | — | `repo run`, cron job scripts, shell integrations | yes |
+| `sh`, `bash` | — | `repo run`, cron job scripts, shell integrations, `scratch new\|open` (`$SHELL` first) | yes |
 | `sudo` | sudo | symlinks whose host path needs root (`/etc/…`) | for those symlinks |
-| your editor: `ws.json` `editor`, `$VISUAL`, `$EDITOR`, else `vim` | vim | `edit` commands, `scratch new\|open` | for editing (the path is printed if it can't start) |
+| your editor: `ws.json` `editor`, `$VISUAL`, `$EDITOR`, else `vim` | vim | `edit` commands | for editing (the path is printed if it can't start) |
 | `$PAGER` / `less` | less | paged output | optional |
 | `rsync` | rsync | `sync push\|status\|restore` | for `ws sync` |
 | `megasync`, `pgrep`, `pkill` | MEGAsync, procps | the `mega-sync` cron job (MEGA only) | for that job |

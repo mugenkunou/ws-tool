@@ -176,13 +176,13 @@ func TestNewPromptsForAName(t *testing.T) {
 	}
 }
 
-// TestEnterOpensTheCursorRowOnly: enter hands the cursor row to the editor and
+// TestEnterOpensTheCursorRowOnly: enter hands the cursor row to a shell and
 // opens no dialog.
 func TestEnterOpensTheCursorRowOnly(t *testing.T) {
 	c := press(screen(t, fixtureRows()), "space", "down", "down") // a mark elsewhere
 	c, cmd := c.Update(keyMsg("enter"))
 	if c.CapturesKeys() || cmd == nil {
-		t.Error("enter should launch the editor")
+		t.Error("enter should start a shell")
 	}
 	if _, cmd := screen(t, nil).Update(keyMsg("enter")); cmd != nil {
 		t.Error("enter with no row does nothing")

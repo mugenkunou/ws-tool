@@ -21,7 +21,7 @@ Everything else:
 - Structured docs for agents (API specs, converted docs, `WISDOM.md`, `RUNBOOKS.md`): `references/`.
 - Small composable blocks: `scripts/`, with shared code in `scripts/lib/`. Hand-written or multi-step scripts: `experiments/`.
 - Code projects, git repos included: `experiments/<name>/`.
-- Throwaway work and captures: `$WS_SCRATCH/<name>.<yyyy-mm>/`, created with `ws scratch new <name> --no-open` when missing (ws adds the `.<yyyy-mm>`).
+- Throwaway work and captures: `$WS_SCRATCH/<name>.<yyyy-mm>/`, created with `ws scratch new <name> --no-shell` when missing (ws adds the `.<yyyy-mm>`).
 - A file put away for good: `archive/`, at the same relative path it had.
 - The user's own skills: `agent/skills/<name>/SKILL.md`. Built-in skills, such as this one, ship with ws and are read-only; `ws skill show <name> --path` prints any skill's folder.
 - `notes/` is the user's own. Read it, and write elsewhere.

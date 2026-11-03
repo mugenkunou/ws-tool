@@ -230,7 +230,7 @@ func (k SymlinksMap) FullHelp() [][]key.Binding {
 type ScratchMap struct {
 	Table  table.KeyMap
 	New    key.Binding // a
-	Open   key.Binding // enter: in your editor
+	Open   key.Binding // enter: a shell in the directory
 	Tag    key.Binding // t
 	Delete key.Binding // ctrl+d
 	Back   key.Binding

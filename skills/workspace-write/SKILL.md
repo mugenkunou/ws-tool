@@ -37,7 +37,7 @@ Ask in one batch:
 - done: how the user checks that it worked
 - never: what must not happen, such as a version change, other targets, or deletes
 
-The capture holds live sessions and secrets, so it lives in `$WS_SCRATCH/<task>.<yyyy-mm>/`, the scratch folder for the task. Create it with `ws scratch new <task> --no-open` when it is missing; ws adds the `.<yyyy-mm>` itself. Move the capture there if it sits anywhere else.
+The capture holds live sessions and secrets, so it lives in `$WS_SCRATCH/<task>.<yyyy-mm>/`, the scratch folder for the task. Create it with `ws scratch new <task> --no-shell` when it is missing; ws adds the `.<yyyy-mm>` itself. Move the capture there if it sits anywhere else.
 
 Done when you hold a capture and a one-sentence goal.
 

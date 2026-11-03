@@ -1,11 +1,13 @@
 // Package scratch is the scratch-directory screen (spec §6.5): list, new, open
-// in the editor, tag and delete, plus the `:add` command that moves a path
+// (both in a shell in the directory), tag and delete, plus the `:add` command that moves a path
 // into scratch. Tag and delete act on the marked directories, else the cursor
 // one.
 package scratch
 
 import (
+	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -47,8 +49,8 @@ func (m LoadedMsg) TotalBytes() int64 {
 	return n
 }
 
-// createdMsg reports the path of a newly created scratch dir so it can be
-// opened in the editor.
+// createdMsg reports the path of a newly created scratch dir so a shell can be
+// started in it.
 type createdMsg struct{ path string }
 
 type step int
@@ -66,7 +68,7 @@ const (
 
 type handoverTag int
 
-const handoverEditor handoverTag = iota
+const handoverShell handoverTag = iota
 
 // Model is the scratch screen state.
 type Model struct {
@@ -164,10 +166,13 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		m.list = m.list.SetItems(msg.Entries)
 		return m, nil
 	case createdMsg:
-		return m, handover.Editor(m.env.Config.Editor, msg.path, handoverEditor)
+		return m, enterShell(msg.path)
 	case handover.DoneMsg:
-		if _, ok := msg.Tag.(handoverTag); ok && msg.Err != nil {
-			return m, nav.Notify(nav.LevelWarn, "Editor launch skipped: "+msg.Err.Error())
+		// The shell's own exit status is not an error: Ctrl-D after a failed
+		// command is a normal way out.
+		var exitErr *exec.ExitError
+		if _, ok := msg.Tag.(handoverTag); ok && msg.Err != nil && !errors.As(msg.Err, &exitErr) {
+			return m, nav.Notify(nav.LevelWarn, "Shell launch skipped: "+msg.Err.Error())
 		}
 		return m, nil
 	}
@@ -227,7 +232,7 @@ func (m Model) updateList(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 	return m, cmd
 }
 
-// ── new, open ──────────────────────────────────────────────────────
+// ── new, open (both end in a shell in the directory) ──────────────────────────────────────────────────────
 
 func (m Model) promptNew(_ []wsscratch.Entry) (Model, tea.Cmd) {
 	var cmd tea.Cmd
@@ -238,7 +243,13 @@ func (m Model) promptNew(_ []wsscratch.Entry) (Model, tea.Cmd) {
 }
 
 func (m Model) open(rows []wsscratch.Entry) (Model, tea.Cmd) {
-	return m, handover.Editor(m.env.Config.Editor, rows[0].Path, handoverEditor)
+	return m, enterShell(rows[0].Path)
+}
+
+// enterShell suspends the TUI and gives the terminal to the user's shell,
+// started in path. The TUI resumes when the shell exits.
+func enterShell(path string) tea.Cmd {
+	return handover.Run(wsscratch.ShellCommand(path), handoverShell)
 }
 
 func (m Model) openNew(name string) Model {

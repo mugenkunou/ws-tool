@@ -23,7 +23,7 @@ func TestScratchCommandsFlow(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "scratch", "new", "demo-scratch", "--no-open"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+	if code := Execute([]string{"--workspace", workspace, "scratch", "new", "demo-scratch", "--no-shell"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
 		t.Fatalf("scratch new failed: code=%d stderr=%s", code, errOut.String())
 	}
 	if !strings.Contains(out.String(), "Create ") {
@@ -71,7 +71,7 @@ func TestScratchDeleteAndAgeFormatting(t *testing.T) {
 		t.Fatalf("init failed: code=%d stderr=%s", code, errOut.String())
 	}
 
-	if code := Execute([]string{"--workspace", workspace, "scratch", "new", "age-case", "--no-open"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+	if code := Execute([]string{"--workspace", workspace, "scratch", "new", "age-case", "--no-shell"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
 		t.Fatalf("scratch new failed: code=%d stderr=%s", code, errOut.String())
 	}
 
@@ -117,7 +117,7 @@ func TestScratchOpenJSON(t *testing.T) {
 	// Create a scratch directory first.
 	out.Reset()
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "scratch", "new", "open-test", "--no-open"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+	if code := Execute([]string{"--workspace", workspace, "scratch", "new", "open-test", "--no-shell"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
 		t.Fatalf("scratch new failed: code=%d stderr=%s", code, errOut.String())
 	}
 
@@ -169,7 +169,7 @@ func TestScratchOpenSubstringMatch(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "scratch", "new", "my-debug-session", "--no-open", "--no-date"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+	if code := Execute([]string{"--workspace", workspace, "scratch", "new", "my-debug-session", "--no-shell", "--no-date"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
 		t.Fatalf("scratch new failed: code=%d stderr=%s", code, errOut.String())
 	}
 
@@ -198,15 +198,14 @@ func TestScratchOpenPrintPath(t *testing.T) {
 
 	out.Reset()
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "scratch", "new", "--no-open", "--no-date", "print-path-test"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
+	if code := Execute([]string{"--workspace", workspace, "scratch", "new", "--no-shell", "--no-date", "print-path-test"}, strings.NewReader("y\n"), &out, &errOut); code != 0 {
 		t.Fatalf("scratch new failed: code=%d stderr=%s", code, errOut.String())
 	}
 
 	// --print-path: stdout must be only the directory path (no decoration).
-	// We fake the editor with a no-op so exec.Command.Start() succeeds.
 	out.Reset()
 	errOut.Reset()
-	if code := Execute([]string{"--workspace", workspace, "scratch", "open", "--print-path", "--editor", "true", "print-path-test"}, strings.NewReader(""), &out, &errOut); code != 0 {
+	if code := Execute([]string{"--workspace", workspace, "scratch", "open", "--print-path", "print-path-test"}, strings.NewReader(""), &out, &errOut); code != 0 {
 		t.Fatalf("scratch open --print-path failed: code=%d stderr=%s", code, errOut.String())
 	}
 	gotPath := strings.TrimSpace(out.String())

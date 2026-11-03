@@ -42,7 +42,7 @@ That's it. `~/.gitconfig` (and the rest you ticked) now lives in `~/Workspace/sy
 | 🪪 **Git tokens** | `ws credential enable` | git reads credentials from `pass` |
 | 📼 **Sessions** | `ws session create web` | recorded tmux sessions, run by [agent-tmux](https://github.com/mugenkunou/agent-tmux); "what was that rsync flag?" → `ws session grep rsync` |
 | 📦 **Repos** | `ws repo ls`, `ws repo git pull` | the whole fleet at a glance, hygiene warnings, any git command across every repo |
-| 🧪 **Scratch** | `ws scratch new proxy-bug` | a named throwaway dir, opened in your editor |
+| 🧪 **Scratch** | `ws scratch new proxy-bug` | a named throwaway dir, with a shell started in it |
 | 🗑️ **Trash** | `ws trash enable` | `rm` becomes undoable, everywhere |
 | 🧩 **Skills** | `ws skill install` | built-in skills that update with ws, plus yours in `agent/skills/` (and the skill `agent-tmux` ships, via `--providers`), linked into Claude Code, Codex, Cursor and more; `ws skill check` catches drift |
 | ⏰ **Cron** | `ws cron add sync-push` | managed jobs with logs and missed-run catch-up |

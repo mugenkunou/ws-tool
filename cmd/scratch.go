@@ -1,15 +1,16 @@
 package cmd
 
 import (
+	"bufio"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 
-	"github.com/mugenkunou/ws-tool/internal/editor"
 	"github.com/mugenkunou/ws-tool/internal/resource"
 	"github.com/mugenkunou/ws-tool/internal/scratch"
 	"github.com/mugenkunou/ws-tool/internal/style"
@@ -138,8 +139,7 @@ func (e scratchEnv) ls(args []string, globals globalFlags, stdout, stderr io.Wri
 func (e scratchEnv) new(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("scratch-new", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	noOpen := fs.Bool("no-open", false, "")
-	editorFlag := fs.String("editor", "", "")
+	noShell := fs.Bool("no-shell", false, "")
 	noDate := fs.Bool("no-date", false, "")
 	registerGlobalFlags(fs, &globals)
 	if err := parseInterspersed(fs, args); err != nil {
@@ -198,19 +198,40 @@ func (e scratchEnv) new(args []string, globals globalFlags, stdin io.Reader, std
 	if planResult.WasExecuted("scratch-new") {
 		out := textOut(globals, stdout)
 		fmt.Fprintf(out, "  %s\n", style.Mutedf(globals.noColor, "%s", res.Path))
-		if !*noOpen {
-			e.openEditor(*editorFlag, res.Path, globals, stdout, out)
+		if !*noShell {
+			enterScratchShell(res.Path, globals, stdin, stdout, stderr)
 		}
 	}
 	return planResult.ExitCode()
 }
 
-// openEditor opens a directory in the editor. A terminal editor runs in the
-// foreground, any other in the background. When it cannot start, ws warns and
-// the command still succeeds.
-func (e scratchEnv) openEditor(editorFlag, path string, globals globalFlags, editorOut io.Writer, out io.Writer) {
-	if err := editor.Open(editorFor(editorFlag, e.cfg), path, editorOut); err != nil {
-		fmt.Fprintln(out, style.ResultWarning(globals.noColor, "Editor launch skipped: %v", err))
+// enterScratchShell starts the user's shell in path and returns when it exits,
+// so `ws scratch new|open` leaves you inside the directory. It does nothing
+// without a terminal (the path is already printed), and asks first when run from
+// inside a scratch shell. The shell's own exit status is not ws's: Ctrl-D after
+// a failed command is not a failure of ws. When the shell cannot start, ws warns
+// and the command still succeeds.
+func enterScratchShell(path string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) {
+	in, inOK := stdin.(*os.File)
+	out, outOK := stdout.(*os.File)
+	if !inOK || !outOK || !tui.IsTTY(in.Fd()) || !tui.IsTTY(out.Fd()) {
+		return
+	}
+	nc := globals.noColor
+	if cur := scratch.InShell(); cur != "" {
+		fmt.Fprintf(stderr, "%s\n", style.ResultWarning(nc, "You are already in a scratch shell (%s); a new one nests inside it.", cur))
+		fmt.Fprint(stderr, "Start it anyway? [y/N] ")
+		line, _ := bufio.NewReader(in).ReadString('\n')
+		if a := strings.ToLower(strings.TrimSpace(line)); a != "y" && a != "yes" {
+			return
+		}
+	}
+	fmt.Fprintf(out, "  %s\n", style.Mutedf(nc, "Entering %s. Type exit to come back.", path))
+	c := scratch.ShellCommand(path)
+	c.Stdin, c.Stdout, c.Stderr = in, out, os.Stderr
+	var exitErr *exec.ExitError
+	if err := c.Run(); err != nil && !errors.As(err, &exitErr) {
+		fmt.Fprintln(out, style.ResultWarning(nc, "Shell launch skipped: %v", err))
 	}
 }
 
@@ -271,7 +292,7 @@ func (e scratchEnv) add(args []string, globals globalFlags, stdin io.Reader, std
 func (e scratchEnv) open(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("scratch-open", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	editorFlag := fs.String("editor", "", "")
+	noShell := fs.Bool("no-shell", false, "")
 	printPath := fs.Bool("print-path", false, "")
 	registerGlobalFlags(fs, &globals)
 	if err := parseInterspersed(fs, args); err != nil {
@@ -310,25 +331,16 @@ func (e scratchEnv) open(args []string, globals globalFlags, stdin io.Reader, st
 		return writeJSON(stdout, stderr, "scratch.open", map[string]any{"name": entry.Name, "path": entry.Path})
 	}
 
-	argv := editorFor(*editorFlag, e.cfg)
-	nc := globals.noColor
 	if *printPath {
-		if err := editor.Open(argv, entry.Path, stderr); err != nil {
-			fmt.Fprintln(stderr, style.ResultWarning(nc, "Editor launch skipped: %v", err))
-		} else {
-			fmt.Fprintf(stderr, "%s\n", style.ResultSuccess(nc, "Opening   %s → %s", strings.Join(argv, " "), entry.Path))
-		}
 		fmt.Fprintln(stdout, entry.Path)
 		return 0
 	}
 
 	out := textOut(globals, stdout)
-	if err := editor.Open(argv, entry.Path, stdout); err != nil {
-		fmt.Fprintln(out, style.ResultWarning(nc, "Editor launch skipped: %v", err))
-		fmt.Fprintln(out, entry.Path)
-		return 0
+	fmt.Fprintf(out, "  %s\n", style.Mutedf(globals.noColor, "%s", entry.Path))
+	if !*noShell {
+		enterScratchShell(entry.Path, globals, stdin, stdout, stderr)
 	}
-	fmt.Fprintf(out, "%s\n", style.ResultSuccess(nc, "Opening   %s → %s", strings.Join(argv, " "), entry.Path))
 	return 0
 }
 

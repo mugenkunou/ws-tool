@@ -173,7 +173,7 @@ func TestCompleteCommandFlags(t *testing.T) {
 	}{
 		{
 			args:     []string{"scratch", "new", "--"},
-			wantSome: []string{"--no-open", "--editor", "--dry-run"},
+			wantSome: []string{"--no-shell", "--no-date", "--dry-run"},
 		},
 		{
 			args:     []string{"ignore", "ls", "--"},

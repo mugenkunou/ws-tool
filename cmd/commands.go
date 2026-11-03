@@ -72,10 +72,10 @@ var (
 	messageFlag = func(def string) flagDoc {
 		return flagDoc{Short: "-m", Name: "-m", Arg: "<message>", Desc: "the commit message (default: " + def + ")"}
 	}
-	olderThan    = flagDoc{Name: "--older-than", Arg: "<age>", Desc: "age such as 30d, 12h or 2w; a bare number means days"}
-	displayFlag  = flagDoc{Name: "--display", Arg: "<d>", Desc: "X display written into the mega-sync line (default $DISPLAY, else :1)"}
-	allFlag      = func(d string) flagDoc { return flagDoc{Name: "--all", Desc: d} }
-	noEditorOpen = flagDoc{Name: "--no-open", Desc: "do not start the editor"}
+	olderThan      = flagDoc{Name: "--older-than", Arg: "<age>", Desc: "age such as 30d, 12h or 2w; a bare number means days"}
+	displayFlag    = flagDoc{Name: "--display", Arg: "<d>", Desc: "X display written into the mega-sync line (default $DISPLAY, else :1)"}
+	allFlag        = func(d string) flagDoc { return flagDoc{Name: "--all", Desc: d} }
+	noScratchShell = flagDoc{Name: "--no-shell", Desc: "do not start a shell in the directory"}
 )
 
 func fieldsOf[T any](s func() resource.Schema[T]) func() []string {
@@ -140,11 +140,11 @@ var commands = []command{
 
 	{Path: []string{"scratch", "ls"}, Summary: "scratch directories", RO: true,
 		Fields: fieldsOf(func() resource.Schema[scratch.Entry] { return scratch.Schema(resource.CLIView()) })},
-	{Path: []string{"scratch", "new"}, Args: "[name]", Summary: "create one and open it",
-		Flags: []flagDoc{{Name: "--no-date", Desc: "no .YYYY-MM suffix"}, noEditorOpen, editorFlag}},
+	{Path: []string{"scratch", "new"}, Args: "[name]", Summary: "create one and start a shell in it",
+		Flags: []flagDoc{{Name: "--no-date", Desc: "no .YYYY-MM suffix"}, noScratchShell}},
 	{Path: []string{"scratch", "add"}, Args: "<path…>", Summary: "move an existing path into scratch"},
-	{Path: []string{"scratch", "open"}, Args: "<name>", Summary: "open one in the editor", RO: true,
-		Flags: []flagDoc{editorFlag, {Name: "--print-path", Desc: "print only the resolved path"}}},
+	{Path: []string{"scratch", "open"}, Args: "<name>", Summary: "start a shell in one", RO: true,
+		Flags: []flagDoc{noScratchShell, {Name: "--print-path", Desc: "print only the resolved path"}}},
 	{Path: []string{"scratch", "tag"}, Args: "<name> [tag…]", Summary: "label one (tags are for you to read)",
 		Flags: []flagDoc{{Name: "--rm", Arg: "<tag>", Desc: "remove this tag (repeatable)"}}},
 	{Path: []string{"scratch", "rm"}, Args: "<name…>", Summary: "soft-delete"},

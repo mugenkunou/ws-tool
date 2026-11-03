@@ -58,7 +58,7 @@ func exists2(p string) bool {
 
 func TestScratchNewNamesTheFinalPath(t *testing.T) {
 	e := newScEnv(t)
-	out := e.mustRun(t, "y\n", "scratch", "new", "proxy-auth", "--no-open", "--no-date")
+	out := e.mustRun(t, "y\n", "scratch", "new", "proxy-auth", "--no-shell", "--no-date")
 	want := filepath.Join(e.root, "proxy-auth")
 	if !strings.Contains(out, "Create "+want+" ") || !strings.Contains(out, "✔ Create "+want) {
 		t.Fatalf("the plan line names the final path:\n%s", out)
@@ -68,13 +68,13 @@ func TestScratchNewNamesTheFinalPath(t *testing.T) {
 	}
 
 	// A name that is taken gets -2, and the plan says so before it runs.
-	out = e.mustRun(t, "y\n", "scratch", "new", "proxy-auth", "--no-open", "--no-date")
+	out = e.mustRun(t, "y\n", "scratch", "new", "proxy-auth", "--no-shell", "--no-date")
 	if !strings.Contains(out, "Create "+want+"-2 ") {
 		t.Fatalf("collision:\n%s", out)
 	}
 
 	// With the date suffix (the default).
-	out = e.mustRun(t, "y\n", "scratch", "new", "dated", "--no-open")
+	out = e.mustRun(t, "y\n", "scratch", "new", "dated", "--no-shell")
 	if !strings.Contains(out, filepath.Join(e.root, "dated.")) {
 		t.Fatalf("date suffix:\n%s", out)
 	}
@@ -82,53 +82,49 @@ func TestScratchNewNamesTheFinalPath(t *testing.T) {
 
 func TestScratchNewTakesOneName(t *testing.T) {
 	e := newScEnv(t)
-	if code, _, errOut := e.run("", "scratch", "new", "two", "words", "--no-open"); code != 1 || !strings.Contains(errOut, "takes one name") {
+	if code, _, errOut := e.run("", "scratch", "new", "two", "words", "--no-shell"); code != 1 || !strings.Contains(errOut, "takes one name") {
 		t.Fatalf("exit %d stderr=%s", code, errOut)
 	}
 	// A quoted name with spaces is one name.
-	e.mustRun(t, "y\n", "scratch", "new", "two words", "--no-open", "--no-date")
+	e.mustRun(t, "y\n", "scratch", "new", "two words", "--no-shell", "--no-date")
 	if !exists2(filepath.Join(e.root, "two words")) {
 		t.Fatal("a quoted name is one name")
 	}
 	// No name and no terminal generates scratch-<n>.
-	out := e.mustRun(t, "y\n", "scratch", "new", "--no-open", "--no-date")
+	out := e.mustRun(t, "y\n", "scratch", "new", "--no-shell", "--no-date")
 	if !strings.Contains(out, filepath.Join(e.root, "scratch-")) {
 		t.Fatalf("a generated name:\n%s", out)
 	}
 }
 
-func TestScratchNewOpensTheEditor(t *testing.T) {
+func TestScratchNewStartsNoShellWithoutATerminal(t *testing.T) {
 	e := newScEnv(t)
-	log := filepath.Join(t.TempDir(), "editor.log")
-	// A terminal editor (vim) that records its arguments.
+	log := filepath.Join(t.TempDir(), "shell.log")
+	// A $SHELL that records that it ran. Without a terminal it must not run.
 	dir := t.TempDir()
-	script := "#!/bin/sh\necho \"$@\" > " + log + "\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(dir, "vim"), []byte(script), 0o755); err != nil {
+	sh := filepath.Join(dir, "myshell")
+	if err := os.WriteFile(sh, []byte("#!/bin/sh\npwd > "+log+"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	e.mustRun(t, "y\n", "scratch", "new", "demo", "--no-date")
-	got, err := os.ReadFile(log)
-	if err != nil || strings.TrimSpace(string(got)) != filepath.Join(e.root, "demo") {
-		t.Fatalf("vim (the default editor) is started on the directory: %q %v", got, err)
+	t.Setenv("SHELL", sh)
+	out := e.mustRun(t, "y\n", "scratch", "new", "demo", "--no-date")
+	if !strings.Contains(out, filepath.Join(e.root, "demo")) {
+		t.Fatalf("the path is printed:\n%s", out)
+	}
+	if exists2(log) {
+		t.Fatal("no shell starts when stdin and stdout are not terminals")
+	}
+	// The editor is gone: --no-open and --editor are no longer flags.
+	for _, f := range []string{"--no-open", "--editor=vim"} {
+		if code, _, errOut := e.run("y\n", "scratch", "new", "x", f); code != 1 || !strings.Contains(errOut, "not defined") {
+			t.Fatalf("%s: exit %d stderr=%s", f, code, errOut)
+		}
 	}
 
-	// A failing editor never fails the command: ws warns and prints the path.
-	if err := os.WriteFile(filepath.Join(dir, "vim"), []byte("#!/bin/sh\nexit 4\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	code, out, _ := e.run("y\n", "scratch", "new", "demo2", "--no-date")
-	if code != 0 || !strings.Contains(out, "Editor launch skipped") {
-		t.Fatalf("exit %d:\n%s", code, out)
-	}
-
-	// --json starts no editor.
-	if err := os.Remove(log); err != nil {
-		t.Fatal(err)
-	}
+	// --json starts no shell.
 	_, js, _ := e.run("", "--json", "scratch", "new", "demo3", "--no-date")
 	if exists2(log) {
-		t.Fatal("--json must not start the editor")
+		t.Fatal("--json must not start a shell")
 	}
 	var env struct {
 		Command string `json:"command"`
@@ -223,15 +219,13 @@ func TestScratchAddJSON(t *testing.T) {
 func TestScratchOpenResolvesNames(t *testing.T) {
 	e := newScEnv(t)
 	e.mk(t, "dns-debug.2026-09", "foo", "foo-2", "myfoo")
-	t.Setenv("VISUAL", "true") // a background editor that exits at once
-
 	// A unique substring.
 	code, out, _ := e.run("", "scratch", "open", "dns")
 	if code != 0 || !strings.Contains(out, filepath.Join(e.root, "dns-debug.2026-09")) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	// An exact name wins over longer names.
-	if code, out, _ = e.run("", "scratch", "open", "foo"); code != 0 || !strings.Contains(out, filepath.Join(e.root, "foo")+"\n") {
+	if code, out, _ = e.run("", "scratch", "open", "foo", "--no-color"); code != 0 || !strings.Contains(out, filepath.Join(e.root, "foo")+"\n") {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	// Ambiguous or missing: exit 1, with the candidates.
@@ -245,6 +239,13 @@ func TestScratchOpenResolvesNames(t *testing.T) {
 	// No name and no terminal is a usage error.
 	if code, _, errOut = e.run("", "scratch", "open"); code != 1 || !strings.Contains(errOut, "usage:") {
 		t.Fatalf("no name: exit %d stderr=%s", code, errOut)
+	}
+	// --print-path prints only the path, and the editor flag is gone.
+	if code, out, _ = e.run("", "scratch", "open", "dns", "--print-path"); code != 0 || out != filepath.Join(e.root, "dns-debug.2026-09")+"\n" {
+		t.Fatalf("--print-path: exit %d out=%q", code, out)
+	}
+	if code, _, errOut = e.run("", "scratch", "open", "dns", "--editor", "vim"); code != 1 || !strings.Contains(errOut, "not defined") {
+		t.Fatalf("--editor: exit %d stderr=%s", code, errOut)
 	}
 }
 

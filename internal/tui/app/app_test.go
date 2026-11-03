@@ -842,7 +842,6 @@ func TestScratchNewEndToEnd(t *testing.T) {
 	}
 	cfg := wsconfig.Default()
 	cfg.Scratch.RootDir = filepath.Join(root, "Scratch")
-	cfg.Editor = "true" // the editor launched after creation
 	cfgPath := filepath.Join(wsPath, "ws.json")
 	if err := wsconfig.Save(cfgPath, cfg); err != nil {
 		t.Fatal(err)
