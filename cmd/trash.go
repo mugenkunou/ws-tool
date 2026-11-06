@@ -18,13 +18,15 @@ import (
 // needs an initialized workspace: the trash belongs to the machine.
 func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: ws trash <ls|restore|rm|empty|prune|enable|disable|status> …")
+		fmt.Fprintln(stderr, "usage: ws trash <ls|add|restore|rm|empty|prune|enable|disable|status> …")
 		return 1
 	}
 	verb, rest := args[0], args[1:]
 	switch verb {
 	case "ls":
 		return trashLs(rest, globals, stdout, stderr)
+	case "add":
+		return trashAdd(rest, globals, stdin, stdout, stderr)
 	case "restore":
 		return trashRestore(rest, globals, stdin, stdout, stderr)
 	case "rm":
@@ -41,7 +43,7 @@ func runTrash(args []string, globals globalFlags, stdin io.Reader, stdout, stder
 		return trashStatus(rest, globals, stdout, stderr)
 	}
 	fmt.Fprintf(stderr, "unknown command: trash %s\n", verb)
-	fmt.Fprintln(stderr, "usage: ws trash <ls|restore|rm|empty|prune|enable|disable|status> …")
+	fmt.Fprintln(stderr, "usage: ws trash <ls|add|restore|rm|empty|prune|enable|disable|status> …")
 	return 1
 }
 
@@ -92,6 +94,41 @@ func resolveItems(verb string, args []string, stderr io.Writer) ([]trash.Item, b
 		return nil, false
 	}
 	return items, true
+}
+
+func trashAdd(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("trash-add", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerGlobalFlags(fs, &globals)
+	if err := parseInterspersed(fs, args); err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	if len(fs.Args()) == 0 {
+		fmt.Fprintln(stderr, "usage: ws trash add <path…>")
+		return 1
+	}
+	paths, err := resolveTargets(fs.Args())
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	actions, err := trash.AddActions(paths)
+	if err != nil {
+		fmt.Fprintln(stderr, err.Error())
+		return 1
+	}
+	planResult := RunPlan(Plan{Command: "trash.add", Actions: actions}, stdin, stdout, globals)
+	trashed := []string{}
+	for _, a := range planResult.Actions {
+		if a.Status == "executed" {
+			trashed = append(trashed, strings.TrimPrefix(a.ID, "trash-add-"))
+		}
+	}
+	if globals.json {
+		return writeJSONDryRun(stdout, stderr, "trash.add", globals.dryRun, map[string]any{"trashed": trashed, "actions": planResult.Actions})
+	}
+	return planResult.ExitCode()
 }
 
 func trashRestore(args []string, globals globalFlags, stdin io.Reader, stdout, stderr io.Writer) int {

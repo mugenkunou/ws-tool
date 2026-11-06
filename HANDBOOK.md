@@ -620,7 +620,7 @@ such as `rclone bisync`.
 | `config` | `ws.json` | Settings (row, action menu) |
 | `completion` | shell completion | Settings (rows, action menu) |
 
-Workspace commands without a noun: `ws init`, `ws layout`, `ws env`, `ws tui`, `ws version`, `ws help`. The
+Workspace commands without a noun: `ws init`, `ws layout`, `ws env`, `ws where`, `ws tui`, `ws version`, `ws help`. The
 Settings screen hosts them, and every noun above has exactly one screen (`TestEveryNounHasATUIHome`). Bare `ws`
 prints help.
 
@@ -630,7 +630,7 @@ prints help.
 | --- | --- | --- |
 | `ls` | list the noun's rows | every noun |
 | `show` | one row in full | repo, secret, config, skill |
-| `add` | put an existing thing under ws management | symlink, scratch, ignore, cron, repo root |
+| `add` | put an existing thing under ws management | symlink, scratch, ignore, cron, repo root, trash |
 | `new` | create a fresh thing | scratch |
 | `rm` | delete something ws owns, soft-deleting files | scratch, trash, cron, ignore, repo root |
 | `edit` | open a file in your editor (§4.10) | ignore, config |
@@ -736,6 +736,7 @@ ws cron log [job…] [--lines n]            RO  recent output of jobs (all when 
 ws cron apply                             RW  install configs/crontab into the live crontab
 
 ws trash ls                               RO  trashed items
+ws trash add <path…>                      RW  move files or directories to the trash
 ws trash restore <item…>                  RW  put items back where they were
 ws trash rm <item…>                       RW  delete items forever
 ws trash empty                            RW  delete everything forever
@@ -758,6 +759,7 @@ ws completion disable [--shell s]         RW  remove it
 ws init                                   RW  create the workspace layout
 ws layout                                 RO  workspace folders and the homes outside it, with their purpose
 ws env                                    RO  export lines for WS_ROOT, WS_TMP, WS_CACHE, WS_RUN, WS_SCRATCH
+ws where <path>                           RO  which workspace folder a file belongs in
 ws tui                                    RO  the full-screen interface
 ws version [--short] [--check]            RO  version, schema and platform; latest releases from the cache, --check looks them up now
 ws help [noun [verb…]]                    RO  help
@@ -2032,7 +2034,9 @@ tags.
 
 The plan has one action, `Create /home/user/Scratch/<final name>`, pre-checked. After
 it runs, ws prints the path and starts a shell in the directory (§4.11). Type `exit` to
-come back to where you were. Without a terminal, ws only prints the path. If the shell
+come back to where you were. Without a terminal, ws asks nothing: it accepts the action
+(an empty directory is cheap to undo), so a caller whose stdin is a pipe that never closes,
+such as an agent's shell tool, does not hang (decision). It only prints the path. If the shell
 cannot start, ws prints a warning and the path, and still exits 0.
 
 | Flag | Default | Meaning |
@@ -3488,8 +3492,8 @@ and its header shows `trash status`.
 **How ws soft-deletes.** ws moves the path to `files/<base name>`, adding `.2`, `.3`, … on a
 collision, as gio does. It writes `info/<name>.trashinfo` with `Path=` (the absolute original
 path, percent-encoded) and `DeletionDate=` (local time, `2026-10-22T11:25:03`). Across
-filesystems it copies, then deletes. This is what `rm` means in other ws commands. No trash
-command does it.
+filesystems it copies, then deletes. This is what `rm` means in other ws commands. `ws trash add`
+does it for the paths you name.
 
 **Item arguments** (decision). An `<item>` is the item's name (the `name` column), or the path it
 was deleted from. An argument that contains `/` or starts with `~` is a path. It is resolved by the
@@ -3501,6 +3505,7 @@ None of these commands needs an initialized workspace (decision).
 | Command | RO/RW | Does | TUI |
 | --- | --- | --- | --- |
 | `ws trash ls` | RO | trashed items, newest first | screen |
+| `ws trash add <path…>` | RW | move files or directories to the trash | `.` `a` |
 | `ws trash restore <item…>` | RW | move items back to their original paths | `r` |
 | `ws trash rm <item…>` | RW | delete items forever | `ctrl+d` |
 | `ws trash empty` | RW | delete every item forever | `.` `e` |
@@ -3587,6 +3592,29 @@ Exit: 0 when every target was restored. 3 when some were restored and others wer
 failed. 1 when none was restored.
 
 TUI: `r` acts on the marked rows, else the cursor row, and opens the checklist. Skipped rows appear in its note.
+
+#### `ws trash add`
+
+```text
+ws trash add <path…> [--dry-run]
+```
+
+Moves each path into the trash (soft-delete, as above), so `ws trash restore` can put it back. Files
+and directories both work. It needs at least one path. Every path is checked first: if one does not
+exist, the command names it and moves nothing. The trash root, or anything inside it, is refused.
+Relative paths resolve against the current directory; `~` expands.
+
+Plan: one action per path, pre-checked, for example "Move /home/user/notes/old-draft.md to the trash".
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--dry-run` | false | print the plan; change nothing |
+
+`--json`: command `trash.add`; data `trashed` (the paths moved), `actions`.
+
+Exit: 0 or 1.
+
+TUI: `.` `a` asks for the path, then opens the checklist.
 
 #### `ws trash rm`
 
@@ -3885,6 +3913,7 @@ screen covers `init`.
 | `ws init` | RW | create the workspace layout, `ws.json`, `.megaignore` and `references/RUNBOOKS.md` | setup screen `enter` |
 | `ws layout` | RO | print the workspace folders and the homes outside it, with their purpose | Workspace rows |
 | `ws env` | RO | print the paths scripts use, as shell `export` lines | — (for scripts) |
+| `ws where <path>` | RO | name the workspace folder a file or directory belongs in | — (for agents and scripts) |
 | `ws config show [--defaults]` | RO | print the resolved `ws.json`, or the built-in defaults | `.` `s` |
 | `ws config edit` | RW | open `ws.json` in `$EDITOR`, validate, save | `.` `e` |
 | `ws completion bash\|zsh\|fish` | RO | print the completion script | — (for shells) |
@@ -3983,6 +4012,52 @@ Homes outside the workspace (ws env exports them)
 `homes` (`name`, `var`, `path`, `purpose`).
 
 Exit: 0. 1 when `ws.json` is invalid.
+
+#### `ws where`
+
+```text
+ws where <path> [--json]
+```
+
+Names the folder a file or directory belongs in, by the "Where a file goes" rules of the
+`workspace-write` skill that its **name and type** settle. It reads no content (only the line
+count of a script) and writes nothing. The path need not exist, so a name about to be created
+works. It needs no initialized workspace. The first rule that fits wins:
+
+| # | The path | Folder |
+| --- | --- | --- |
+| 1 | already under a layout folder (§2.2) or a home | that folder, marked `Inside`; for `notes/`: "the user's own; read it, write elsewhere" |
+| 2 | under `/etc` | `symlinks/` |
+| 3 | a directory with `.git` | `experiments/<name>/` |
+| 4 | `.har` | `$WS_SCRATCH/<name>.<yyyy-mm>/` (a capture holds live sessions and secrets) |
+| 5 | pdf, pptx, ppt, docx, xlsx, png, jpg, jpeg, gif, svg, webp, zip, tar, tgz, gz, bz2, xz, 7z, csv, parquet, sqlite, db | `artifacts/` |
+| 6 | `WISDOM.md`, `RUNBOOKS.md`, `openapi.*`, `swagger.*`, `*.openapi.*` | `references/` |
+| 7 | yml, yaml, xml, env, properties, conf, ini, toml, or a name starting `.env` | `configs/<system>-<instance>/`; a value that is a secret goes in pass instead |
+| 8 | a name starting with `.` | `symlinks/`: `ws symlink add <path>` |
+| 9 | sh, bash, py, rb, pl, js, ts, go, rs | `scripts/` up to 60 lines, `experiments/` above (or when unreadable) |
+
+Nothing else matches: other directories, `.md` files, `.txt`, and so on. The rules cover only
+what a name settles; whether a file holds a secret, or whether a program writes it, is for the
+caller to decide with the skill's questions. There is no inbox folder: when no rule fits, ask
+the user.
+
+```text
+$ ws where ~/Downloads/spec.pdf
+artifacts/
+  raw blob (.pdf)
+
+$ ws where ~/Workspace/scripts/dns-ls.sh
+scripts/ Inside
+  already placed: small composable blocks, one action each
+
+$ ws where notes.txt
+no folder fits /home/user/notes.txt: ask the user
+```
+
+`--json`: command `where`; data `path` (absolute), `folder`, `reason`, `matched` and `inside`.
+With no match the envelope is still printed, with `matched: false` and an empty `folder`.
+
+Exit: 0 placed. 1 no rule fits, or not exactly one path (`usage: ws where <path>`).
 
 #### `ws env`
 

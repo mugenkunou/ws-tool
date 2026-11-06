@@ -177,6 +177,13 @@ func (e scratchEnv) new(args []string, globals globalFlags, stdin io.Reader, std
 		return 1
 	}
 
+	// Without a terminal nobody can answer the prompt, and a pipe that never
+	// closes would block it forever (an agent's shell tool does exactly that).
+	// Creating an empty directory is cheap to undo, so accept it.
+	if !isInteractive(stdin, stdout) {
+		globals.autoAccept = true
+	}
+
 	var res scratch.NewResult
 	p := Plan{Command: "scratch.new", Actions: []Action{{
 		ID:          "scratch-new",

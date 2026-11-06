@@ -60,6 +60,7 @@ var CLICoverage = func() []Coverage {
 		{CLI: "version", Screen: ws, Why: List, Note: "the Versions group; the `.` menu u looks up releases (--check)"},
 		{CLI: "layout", Screen: ws, Why: CLIOnly, Note: "the Settings screen shows the layout as one summary row; the full per-folder listing is for scripts and skills"},
 		{CLI: "env", Screen: ws, Why: Shell, Note: "shell lines for scripts to eval; the Settings screen's homes row names them"},
+		{CLI: "where", Screen: ws, Why: CLIOnly, Note: "for agents and scripts deciding where a file goes; the TUI has no file to ask about"},
 		{CLI: "help", Screen: ws, Why: Elsewhere, Note: "? opens full help"},
 		{CLI: "tui", Screen: ws, Why: Elsewhere, Note: "starts this TUI"},
 		{CLI: "config show", Screen: ws, Cmd: "config show"},
@@ -148,6 +149,7 @@ var CLICoverage = func() []Coverage {
 		{CLI: "git-credential-helper erase", Screen: crt, Why: Plumbing, Note: git},
 
 		{CLI: "trash ls", Screen: nav.ScreenTrash, Why: List},
+		{CLI: "trash add", Screen: nav.ScreenTrash, Cmd: "add"},
 		{CLI: "trash restore", Screen: nav.ScreenTrash, Key: tr.Restore},
 		{CLI: "trash rm", Screen: nav.ScreenTrash, Key: tr.Delete},
 		{CLI: "trash empty", Screen: nav.ScreenTrash, Cmd: "empty"},

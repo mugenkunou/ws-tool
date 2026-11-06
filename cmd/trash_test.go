@@ -460,3 +460,89 @@ func TestTrashNoArgsShowsHelp(t *testing.T) {
 		t.Fatalf("ws trash (no args): exit %d out=%s err=%s", code, out.String(), errOut.String())
 	}
 }
+
+func TestTrashAdd(t *testing.T) {
+	e := newTrEnv(t)
+	file := filepath.Join(e.home, "notes.md")
+	dir := filepath.Join(e.home, "build")
+	if err := os.WriteFile(file, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	e.mustRun(t, "y\ny\n", "trash", "add", file, dir)
+	if exists2(file) || exists2(dir) {
+		t.Fatal("the paths must leave their places")
+	}
+	if !e.inTrash("notes.md") || !e.inTrash("build") {
+		t.Fatal("both paths must be in the trash")
+	}
+	out := e.mustRun(t, "", "trash", "ls")
+	if !strings.Contains(out, "notes.md") || !strings.Contains(out, "build/") {
+		t.Fatalf("trash ls lacks the added items:\n%s", out)
+	}
+}
+
+func TestTrashAddMissingPathMovesNothing(t *testing.T) {
+	e := newTrEnv(t)
+	file := filepath.Join(e.home, "keep.txt")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut := e.run("y\n", "trash", "add", file, filepath.Join(e.home, "ghost"))
+	if code != 1 || !strings.Contains(errOut, "ghost") || !exists2(file) {
+		t.Fatalf("exit %d stderr=%s; nothing may move", code, errOut)
+	}
+}
+
+func TestTrashAddArgumentsAndTrashRoot(t *testing.T) {
+	e := newTrEnv(t)
+	if code, _, errOut := e.run("", "trash", "add"); code != 1 || !strings.Contains(errOut, "usage: ws trash add <path…>") {
+		t.Fatalf("no paths: exit %d stderr=%s", code, errOut)
+	}
+	e.trashed(t, "a", "/x/a", "aaa", time.Now())
+	if code, _, errOut := e.run("", "trash", "add", filepath.Join(e.root, "files", "a")); code != 1 || !strings.Contains(errOut, "already in the trash") {
+		t.Fatalf("trash item: exit %d stderr=%s", code, errOut)
+	}
+}
+
+func TestTrashAddDryRunMovesNothing(t *testing.T) {
+	e := newTrEnv(t)
+	file := filepath.Join(e.home, "stay.txt")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, _ := e.run("", "--dry-run", "trash", "add", file); code != 0 || !strings.Contains(out, "[dry-run]") {
+		t.Fatalf("dry run: exit %d\n%s", code, out)
+	}
+	if !exists2(file) || e.inTrash("stay.txt") {
+		t.Fatal("--dry-run must change nothing")
+	}
+}
+
+func TestTrashAddJSON(t *testing.T) {
+	e := newTrEnv(t)
+	file := filepath.Join(e.home, "j.txt")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, js, _ := e.run("", "--json", "trash", "add", file)
+	var env struct {
+		Command string `json:"command"`
+		Data    struct {
+			Trashed []string `json:"trashed"`
+			Actions []struct {
+				ID     string `json:"id"`
+				Status string `json:"status"`
+			} `json:"actions"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(js), &env); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, js)
+	}
+	if env.Command != "trash.add" || len(env.Data.Trashed) != 1 || env.Data.Trashed[0] != file || len(env.Data.Actions) != 1 || env.Data.Actions[0].Status != "executed" {
+		t.Fatalf("envelope = %+v", env)
+	}
+}

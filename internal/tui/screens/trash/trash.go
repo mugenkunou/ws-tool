@@ -6,6 +6,7 @@ package trash
 
 import (
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/plan"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	wstrash "github.com/mugenkunou/ws-tool/internal/trash"
+	"github.com/mugenkunou/ws-tool/internal/tui/complete"
 	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/format"
@@ -27,6 +29,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/tui/prompt"
 	"github.com/mugenkunou/ws-tool/internal/tui/reslist"
 	"github.com/mugenkunou/ws-tool/internal/tui/theme"
+	"github.com/mugenkunou/ws-tool/internal/wsconfig"
 )
 
 // Item is one top-level entry in the trash root.
@@ -48,7 +51,9 @@ const (
 	stepDeleteItem
 	stepPurgeDays
 	stepPurge
-	stepMenu // the `.` menu
+	stepAdd     // the checklist of paths to move into the trash
+	stepAddPath // the prompt for the path to add
+	stepMenu    // the `.` menu
 )
 
 // Model is the trash screen state.
@@ -121,6 +126,9 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		}
 		if st == stepPurgeDays {
 			return m.purgeDays(msg.(prompt.ResultMsg))
+		}
+		if st == stepAddPath {
+			return m.addPathResult(msg.(prompt.ResultMsg))
 		}
 		done := msg.(confirm.DoneMsg)
 		if done.Result.Aborted {
@@ -210,6 +218,8 @@ var commands = []reslist.Command[Model, Item]{
 		Do: func(m Model, _ []Item, _ []string) (Model, tea.Cmd) { return m.openEnable(), nil }},
 	{Name: "disable", Menu: "d", Help: "stop routing deletes to the trash", Scope: reslist.Global,
 		Do: func(m Model, _ []Item, _ []string) (Model, tea.Cmd) { return m.openDisable(), nil }},
+	{Name: "add", Menu: "a", Args: "<path…>", Help: "move files or directories to the trash", Scope: reslist.Global,
+		Do: func(m Model, _ []Item, args []string) (Model, tea.Cmd) { return m.addCommand(args) }},
 }
 
 // Commands implements nav.Commander.
@@ -344,6 +354,41 @@ func (m Model) purgeDays(r prompt.ResultMsg) (nav.Component, tea.Cmd) {
 	}
 	title := fmt.Sprintf("Prune trash older than %s", strings.TrimSpace(r.Value))
 	m.modal = m.modal.Confirm(stepPurge, confirm.New(title, pl))
+	return m, nil
+}
+
+// addCommand is `trash add <path…>`: move paths to the trash. With no path it
+// asks for one. Every path is checked before the checklist opens.
+func (m Model) addCommand(args []string) (Model, tea.Cmd) {
+	if len(args) == 0 {
+		var cmd tea.Cmd
+		m.modal, cmd = m.modal.Prompt(stepAddPath, prompt.New("Move to the trash",
+			prompt.WithHint("A file or folder on this machine; soft-delete moves it to the trash, where trash restore brings it back."),
+			prompt.WithValue("~/"),
+			prompt.WithCompleter(complete.Paths)))
+		return m, cmd
+	}
+	var paths []string
+	for _, raw := range args {
+		abs, err := wsconfig.ExpandUserPath(raw)
+		if err != nil {
+			return m, nav.Notify(nav.LevelWarn, fmt.Sprintf("invalid path %q: %v", raw, err))
+		}
+		paths = append(paths, filepath.Clean(abs))
+	}
+	actions, err := wstrash.AddActions(paths)
+	if err != nil {
+		return m, nav.Notify(nav.LevelError, err.Error())
+	}
+	m.modal = m.modal.Confirm(stepAdd, confirm.New("Move to the trash", plan.Plan{Command: "trash.add", Actions: actions}))
+	return m, nil
+}
+
+// addPathResult takes the path typed at the add prompt, the way scratch add does.
+func (m Model) addPathResult(r prompt.ResultMsg) (nav.Component, tea.Cmd) {
+	if v := strings.TrimSpace(r.Value); !r.Cancelled && v != "" && v != "~/" {
+		return m.addCommand([]string{v})
+	}
 	return m, nil
 }
 

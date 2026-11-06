@@ -4,7 +4,7 @@ Where every file in ~/Workspace goes, how scripts handle paths and secrets, the 
 
 ## Where a file goes
 
-`ws layout` lists every workspace folder with its purpose, and where the homes (`$WS_TMP`, `$WS_CACHE`, `$WS_RUN`, `$WS_SCRATCH`) are on this machine. The rules below decide which one a file goes in.
+`ws layout` lists every workspace folder with its purpose, and where the homes (`$WS_TMP`, `$WS_CACHE`, `$WS_RUN`, `$WS_SCRATCH`) are on this machine. The rules below decide which one a file goes in. `ws where <path>` names the folder for a file by these rules for the cases they settle; when it prints that no folder fits, ask the user.
 
 For settings and state, ask in order and stop at the first yes:
 
@@ -23,12 +23,11 @@ Everything else:
 - Code projects, git repos included: `experiments/<name>/`.
 - Throwaway work and captures: `$WS_SCRATCH/<name>.<yyyy-mm>/`, created with `ws scratch new <name> --no-shell` when missing (ws adds the `.<yyyy-mm>`).
 - A file put away for good: `archive/`, at the same relative path it had.
+- To discard a file, run `ws trash add <path>`; it is recoverable with `ws trash restore`.
 - The user's own skills: `agent/skills/<name>/SKILL.md`. Built-in skills, such as this one, ship with ws and are read-only; `ws skill show <name> --path` prints any skill's folder.
 - `notes/` is the user's own. Read it, and write elsewhere.
 
 A system with one instance still gets an instance name, such as `zdcm-prod`, for its folders under `configs/`, `$WS_CACHE` and `$WS_RUN`.
-
-Create no `.owner` files; ownership markers are on hold.
 
 Put the topic in the filename, not in a new folder. If nothing fits, ask the user. There is no inbox and no catch-all folder.
 

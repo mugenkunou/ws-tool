@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // scEnv is one isolated machine for the scratch commands: a home (the default
@@ -60,7 +61,8 @@ func TestScratchNewNamesTheFinalPath(t *testing.T) {
 	e := newScEnv(t)
 	out := e.mustRun(t, "y\n", "scratch", "new", "proxy-auth", "--no-shell", "--no-date")
 	want := filepath.Join(e.root, "proxy-auth")
-	if !strings.Contains(out, "Create "+want+" ") || !strings.Contains(out, "✔ Create "+want) {
+	// No terminal here, so no prompt: the action is accepted and its line names the final path.
+	if strings.Contains(out, "[y/n/a/q]") || !strings.Contains(out, "✔ Create "+want) {
 		t.Fatalf("the plan line names the final path:\n%s", out)
 	}
 	if !exists2(filepath.Join(e.root, "proxy-auth", ".ws-meta.json")) {
@@ -69,7 +71,7 @@ func TestScratchNewNamesTheFinalPath(t *testing.T) {
 
 	// A name that is taken gets -2, and the plan says so before it runs.
 	out = e.mustRun(t, "y\n", "scratch", "new", "proxy-auth", "--no-shell", "--no-date")
-	if !strings.Contains(out, "Create "+want+"-2 ") {
+	if !strings.Contains(out, "✔ Create "+want+"-2") {
 		t.Fatalf("collision:\n%s", out)
 	}
 
@@ -135,6 +137,35 @@ func TestScratchNewStartsNoShellWithoutATerminal(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(js), &env); err != nil || env.Command != "scratch.new" || env.Data.Result.Path != filepath.Join(e.root, "demo3") || len(env.Data.Actions) != 1 {
 		t.Fatalf("envelope = %+v err=%v\n%s", env, err, js)
+	}
+}
+
+// An agent's shell tool gives ws a stdin pipe that is never written to or closed.
+// `scratch new` must not wait on the plan prompt there: it creates the folder.
+func TestScratchNewDoesNotWaitOnAnOpenPipe(t *testing.T) {
+	e := newScEnv(t)
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+
+	done := make(chan int, 1)
+	var out, errOut bytes.Buffer
+	go func() {
+		done <- Execute([]string{"--workspace", e.workspace, "scratch", "new", "piped", "--no-shell", "--no-date"}, r, &out, &errOut)
+	}()
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("exit %d\nstdout: %s\nstderr: %s", code, out.String(), errOut.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("scratch new --no-shell blocked on stdin")
+	}
+	if !exists2(filepath.Join(e.root, "piped")) {
+		t.Fatalf("the folder was not created:\n%s", out.String())
 	}
 }
 

@@ -78,6 +78,8 @@ func Execute(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return runLayout(commandArgs, globals, stdout, stderr)
 	case "env":
 		return runEnv(commandArgs, globals, stdout, stderr)
+	case "where":
+		return runWhere(commandArgs, globals, stdout, stderr)
 	case "config":
 		return runConfig(commandArgs, globals, stdin, stdout, stderr)
 	case "symlink":

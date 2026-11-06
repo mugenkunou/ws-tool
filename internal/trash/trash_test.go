@@ -611,3 +611,22 @@ func TestDisableRemovesTheShellIntegration(t *testing.T) {
 		t.Fatalf("nothing left to disable: %d actions", len(got))
 	}
 }
+
+func TestAddActionsValidatesBeforeBuilding(t *testing.T) {
+	m := newMachine(t)
+	src := filepath.Join(m.home, "a.txt")
+	write(t, src, "a")
+	acts, err := AddActions([]string{src})
+	if err != nil || len(acts) != 1 || acts[0].ID != "trash-add-"+src {
+		t.Fatalf("AddActions = %v, %v", acts, err)
+	}
+	if !exists(src) {
+		t.Fatal("building the plan must not move anything")
+	}
+	if _, err := AddActions([]string{src, filepath.Join(m.home, "ghost")}); err == nil || !strings.Contains(err.Error(), "ghost") {
+		t.Fatalf("missing path: %v", err)
+	}
+	if _, err := AddActions([]string{m.root}); err == nil {
+		t.Fatal("the trash root must be refused")
+	}
+}

@@ -66,7 +66,7 @@ var specs = [screenCount]Spec{
 	ScreenTrash:  {Icon: "🚮", Title: "Trash", Noun: "trash"},
 	ScreenSkills: {Icon: "🧩", Title: "Skills", Noun: "skill"},
 	ScreenSettings: {Icon: "🔧", Title: "Settings",
-		Hosts: []string{"config", "completion", "version", "layout", "env", "init", "tui", "help"}},
+		Hosts: []string{"config", "completion", "version", "layout", "env", "where", "init", "tui", "help"}},
 }
 
 // Screens returns every screen in tab order.

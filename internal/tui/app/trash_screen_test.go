@@ -56,7 +56,7 @@ func assertNoHardcodedKeyNames(t *testing.T, file string) {
 
 // TestTrashCommands: the `.` menu is the spec's §6.5 list; status is the header.
 func TestTrashCommands(t *testing.T) {
-	want := []string{"disable", "empty", "enable"}
+	want := []string{"add", "disable", "empty", "enable"}
 	if got := commandNames(loaded(t, 100, 30), nav.ScreenTrash); !slices.Equal(got, want) {
 		t.Errorf("trash commands = %v, want %v", got, want)
 	}

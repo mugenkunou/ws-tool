@@ -218,6 +218,7 @@ var commands = []command{
 
 	{Path: []string{"trash", "ls"}, Summary: "trashed items", RO: true,
 		Fields: fieldsOf(func() resource.Schema[trash.Item] { return trash.Schema(resource.CLIView()) })},
+	{Path: []string{"trash", "add"}, Args: "<path…>", Summary: "move files or directories to the trash"},
 	{Path: []string{"trash", "restore"}, Args: "<item…>", Summary: "put items back where they were"},
 	{Path: []string{"trash", "rm"}, Args: "<item…>", Summary: "delete items forever"},
 	{Path: []string{"trash", "empty"}, Summary: "delete everything forever"},
@@ -248,6 +249,7 @@ var commands = []command{
 	{Path: []string{"layout"}, Summary: "workspace folders and the homes outside it, with their purpose", RO: true},
 	{Path: []string{"env"}, Summary: "export lines for WS_ROOT, WS_TMP, WS_CACHE, WS_RUN, WS_SCRATCH", RO: true,
 		Examples: []string{`eval "$(ws env)"`}},
+	{Path: []string{"where"}, Args: "<path>", Summary: "which workspace folder a file belongs in", RO: true},
 	{Path: []string{"tui"}, Summary: "the full-screen interface", RO: true},
 	{Path: []string{"version"}, Summary: "version, schema and platform", RO: true,
 		Flags: []flagDoc{
@@ -278,6 +280,7 @@ var workspaceSummaries = []struct{ Name, Summary string }{
 	{"init", "Create the workspace layout and ws.json"},
 	{"layout", "Workspace folders and homes, with their purpose"},
 	{"env", "Paths for scripts, as shell export lines"},
+	{"where", "Which workspace folder a file belongs in"},
 	{"config", "Show or edit ws.json"},
 	{"completion", "Shell completion"},
 	{"tui", "Interactive terminal UI"},

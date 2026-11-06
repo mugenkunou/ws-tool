@@ -19,7 +19,7 @@ Two references sit beside this file:
 - [write-rules.md](write-rules.md): where every file goes, the path and secret rules, and the formats of WISDOM.md, RUNBOOKS.md and scripts/README.md. Read it before you place any file.
 - [script-contract.md](script-contract.md): how a script looks and behaves. Read it before you write or change a script.
 
-**Placing one file**, outside a build or when the user asks where something belongs: apply write-rules.md, including its Verify section, and stop there.
+**Placing one file**, outside a build or when the user asks where something belongs: apply write-rules.md, including its Verify section, and stop there. `ws where <path>` names the folder for the cases the rules settle.
 
 ## Gate
 

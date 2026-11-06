@@ -73,6 +73,8 @@ var resolvers = map[string]resolver{
 	"secret skip":   dirTargets,
 	"secret unskip": dirTargets,
 
+	"where": fileTargets,
+
 	"cron add": cronTargets,
 	"cron rm":  cronTargets,
 	"cron run": cronTargets,
@@ -80,6 +82,7 @@ var resolvers = map[string]resolver{
 
 	"sync restore": dirTargets,
 
+	"trash add":     fileTargets,
 	"trash restore": trashTargets,
 	"trash rm":      trashTargets,
 }

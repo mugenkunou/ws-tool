@@ -64,7 +64,7 @@ Stuck? `ws help`, or `ws <noun> --help`.
 └── notes/ experiments/ artifacts/ references/ archive/ scripts/ agent/ configs/ data/
 ```
 
-`ws layout` prints every folder with what belongs in it, and `ws env` prints the paths scripts use (`eval "$(ws env)"`).
+`ws layout` prints every folder with what belongs in it, `ws env` prints the paths scripts use (`eval "$(ws env)"`), and `ws where <path>` names the folder a file belongs in.
 
 `references/` is what agents read first: API specs, `WISDOM.md` (lessons) and `RUNBOOKS.md`, a table that maps what you ask, in any words, to the route for that task. `ws init` seeds `RUNBOOKS.md`; the built-in skills read it and keep it up to date.
 
