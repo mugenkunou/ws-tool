@@ -24,7 +24,8 @@ How every script in ~/Workspace/scripts looks and behaves. Paths and secrets are
 
 ## Sessions
 
-- A `<system>-login.sh` reads the session from the clipboard ("Copy as cURL" in DevTools) or stdin, stores it in `$WS_RUN/<system>-<instance>/`, and prints whose session it is.
+- A `<system>-login.sh` reads the session from the clipboard or stdin, stores it in `$WS_RUN/<system>-<instance>/`, and prints whose session it is. After a good read from the clipboard it calls `ws_clipboard_clear` (from `common.sh`), because a session left in the clipboard lingers in clipboard history.
+- Sources for the clipboard session, easiest first: a browser extension that copies the tab's cookies as a `Cookie:` header in one click, then "Copy as cURL" in DevTools. When the user has no such extension, offer to build one: Manifest V3, host permission asked once per site through `optional_host_permissions` (`activeTab` gives `chrome.cookies` nothing), no background page, and `connect-src 'none'` in its CSP. The user's is `experiments/brave-session-copy/`.
 - On an expired session, the client asks once for a fresh one when a terminal is attached. Otherwise it fails with the login command to run.
 - A login or prompt must also work under Claude Code's `!` prefix, where stdin is empty and not a terminal and `/dev/tty` may be missing: read stdin only when it has data, else the clipboard, and fail with a clear message instead of a `/dev/tty` error.
 - A short-lived code (TFA) is the last input the script reads, after every slow lookup, from stdin or /dev/tty, never a flag value. Send every call that needs it inside the code's window, in parallel when there are several.

@@ -125,7 +125,7 @@ Shape, shown for an example DNS system:
 ````markdown
 ## DNS: zone records
 
-- `dns-login.sh`: save the DNS console session from a request copied as cURL in the browser.
+- `dns-login.sh`: save the DNS console session from the clipboard (a `Cookie:` header or a request copied as cURL), then clear it.
   ```bash
   bash ~/Workspace/scripts/dns-login.sh            # reads the clipboard
   bash ~/Workspace/scripts/dns-login.sh --check    # is the saved session still good?

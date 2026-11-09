@@ -32,7 +32,7 @@ Read-only calls and the system's own preview or verify endpoints run freely. A c
 Ask in one batch:
 
 - the task in one sentence, and the system it runs on
-- the capture. A HAR is best: DevTools → Network → Preserve log → do the task once → Export HAR. Curl commands, shell history or a rough script also work. For a run you just improvised, write the commands you ran to `$WS_SCRATCH/<task>.<yyyy-mm>/steps.md`, in order, with secret values left out.
+- the capture. A HAR is best: DevTools → Network → Preserve log → do the task once → Export HAR. Curl commands, shell history or a rough script also work. For a run you just improvised, write the commands you ran to `$WS_SCRATCH/<task>.<yyyy-mm>/steps.md`, in order, with secret values left out. For a login, the easiest source is a one-click browser extension that copies the tab's cookies as a `Cookie:` header (see script-contract.md, Sessions); DevTools Copy as cURL also works.
 - the targets: instances, environments, DCs
 - done: how the user checks that it worked
 - never: what must not happen, such as a version change, other targets, or deletes
