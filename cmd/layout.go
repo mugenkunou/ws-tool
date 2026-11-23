@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
+	"github.com/mugenkunou/ws-tool/internal/agenttmux"
 	"github.com/mugenkunou/ws-tool/internal/style"
 	"github.com/mugenkunou/ws-tool/internal/workspace"
 	"github.com/mugenkunou/ws-tool/internal/wsconfig"
@@ -30,6 +32,26 @@ func scriptPaths(globals globalFlags) (string, []workspace.Home, error) {
 		return "", nil, err
 	}
 	return workspacePath, workspace.ScriptHomes(os.Getenv, scratchRoot), nil
+}
+
+// recordingsHome is where agent-tmux keeps its terminal session recordings. It
+// is a home for `ws layout` and `ws where`, but not a `ws env` variable: scripts
+// do not use it, and `ws env` is the contract with scripts/lib/common.sh.
+func recordingsHome() (workspace.Home, bool) {
+	root := agenttmux.Root(os.Getenv)
+	if root == "" {
+		return workspace.Home{}, false
+	}
+	return workspace.Home{Name: "recordings", Path: root,
+		Purpose: "terminal session recordings of agent-tmux (ws session path)"}, true
+}
+
+// withRecordings adds the recordings home after the script homes.
+func withRecordings(homes []workspace.Home) []workspace.Home {
+	if h, ok := recordingsHome(); ok {
+		return append(slices.Clone(homes), h)
+	}
+	return homes
 }
 
 // parseNoArgs parses the flags of a command that takes no arguments.
@@ -59,6 +81,7 @@ func runLayout(args []string, globals globalFlags, stdout, stderr io.Writer) int
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
+	homes = withRecordings(homes)
 	folders := workspace.LayoutFolders(workspacePath)
 	if globals.json {
 		return writeJSON(stdout, stderr, "layout", map[string]any{

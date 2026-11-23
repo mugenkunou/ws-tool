@@ -362,6 +362,7 @@ func TestSnapshots(t *testing.T) {
 		{"command_bar", []string{"3", ":", "d", "o"}},
 		{"command_bar_empty", []string{"2", ":"}},
 	}
+	t.Setenv("AGENT_TMUX_STATE_DIR", "/home/tester/.local/state/agent-tmux") // the Sessions header names it
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			m := loaded(t, 100, 30)

@@ -19,6 +19,8 @@ func scriptEnvFixture(t *testing.T) (home string) {
 	t.Setenv("HOME", home)
 	t.Setenv("TMPDIR", "")
 	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("AGENT_TMUX_STATE_DIR", "")
 	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(home, "it's run"))
 	return home
 }
@@ -136,12 +138,36 @@ func TestLayoutListsEveryFolderAndHome(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &env); err != nil {
 		t.Fatal(err)
 	}
-	if env.Command != "layout" || env.Data.Workspace != ws || len(env.Data.Folders) != len(workspace.Layout) || len(env.Data.Homes) != 4 {
+	if env.Command != "layout" || env.Data.Workspace != ws || len(env.Data.Folders) != len(workspace.Layout) || len(env.Data.Homes) != 5 {
 		t.Fatalf("%+v", env)
 	}
 	for _, f := range env.Data.Folders {
 		if !filepath.IsAbs(f.Path) || !f.Exists {
 			t.Errorf("folder %+v: want an absolute path that exists", f)
 		}
+	}
+}
+
+// The recordings root is a home of `ws layout`, not a `ws env` variable.
+func TestLayoutNamesTheRecordingsRoot(t *testing.T) {
+	ws := initWorkspace(t)
+	home := scriptEnvFixture(t)
+	var out, errOut bytes.Buffer
+	Execute([]string{"--workspace", ws, "--no-color", "layout"}, strings.NewReader(""), &out, &errOut)
+	if want := home + "/.local/state/agent-tmux "; !strings.Contains(out.String(), want) || !strings.Contains(out.String(), "recordings: ") {
+		t.Errorf("layout lacks the recordings root %q:\n%s", want, out.String())
+	}
+
+	t.Setenv("AGENT_TMUX_STATE_DIR", home+"/rec")
+	out.Reset()
+	Execute([]string{"--workspace", ws, "--no-color", "layout"}, strings.NewReader(""), &out, &errOut)
+	if !strings.Contains(out.String(), home+"/rec ") {
+		t.Errorf("AGENT_TMUX_STATE_DIR is not followed:\n%s", out.String())
+	}
+
+	out.Reset()
+	Execute([]string{"--workspace", ws, "env"}, strings.NewReader(""), &out, &errOut)
+	if strings.Contains(out.String(), "rec") {
+		t.Errorf("ws env must not export the recordings root:\n%s", out.String())
 	}
 }

@@ -1,5 +1,6 @@
 ws  🏠   📦   🔗   🧪   📼 Sessions   🧹   🔄   🔐   🔒   🔑   ⏰   🚮   🧩   🔧
 ────────────────────────────────────────────────────────────────────────────────────────────────────
+recordings: ~/.local/state/agent-tmux · 2 recordings · 48.0 KB
  Session                            State   Rec      Owner     Clients  Started           Size
  deploy-fix                         live    ● rec              1        2026-09-30 14:05  40.0 KB
  rsync-backup                       ended                               2026-09-28 09:30  8.0 KB
@@ -25,6 +26,5 @@ ws  🏠   📦   🔗   🧪   📼 Sessions   🧹   🔄   🔐   🔒   🔑
 
 
 
-
 2 marked — x kill · ctrl+d delete act on them · esc clears
-enter open • v show • a new • s grep • x kill … • ctrl+r refresh • : command • ? help • q quit
+enter open • v show • a new • s grep • p copy dir … • ctrl+r refresh • : command • ? help • q quit

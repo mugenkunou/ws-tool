@@ -270,6 +270,7 @@ type SessionsMap struct {
 	Show   key.Binding // v: page the recording (`show`)
 	New    key.Binding // a: create a session and attach (`create`)
 	Grep   key.Binding // s: search every recording (`grep`)
+	Path   key.Binding // p: copy the recording's directory (`path <session>`)
 	Kill   key.Binding // x: end live sessions (`kill`)
 	Delete key.Binding // ctrl+d: ended recordings to the trash (`rm`)
 	Back   key.Binding
@@ -283,6 +284,7 @@ func Sessions() SessionsMap {
 		Show:   key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "show")),
 		New:    key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "new")),
 		Grep:   key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "grep")),
+		Path:   key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "copy dir")),
 		Kill:   key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "kill")),
 		Delete: Delete(),
 		Back:   back(),
@@ -291,14 +293,14 @@ func Sessions() SessionsMap {
 
 // ShortHelp implements help.KeyMap.
 func (k SessionsMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Open, k.Show, k.New, k.Grep, k.Kill, k.Delete}
+	return []key.Binding{k.Open, k.Show, k.New, k.Grep, k.Path, k.Kill, k.Delete}
 }
 
 // FullHelp implements help.KeyMap.
 func (k SessionsMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
-		{k.Open, k.Show, k.New, k.Grep, k.Kill, k.Delete},
+		{k.Open, k.Show, k.New, k.Grep, k.Path, k.Kill, k.Delete},
 		{k.Back},
 	}
 }
@@ -308,6 +310,7 @@ func (k SessionsMap) FullHelp() [][]key.Binding {
 type SessionMatchesMap struct {
 	Table table.KeyMap
 	Show  key.Binding
+	Path  key.Binding // p: copy the recording's directory
 	Back  key.Binding
 }
 
@@ -316,18 +319,19 @@ func SessionMatches() SessionMatchesMap {
 	return SessionMatchesMap{
 		Table: Table(),
 		Show:  key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "show")),
+		Path:  key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "copy dir")),
 		Back:  back(),
 	}
 }
 
 // ShortHelp implements help.KeyMap.
-func (k SessionMatchesMap) ShortHelp() []key.Binding { return []key.Binding{k.Show, k.Back} }
+func (k SessionMatchesMap) ShortHelp() []key.Binding { return []key.Binding{k.Show, k.Path, k.Back} }
 
 // FullHelp implements help.KeyMap.
 func (k SessionMatchesMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Table.LineUp, k.Table.LineDown, k.Table.GotoTop, k.Table.GotoBottom},
-		{k.Show, k.Back},
+		{k.Show, k.Path, k.Back},
 	}
 }
 

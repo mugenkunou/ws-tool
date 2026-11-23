@@ -14,6 +14,7 @@ import (
 
 	"github.com/mugenkunou/ws-tool/internal/agenttmux"
 	"github.com/mugenkunou/ws-tool/internal/agenttmux/agenttmuxtest"
+	"github.com/mugenkunou/ws-tool/internal/tui/clip"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/handover"
 	"github.com/mugenkunou/ws-tool/internal/tui/keys"
@@ -146,7 +147,7 @@ func TestKeysAreTheSpecTable(t *testing.T) {
 	for _, b := range keys.Sessions().ShortHelp() {
 		got = append(got, b.Help().Key+" "+b.Help().Desc)
 	}
-	want := []string{"enter open", "v show", "a new", "s grep", "x kill", "ctrl+d delete"}
+	want := []string{"enter open", "v show", "a new", "s grep", "p copy dir", "x kill", "ctrl+d delete"}
 	if !slices.Equal(got, want) {
 		t.Errorf("keys = %v, want %v", got, want)
 	}
@@ -156,7 +157,7 @@ func TestKeysAreTheSpecTable(t *testing.T) {
 func TestEveryActionDeclaresItsScope(t *testing.T) {
 	want := map[string]reslist.Scope{
 		"enter": reslist.Cursor, "v": reslist.Cursor, "a": reslist.Global, "s": reslist.Global,
-		"x": reslist.Selected, "ctrl+d": reslist.Selected,
+		"p": reslist.Cursor, "x": reslist.Selected, "ctrl+d": reslist.Selected,
 	}
 	got := map[string]reslist.Scope{}
 	for _, d := range New(env.Env{}).Declared() {
@@ -417,5 +418,115 @@ func TestHandoverFailureIsANotice(t *testing.T) {
 	}
 	if len(c.(Model).list.Items()) != 1 {
 		t.Error("the list should reload after a handover")
+	}
+}
+
+// copied runs cmd and returns what it copied to the clipboard ("" when nothing).
+func copied(t *testing.T, cmd tea.Cmd) string {
+	t.Helper()
+	t.Setenv("WAYLAND_DISPLAY", "") // no native clipboard tool
+	t.Setenv("DISPLAY", "")
+	var text string
+	var walk func(tea.Cmd)
+	walk = func(c tea.Cmd) {
+		if c == nil {
+			return
+		}
+		switch msg := c().(type) {
+		case tea.BatchMsg:
+			for _, c := range msg {
+				walk(c)
+			}
+		case clip.CopiedMsg:
+			text = msg.Text
+		}
+	}
+	walk(cmd)
+	return text
+}
+
+func withRoot(t *testing.T, dir string) {
+	t.Helper()
+	old := root
+	root = func() string { return dir }
+	t.Cleanup(func() { root = old })
+}
+
+// TestRecordingsLineNamesTheRoot: a muted line above the list says where the
+// recordings are, how many and how big; the grep matches and a missing
+// agent-tmux do not show it.
+func TestRecordingsLineNamesTheRoot(t *testing.T) {
+	withRoot(t, "/rec/agent-tmux")
+	c := screen(t, fixtureRows())
+	v := plain(c)
+	if want := "recordings: /rec/agent-tmux · 3 recordings · "; !strings.Contains(v, want) {
+		t.Errorf("no %q:\n%s", want, v)
+	}
+	if lines := strings.Split(v, "\n"); len(lines) > 20 {
+		t.Errorf("the header pushes the screen past its height: %d lines", len(lines))
+	}
+
+	fakeAgentTmux(t)
+	c, _ = hit(typeText(press(c, "s"), "kube"), "enter")
+	if v := plain(c); strings.Contains(v, "recordings:") || !strings.Contains(v, "grep kube") {
+		t.Errorf("the matches level has its own header:\n%s", v)
+	}
+
+	e := env.Env{Config: wsconfig.Default(), Clock: func() time.Time { return now }}
+	m, _ := New(e).Update(nav.ResizeMsg{Width: 120, Height: 20})
+	m, _ = m.Update(LoadedMsg{Missing: true})
+	if strings.Contains(plain(m), "recordings:") {
+		t.Errorf("a missing agent-tmux has no recordings line:\n%s", plain(m))
+	}
+}
+
+// TestPCopiesTheRecordingDir: p copies the dir agent-tmux reports, else root/<id>;
+// a row without a recording is a notice.
+func TestPCopiesTheRecordingDir(t *testing.T) {
+	withRoot(t, "/rec/agent-tmux")
+	rows := fixtureRows()
+	rows[0].Dir = "/reported/web-2026-10-01-0900"
+	c := screen(t, rows)
+	_, cmd := c.Update(keyMsg("p"))
+	if got := copied(t, cmd); got != "/reported/web-2026-10-01-0900" {
+		t.Errorf("copied %q", got)
+	}
+	c = press(c, "down", "down") // an ended row, no dir reported
+	_, cmd = c.Update(keyMsg("p"))
+	if got := copied(t, cmd); got != "/rec/agent-tmux/web-2026-09-20-1000" {
+		t.Errorf("copied %q", got)
+	}
+	c = screen(t, rows)
+	c, notices := hit(press(c, "down"), "p") // legacy: live, no recording
+	if len(notices) != 1 || !strings.Contains(notices[0], "no recording") {
+		t.Errorf("notices %q", notices)
+	}
+}
+
+// TestPCopiesTheMatchsDir: p in the grep matches copies the match's recording dir.
+func TestPCopiesTheMatchsDir(t *testing.T) {
+	withRoot(t, "/rec/agent-tmux")
+	fakeAgentTmux(t)
+	c := screen(t, fixtureRows())
+	c, _ = hit(typeText(press(c, "s"), "kube"), "enter")
+	_, cmd := c.Update(keyMsg("p"))
+	if got := copied(t, cmd); got != "/rec/agent-tmux/web-2026-09-20-1000" {
+		t.Errorf("copied %q", got)
+	}
+}
+
+// TestDeleteChecklistShowsTheDir: each row of the delete checklist says where
+// the recording is.
+func TestDeleteChecklistShowsTheDir(t *testing.T) {
+	withRoot(t, "/rec/agent-tmux")
+	v := plain(press(screen(t, fixtureRows()), "ctrl+a", "ctrl+d"))
+	if !strings.Contains(v, "Move recording /rec/agent-tmux/build-2026-09-10-0800 (") {
+		t.Errorf("checklist lacks the dir:\n%s", v)
+	}
+	rows := fixtureRows()
+	rows[3].Dir = "/elsewhere/build"
+	v = plain(press(screen(t, rows), "ctrl+a", "ctrl+d"))
+	if !strings.Contains(v, "build-2026-09-10-0800 at /elsewhere/build (") {
+		t.Errorf("a dir that does not end in the id is named with it:\n%s", v)
 	}
 }

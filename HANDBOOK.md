@@ -983,7 +983,8 @@ only. Without agent-tmux there are none.
 | `SHELL` | the shell `scratch new` and `scratch open` start (§4.11); else `bash`, else `sh` |
 | `WS_SCRATCH_SHELL` | set by ws inside a scratch shell, to its directory. Not `WS_SCRATCH`, the scratch root. Show it in your prompt, or test it |
 | `PASSWORD_STORE_DIR` | pass store location |
-| `XDG_STATE_HOME`, `XDG_DATA_HOME` | machine-local state and trash locations |
+| `XDG_STATE_HOME`, `XDG_DATA_HOME` | machine-local state and trash locations; `XDG_STATE_HOME` also the agent-tmux recordings root in `ws layout` and the Sessions screen |
+| `AGENT_TMUX_STATE_DIR` | where agent-tmux keeps its recordings; `ws layout` and the Sessions screen follow it |
 | `TMPDIR`, `XDG_CACHE_HOME`, `XDG_RUNTIME_DIR` | `ws env` and `ws layout`: the temp, cache and session homes; `XDG_CACHE_HOME`: the agent-tmux release cache |
 | `WS_NO_VERSION_CHECK` | `1`: no background version refresh and no agent-tmux nudge (ws never asks GitHub on its own). `ws version --check` is an explicit request and ignores it |
 | `WS_NO_MOUSE` | TUI: leave the mouse to the terminal |
@@ -2195,7 +2196,10 @@ the recordings. ws has no session code of its own. `ws session <args…>` replac
 with `agent-tmux <args…>` (exec), so the terminal and signals reach agent-tmux directly.
 Every word after `session` is agent-tmux's, flags included: `ws session --help` is
 agent-tmux's help, and `ws session ls --json` is its JSON. ws global flags typed before
-`session` are ignored. Recordings live where agent-tmux keeps them; ws never reads them.
+`session` are ignored. Recordings live where agent-tmux keeps them; ws never reads them. `ws session path` prints
+that root (`ws session path <session>` one recording's directory); `ws layout` lists it too, as
+the `recordings` home. An agent-tmux without `path` is not asked: ws derives the root by the
+same rules.
 
 ```text
 ws session <agent-tmux args…>
@@ -4006,7 +4010,13 @@ Homes outside the workspace (ws env exports them)
   /home/user/.cache/ws               WS_CACHE    cache: regenerable caches, one <system>-<instance>/ each
   /run/user/1000                     WS_RUN      session: short-lived runtime and session files
   /home/user/Scratch                 WS_SCRATCH  scratch: throwaway work and captures (ws scratch)
+  /home/user/.local/state/agent-tmux             recordings: terminal session recordings of agent-tmux (ws session path)
 ```
+
+The `recordings` home is where agent-tmux keeps its session recordings: `$AGENT_TMUX_STATE_DIR`,
+else `$XDG_STATE_HOME/agent-tmux`, else `~/.local/state/agent-tmux` (the rules of `agent-tmux
+path`, which prints the same). It has no variable: `ws env` does not export it, because scripts do
+not use it. `ws where` treats a path inside it as already placed.
 
 `--json`: command `layout`; data `workspace`, `folders` (`path`, `rel`, `purpose`, `exists`) and
 `homes` (`name`, `var`, `path`, `purpose`).
@@ -4026,7 +4036,7 @@ works. It needs no initialized workspace. The first rule that fits wins:
 
 | # | The path | Folder |
 | --- | --- | --- |
-| 1 | already under a layout folder (§2.2) or a home | that folder, marked `Inside`; for `notes/`: "the user's own; read it, write elsewhere" |
+| 1 | already under a layout folder (§2.2) or a home (the recordings root of `ws layout` included, written as its path) | that folder, marked `Inside`; for `notes/`: "the user's own; read it, write elsewhere" |
 | 2 | under `/etc` | `symlinks/` |
 | 3 | a directory with `.git` | `experiments/<name>/` |
 | 4 | `.har` | `$WS_SCRATCH/<name>.<yyyy-mm>/` (a capture holds live sessions and secrets) |
@@ -4529,7 +4539,11 @@ recordings together, with their state (`live`, `ended`) and recorder (`● rec` 
 runs one agent-tmux verb; `open`, `show` and `create` get the terminal, with the TUI
 suspended (§6.8). Without agent-tmux the screen is greyed out and shows the two install
 lines; refresh after installing it. When a newer agent-tmux is out, its line and the install
-lines stand above the list (the version nudge, §5 `ws session`).
+lines stand above the list (the version nudge, §5 `ws session`). A muted line names where the
+recordings are: `recordings: ~/.local/state/agent-tmux · 12 recordings · 3.4 MB` (the root,
+the rows that have a recording, and their size). The grep matches have their own header and no
+such line. The `Directory` field (`dir` in the JSON, off by default in the columns) is a
+recording's directory; an agent-tmux that does not report it gets `<root>/<recording id>`.
 
 | Key | Does | Rows |
 | --- | --- | --- |
@@ -4537,8 +4551,9 @@ lines stand above the list (the version nudge, §5 `ws session`).
 | `v` | show: page the recording (`agent-tmux show`, which pages it in `less`) | cursor |
 | `a` | new: prompt for a name, then `agent-tmux create <name>`, which attaches | none |
 | `s` | grep: prompt for text, then list the matching lines (`agent-tmux grep --json`); `enter` shows one, `esc` returns | none |
+| `p` | copy the recording's directory to the clipboard (`agent-tmux path <session>`); in the grep matches, the match's recording | cursor |
 | `x` | kill the live sessions, through a checklist; their recordings stay | selected |
-| `ctrl+d` | delete: move ended recordings to the trash (`agent-tmux rm`), through a checklist; live ones are left out | selected |
+| `ctrl+d` | delete: move ended recordings to the trash (`agent-tmux rm`), through a checklist that names each recording's directory; live ones are left out | selected |
 
 The Dashboard card counts live and ended sessions. A live session whose recorder stopped is
 a problem there (it opens the screen filtered to `recorder=stopped`), and the version nudge

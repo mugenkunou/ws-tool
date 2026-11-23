@@ -111,3 +111,16 @@ func TestWhereNeedsNoWorkspace(t *testing.T) {
 		t.Fatal("where created the scratch root")
 	}
 }
+
+func TestWhereRecognizesTheRecordingsRoot(t *testing.T) {
+	ws := initWorkspace(t)
+	home := scriptEnvFixture(t)
+	root := filepath.Join(home, ".local", "state", "agent-tmux")
+	code, out, errOut := runWhereCmd(t, "--workspace", ws, "--no-color", "where", filepath.Join(root, "web-2026-10-29-1402", "raw.log"))
+	if code != 0 {
+		t.Fatalf("exit %d stderr=%s", code, errOut)
+	}
+	if !strings.HasPrefix(out, root+"/ Inside\n") || !strings.Contains(out, "recordings") {
+		t.Fatalf("got %q", out)
+	}
+}

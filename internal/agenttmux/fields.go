@@ -42,6 +42,13 @@ func Schema(v resource.View) resource.Schema[Session] {
 				Text: func(s Session) string { return when(s.EndedAt) }},
 			{Key: "history_starts_at", Title: "History from", Value: func(s Session) any { return s.HistoryStartsAt },
 				Text: func(s Session) string { return when(s.HistoryStartsAt) }},
+			{Key: "dir", Title: "Directory", Value: func(s Session) any { return s.Dir },
+				Text: func(s Session) string {
+					if s.Dir == "" {
+						return ""
+					}
+					return v.Path(s.Dir)
+				}},
 			{Key: "bytes", Title: "Size", Value: func(s Session) any { return s.Bytes },
 				Text: func(s Session) string {
 					if s.Bytes == 0 && s.ID == "" {
@@ -77,6 +84,7 @@ func MatchSchema() resource.Schema[Match] {
 			{Key: "id", Title: "Recording", Value: func(m Match) any { return m.ID }},
 			{Key: "line", Title: "Line", Value: func(m Match) any { return m.Line }},
 			{Key: "text", Title: "Text", Value: func(m Match) any { return m.Text }},
+			{Key: "dir", Title: "Directory", Value: func(m Match) any { return m.Dir }},
 		},
 		Columns: []string{"id", "line", "text"},
 	}

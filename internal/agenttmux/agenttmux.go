@@ -110,6 +110,39 @@ type Session struct {
 	EndedAt         string `json:"ended_at"`
 	HistoryStartsAt string `json:"history_starts_at"`
 	Bytes           int64  `json:"bytes"`
+	Dir             string `json:"dir"` // absolute recording directory; "" when none or an older agent-tmux
+}
+
+// RecordingDir is the recording's directory: the one agent-tmux reports, or
+// root/<id> for an agent-tmux that does not report it. "" without a recording.
+func (s Session) RecordingDir(root string) string { return recordingDir(s.Dir, root, s.ID) }
+
+func recordingDir(dir, root, id string) string {
+	if dir != "" {
+		return dir
+	}
+	if id == "" || root == "" {
+		return ""
+	}
+	return filepath.Join(root, id)
+}
+
+// Root is where agent-tmux keeps its recordings. It mirrors agent-tmux's own
+// rules (`agent-tmux path`), for an agent-tmux that has no `path`:
+// $AGENT_TMUX_STATE_DIR, else $XDG_STATE_HOME/agent-tmux, else
+// ~/.local/state/agent-tmux. An empty variable counts as unset. getenv is
+// os.Getenv outside tests; "" when no home is known.
+func Root(getenv func(string) string) string {
+	if v := getenv("AGENT_TMUX_STATE_DIR"); v != "" {
+		return v
+	}
+	if v := getenv("XDG_STATE_HOME"); v != "" {
+		return filepath.Join(v, Bin)
+	}
+	if h := getenv("HOME"); h != "" {
+		return filepath.Join(h, ".local", "state", Bin)
+	}
+	return ""
 }
 
 // Live reports whether the session is running.
@@ -163,7 +196,11 @@ type Match struct {
 	ID   string `json:"id"`
 	Line int    `json:"line"`
 	Text string `json:"text"`
+	Dir  string `json:"dir"` // the recording's directory; "" from an older agent-tmux
 }
+
+// RecordingDir is the match's recording directory (see Session.RecordingDir).
+func (m Match) RecordingDir(root string) string { return recordingDir(m.Dir, root, m.ID) }
 
 // GrepResult is the answer of `agent-tmux grep --json`.
 type GrepResult struct {

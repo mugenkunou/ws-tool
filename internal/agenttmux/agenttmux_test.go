@@ -239,3 +239,41 @@ func TestCheckNudge(t *testing.T) {
 		t.Error("agent-tmux missing: no nudge")
 	}
 }
+
+func TestRoot(t *testing.T) {
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	for _, c := range []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"default", map[string]string{"HOME": "/h"}, "/h/.local/state/agent-tmux"},
+		{"xdg", map[string]string{"HOME": "/h", "XDG_STATE_HOME": "/x"}, "/x/agent-tmux"},
+		{"override", map[string]string{"HOME": "/h", "XDG_STATE_HOME": "/x", "AGENT_TMUX_STATE_DIR": "/o"}, "/o"},
+		{"empty counts as unset", map[string]string{"HOME": "/h", "XDG_STATE_HOME": "", "AGENT_TMUX_STATE_DIR": ""}, "/h/.local/state/agent-tmux"},
+		{"no home", map[string]string{}, ""},
+	} {
+		if got := agenttmux.Root(env(c.env)); got != c.want {
+			t.Errorf("%s: Root = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestRecordingDir(t *testing.T) {
+	if got := (agenttmux.Session{ID: "a-1", Dir: "/real/a-1"}).RecordingDir("/root"); got != "/real/a-1" {
+		t.Errorf("reported dir wins: %q", got)
+	}
+	if got := (agenttmux.Session{ID: "a-1"}).RecordingDir("/root"); got != "/root/a-1" {
+		t.Errorf("derived from the root: %q", got)
+	}
+	if got := (agenttmux.Session{Name: "live"}).RecordingDir("/root"); got != "" {
+		t.Errorf("no recording, no dir: %q", got)
+	}
+	if got := (agenttmux.Match{ID: "m-1"}).RecordingDir("/root"); got != "/root/m-1" {
+		t.Errorf("match derived: %q", got)
+	}
+	var s agenttmux.Session
+	if err := json.Unmarshal([]byte(`{"id":"x","dir":"/d/x"}`), &s); err != nil || s.Dir != "/d/x" {
+		t.Errorf("dir is read from ls --json: %+v %v", s, err)
+	}
+}

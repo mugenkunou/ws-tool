@@ -34,7 +34,7 @@ func runWhere(args []string, globals globalFlags, stdout, stderr io.Writer) int 
 		fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	p := workspace.Where(workspacePath, homes, path)
+	p := workspace.Where(workspacePath, withRecordings(homes), path)
 
 	if globals.json {
 		code := writeJSON(stdout, stderr, "where", map[string]any{

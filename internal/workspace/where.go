@@ -76,7 +76,11 @@ func whereAt(workspacePath string, homes []Home, path string, now time.Time) Pla
 	}
 	for _, h := range homes {
 		if _, ok := relUnder(h.Path, path); ok {
-			return Placement{Folder: "$" + h.Var + "/", Reason: "already placed: " + h.Purpose, Matched: true, Inside: true}
+			folder := "$" + h.Var + "/"
+			if h.Var == "" { // a home without a variable (ws layout's recordings): its path
+				folder = h.Path + "/"
+			}
+			return Placement{Folder: folder, Reason: "already placed: " + h.Purpose, Matched: true, Inside: true}
 		}
 	}
 

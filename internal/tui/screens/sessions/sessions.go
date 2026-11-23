@@ -17,6 +17,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"charm.land/bubbles/v2/help"
@@ -27,6 +29,7 @@ import (
 	"github.com/mugenkunou/ws-tool/internal/agenttmux"
 	"github.com/mugenkunou/ws-tool/internal/plan"
 	"github.com/mugenkunou/ws-tool/internal/style"
+	"github.com/mugenkunou/ws-tool/internal/tui/clip"
 	"github.com/mugenkunou/ws-tool/internal/tui/confirm"
 	"github.com/mugenkunou/ws-tool/internal/tui/env"
 	"github.com/mugenkunou/ws-tool/internal/tui/format"
@@ -195,7 +198,45 @@ func (m Model) reload() (Model, tea.Cmd) {
 	return m, Load()
 }
 
-// headerLines is what stands above the list: the nudge, the grep's title.
+// root is where agent-tmux keeps its recordings (agenttmux.Root). Tests swap
+// it.
+var root = func() string { return agenttmux.Root(os.Getenv) }
+
+// recordingsLine is the muted line naming where the recordings are, how many
+// and how big: `recordings: ~/.local/state/agent-tmux · 12 recordings · 3.4 MB`.
+func (m Model) recordingsLine() string {
+	r := root()
+	if r == "" {
+		return ""
+	}
+	n, size := 0, int64(0)
+	for _, s := range m.list.Items() {
+		if s.ID != "" {
+			n++
+			size += s.Bytes
+		}
+	}
+	return theme.Muted.Render(fmt.Sprintf("recordings: %s · %s · %s",
+		m.env.View().Path(r), format.Plural(n, "recording"), style.HumanBytes(size)))
+}
+
+// copyDir is p: copy the cursor row's recording directory.
+func (m Model) copyDir(rows []agenttmux.Session) (Model, tea.Cmd) {
+	if m.missing {
+		return m, notInstalled()
+	}
+	return m, copyPath(rows[0].Name, rows[0].RecordingDir(root()))
+}
+
+func copyPath(name, dir string) tea.Cmd {
+	if dir == "" {
+		return nav.Notify(nav.LevelInfo, name+" has no recording: an older agent-tmux started it")
+	}
+	return clip.Copy(dir)
+}
+
+// headerLines is what stands above the list: the nudge, the recordings root,
+// the grep's title.
 func (m Model) headerLines() []string {
 	var out []string
 	for i, l := range m.nudge {
@@ -206,7 +247,12 @@ func (m Model) headerLines() []string {
 		}
 	}
 	if m.level == levelMatches {
-		out = append(out, m.grepHeader())
+		return append(out, m.grepHeader())
+	}
+	if !m.missing {
+		if l := m.recordingsLine(); l != "" {
+			out = append(out, l)
+		}
 	}
 	return out
 }
@@ -240,10 +286,10 @@ func (m Model) Update(msg tea.Msg) (nav.Component, tea.Cmd) {
 		m.missing = msg.Missing
 		if msg.Err != nil {
 			m.list = m.list.SetError(msg.Err)
-			return m, nil
+			return m.layout(), nil
 		}
 		m.list = m.list.SetItems(msg.Sessions)
-		return m, nil
+		return m.layout(), nil // the recordings line has a size of its own
 	case NudgeMsg:
 		m.nudge = msg.Nudge.Lines()
 		return m.layout(), nil
@@ -296,6 +342,7 @@ var actions = func() []reslist.Action[Model, agenttmux.Session] {
 		{Key: k.Show, Scope: reslist.Cursor, Do: Model.show},
 		{Key: k.New, Scope: reslist.Global, Do: Model.promptNew},
 		{Key: k.Grep, Scope: reslist.Global, Do: Model.promptGrep},
+		{Key: k.Path, Scope: reslist.Cursor, Do: Model.copyDir},
 		{Key: k.Kill, Scope: reslist.Selected, Do: Model.kill},
 		{Key: k.Delete, Scope: reslist.Selected, Do: Model.delete},
 	}
@@ -326,6 +373,11 @@ func (m Model) updateMatches(k tea.KeyPressMsg) (nav.Component, tea.Cmd) {
 	case key.Matches(k, m.matchKeys.Show):
 		if mt, ok := m.matches.Current(); ok {
 			return m, m.run(handoverShow, "show", mt.ID)
+		}
+		return m, nil
+	case key.Matches(k, m.matchKeys.Path):
+		if mt, ok := m.matches.Current(); ok {
+			return m, copyPath(mt.Name, mt.RecordingDir(root()))
 		}
 		return m, nil
 	case key.Matches(k, m.matchKeys.Back):
@@ -468,7 +520,7 @@ func (m Model) delete(rows []agenttmux.Session) (Model, tea.Cmd) {
 		id := s.ID
 		p.Actions = append(p.Actions, plan.Action{
 			ID:          "session-rm-" + id,
-			Description: fmt.Sprintf("Move recording %s (%s) to the trash", id, style.HumanBytes(s.Bytes)),
+			Description: deleteDescription(s, root(), m.env.View().Path),
 			Execute:     func() error { _, err := agenttmux.Output(context.Background(), "rm", id); return err },
 		})
 	}
@@ -477,6 +529,20 @@ func (m Model) delete(rows []agenttmux.Session) (Model, tea.Cmd) {
 	}
 	m.modal = m.modal.Confirm(stepDelete, confirm.New("Delete "+format.Plural(len(p.Actions), "recording"), p))
 	return m, nil
+}
+
+// deleteDescription is a checklist row of the delete: the recording, as its
+// directory (which ends in its id) so the row says where it is, and its size.
+// path shortens a path for display.
+func deleteDescription(s agenttmux.Session, root string, path func(string) string) string {
+	name := s.ID
+	if dir := s.RecordingDir(root); dir != "" {
+		name = path(dir)
+		if filepath.Base(dir) != s.ID {
+			name = s.ID + " at " + name
+		}
+	}
+	return fmt.Sprintf("Move recording %s (%s) to the trash", name, style.HumanBytes(s.Bytes))
 }
 
 func (m Model) dialogResult(st step, msg tea.Msg) (nav.Component, tea.Cmd) {
